@@ -10,6 +10,7 @@ import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.util.IdGenerator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.core.annotation.Order;
@@ -22,8 +23,12 @@ import org.springframework.stereotype.Component;
  * data with minimal friction. Runs at the default seed order (0), strictly before
  * {@link com.voyra.crm.migration.TenantMigrationStartupRunner} (order 100), so the newly
  * seeded tenant's schema gets provisioned in the same startup.
+ *
+ * Gated behind app.seed.demo-data=true so it can never run in a deployed environment; the
+ * shared demo password is acceptable only because that flag is local-only.
  */
 @Component
+@ConditionalOnProperty(name = "app.seed.demo-data", havingValue = "true")
 @RequiredArgsConstructor
 @Slf4j
 @Order(0)
@@ -58,7 +63,7 @@ public class DemoDataSeedRunner implements ApplicationRunner {
                 .isActive(true)
                 .build();
         platformAdminRepository.save(admin);
-        log.info("Seeded demo platform admin: email={}, password={}", PLATFORM_ADMIN_EMAIL, DEMO_PASSWORD);
+        log.info("Seeded demo platform admin: email={}", PLATFORM_ADMIN_EMAIL);
     }
 
     private String seedTenant() {
@@ -74,8 +79,8 @@ public class DemoDataSeedRunner implements ApplicationRunner {
                             .isActive(true)
                             .build();
                     tenantRepository.save(tenant);
-                    log.info("Seeded demo agency '{}' (tenantId={}): owner email={}, password={}",
-                            tenant.getAgencyName(), tenant.getId(), OWNER_EMAIL, DEMO_PASSWORD);
+                    log.info("Seeded demo agency '{}' (tenantId={}): owner email={}",
+                            tenant.getAgencyName(), tenant.getId(), OWNER_EMAIL);
                     return tenant.getId();
                 });
     }
@@ -95,8 +100,8 @@ public class DemoDataSeedRunner implements ApplicationRunner {
                 .isActive(true)
                 .build();
         agentRepository.save(agent);
-        log.info("Seeded demo agent '{}' (agentId={}): email={}, password={}",
-                agent.getName(), agent.getId(), AGENT_EMAIL, DEMO_PASSWORD);
+        log.info("Seeded demo agent '{}' (agentId={}): email={}",
+                agent.getName(), agent.getId(), AGENT_EMAIL);
     }
 
     private String generateUniqueId(java.util.function.Predicate<String> existsById) {
