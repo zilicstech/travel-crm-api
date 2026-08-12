@@ -51,6 +51,7 @@ public class CustomerSubResourceService {
                 .name(request.getName())
                 .relation(request.getRelation())
                 .dob(request.getDob())
+                .createdDate(LocalDateTime.now())
                 .build();
         familyMemberRepository.save(member);
         log.info("Family member added: customerId={}, familyMemberId={}", customerId, member.getId());

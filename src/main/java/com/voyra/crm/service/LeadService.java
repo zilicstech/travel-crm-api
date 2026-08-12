@@ -184,6 +184,7 @@ public class LeadService {
                 .supplier(request.getSupplier())
                 .netCost(netCost)
                 .sellingPrice(sellingPrice)
+                .createdDate(LocalDateTime.now())
                 .build();
         proposalItemRepository.save(item);
         log.info("Proposal item added: leadId={}, itemId={}", id, item.getId());
