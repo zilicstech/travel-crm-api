@@ -74,15 +74,40 @@ public class BookingService {
 
     @Transactional(readOnly = true)
     public List<BookingResponse> listBookings(BookingType typeFilter, BookingStatus statusFilter) {
+        return scopedBookings(typeFilter, statusFilter).stream().map(this::toResponse).toList();
+    }
+
+    /**
+     * Every filter combination resolves to an indexed derived query - never a full table
+     * read filtered in Java. Agent callers are structurally confined to their own rows.
+     */
+    private List<Booking> scopedBookings(BookingType typeFilter, BookingStatus statusFilter) {
         CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
-        List<Booking> base = principal.isAgent()
-                ? bookingRepository.findByAgentId(principal.userId())
-                : bookingRepository.findAll();
-        return base.stream()
-                .filter(b -> typeFilter == null || b.getType() == typeFilter)
-                .filter(b -> statusFilter == null || b.getBookingStatus() == statusFilter)
-                .map(this::toResponse)
-                .toList();
+        String agentId = principal.isAgent() ? principal.userId() : null;
+
+        if (agentId != null) {
+            if (typeFilter != null && statusFilter != null) {
+                return bookingRepository.findByAgentIdAndTypeAndBookingStatus(agentId, typeFilter, statusFilter);
+            }
+            if (typeFilter != null) {
+                return bookingRepository.findByAgentIdAndType(agentId, typeFilter);
+            }
+            if (statusFilter != null) {
+                return bookingRepository.findByAgentIdAndBookingStatus(agentId, statusFilter);
+            }
+            return bookingRepository.findByAgentId(agentId);
+        }
+
+        if (typeFilter != null && statusFilter != null) {
+            return bookingRepository.findByTypeAndBookingStatus(typeFilter, statusFilter);
+        }
+        if (typeFilter != null) {
+            return bookingRepository.findByType(typeFilter);
+        }
+        if (statusFilter != null) {
+            return bookingRepository.findByBookingStatus(statusFilter);
+        }
+        return bookingRepository.findAll();
     }
 
     @Transactional(readOnly = true)

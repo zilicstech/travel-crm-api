@@ -97,14 +97,23 @@ public class LeadService {
 
     @Transactional(readOnly = true)
     public List<LeadResponse> listLeads(LeadStatus statusFilter) {
+        return scopedLeads(statusFilter).stream().map(this::toResponse).toList();
+    }
+
+    /**
+     * Every combination resolves to an indexed derived query - never a full table read
+     * filtered in Java. Agent callers are structurally confined to their own assigned rows.
+     */
+    private List<Lead> scopedLeads(LeadStatus statusFilter) {
         CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
-        List<Lead> base = principal.isAgent()
-                ? leadRepository.findByAssignedTo(principal.userId())
-                : leadRepository.findAll();
-        return base.stream()
-                .filter(l -> statusFilter == null || l.getStatus() == statusFilter)
-                .map(this::toResponse)
-                .toList();
+        if (principal.isAgent()) {
+            return statusFilter == null
+                    ? leadRepository.findByAssignedTo(principal.userId())
+                    : leadRepository.findByAssignedToAndStatus(principal.userId(), statusFilter);
+        }
+        return statusFilter == null
+                ? leadRepository.findAll()
+                : leadRepository.findByStatus(statusFilter);
     }
 
     @Transactional(readOnly = true)

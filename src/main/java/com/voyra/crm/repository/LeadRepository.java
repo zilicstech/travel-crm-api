@@ -24,6 +24,8 @@ public interface LeadRepository extends JpaRepository<Lead, String> {
 
     List<Lead> findByStatus(LeadStatus status);
 
+    List<Lead> findByAssignedToAndStatus(String assignedTo, LeadStatus status);
+
     Optional<Lead> findByPublicProposalToken(String publicProposalToken);
 
     long countByAssignedTo(String assignedTo);
