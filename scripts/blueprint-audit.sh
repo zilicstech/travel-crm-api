@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# Mechanical BACKEND_BLUEPRINT.md compliance audit. Exit 0 = compliant.
+# Run from the project root. Every check maps to a numbered blueprint section.
+set -uo pipefail
+cd "$(dirname "$0")/.."
+SRC=src/main/java/com/voyra/crm
+FAIL=0
+
+check() { # name, expected, actual
+  if [ "$2" = "$3" ]; then printf "  PASS  %-58s %s\n" "$1" "$3"
+  else printf "  FAIL  %-58s expected=%s actual=%s\n" "$1" "$2" "$3"; FAIL=1; fi
+}
+
+echo "=== BACKEND_BLUEPRINT.md compliance audit ==="
+
+# §5.3 - every controller class or method carries @PreAuthorize (auth + public are exempt)
+UNGUARDED=0
+for f in $SRC/controller/*.java; do
+  case "$(basename "$f")" in AuthController.java|PublicProposalController.java) continue ;; esac
+  grep -q '@PreAuthorize' "$f" || { echo "    unguarded controller: $f"; UNGUARDED=$((UNGUARDED+1)); }
+done
+check "§5.3 all controllers guarded by @PreAuthorize" 0 "$UNGUARDED"
+
+# §7.3 - controllers never return JPA entities
+check "§7.3 no entities returned from controllers" 0 \
+  "$(grep -rlE 'ResponseEntity<(List<)?(Lead|Customer|Booking|Visa|Agent|Tenant|ClientInvoice|SupplierInvoice|ProposalItem|LeadNote|PlatformAdmin|CustomerDocument|FamilyMember)[>,]' $SRC/controller/ 2>/dev/null | wc -l | tr -d ' ')"
+
+# §8.1 - controllers hold no repository access and no try/catch
+check "§8.1 no repository access in controllers" 0 \
+  "$(grep -rl 'Repository' $SRC/controller/ 2>/dev/null | wc -l | tr -d ' ')"
+check "§8.1 no try/catch in controllers" 0 \
+  "$(grep -rl 'try {' $SRC/controller/ 2>/dev/null | wc -l | tr -d ' ')"
+
+# §8.3 - constructor injection only
+check "§8.3 no @Autowired field injection" 0 \
+  "$(grep -rl '@Autowired' $SRC 2>/dev/null | wc -l | tr -d ' ')"
+
+# §8.4 - enums persisted as STRING, money is BigDecimal, secrets are @JsonIgnore
+check "§8.4 no ordinal enum persistence" 0 \
+  "$(grep -rl '@Enumerated(EnumType.ORDINAL)' $SRC/entity/ 2>/dev/null | wc -l | tr -d ' ')"
+check "§8.4 no double/float money fields" 0 \
+  "$(grep -rhE 'private (double|Double|float|Float) ' $SRC/entity/ $SRC/dto/ 2>/dev/null | wc -l | tr -d ' ')"
+check "§8.4 no JPA associations (flat FK columns only)" 0 \
+  "$(grep -rhE '@(OneToMany|ManyToOne|ManyToMany|OneToOne|JoinColumn)' $SRC/entity/ 2>/dev/null | wc -l | tr -d ' ')"
+PW_TOTAL=$(grep -rh 'private String password;' $SRC/entity/ | wc -l | tr -d ' ')
+PW_IGNORED=$(grep -rh -B1 'private String password;' $SRC/entity/ | grep -c '@JsonIgnore' | tr -d ' ')
+check "§8.4 all entity password fields @JsonIgnore" "$PW_TOTAL" "$PW_IGNORED"
+
+# §8.5 - every entity primary key is collision-checked, never a raw generate6()
+check "§8.5 no raw IdGenerator.generate6() in .id() builder calls" 0 \
+  "$(grep -rh '\.id(IdGenerator\.generate6())' $SRC/service/ 2>/dev/null | wc -l | tr -d ' ')"
+
+# §5.3 - services read the principal only via SecurityContextUtil
+check "§5.3 SecurityContextHolder only in security package" 0 \
+  "$(grep -rl 'SecurityContextHolder' $SRC/service/ $SRC/controller/ 2>/dev/null | wc -l | tr -d ' ')"
+
+# §8.13 - every DTO field documented with @Schema
+DTO_FIELDS=$(grep -rh '^    private ' $SRC/dto/*.java | wc -l | tr -d ' ')
+DTO_SCHEMAS=$(grep -rh '^    @Schema' $SRC/dto/*.java | wc -l | tr -d ' ')
+check "§8.13 @Schema on every DTO field" "$DTO_FIELDS" "$DTO_SCHEMAS"
+
+# §2.2 - Flyway never allowed to clean
+check "§2.2 flyway clean-disabled=true" 1 \
+  "$(grep -c '^spring.flyway.clean-disabled=true' src/main/resources/application.properties | tr -d ' ')"
+
+# §10 - test sources exist
+check "§10 test sources present (>=20 test files)" "yes" \
+  "$([ "$(find src/test -name '*Test.java' -o -name '*IT.java' 2>/dev/null | wc -l | tr -d ' ')" -ge 20 ] && echo yes || echo no)"
+
+echo
+[ "$FAIL" = 0 ] && echo "RESULT: COMPLIANT" || echo "RESULT: NON-COMPLIANT"
+exit $FAIL
