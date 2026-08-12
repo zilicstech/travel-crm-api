@@ -39,7 +39,11 @@ public class PublicProposalService {
                 .orElseThrow(() -> new IllegalArgumentException(NOT_FOUND_MESSAGE));
     }
 
-    @Transactional(readOnly = true)
+    /**
+     * Not readOnly: the tenant-scoped work this delegates to is a write. The outer
+     * transaction only resolves the public-schema token.
+     */
+    @Transactional
     public void approveProposal(String token) {
         ProposalLink link = resolveLink(token);
         boolean approved = withTenant(link.getTenantId(), () -> tenantService.approve(link.getLeadId()));
