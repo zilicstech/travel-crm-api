@@ -45,6 +45,35 @@ public interface LeadRepository extends JpaRepository<Lead, String> {
 
     boolean existsByAssignedToAndStatusNotIn(String assignedTo, Collection<LeadStatus> excludedStatuses);
 
+    /** One grouped row per agent - replaces five per-agent count queries. */
+    @Query("""
+            SELECT l.assignedTo AS agentId,
+                   COUNT(l) AS leadsAssigned,
+                   SUM(CASE WHEN l.status = :booked THEN 1L ELSE 0L END) AS bookedLeads,
+                   SUM(CASE WHEN l.status NOT IN :terminal THEN 1L ELSE 0L END) AS activeLeads,
+                   SUM(CASE WHEN l.status IN :proposalStage THEN 1L ELSE 0L END) AS quotationsSent,
+                   SUM(CASE WHEN l.followUpDate <= :today AND l.status NOT IN :terminal
+                            THEN 1L ELSE 0L END) AS pendingFollowUps
+            FROM Lead l
+            WHERE l.assignedTo IN :agentIds
+            GROUP BY l.assignedTo
+            """)
+    List<AgentLeadStatsProjection> aggregateLeadStatsByAgent(
+            @Param("agentIds") Collection<String> agentIds,
+            @Param("booked") LeadStatus booked,
+            @Param("terminal") Collection<LeadStatus> terminal,
+            @Param("proposalStage") Collection<LeadStatus> proposalStage,
+            @Param("today") LocalDate today);
+
+    interface AgentLeadStatsProjection {
+        String getAgentId();
+        long getLeadsAssigned();
+        long getBookedLeads();
+        long getActiveLeads();
+        long getQuotationsSent();
+        long getPendingFollowUps();
+    }
+
     /** Keeps the denormalized assigned_agent_name snapshot live-synced on Agent rename. */
     @Modifying
     @Query("UPDATE Lead l SET l.assignedAgentName = :name WHERE l.assignedTo = :agentId")

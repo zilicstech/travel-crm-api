@@ -9,6 +9,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.util.Collection;
 import java.util.List;
 
 @Repository
@@ -56,6 +57,24 @@ public interface BookingRepository extends JpaRepository<Booking, String> {
         java.math.BigDecimal getTotalProfit();
 
         java.math.BigDecimal getTotalNetCost();
+    }
+
+    @Query("""
+            SELECT b.agentId AS agentId,
+                   COUNT(b) AS bookingsCount,
+                   COALESCE(SUM(b.sellingPrice), 0) AS totalRevenue,
+                   COALESCE(SUM(b.profit), 0) AS totalProfit
+            FROM Booking b
+            WHERE b.agentId IN :agentIds
+            GROUP BY b.agentId
+            """)
+    List<AgentBookingStatsProjection> aggregateBookingStatsByAgent(@Param("agentIds") Collection<String> agentIds);
+
+    interface AgentBookingStatsProjection {
+        String getAgentId();
+        long getBookingsCount();
+        java.math.BigDecimal getTotalRevenue();
+        java.math.BigDecimal getTotalProfit();
     }
 
     /** Keeps the denormalized agent_name/customer_name snapshots live-synced on rename. */
