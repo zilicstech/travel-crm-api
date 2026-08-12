@@ -12,7 +12,7 @@ import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.security.AesPasswordEncoder;
 import com.voyra.crm.security.SecurityContextUtil;
-import com.voyra.crm.util.IdGenerator;
+import com.voyra.crm.util.UniqueIdResolver;
 import com.voyra.crm.util.RandomPasswordGenerator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -143,13 +143,6 @@ public class AgencyService {
     }
 
     private String generateUniqueTenantId() {
-        int maxAttempts = 10;
-        for (int i = 0; i < maxAttempts; i++) {
-            String id = IdGenerator.generate6();
-            if (!tenantRepository.existsById(id)) {
-                return id;
-            }
-        }
-        throw new IllegalStateException("Unable to generate unique tenant id after " + maxAttempts + " attempts");
+        return UniqueIdResolver.resolve(tenantRepository::existsById);
     }
 }

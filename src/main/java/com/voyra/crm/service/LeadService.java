@@ -26,8 +26,8 @@ import com.voyra.crm.repository.LeadRepository;
 import com.voyra.crm.repository.ProposalItemRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.security.SecurityContextUtil;
-import com.voyra.crm.util.IdGenerator;
 import com.voyra.crm.util.MarginCalculator;
+import com.voyra.crm.util.UniqueIdResolver;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.access.AccessDeniedException;
@@ -157,7 +157,7 @@ public class LeadService {
         AuthorResolver.AuthorInfo author = authorResolver.resolveCurrentAuthor();
 
         LeadNote note = LeadNote.builder()
-                .id(IdGenerator.generate6())
+                .id(UniqueIdResolver.resolve(leadNoteRepository::existsById))
                 .leadId(id)
                 .authorAgentId(author.id())
                 .authorName(author.name())
@@ -177,7 +177,7 @@ public class LeadService {
         BigDecimal sellingPrice = request.getSellingPrice() != null ? request.getSellingPrice() : BigDecimal.ZERO;
 
         ProposalItem item = ProposalItem.builder()
-                .id(IdGenerator.generate6())
+                .id(UniqueIdResolver.resolve(proposalItemRepository::existsById))
                 .leadId(id)
                 .type(request.getType())
                 .description(request.getDescription())
@@ -299,13 +299,6 @@ public class LeadService {
     }
 
     private String generateUniqueLeadId() {
-        int maxAttempts = 10;
-        for (int i = 0; i < maxAttempts; i++) {
-            String id = IdGenerator.generate6();
-            if (!leadRepository.existsById(id)) {
-                return id;
-            }
-        }
-        throw new IllegalStateException("Unable to generate unique lead id after " + maxAttempts + " attempts");
+        return UniqueIdResolver.resolve(leadRepository::existsById);
     }
 }

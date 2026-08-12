@@ -13,7 +13,7 @@ import com.voyra.crm.repository.CustomerRepository;
 import com.voyra.crm.repository.VisaRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.security.SecurityContextUtil;
-import com.voyra.crm.util.IdGenerator;
+import com.voyra.crm.util.UniqueIdResolver;
 import com.voyra.crm.util.VisaStatusCalculator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -39,7 +39,7 @@ public class VisaService {
                 .orElseThrow(() -> new IllegalArgumentException("Customer not found: " + request.getCustomerId()));
 
         Visa visa = Visa.builder()
-                .id(IdGenerator.generate6())
+                .id(UniqueIdResolver.resolve(visaRepository::existsById))
                 .customerId(customer.getId())
                 .customerName(customer.getName())
                 .agentId(owner.id())

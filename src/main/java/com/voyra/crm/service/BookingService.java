@@ -15,7 +15,7 @@ import com.voyra.crm.repository.BookingRepository;
 import com.voyra.crm.repository.CustomerRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.security.SecurityContextUtil;
-import com.voyra.crm.util.IdGenerator;
+import com.voyra.crm.util.UniqueIdResolver;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.access.AccessDeniedException;
@@ -184,13 +184,6 @@ public class BookingService {
     }
 
     private String generateUniqueBookingId() {
-        int maxAttempts = 10;
-        for (int i = 0; i < maxAttempts; i++) {
-            String id = IdGenerator.generate6();
-            if (!bookingRepository.existsById(id)) {
-                return id;
-            }
-        }
-        throw new IllegalStateException("Unable to generate unique booking id after " + maxAttempts + " attempts");
+        return UniqueIdResolver.resolve(bookingRepository::existsById);
     }
 }

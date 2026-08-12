@@ -15,7 +15,7 @@ import com.voyra.crm.repository.CustomerInteractionRepository;
 import com.voyra.crm.repository.FamilyMemberDocumentRepository;
 import com.voyra.crm.repository.FamilyMemberRepository;
 import com.voyra.crm.security.SecurityContextUtil;
-import com.voyra.crm.util.IdGenerator;
+import com.voyra.crm.util.UniqueIdResolver;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -46,7 +46,7 @@ public class CustomerSubResourceService {
     public FamilyMemberResponse addFamilyMember(String customerId, FamilyMemberCreateRequest request) {
         customerService.findAccessibleCustomer(customerId);
         FamilyMember member = FamilyMember.builder()
-                .id(IdGenerator.generate6())
+                .id(UniqueIdResolver.resolve(familyMemberRepository::existsById))
                 .customerId(customerId)
                 .name(request.getName())
                 .relation(request.getRelation())
@@ -66,7 +66,7 @@ public class CustomerSubResourceService {
         String fileKey = fileStorageService.store(tenantId, CUSTOMER_DOC_CATEGORY, customerId, file);
 
         CustomerDocument doc = CustomerDocument.builder()
-                .id(IdGenerator.generate6())
+                .id(UniqueIdResolver.resolve(customerDocumentRepository::existsById))
                 .customerId(customer.getId())
                 .name(file.getOriginalFilename())
                 .fileKey(fileKey)
@@ -102,7 +102,7 @@ public class CustomerSubResourceService {
         String fileKey = fileStorageService.store(tenantId, FAMILY_DOC_CATEGORY, familyMemberId, file);
 
         FamilyMemberDocument doc = FamilyMemberDocument.builder()
-                .id(IdGenerator.generate6())
+                .id(UniqueIdResolver.resolve(familyMemberDocumentRepository::existsById))
                 .familyMemberId(member.getId())
                 .name(file.getOriginalFilename())
                 .fileKey(fileKey)
@@ -121,7 +121,7 @@ public class CustomerSubResourceService {
         AuthorResolver.AuthorInfo author = authorResolver.resolveCurrentAuthor();
 
         CustomerInteraction interaction = CustomerInteraction.builder()
-                .id(IdGenerator.generate6())
+                .id(UniqueIdResolver.resolve(interactionRepository::existsById))
                 .customerId(customerId)
                 .authorAgentId(author.id())
                 .authorName(author.name())

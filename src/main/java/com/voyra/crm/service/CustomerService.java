@@ -18,7 +18,7 @@ import com.voyra.crm.repository.CustomerRepository;
 import com.voyra.crm.repository.LeadRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.security.SecurityContextUtil;
-import com.voyra.crm.util.IdGenerator;
+import com.voyra.crm.util.UniqueIdResolver;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.access.AccessDeniedException;
@@ -77,7 +77,7 @@ public class CustomerService {
         if (request.getNotes() != null && !request.getNotes().isBlank()) {
             AuthorResolver.AuthorInfo author = authorResolver.resolveCurrentAuthor();
             interactionRepository.save(CustomerInteraction.builder()
-                    .id(IdGenerator.generate6())
+                    .id(UniqueIdResolver.resolve(interactionRepository::existsById))
                     .customerId(customer.getId())
                     .authorAgentId(author.id())
                     .authorName(author.name())
@@ -222,13 +222,6 @@ public class CustomerService {
     }
 
     private String generateUniqueCustomerId() {
-        int maxAttempts = 10;
-        for (int i = 0; i < maxAttempts; i++) {
-            String id = IdGenerator.generate6();
-            if (!customerRepository.existsById(id)) {
-                return id;
-            }
-        }
-        throw new IllegalStateException("Unable to generate unique customer id after " + maxAttempts + " attempts");
+        return UniqueIdResolver.resolve(customerRepository::existsById);
     }
 }

@@ -18,7 +18,7 @@ import com.voyra.crm.repository.CustomerRepository;
 import com.voyra.crm.repository.SupplierInvoiceRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.security.SecurityContextUtil;
-import com.voyra.crm.util.IdGenerator;
+import com.voyra.crm.util.UniqueIdResolver;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -215,13 +215,6 @@ public class InvoiceService {
     }
 
     private String generateUniqueId(java.util.function.Predicate<String> existsById) {
-        int maxAttempts = 10;
-        for (int i = 0; i < maxAttempts; i++) {
-            String id = IdGenerator.generate6();
-            if (!existsById.test(id)) {
-                return id;
-            }
-        }
-        throw new IllegalStateException("Unable to generate unique invoice id after " + maxAttempts + " attempts");
+        return UniqueIdResolver.resolve(existsById);
     }
 }
