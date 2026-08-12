@@ -126,10 +126,19 @@ public class InvoiceService {
         return toSupplierResponse(invoice);
     }
 
+    /**
+     * Owner sees agency-wide client + supplier figures. Agent sees only their own client
+     * invoices, and zero supplier figures - payables are not agent-scoped data. Mixing the
+     * two scopes in one response would report agency-wide payables against an agent's own
+     * receivables.
+     */
     @Transactional(readOnly = true)
     public InvoiceSummaryResponse getSummary() {
         List<ClientInvoice> clientInvoices = scopedClientInvoices();
-        List<SupplierInvoice> supplierInvoices = supplierInvoiceRepository.findAll();
+        // Supplier invoices are accounts-payable data: Owner-only, matching the three
+        // supplier endpoints. An Agent's summary reports on their own client invoices only.
+        boolean isOwner = !SecurityContextUtil.getCurrentUserOrThrow().isAgent();
+        List<SupplierInvoice> supplierInvoices = isOwner ? supplierInvoiceRepository.findAll() : List.of();
 
         BigDecimal totalCollected = sum(clientInvoices, ClientInvoice::getAmountPaid);
         BigDecimal totalPendingToCollect = clientInvoices.stream()

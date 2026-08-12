@@ -25,7 +25,10 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
-/** Shared between AGENCY_OWNER and AGENT - same rules for both, scope resolved per caller. */
+/**
+ * Client invoices are shared between AGENCY_OWNER and AGENT, scope resolved per caller.
+ * Supplier invoices are accounts-payable data and are Owner-only (method-level override).
+ */
 @Slf4j
 @RestController
 @RequestMapping("/api/invoices")
@@ -56,19 +59,22 @@ public class InvoiceController {
     }
 
     @PostMapping("/supplier")
-    @Operation(summary = "Record a supplier invoice")
+    @PreAuthorize("hasRole('AGENCY_OWNER')")
+    @Operation(summary = "Owner-only. Record a supplier invoice")
     public ResponseEntity<SupplierInvoiceResponse> createSupplierInvoice(@Valid @RequestBody SupplierInvoiceCreateRequest request) {
         return ResponseEntity.ok(invoiceService.createSupplierInvoice(request));
     }
 
     @GetMapping("/supplier")
-    @Operation(summary = "List supplier invoices", description = "Agency-wide for both roles - supplier payables aren't agent-attributed.")
+    @PreAuthorize("hasRole('AGENCY_OWNER')")
+    @Operation(summary = "Owner-only. List supplier invoices", description = "Agency-wide - supplier payables are accounts-payable data, not agent-scoped.")
     public ResponseEntity<List<SupplierInvoiceResponse>> listSupplierInvoices() {
         return ResponseEntity.ok(invoiceService.listSupplierInvoices());
     }
 
     @PatchMapping("/supplier/{id}/status")
-    @Operation(summary = "Update a supplier invoice's payment status")
+    @PreAuthorize("hasRole('AGENCY_OWNER')")
+    @Operation(summary = "Owner-only. Update a supplier invoice's payment status")
     public ResponseEntity<SupplierInvoiceResponse> updateSupplierInvoiceStatus(
             @PathVariable String id, @Valid @RequestBody SupplierInvoiceStatusUpdateRequest request) {
         return ResponseEntity.ok(invoiceService.updateSupplierInvoiceStatus(id, request));
