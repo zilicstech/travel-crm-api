@@ -1,5 +1,6 @@
 package com.voyra.crm.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
@@ -41,6 +42,7 @@ public class Tenant {
     private String ownerEmail;
 
     @Column(name = "password", nullable = false)
+    @JsonIgnore
     private String password;
 
     @Column(name = "is_active", nullable = false)

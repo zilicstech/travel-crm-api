@@ -1,5 +1,6 @@
 package com.voyra.crm.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.voyra.crm.enums.AgentDepartment;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -52,6 +53,7 @@ public class Agent {
     private AgentDepartment department;
 
     @Column(name = "password", nullable = false)
+    @JsonIgnore
     private String password;
 
     @Column(name = "commission_rate", nullable = false, precision = 5, scale = 2)
