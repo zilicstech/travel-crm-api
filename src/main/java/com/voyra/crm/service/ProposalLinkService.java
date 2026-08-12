@@ -13,6 +13,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
+
 /**
  * Generates the unguessable public share-link token for a lead's proposal. The token (not
  * the lead's short, enumerable id) is what the public proposal page is keyed on - see
@@ -30,6 +32,9 @@ public class ProposalLinkService {
     @Value("${app.public-proposal.base-url}")
     private String publicProposalBaseUrl;
 
+    @Value("${app.public-proposal.validity-days:90}")
+    private int validityDays;
+
     @Transactional
     public ProposalLinkResponse generateLink(String leadId) {
         Lead lead = leadService.findAccessibleLead(leadId);
@@ -45,6 +50,7 @@ public class ProposalLinkService {
                     .token(token)
                     .tenantId(tenantId)
                     .leadId(leadId)
+                    .expiresAt(LocalDateTime.now().plusDays(validityDays))
                     .build());
             log.info("Proposal link generated: leadId={}", leadId);
         }

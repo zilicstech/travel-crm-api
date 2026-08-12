@@ -9,6 +9,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.Optional;
 
 /**
@@ -47,9 +48,18 @@ public class PublicProposalService {
         }
     }
 
+    /**
+     * Resolves the opaque token, treating unknown and expired identically. The caller must
+     * never be able to distinguish "no such token" from "token expired" - both are the same
+     * generic failure, so a guessed token reveals nothing about whether it ever existed.
+     */
     private ProposalLink resolveLink(String token) {
-        return proposalLinkRepository.findById(token)
+        ProposalLink link = proposalLinkRepository.findById(token)
                 .orElseThrow(() -> new IllegalArgumentException(NOT_FOUND_MESSAGE));
+        if (link.getExpiresAt() != null && link.getExpiresAt().isBefore(LocalDateTime.now())) {
+            throw new IllegalArgumentException(NOT_FOUND_MESSAGE);
+        }
+        return link;
     }
 
     /** try {set} finally {restore} - never leave a mutated ThreadLocal behind on a pooled request thread. */
