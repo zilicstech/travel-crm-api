@@ -1,0 +1,81 @@
+package com.voyra.crm.controller;
+
+import com.voyra.crm.dto.BookingCreateRequest;
+import com.voyra.crm.dto.BookingPaymentStatusUpdateRequest;
+import com.voyra.crm.dto.BookingResponse;
+import com.voyra.crm.dto.BookingStatusUpdateRequest;
+import com.voyra.crm.dto.BookingUpdateRequest;
+import com.voyra.crm.enums.BookingStatus;
+import com.voyra.crm.enums.BookingType;
+import com.voyra.crm.service.BookingService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
+
+/** Shared between AGENCY_OWNER and AGENT - same rules for both, scope resolved per caller (like CustomerController). */
+@Slf4j
+@RestController
+@RequestMapping("/api/bookings")
+@RequiredArgsConstructor
+@Tag(name = "Bookings", description = "Flight/Hotel/Package/Visa bookings - shared, scoped per caller")
+@PreAuthorize("hasAnyRole('AGENCY_OWNER', 'AGENT')")
+public class BookingController {
+
+    private final BookingService bookingService;
+
+    @PostMapping
+    @Operation(summary = "Create a booking", description = "Profit is always server-computed from sellingPrice - netCost.")
+    public ResponseEntity<BookingResponse> createBooking(@Valid @RequestBody BookingCreateRequest request) {
+        return ResponseEntity.ok(bookingService.createBooking(request));
+    }
+
+    @GetMapping
+    @Operation(summary = "List bookings", description = "Agents see only their own bookings; Owners see the whole agency.")
+    public ResponseEntity<List<BookingResponse>> listBookings(
+            @RequestParam(value = "type", required = false) BookingType type,
+            @RequestParam(value = "status", required = false) BookingStatus status) {
+        return ResponseEntity.ok(bookingService.listBookings(type, status));
+    }
+
+    @GetMapping("/{id}")
+    @Operation(summary = "Booking detail")
+    public ResponseEntity<BookingResponse> getBooking(@PathVariable String id) {
+        return ResponseEntity.ok(bookingService.getBooking(id));
+    }
+
+    @PutMapping("/{id}")
+    @Operation(summary = "Update booking details")
+    public ResponseEntity<BookingResponse> updateBooking(@PathVariable String id,
+                                                          @Valid @RequestBody BookingUpdateRequest request) {
+        return ResponseEntity.ok(bookingService.updateBooking(id, request));
+    }
+
+    @PatchMapping("/{id}/status")
+    @Operation(summary = "Update booking status", description = "cancelReason is mandatory when bookingStatus is CANCELLED.")
+    public ResponseEntity<BookingResponse> updateStatus(@PathVariable String id,
+                                                         @Valid @RequestBody BookingStatusUpdateRequest request) {
+        return ResponseEntity.ok(bookingService.updateStatus(id, request));
+    }
+
+    @PatchMapping("/{id}/payment-status")
+    @Operation(summary = "Update payment status")
+    public ResponseEntity<BookingResponse> updatePaymentStatus(@PathVariable String id,
+                                                                @Valid @RequestBody BookingPaymentStatusUpdateRequest request) {
+        return ResponseEntity.ok(bookingService.updatePaymentStatus(id, request));
+    }
+}

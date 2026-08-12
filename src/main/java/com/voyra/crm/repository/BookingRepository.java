@@ -1,0 +1,61 @@
+package com.voyra.crm.repository;
+
+import com.voyra.crm.entity.Booking;
+import com.voyra.crm.enums.BookingStatus;
+import com.voyra.crm.enums.BookingType;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+import org.springframework.stereotype.Repository;
+
+import java.util.List;
+
+@Repository
+public interface BookingRepository extends JpaRepository<Booking, String> {
+
+    List<Booking> findByAgentId(String agentId);
+
+    List<Booking> findByCustomerId(String customerId);
+
+    List<Booking> findByType(BookingType type);
+
+    List<Booking> findByBookingStatus(BookingStatus bookingStatus);
+
+    long countByAgentId(String agentId);
+
+    long countByAgentIdAndBookingStatus(String agentId, BookingStatus bookingStatus);
+
+    long countByBookingStatus(BookingStatus bookingStatus);
+
+    @Query("""
+            SELECT COALESCE(SUM(b.sellingPrice), 0) AS totalRevenue, COALESCE(SUM(b.profit), 0) AS totalProfit,
+                   COALESCE(SUM(b.netCost), 0) AS totalNetCost
+            FROM Booking b WHERE b.agentId = :agentId
+            """)
+    AgentRevenueProjection sumRevenueByAgentId(@Param("agentId") String agentId);
+
+    @Query("""
+            SELECT COALESCE(SUM(b.sellingPrice), 0) AS totalRevenue, COALESCE(SUM(b.profit), 0) AS totalProfit,
+                   COALESCE(SUM(b.netCost), 0) AS totalNetCost
+            FROM Booking b
+            """)
+    AgentRevenueProjection sumRevenueForAgency();
+
+    interface AgentRevenueProjection {
+        java.math.BigDecimal getTotalRevenue();
+
+        java.math.BigDecimal getTotalProfit();
+
+        java.math.BigDecimal getTotalNetCost();
+    }
+
+    /** Keeps the denormalized agent_name/customer_name snapshots live-synced on rename. */
+    @Modifying
+    @Query("UPDATE Booking b SET b.agentName = :name WHERE b.agentId = :agentId")
+    void updateAgentNameForAgent(@Param("agentId") String agentId, @Param("name") String name);
+
+    @Modifying
+    @Query("UPDATE Booking b SET b.customerName = :name WHERE b.customerId = :customerId")
+    void updateCustomerNameForCustomer(@Param("customerId") String customerId, @Param("name") String name);
+}
