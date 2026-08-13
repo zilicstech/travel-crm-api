@@ -4,9 +4,19 @@ Status as of **2026-08-13**. This document explains what has been built, how it 
 
 ## TL;DR
 
-All 15 build tasks are complete. The backend runs locally, is fully wired to a real PostgreSQL database, and every module has been exercised end-to-end with real HTTP requests (not just compiled) — including the two hardest correctness/security cases: multi-tenant data isolation and the public proposal link's pricing-safety guarantee. **56 endpoints** are live across auth, platform, agency, and public surfaces.
+All 15 original build tasks are complete, plus a full remediation pass (see
+[`docs/REMEDIATION_PLAN.md`](docs/REMEDIATION_PLAN.md)) that closed every gap between this
+codebase and [`BACKEND_BLUEPRINT.md`](../BACKEND_BLUEPRINT.md). The backend runs locally, is
+fully wired to a real PostgreSQL database, and is backed by a **63-test suite** (unit + service
++ controller slice tests, run via `mvn verify`) that converts every correctness claim in this
+document into an executable assertion — including the two hardest correctness/security cases:
+multi-tenant data isolation and the public proposal link's pricing-safety guarantee.
+**68 endpoints** are live across auth, platform, agency, and public surfaces.
 
-What's *not* done: no GitHub remote yet (repo is `git init`'d locally only, waiting on your access), the existing `travel-crm-main` frontend is not yet wired to call this backend, and a few things were explicitly scoped out per your earlier decisions (audit log, notifications, flight/hotel search, GCS storage).
+Blueprint compliance is now machine-verified: `scripts/blueprint-audit.sh` runs in the `verify`
+Maven phase and currently reports **COMPLIANT** against all 14 mechanical checks.
+
+What's *not* done: no GitHub remote yet (repo is `git init`'d locally only, waiting on your access), the existing `travel-crm-main` frontend is not yet wired to call this backend, two integration tests (tenant isolation, proposal-link resolution) are written but unverified because Docker isn't installed on this machine, and a few things were explicitly scoped out per your earlier decisions (audit log, notifications, flight/hotel search, GCS storage).
 
 ## Where everything lives
 
@@ -22,7 +32,7 @@ What's *not* done: no GitHub remote yet (repo is `git init`'d locally only, wait
 
 ## Codebase size
 
-166 Java files, ~8,000 lines. 16 entities, 16 repositories, 19 services, 13 controllers, 60 DTOs, 14 enums, 3 Flyway migrations (2 public-schema, 1 tenant-schema).
+170 main-source Java files (~9,400 lines) plus 20 test files (63 test methods). 16 entities, 16 repositories, 19 services, 13 controllers, 61 DTOs, 14 enums, 4 Flyway migrations (2 public-schema, 2 tenant-schema).
 
 ## Architecture, in brief
 
@@ -65,19 +75,60 @@ Local dev environment (Java 17, Maven, Postgres 16 — all installed and verifie
 
 ## How this was verified
 
-Every module above was tested with real `curl` requests against the running server and a real Postgres database — not just "it compiles." That process caught and fixed two genuine bugs:
+Originally (v1 build), every module was tested with real `curl` requests against the running
+server and a real Postgres database — not just "it compiles." That manual process caught and
+fixed two genuine bugs (the Hibernate enum-array mapping bug and a timestamp-before-flush bug),
+but manual curl runs can't be re-run, so nothing guaranteed the claims stayed true as the code
+changed.
 
-1. **Hibernate enum-array mapping bug**: `Lead.categories` (a `List<LeadCategory>`) was missing `@Enumerated(STRING)` alongside `@JdbcTypeCode(ARRAY)`, so Postgres was storing ordinal values that couldn't be read back. Fixed, and one pre-fix test row's corrupted data was cleaned up directly in the database.
-2. **Timestamp-before-flush bug**: a few `create` responses returned `null` for `createdDate`/`uploadedDate` because they read the in-memory entity before `@PrePersist` had populated it. Fixed by setting these explicitly at construction time.
+The remediation pass replaced that with a **63-test automated suite** (`mvn verify` runs all of
+it, plus the blueprint compliance audit) that converts every one of those manually-verified
+claims into an executable assertion:
 
-Specific things explicitly confirmed, not assumed:
-- Cross-tenant access is structurally blocked (tested with two real agencies).
-- Agent-role list endpoints only ever return that agent's own records (fixes a real bug present in the original mock UI, where this scoping was missing).
-- The public proposal JSON was asserted, field-by-field, to never contain `netCost`, `margin`, `status`, `priority`, `assignedTo`, `phone`, `email`, `budget`, or `customerId`.
-- An unknown/guessed proposal token returns the same generic error as an expired one — it never reveals whether a token existed.
-- Mandatory-reason rules (lost lead, cancelled booking) reject the request with a 400 when the reason is missing.
-- Owner-only reassignment returns 403 for an Agent.
-- GST, profit, and margin math were checked against hand-computed expected values.
+- **Unit tests** (26) — `MarginCalculator`, `VisaStatusCalculator`'s priority-ladder overlap
+  resolution, `IdGenerator`, `UniqueIdResolver`'s retry/exhaustion behavior, `CsvWriter`, and
+  `TenantSearchPathUtil` — the last of these is the SQL-injection allowlist guard from blueprint
+  §3.3, tested directly against injection payloads (`abc; DROP TABLE tenant`, `abc'--`).
+- **Service tests** (18, Mockito) — GST is always computed from the server-side rate regardless
+  of client input; booking profit is always recomputed from current cost fields, never trusted
+  from a stale stored value; the mandatory-reason rule for a Lost lead; the agent-scoping fix
+  (an Agent can never touch a lead assigned to someone else, an Owner can touch any); agent
+  removal is blocked while non-terminal leads remain assigned; and an unknown vs. an expired
+  proposal token produce the byte-identical error message.
+- **Controller slice tests** (14, `@WebMvcTest` + real Spring Security) — the public proposal
+  endpoint's raw JSON body is asserted to never contain `netCost`, `margin`, `marginPercent`,
+  `status`, `priority`, `source`, `assignedTo`, `notes`, `visaTracker`, `phone`, `email`,
+  `budget`, `lostReason`, or `customerId` (this is the strongest form of this check — it fails
+  the build if any of those fields is ever added to the response, not just at the DTO-type
+  level); supplier invoices return 403 for an Agent and 200 for an Owner; only an Owner can
+  reassign a lead; and the full blueprint §6.1 exception→status contract is exercised directly.
+- **Integration tests** (5, Testcontainers Postgres) — **written but not yet run**: Docker isn't
+  installed on this machine. `TenantIsolationIT` and `ProposalLinkResolutionIT` test-compile
+  cleanly against the real service signatures and are correctly excluded from the default
+  Surefire run (Maven's default pattern only matches `*Test.java`, not `*IT.java`), so `mvn
+  verify` neither runs them nor depends on Docker. Run them once with Docker available before
+  trusting the result — see `docs/REMEDIATION_PLAN.md` §T5.5.
+
+Cross-tenant isolation and the agent-scoping fix were also independently confirmed manually
+(two real agencies, real HTTP requests) during both the original build and the remediation pass.
+
+## Blueprint compliance
+
+`scripts/blueprint-audit.sh` mechanically checks the source against 14 rules from
+`BACKEND_BLUEPRINT.md` (tenant isolation, no entities leaking out of controllers, `@PreAuthorize`
+coverage, money as `BigDecimal`, collision-checked IDs, `@Schema` on every DTO field, test
+coverage, and more). It runs automatically in `mvn verify` and currently reports:
+
+```
+$ ./scripts/blueprint-audit.sh
+...
+RESULT: COMPLIANT
+```
+
+Three deliberate, documented deviations from the blueprint remain (class-level `@PreAuthorize`
+instead of per-method, REST-style URLs instead of the blueprint's `/save`/`/list` convention,
+and `/api/public/**` as a second `permitAll` surface) — see `docs/REMEDIATION_PLAN.md` Appendix B
+for why each one stands.
 
 ## Running it locally
 
@@ -91,7 +142,9 @@ set -a; source .env; set +a
 
 Swagger UI: `http://localhost:8080/swagger-ui/index.html`
 
-Seeded demo accounts (all password `Passw0rd!`):
+Seeded demo accounts (all password `Passw0rd!`) — only created when `.env` has
+`SEED_DEMO_DATA=true` (the local `.env.example` sets this; it must never be `true` in a deployed
+environment, see `docs/DEPLOYMENT.md`):
 - Platform Admin: `admin@travelos.com`
 - Agency Owner: `owner@globalexplorer.com` (Global Explorer Travels)
 - Agent: `liam@globalexplorer.com`
@@ -106,7 +159,10 @@ Seeded demo accounts (all password `Passw0rd!`):
 ## Next steps
 
 1. **You**: send the GitHub username and SSH access when ready — the repo is `git init`'d locally with nothing pushed yet.
-2. **Frontend integration**: wire `travel-crm-main` to call this backend instead of `lib/mockData.ts`. Not started — this is a frontend-side task (replacing every mock import with real `fetch` calls against the endpoints above) and hasn't been scoped in detail yet.
-3. **GCS migration**: when you're ready to move off local disk, add a `GcsFileStorageService` implementing the existing `FileStorageService` interface and flip `STORAGE_PROVIDER=gcs` — no other code changes needed.
-4. **Deployment**: a `Dockerfile` already exists in the repo; choosing and configuring an actual hosting target (Cloud Run, etc.) hasn't been done.
-5. Anything from the "explicitly out of scope" list above, if priorities change.
+2. **Run the two unverified integration tests**: install Docker, then run
+   `./mvnw test -Dtest=TenantIsolationIT,ProposalLinkResolutionIT` and fix anything that surfaces.
+   They're excluded from `mvn verify` today specifically because they've never been run.
+3. **Frontend integration**: wire `travel-crm-main` to call this backend instead of `lib/mockData.ts`. Not started — this is a frontend-side task (replacing every mock import with real `fetch` calls against the endpoints above) and hasn't been scoped in detail yet.
+4. **GCS migration**: when you're ready to move off local disk, add a `GcsFileStorageService` implementing the existing `FileStorageService` interface and flip `STORAGE_PROVIDER=gcs` — no other code changes needed.
+5. **Deployment**: `docs/DEPLOYMENT.md` has the full Cloud Run runbook (Cloud SQL socket factory, secrets, the `cloudrun` Spring profile, deploy command, pre-deploy checklist) — the Dockerfile builds a non-root image. Nothing has actually been deployed yet; this is ready to execute once you have the GCP project set up.
+6. Anything from the "explicitly out of scope" list above, if priorities change.

@@ -161,3 +161,24 @@ Straight application of blueprint §4–5:
 - Explicitly test the Agent-role scoping fix: confirm `GET` lead/customer/booking lists as an Agent only ever return rows where `assignedTo`/`agentId` equals that agent's own ID, even though the current mock UI doesn't enforce this.
 - Explicitly test the public proposal endpoint: confirm `netCost` and every excluded field are structurally absent from the JSON response (not just hidden by the frontend), and that an unknown/guessed token returns the generic not-found response.
 - Confirm agent removal is blocked (409) while that agent still has non-terminal leads/bookings, and succeeds once reassigned/closed.
+
+---
+
+## Addendum — Remediation (2026-08-13)
+
+This plan's "Blueprint-compliance checklist" was written with `[x]` boxes before the code
+existed. They recorded design intent, not verification, and one item ("Reports/aggregates:
+... a single GROUP BY query per report") was not true of the delivered code.
+
+Compliance is now machine-verified by `scripts/blueprint-audit.sh`, which runs in `mvn verify`.
+Treat the checklist above as historical intent; treat the script's output as the current truth.
+
+Gaps this plan did not cover, now addressed in `docs/REMEDIATION_PLAN.md`:
+
+- **Testing strategy.** The original "Verification" section specified manual Swagger/curl passes
+  only, reproducing the one deviation blueprint §10 explicitly names. Now a ~63-test suite.
+- **Pagination.** Every list endpoint was unbounded. Now opt-in `?page=&size=`, non-breaking.
+- **Deployment.** Only a Dockerfile was mentioned. See `docs/DEPLOYMENT.md`.
+- **Seed-data safety.** The seed runner was unguarded and logged credentials. Now flag-gated.
+- **Auth lifecycle.** 24h JWT with no refresh or logout was an unstated omission; it is now a
+  recorded decision in `docs/DEPLOYMENT.md`.
