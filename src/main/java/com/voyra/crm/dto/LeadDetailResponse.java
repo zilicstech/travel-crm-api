@@ -82,11 +82,13 @@ public class LeadDetailResponse {
     @Schema(description = "followUpDate is in the past AND status is not BOOKED/LOST")
     private boolean overdue;
 
+    @Schema(description = "Traveller headcount")
     private GuestDetails guestDetails;
 
     @Schema(description = "Only present when VISA is in categories")
     private VisaTrackerResponse visaTracker;
 
+    @Schema(description = "This lead's proposal line items")
     private List<ProposalItemResponse> proposalItems;
 
     @Schema(description = "Sum of proposalItems' netCost", example = "42000.00")
@@ -98,6 +100,7 @@ public class LeadDetailResponse {
     @Schema(description = "Server-computed margin %, based on the total net cost and selling price", example = "19.2")
     private BigDecimal marginPercent;
 
+    @Schema(description = "This lead's logged notes")
     private List<LeadNoteResponse> notes;
 
     @Schema(description = "Whether a public share link has been generated for this lead's proposal")

@@ -15,11 +15,14 @@ import java.math.BigDecimal;
 public class AgentUpdateRequest {
 
     @Size(max = 150, message = "Name must be 150 characters or fewer")
+    @Schema(example = "Liam Smith")
     private String name;
 
     @Size(max = 20, message = "Phone must be 20 characters or fewer")
+    @Schema(example = "+1 555 123 4567")
     private String phone;
 
+    @Schema(example = "SALES")
     private AgentDepartment department;
 
     @DecimalMin(value = "0.00", message = "Commission rate cannot be negative")

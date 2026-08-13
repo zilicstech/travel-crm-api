@@ -29,5 +29,6 @@ public class FamilyMemberResponse {
     @Schema(example = "2015-03-10")
     private LocalDate dob;
 
+    @Schema(description = "Documents uploaded for this family member")
     private List<DocumentResponse> documents;
 }

@@ -82,8 +82,15 @@ public class CustomerDetailResponse {
     @Schema(description = "This customer's leads not yet Booked or Lost", example = "2")
     private Long activeLeadsCount;
 
+    @Schema(description = "This customer's bookings")
     private List<BookingSummaryResponse> bookings;
+
+    @Schema(description = "This customer's uploaded documents")
     private List<DocumentResponse> documents;
+
+    @Schema(description = "This customer's linked family members")
     private List<FamilyMemberResponse> familyMembers;
+
+    @Schema(description = "This customer's logged interaction notes")
     private List<InteractionResponse> interactions;
 }

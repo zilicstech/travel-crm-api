@@ -38,6 +38,7 @@ public class PublicProposalResponse {
     @Schema(description = "adults + children + infants", example = "2")
     private Integer guestCount;
 
+    @Schema(description = "The proposal's line items, pricing-safe by construction")
     private List<PublicProposalItemResponse> items;
 
     @Schema(description = "Sum of items' sellingPrice - net cost and margin are never exposed", example = "52000.00")

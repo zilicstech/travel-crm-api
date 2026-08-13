@@ -64,5 +64,6 @@ public class LeadCreateRequest {
     private LeadPriority priority;
 
     // Step 3 - Guests
+    @Schema(description = "Traveller headcount; adults defaults to 1 if not supplied")
     private GuestDetails guestDetails;
 }
