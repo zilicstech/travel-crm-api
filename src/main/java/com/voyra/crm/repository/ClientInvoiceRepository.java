@@ -2,6 +2,8 @@ package com.voyra.crm.repository;
 
 import com.voyra.crm.entity.ClientInvoice;
 import com.voyra.crm.enums.InvoiceStatus;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -15,6 +17,8 @@ import java.util.List;
 public interface ClientInvoiceRepository extends JpaRepository<ClientInvoice, String> {
 
     List<ClientInvoice> findByAgentId(String agentId);
+
+    Page<ClientInvoice> findByAgentId(String agentId, Pageable pageable);
 
     List<ClientInvoice> findByCustomerId(String customerId);
 

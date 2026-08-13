@@ -5,6 +5,7 @@ import com.voyra.crm.dto.BookingPaymentStatusUpdateRequest;
 import com.voyra.crm.dto.BookingResponse;
 import com.voyra.crm.dto.BookingStatusUpdateRequest;
 import com.voyra.crm.dto.BookingUpdateRequest;
+import com.voyra.crm.dto.PagedResponse;
 import com.voyra.crm.entity.Agent;
 import com.voyra.crm.entity.Booking;
 import com.voyra.crm.entity.Customer;
@@ -18,6 +19,8 @@ import com.voyra.crm.security.SecurityContextUtil;
 import com.voyra.crm.util.UniqueIdResolver;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -75,6 +78,34 @@ public class BookingService {
     @Transactional(readOnly = true)
     public List<BookingResponse> listBookings(BookingType typeFilter, BookingStatus statusFilter) {
         return scopedBookings(typeFilter, statusFilter).stream().map(this::toResponse).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public PagedResponse<BookingResponse> listBookings(BookingType typeFilter, BookingStatus statusFilter, Pageable pageable) {
+        CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
+        String agentId = principal.isAgent() ? principal.userId() : null;
+        Page<Booking> page;
+
+        if (agentId != null) {
+            if (typeFilter != null && statusFilter != null) {
+                page = bookingRepository.findByAgentIdAndTypeAndBookingStatus(agentId, typeFilter, statusFilter, pageable);
+            } else if (typeFilter != null) {
+                page = bookingRepository.findByAgentIdAndType(agentId, typeFilter, pageable);
+            } else if (statusFilter != null) {
+                page = bookingRepository.findByAgentIdAndBookingStatus(agentId, statusFilter, pageable);
+            } else {
+                page = bookingRepository.findByAgentId(agentId, pageable);
+            }
+        } else if (typeFilter != null && statusFilter != null) {
+            page = bookingRepository.findByTypeAndBookingStatus(typeFilter, statusFilter, pageable);
+        } else if (typeFilter != null) {
+            page = bookingRepository.findByType(typeFilter, pageable);
+        } else if (statusFilter != null) {
+            page = bookingRepository.findByBookingStatus(statusFilter, pageable);
+        } else {
+            page = bookingRepository.findAll(pageable);
+        }
+        return PagedResponse.from(page, this::toResponse);
     }
 
     /**

@@ -5,6 +5,7 @@ import com.voyra.crm.dto.CustomerDetailResponse;
 import com.voyra.crm.dto.CustomerLookupResponse;
 import com.voyra.crm.dto.CustomerResponse;
 import com.voyra.crm.dto.CustomerUpdateRequest;
+import com.voyra.crm.dto.PagedResponse;
 import com.voyra.crm.entity.Agent;
 import com.voyra.crm.entity.Customer;
 import com.voyra.crm.entity.CustomerInteraction;
@@ -21,6 +22,8 @@ import com.voyra.crm.security.SecurityContextUtil;
 import com.voyra.crm.util.UniqueIdResolver;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -94,6 +97,23 @@ public class CustomerService {
     public List<CustomerResponse> listCustomers(String search) {
         List<Customer> customers = scopedList(search);
         return customers.stream().map(this::toResponse).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public PagedResponse<CustomerResponse> listCustomers(String search, Pageable pageable) {
+        CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
+        boolean hasSearch = search != null && !search.isBlank();
+        Page<Customer> page;
+        if (principal.isAgent()) {
+            page = hasSearch
+                    ? customerRepository.searchByAgentId(principal.userId(), search, pageable)
+                    : customerRepository.findByAgentId(principal.userId(), pageable);
+        } else {
+            page = hasSearch
+                    ? customerRepository.search(search, pageable)
+                    : customerRepository.findAll(pageable);
+        }
+        return PagedResponse.from(page, this::toResponse);
     }
 
     @Transactional(readOnly = true)

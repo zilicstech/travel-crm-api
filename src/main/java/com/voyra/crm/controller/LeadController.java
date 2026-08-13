@@ -15,11 +15,13 @@ import com.voyra.crm.dto.VisaTrackerUpdateRequest;
 import com.voyra.crm.enums.LeadStatus;
 import com.voyra.crm.service.LeadService;
 import com.voyra.crm.service.ProposalLinkService;
+import com.voyra.crm.util.PageRequestUtil;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -57,10 +59,17 @@ public class LeadController {
     }
 
     @GetMapping
-    @Operation(summary = "List leads", description = "Agents see only their own leads; Owners see the whole agency.")
-    public ResponseEntity<List<LeadResponse>> listLeads(
-            @RequestParam(value = "status", required = false) LeadStatus status) {
-        return ResponseEntity.ok(leadService.listLeads(status));
+    @Operation(summary = "List leads",
+            description = "Agents see only their own assigned leads; Owners see the whole agency. Supply ?page= "
+                    + "for a paged envelope; omit it for the full list as a plain array.")
+    public ResponseEntity<Object> listLeads(
+            @RequestParam(value = "status", required = false) LeadStatus status,
+            @RequestParam(value = "page", required = false) Integer page,
+            @RequestParam(value = "size", required = false) Integer size) {
+        Pageable pageable = PageRequestUtil.resolve(page, size);
+        return ResponseEntity.ok(pageable == null
+                ? leadService.listLeads(status)
+                : leadService.listLeads(status, pageable));
     }
 
     @GetMapping("/{id}")

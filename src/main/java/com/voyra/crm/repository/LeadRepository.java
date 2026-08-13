@@ -2,6 +2,8 @@ package com.voyra.crm.repository;
 
 import com.voyra.crm.entity.Lead;
 import com.voyra.crm.enums.LeadStatus;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -25,6 +27,12 @@ public interface LeadRepository extends JpaRepository<Lead, String> {
     List<Lead> findByStatus(LeadStatus status);
 
     List<Lead> findByAssignedToAndStatus(String assignedTo, LeadStatus status);
+
+    Page<Lead> findByAssignedTo(String assignedTo, Pageable pageable);
+
+    Page<Lead> findByStatus(LeadStatus status, Pageable pageable);
+
+    Page<Lead> findByAssignedToAndStatus(String assignedTo, LeadStatus status, Pageable pageable);
 
     Optional<Lead> findByPublicProposalToken(String publicProposalToken);
 

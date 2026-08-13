@@ -6,6 +6,7 @@ import com.voyra.crm.dto.AgentCreateResponse;
 import com.voyra.crm.dto.AgentPerformanceResponse;
 import com.voyra.crm.dto.AgentUpdateRequest;
 import com.voyra.crm.dto.CredentialsResponse;
+import com.voyra.crm.dto.PagedResponse;
 import com.voyra.crm.entity.Agent;
 import com.voyra.crm.enums.LeadStatus;
 import com.voyra.crm.models.AgentStats;
@@ -23,6 +24,8 @@ import com.voyra.crm.util.UniqueIdResolver;
 import com.voyra.crm.util.RandomPasswordGenerator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -96,6 +99,14 @@ public class AgentService {
         return agents.stream()
                 .map(a -> toPerformanceResponse(a, stats.getOrDefault(a.getId(), AgentStats.empty())))
                 .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public PagedResponse<AgentPerformanceResponse> listAgents(Pageable pageable) {
+        String tenantId = ownerTenantId();
+        Page<Agent> page = agentRepository.findByTenantId(tenantId, pageable);
+        Map<String, AgentStats> stats = loadStats(page.getContent().stream().map(Agent::getId).toList());
+        return PagedResponse.from(page, a -> toPerformanceResponse(a, stats.getOrDefault(a.getId(), AgentStats.empty())));
     }
 
     @Transactional(readOnly = true)

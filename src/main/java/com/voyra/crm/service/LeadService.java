@@ -8,6 +8,7 @@ import com.voyra.crm.dto.LeadNoteCreateRequest;
 import com.voyra.crm.dto.LeadNoteResponse;
 import com.voyra.crm.dto.LeadResponse;
 import com.voyra.crm.dto.LeadStatusUpdateRequest;
+import com.voyra.crm.dto.PagedResponse;
 import com.voyra.crm.dto.ProposalItemCreateRequest;
 import com.voyra.crm.dto.ProposalItemResponse;
 import com.voyra.crm.dto.VisaTrackerResponse;
@@ -30,6 +31,8 @@ import com.voyra.crm.util.MarginCalculator;
 import com.voyra.crm.util.UniqueIdResolver;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -98,6 +101,22 @@ public class LeadService {
     @Transactional(readOnly = true)
     public List<LeadResponse> listLeads(LeadStatus statusFilter) {
         return scopedLeads(statusFilter).stream().map(this::toResponse).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public PagedResponse<LeadResponse> listLeads(LeadStatus statusFilter, Pageable pageable) {
+        CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
+        Page<Lead> page;
+        if (principal.isAgent()) {
+            page = statusFilter == null
+                    ? leadRepository.findByAssignedTo(principal.userId(), pageable)
+                    : leadRepository.findByAssignedToAndStatus(principal.userId(), statusFilter, pageable);
+        } else {
+            page = statusFilter == null
+                    ? leadRepository.findAll(pageable)
+                    : leadRepository.findByStatus(statusFilter, pageable);
+        }
+        return PagedResponse.from(page, this::toResponse);
     }
 
     /**

@@ -4,6 +4,7 @@ import com.voyra.crm.dto.ClientInvoiceCreateRequest;
 import com.voyra.crm.dto.ClientInvoicePaymentRequest;
 import com.voyra.crm.dto.ClientInvoiceResponse;
 import com.voyra.crm.dto.InvoiceSummaryResponse;
+import com.voyra.crm.dto.PagedResponse;
 import com.voyra.crm.dto.SupplierInvoiceCreateRequest;
 import com.voyra.crm.dto.SupplierInvoiceResponse;
 import com.voyra.crm.dto.SupplierInvoiceStatusUpdateRequest;
@@ -21,6 +22,8 @@ import com.voyra.crm.security.SecurityContextUtil;
 import com.voyra.crm.util.UniqueIdResolver;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -74,6 +77,15 @@ public class InvoiceService {
     @Transactional(readOnly = true)
     public List<ClientInvoiceResponse> listClientInvoices() {
         return scopedClientInvoices().stream().map(this::toClientResponse).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public PagedResponse<ClientInvoiceResponse> listClientInvoices(Pageable pageable) {
+        CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
+        Page<ClientInvoice> page = principal.isAgent()
+                ? clientInvoiceRepository.findByAgentId(principal.userId(), pageable)
+                : clientInvoiceRepository.findAll(pageable);
+        return PagedResponse.from(page, this::toClientResponse);
     }
 
     @Transactional

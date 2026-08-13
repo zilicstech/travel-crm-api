@@ -3,6 +3,8 @@ package com.voyra.crm.repository;
 import com.voyra.crm.entity.Booking;
 import com.voyra.crm.enums.BookingStatus;
 import com.voyra.crm.enums.BookingType;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -30,6 +32,20 @@ public interface BookingRepository extends JpaRepository<Booking, String> {
     List<Booking> findByTypeAndBookingStatus(BookingType type, BookingStatus bookingStatus);
 
     List<Booking> findByAgentIdAndTypeAndBookingStatus(String agentId, BookingType type, BookingStatus bookingStatus);
+
+    Page<Booking> findByAgentId(String agentId, Pageable pageable);
+
+    Page<Booking> findByType(BookingType type, Pageable pageable);
+
+    Page<Booking> findByBookingStatus(BookingStatus bookingStatus, Pageable pageable);
+
+    Page<Booking> findByAgentIdAndType(String agentId, BookingType type, Pageable pageable);
+
+    Page<Booking> findByAgentIdAndBookingStatus(String agentId, BookingStatus bookingStatus, Pageable pageable);
+
+    Page<Booking> findByTypeAndBookingStatus(BookingType type, BookingStatus bookingStatus, Pageable pageable);
+
+    Page<Booking> findByAgentIdAndTypeAndBookingStatus(String agentId, BookingType type, BookingStatus bookingStatus, Pageable pageable);
 
     long countByAgentId(String agentId);
 

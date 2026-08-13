@@ -7,11 +7,13 @@ import com.voyra.crm.dto.AgentPerformanceResponse;
 import com.voyra.crm.dto.AgentUpdateRequest;
 import com.voyra.crm.dto.CredentialsResponse;
 import com.voyra.crm.service.AgentService;
+import com.voyra.crm.util.PageRequestUtil;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -22,6 +24,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -43,9 +46,13 @@ public class OwnerAgentController {
     }
 
     @GetMapping
-    @Operation(summary = "List agents in this agency, with performance KPIs")
-    public ResponseEntity<List<AgentPerformanceResponse>> listAgents() {
-        return ResponseEntity.ok(agentService.listAgents());
+    @Operation(summary = "List agents in this agency, with performance KPIs",
+            description = "Supply ?page= for a paged envelope; omit it for the full list as a plain array.")
+    public ResponseEntity<Object> listAgents(
+            @RequestParam(value = "page", required = false) Integer page,
+            @RequestParam(value = "size", required = false) Integer size) {
+        Pageable pageable = PageRequestUtil.resolve(page, size);
+        return ResponseEntity.ok(pageable == null ? agentService.listAgents() : agentService.listAgents(pageable));
     }
 
     @GetMapping("/{id}")

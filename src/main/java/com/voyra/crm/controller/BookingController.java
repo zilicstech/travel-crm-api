@@ -8,11 +8,13 @@ import com.voyra.crm.dto.BookingUpdateRequest;
 import com.voyra.crm.enums.BookingStatus;
 import com.voyra.crm.enums.BookingType;
 import com.voyra.crm.service.BookingService;
+import com.voyra.crm.util.PageRequestUtil;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -45,11 +47,18 @@ public class BookingController {
     }
 
     @GetMapping
-    @Operation(summary = "List bookings", description = "Agents see only their own bookings; Owners see the whole agency.")
-    public ResponseEntity<List<BookingResponse>> listBookings(
+    @Operation(summary = "List bookings",
+            description = "Agents see only their own bookings; Owners see the whole agency. Supply ?page= for a "
+                    + "paged envelope; omit it for the full list as a plain array.")
+    public ResponseEntity<Object> listBookings(
             @RequestParam(value = "type", required = false) BookingType type,
-            @RequestParam(value = "status", required = false) BookingStatus status) {
-        return ResponseEntity.ok(bookingService.listBookings(type, status));
+            @RequestParam(value = "status", required = false) BookingStatus status,
+            @RequestParam(value = "page", required = false) Integer page,
+            @RequestParam(value = "size", required = false) Integer size) {
+        Pageable pageable = PageRequestUtil.resolve(page, size);
+        return ResponseEntity.ok(pageable == null
+                ? bookingService.listBookings(type, status)
+                : bookingService.listBookings(type, status, pageable));
     }
 
     @GetMapping("/{id}")

@@ -6,11 +6,13 @@ import com.voyra.crm.dto.CustomerLookupResponse;
 import com.voyra.crm.dto.CustomerResponse;
 import com.voyra.crm.dto.CustomerUpdateRequest;
 import com.voyra.crm.service.CustomerService;
+import com.voyra.crm.util.PageRequestUtil;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -49,10 +51,17 @@ public class CustomerController {
     }
 
     @GetMapping
-    @Operation(summary = "List customers", description = "Agents see only their own customers; Owners see the whole agency.")
-    public ResponseEntity<List<CustomerResponse>> listCustomers(
-            @RequestParam(value = "search", required = false) String search) {
-        return ResponseEntity.ok(customerService.listCustomers(search));
+    @Operation(summary = "List customers",
+            description = "Agents see only their own customers; Owners see the whole agency. Supply ?page= for a "
+                    + "paged envelope; omit it for the full list as a plain array.")
+    public ResponseEntity<Object> listCustomers(
+            @RequestParam(value = "search", required = false) String search,
+            @RequestParam(value = "page", required = false) Integer page,
+            @RequestParam(value = "size", required = false) Integer size) {
+        Pageable pageable = PageRequestUtil.resolve(page, size);
+        return ResponseEntity.ok(pageable == null
+                ? customerService.listCustomers(search)
+                : customerService.listCustomers(search, pageable));
     }
 
     @GetMapping("/lookup")

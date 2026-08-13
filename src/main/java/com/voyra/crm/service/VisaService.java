@@ -1,5 +1,6 @@
 package com.voyra.crm.service;
 
+import com.voyra.crm.dto.PagedResponse;
 import com.voyra.crm.dto.VisaChecklistUpdateRequest;
 import com.voyra.crm.dto.VisaCreateRequest;
 import com.voyra.crm.dto.VisaDashboardSummaryResponse;
@@ -17,6 +18,8 @@ import com.voyra.crm.util.UniqueIdResolver;
 import com.voyra.crm.util.VisaStatusCalculator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -64,6 +67,15 @@ public class VisaService {
                 ? visaRepository.findByAgentId(principal.userId())
                 : visaRepository.findAll();
         return base.stream().map(this::toResponse).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public PagedResponse<VisaResponse> listVisas(Pageable pageable) {
+        CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
+        Page<Visa> page = principal.isAgent()
+                ? visaRepository.findByAgentId(principal.userId(), pageable)
+                : visaRepository.findAll(pageable);
+        return PagedResponse.from(page, this::toResponse);
     }
 
     @Transactional(readOnly = true)

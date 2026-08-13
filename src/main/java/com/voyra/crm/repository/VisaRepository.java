@@ -1,6 +1,8 @@
 package com.voyra.crm.repository;
 
 import com.voyra.crm.entity.Visa;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -13,6 +15,8 @@ import java.util.List;
 public interface VisaRepository extends JpaRepository<Visa, String> {
 
     List<Visa> findByAgentId(String agentId);
+
+    Page<Visa> findByAgentId(String agentId, Pageable pageable);
 
     List<Visa> findByCustomerId(String customerId);
 
