@@ -15,12 +15,25 @@ import lombok.NoArgsConstructor;
 @Schema(description = "Login result")
 public class LoginResponse {
 
+    @Schema(description = "False on failure - always the same generic failure for a bad email, wrong password, or inactive account")
     private boolean success;
+
+    @Schema(example = "Login successful")
     private String message;
+
+    @Schema(description = "The authenticated principal's id", example = "CB9Y0N")
     private String userId;
+
+    @Schema(example = "Liam Smith")
     private String name;
+
+    @Schema(example = "AGENT")
     private String role;
+
+    @Schema(description = "Omitted for SUPER_ADMIN", example = "4K2N7P")
     private String tenantId;
+
+    @Schema(description = "Bearer JWT - pass as 'Authorization: Bearer <token>' on subsequent requests")
     private String token;
 
     public static LoginResponse failure(String message) {

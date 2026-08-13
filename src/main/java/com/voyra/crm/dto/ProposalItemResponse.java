@@ -1,6 +1,7 @@
 package com.voyra.crm.dto;
 
 import com.voyra.crm.enums.ProposalItemType;
+import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -12,13 +13,27 @@ import java.math.BigDecimal;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
+@Schema(description = "A proposal line item on a Lead - never exposed to the public proposal endpoint")
 public class ProposalItemResponse {
 
+    @Schema(example = "T9U3V7")
     private String id;
+
+    @Schema(example = "HOTEL")
     private ProposalItemType type;
+
+    @Schema(example = "5 nights at Burj Al Arab, Deluxe Suite")
     private String description;
+
+    @Schema(example = "Cleartrip")
     private String supplier;
+
+    @Schema(description = "Cost paid to the supplier", example = "18000.00")
     private BigDecimal netCost;
+
+    @Schema(description = "Price shown to the customer", example = "22000.00")
     private BigDecimal sellingPrice;
+
+    @Schema(description = "Server-computed margin % for this line item", example = "18.2")
     private BigDecimal marginPercent;
 }
