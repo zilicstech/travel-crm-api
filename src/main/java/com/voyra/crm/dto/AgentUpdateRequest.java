@@ -2,6 +2,9 @@ package com.voyra.crm.dto;
 
 import com.voyra.crm.enums.AgentDepartment;
 import io.swagger.v3.oas.annotations.media.Schema;
+import jakarta.validation.constraints.DecimalMax;
+import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 import java.math.BigDecimal;
@@ -11,10 +14,16 @@ import java.math.BigDecimal;
 @Schema(description = "Request body for updating an Agent's profile")
 public class AgentUpdateRequest {
 
+    @Size(max = 150, message = "Name must be 150 characters or fewer")
     private String name;
+
+    @Size(max = 20, message = "Phone must be 20 characters or fewer")
     private String phone;
+
     private AgentDepartment department;
 
+    @DecimalMin(value = "0.00", message = "Commission rate cannot be negative")
+    @DecimalMax(value = "100.00", message = "Commission rate cannot exceed 100")
     @Schema(description = "Percentage of booking profit paid as commission", example = "5.00")
     private BigDecimal commissionRate;
 }

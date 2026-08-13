@@ -1,5 +1,6 @@
 package com.voyra.crm.dto;
 
+import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 import java.time.LocalDate;
@@ -17,6 +18,9 @@ public class VisaChecklistUpdateRequest {
     private Boolean approved;
     private Boolean rejected;
     private Boolean passportReturned;
+
+    @Size(max = 50, message = "Visa validity must be 50 characters or fewer")
     private String visaValidity;
+
     private LocalDate expiryDate;
 }
