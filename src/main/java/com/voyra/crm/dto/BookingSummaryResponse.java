@@ -2,6 +2,7 @@ package com.voyra.crm.dto;
 
 import com.voyra.crm.enums.BookingStatus;
 import com.voyra.crm.enums.BookingType;
+import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -15,12 +16,24 @@ import java.time.LocalDate;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
+@Schema(description = "Lightweight booking summary embedded in the Customer detail view")
 public class BookingSummaryResponse {
 
+    @Schema(example = "P4Q7R2")
     private String id;
+
+    @Schema(example = "FLIGHT")
     private BookingType type;
+
+    @Schema(example = "Dubai, UAE")
     private String destination;
+
+    @Schema(example = "2026-09-15")
     private LocalDate journeyDate;
+
+    @Schema(description = "Price charged to the customer", example = "52000.00")
     private BigDecimal sellingPrice;
+
+    @Schema(example = "CONFIRMED")
     private BookingStatus bookingStatus;
 }

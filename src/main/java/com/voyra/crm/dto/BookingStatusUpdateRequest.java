@@ -6,9 +6,11 @@ import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
 @Data
+@Schema(description = "Request body for updating a booking's status")
 public class BookingStatusUpdateRequest {
 
     @NotNull(message = "Booking status is required")
+    @Schema(example = "CANCELLED")
     private BookingStatus bookingStatus;
 
     @Schema(description = "Required when bookingStatus is CANCELLED")
