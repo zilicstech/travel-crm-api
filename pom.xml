@@ -103,6 +103,13 @@
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
 
+        <!-- Cloud SQL connectivity (Cloud Run deployment target) -->
+        <dependency>
+            <groupId>com.google.cloud.sql</groupId>
+            <artifactId>postgres-socket-factory</artifactId>
+            <version>1.19.0</version>
+        </dependency>
+
         <!-- Boilerplate -->
         <dependency>
             <groupId>org.projectlombok</groupId>
