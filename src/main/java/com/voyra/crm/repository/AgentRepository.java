@@ -14,6 +14,8 @@ public interface AgentRepository extends JpaRepository<Agent, String> {
 
     List<Agent> findByTenantId(String tenantId);
 
+    long countByTenantId(String tenantId);
+
     Optional<Agent> findByIdAndTenantId(String id, String tenantId);
 
     boolean existsByEmailIgnoreCase(String email);

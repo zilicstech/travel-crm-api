@@ -74,6 +74,17 @@ public interface LeadRepository extends JpaRepository<Lead, String> {
         long getPendingFollowUps();
     }
 
+    @Query("SELECT l.source AS category, COUNT(l) AS count FROM Lead l GROUP BY l.source")
+    List<CategoryCountProjection> countGroupedBySource();
+
+    @Query("SELECT l.status AS category, COUNT(l) AS count FROM Lead l WHERE l.status <> :excluded GROUP BY l.status")
+    List<CategoryCountProjection> countGroupedByStatusExcluding(@Param("excluded") LeadStatus excluded);
+
+    interface CategoryCountProjection {
+        String getCategory();
+        long getCount();
+    }
+
     /** Keeps the denormalized assigned_agent_name snapshot live-synced on Agent rename. */
     @Modifying
     @Query("UPDATE Lead l SET l.assignedAgentName = :name WHERE l.assignedTo = :agentId")

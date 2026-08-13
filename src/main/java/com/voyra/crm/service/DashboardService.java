@@ -46,10 +46,7 @@ public class DashboardService {
         long bookedLeads = leadRepository.countByStatus(LeadStatus.BOOKED);
         long lostLeads = leadRepository.countByStatus(LeadStatus.LOST);
 
-        BigDecimal pendingPayments = clientInvoiceRepository.findAll().stream()
-                .filter(i -> i.getStatus() != InvoiceStatus.PAID)
-                .map(i -> i.getTotalWithGst().subtract(i.getAmountPaid()))
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal pendingPayments = clientInvoiceRepository.sumOutstanding(InvoiceStatus.PAID);
 
         return OwnerDashboardSummaryResponse.builder()
                 .totalRevenue(revenue.getTotalRevenue())

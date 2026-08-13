@@ -77,6 +77,26 @@ public interface BookingRepository extends JpaRepository<Booking, String> {
         java.math.BigDecimal getTotalProfit();
     }
 
+    @Query("SELECT b.type AS category, COUNT(b) AS count FROM Booking b GROUP BY b.type")
+    List<com.voyra.crm.repository.LeadRepository.CategoryCountProjection> countGroupedByType();
+
+    @Query("""
+            SELECT YEAR(b.bookingDate) AS year, MONTH(b.bookingDate) AS month,
+                   COALESCE(SUM(b.sellingPrice), 0) AS revenue,
+                   COALESCE(SUM(b.profit), 0) AS profit
+            FROM Booking b
+            WHERE b.bookingDate >= :from
+            GROUP BY YEAR(b.bookingDate), MONTH(b.bookingDate)
+            """)
+    List<MonthlyRevenueProjection> aggregateMonthlyRevenueSince(@Param("from") java.time.LocalDate from);
+
+    interface MonthlyRevenueProjection {
+        int getYear();
+        int getMonth();
+        java.math.BigDecimal getRevenue();
+        java.math.BigDecimal getProfit();
+    }
+
     /** Keeps the denormalized agent_name/customer_name snapshots live-synced on rename. */
     @Modifying
     @Query("UPDATE Booking b SET b.agentName = :name WHERE b.agentId = :agentId")

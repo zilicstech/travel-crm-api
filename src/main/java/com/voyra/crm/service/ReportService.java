@@ -5,8 +5,6 @@ import com.voyra.crm.dto.BookingResponse;
 import com.voyra.crm.dto.CategoryCountResponse;
 import com.voyra.crm.dto.LeadResponse;
 import com.voyra.crm.dto.MonthlyRevenuePoint;
-import com.voyra.crm.entity.Booking;
-import com.voyra.crm.entity.Lead;
 import com.voyra.crm.enums.LeadStatus;
 import com.voyra.crm.repository.BookingRepository;
 import com.voyra.crm.repository.LeadRepository;
@@ -39,24 +37,20 @@ public class ReportService {
 
     @Transactional(readOnly = true)
     public List<MonthlyRevenuePoint> getRevenueTrend(int months) {
-        List<Booking> bookings = bookingRepository.findAll();
         YearMonth start = YearMonth.now().minusMonths(months - 1L);
 
         Map<YearMonth, BigDecimal[]> byMonth = new LinkedHashMap<>();
         for (int i = 0; i < months; i++) {
             byMonth.put(start.plusMonths(i), new BigDecimal[]{BigDecimal.ZERO, BigDecimal.ZERO});
         }
-        for (Booking b : bookings) {
-            if (b.getBookingDate() == null) {
-                continue;
-            }
-            YearMonth ym = YearMonth.from(b.getBookingDate());
+        for (var row : bookingRepository.aggregateMonthlyRevenueSince(start.atDay(1))) {
+            YearMonth ym = YearMonth.of(row.getYear(), row.getMonth());
             BigDecimal[] agg = byMonth.get(ym);
             if (agg == null) {
                 continue; // outside the requested window
             }
-            agg[0] = agg[0].add(b.getSellingPrice() != null ? b.getSellingPrice() : BigDecimal.ZERO);
-            agg[1] = agg[1].add(b.getProfit() != null ? b.getProfit() : BigDecimal.ZERO);
+            agg[0] = row.getRevenue() != null ? row.getRevenue() : BigDecimal.ZERO;
+            agg[1] = row.getProfit() != null ? row.getProfit() : BigDecimal.ZERO;
         }
 
         return byMonth.entrySet().stream()
@@ -80,29 +74,35 @@ public class ReportService {
 
     @Transactional(readOnly = true)
     public List<CategoryCountResponse> getLeadSourceDistribution() {
-        return countBy(leadRepository.findAll(), l -> l.getSource().name());
+        return leadRepository.countGroupedBySource().stream()
+                .map(p -> CategoryCountResponse.builder().category(p.getCategory()).count(p.getCount()).build())
+                .toList();
     }
 
     @Transactional(readOnly = true)
     public List<CategoryCountResponse> getBookingTypeDistribution() {
-        return countBy(bookingRepository.findAll(), b -> b.getType().name());
+        return bookingRepository.countGroupedByType().stream()
+                .map(p -> CategoryCountResponse.builder().category(p.getCategory()).count(p.getCount()).build())
+                .toList();
     }
 
     /** Cumulative "reached this stage or beyond" counts (excluding Lost), so each stage <= the previous one. */
     @Transactional(readOnly = true)
     public List<CategoryCountResponse> getConversionFunnel() {
-        List<Lead> leads = leadRepository.findAll().stream()
-                .filter(l -> l.getStatus() != LeadStatus.LOST)
-                .toList();
+        Map<LeadStatus, Long> countsByStatus = leadRepository.countGroupedByStatusExcluding(LeadStatus.LOST).stream()
+                .collect(java.util.stream.Collectors.toMap(p -> LeadStatus.valueOf(p.getCategory()), p -> p.getCount()));
 
-        return FUNNEL_STAGES.stream()
-                .map(stage -> {
-                    int stageRank = FUNNEL_STAGES.indexOf(stage);
-                    long count = leads.stream()
-                            .filter(l -> FUNNEL_STAGES.indexOf(l.getStatus()) >= stageRank)
-                            .count();
-                    return CategoryCountResponse.builder().category(stage.name()).count(count).build();
-                })
+        long[] cumulative = new long[FUNNEL_STAGES.size()];
+        for (int i = FUNNEL_STAGES.size() - 1; i >= 0; i--) {
+            long atThisStage = countsByStatus.getOrDefault(FUNNEL_STAGES.get(i), 0L);
+            cumulative[i] = atThisStage + (i + 1 < FUNNEL_STAGES.size() ? cumulative[i + 1] : 0L);
+        }
+
+        return java.util.stream.IntStream.range(0, FUNNEL_STAGES.size())
+                .mapToObj(i -> CategoryCountResponse.builder()
+                        .category(FUNNEL_STAGES.get(i).name())
+                        .count(cumulative[i])
+                        .build())
                 .toList();
     }
 
@@ -156,15 +156,5 @@ public class ReportService {
 
     private String str(Object value) {
         return value != null ? value.toString() : "";
-    }
-
-    private <T> List<CategoryCountResponse> countBy(List<T> items, java.util.function.Function<T, String> keyFn) {
-        Map<String, Long> counts = new LinkedHashMap<>();
-        for (T item : items) {
-            counts.merge(keyFn.apply(item), 1L, Long::sum);
-        }
-        return counts.entrySet().stream()
-                .map(e -> CategoryCountResponse.builder().category(e.getKey()).count(e.getValue()).build())
-                .toList();
     }
 }

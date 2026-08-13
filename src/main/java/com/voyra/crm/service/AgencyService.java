@@ -105,7 +105,7 @@ public class AgencyService {
     }
 
     private AgencyResponse toResponse(Tenant tenant, boolean includeRevenue) {
-        long agentsCount = agentRepository.findByTenantId(tenant.getId()).size();
+        long agentsCount = agentRepository.countByTenantId(tenant.getId());
         BigDecimal totalRevenue = null;
         if (includeRevenue) {
             totalRevenue = readRevenueForTenant(tenant.getId());
