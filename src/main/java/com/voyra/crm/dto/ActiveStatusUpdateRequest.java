@@ -9,5 +9,6 @@ import lombok.Data;
 public class ActiveStatusUpdateRequest {
 
     @NotNull(message = "isActive is required")
+    @Schema(description = "New active state - true to activate, false to deactivate")
     private Boolean isActive;
 }

@@ -24,5 +24,6 @@ public class AgentCreateRequest {
     private String phone;
 
     @NotNull(message = "Department is required")
+    @Schema(description = "Agent's department", example = "SALES")
     private AgentDepartment department;
 }
