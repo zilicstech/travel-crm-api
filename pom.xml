@@ -97,6 +97,12 @@
             <version>${springdoc.version}</version>
         </dependency>
 
+        <!-- Health probes (Cloud Run startup/liveness) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
         <!-- Boilerplate -->
         <dependency>
             <groupId>org.projectlombok</groupId>
