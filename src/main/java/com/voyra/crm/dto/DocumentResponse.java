@@ -1,5 +1,6 @@
 package com.voyra.crm.dto;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -12,10 +13,18 @@ import java.time.LocalDateTime;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
+@Schema(description = "An uploaded document (passport, visa, etc.), belonging to a customer or family member")
 public class DocumentResponse {
 
+    @Schema(example = "D4F8G2")
     private String id;
+
+    @Schema(description = "Original uploaded filename", example = "passport.pdf")
     private String name;
+
+    @Schema(example = "Passport")
     private String docType;
+
+    @Schema(example = "2026-08-13T09:15:22")
     private LocalDateTime uploadedDate;
 }
