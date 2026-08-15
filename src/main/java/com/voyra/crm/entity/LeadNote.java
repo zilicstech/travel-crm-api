@@ -23,13 +23,13 @@ import java.time.LocalDateTime;
 public class LeadNote {
 
     @Id
-    @Column(name = "id", length = 6)
+    @Column(name = "id", length = 36)
     private String id;
 
-    @Column(name = "lead_id", nullable = false, length = 6)
+    @Column(name = "lead_id", nullable = false, length = 36)
     private String leadId;
 
-    @Column(name = "author_agent_id", nullable = false, length = 6)
+    @Column(name = "author_agent_id", nullable = false, length = 36)
     private String authorAgentId;
 
     @Column(name = "author_name", nullable = false, length = 150)

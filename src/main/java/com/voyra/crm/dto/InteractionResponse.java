@@ -15,10 +15,10 @@ import java.time.LocalDateTime;
 @Schema(description = "A logged customer interaction note")
 public class InteractionResponse {
 
-    @Schema(example = "I8K3L7")
+    @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String id;
 
-    @Schema(example = "CB9Y0N")
+    @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String authorAgentId;
 
     @Schema(description = "Denormalized snapshot, live-synced on agent rename", example = "Liam Smith")

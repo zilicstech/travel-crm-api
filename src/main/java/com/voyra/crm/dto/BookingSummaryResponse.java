@@ -19,7 +19,7 @@ import java.time.LocalDate;
 @Schema(description = "Lightweight booking summary embedded in the Customer detail view")
 public class BookingSummaryResponse {
 
-    @Schema(example = "P4Q7R2")
+    @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String id;
 
     @Schema(example = "FLIGHT")

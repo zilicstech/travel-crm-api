@@ -3,7 +3,7 @@
 -- tenant schema is known), and the public-proposal token index.
 
 CREATE TABLE tenant (
-    id           VARCHAR(6) NOT NULL PRIMARY KEY,
+    id           VARCHAR(36) NOT NULL PRIMARY KEY,
     agency_name  VARCHAR(150) NOT NULL,
     owner_name   VARCHAR(150) NOT NULL,
     owner_email  VARCHAR(150) NOT NULL,
@@ -15,7 +15,7 @@ CREATE TABLE tenant (
 CREATE UNIQUE INDEX idx_tenant_owner_email ON tenant (LOWER(owner_email));
 
 CREATE TABLE platform_admin (
-    id           VARCHAR(6) NOT NULL PRIMARY KEY,
+    id           VARCHAR(36) NOT NULL PRIMARY KEY,
     name         VARCHAR(150) NOT NULL,
     email        VARCHAR(150) NOT NULL,
     password     VARCHAR(255) NOT NULL,
@@ -26,8 +26,8 @@ CREATE TABLE platform_admin (
 CREATE UNIQUE INDEX idx_platform_admin_email ON platform_admin (LOWER(email));
 
 CREATE TABLE agent (
-    id           VARCHAR(6) NOT NULL PRIMARY KEY,
-    tenant_id    VARCHAR(6) NOT NULL,
+    id           VARCHAR(36) NOT NULL PRIMARY KEY,
+    tenant_id    VARCHAR(36) NOT NULL,
     name         VARCHAR(150) NOT NULL,
     email        VARCHAR(150) NOT NULL,
     phone        VARCHAR(20),
@@ -45,8 +45,8 @@ CREATE UNIQUE INDEX idx_agent_email ON agent (LOWER(email));
 -- filtering is correct here, unlike tenant-schema tables - this row IS the exception.
 CREATE TABLE proposal_link (
     token        VARCHAR(32) NOT NULL PRIMARY KEY,
-    tenant_id    VARCHAR(6) NOT NULL,
-    lead_id      VARCHAR(6) NOT NULL,
+    tenant_id    VARCHAR(36) NOT NULL,
+    lead_id      VARCHAR(36) NOT NULL,
     created_date TIMESTAMP,
     expires_at   TIMESTAMP
 );

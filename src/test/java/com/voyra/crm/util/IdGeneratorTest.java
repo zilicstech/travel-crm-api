@@ -8,9 +8,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class IdGeneratorTest {
 
     @Test
-    void generate6ProducesSixUppercaseBase36Characters() {
-        String id = IdGenerator.generate6();
-        assertThat(id).hasSize(6).matches("^[0-9A-Z]{6}$");
+    void generateIdProducesLowercaseUuidString() {
+        String id = IdGenerator.generateId();
+        assertThat(id).hasSize(36)
+                .matches("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$");
     }
 
     @Test

@@ -33,10 +33,10 @@ import java.time.LocalDateTime;
 public class Agent {
 
     @Id
-    @Column(name = "id", length = 6)
+    @Column(name = "id", length = 36)
     private String id;
 
-    @Column(name = "tenant_id", nullable = false, length = 6)
+    @Column(name = "tenant_id", nullable = false, length = 36)
     private String tenantId;
 
     @Column(name = "name", nullable = false, length = 150)

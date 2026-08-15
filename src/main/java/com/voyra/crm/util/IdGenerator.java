@@ -1,8 +1,9 @@
 package com.voyra.crm.util;
 
 import java.security.SecureRandom;
+import java.util.UUID;
 
-/** Short, human-shareable, collision-checked, uppercase base-36 identifiers. */
+/** Collision-checked identifiers: UUIDs for entity primary keys, base-36 for the share-link token. */
 public final class IdGenerator {
 
     private static final String BASE36_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -11,9 +12,9 @@ public final class IdGenerator {
     private IdGenerator() {
     }
 
-    /** 6 chars ~ 2.1B combinations. Used for entity primary keys. */
-    public static String generate6() {
-        return generateAlphanumeric(6);
+    /** Standard UUID (36 chars, lowercase, dashed). Used for entity primary keys. */
+    public static String generateId() {
+        return UUID.randomUUID().toString();
     }
 
     /** High-entropy token for the public proposal share-link (not a primary key). */

@@ -28,16 +28,16 @@ import java.time.LocalDateTime;
 public class ClientInvoice {
 
     @Id
-    @Column(name = "id", length = 6)
+    @Column(name = "id", length = 36)
     private String id;
 
-    @Column(name = "customer_id", nullable = false, length = 6)
+    @Column(name = "customer_id", nullable = false, length = 36)
     private String customerId;
 
     @Column(name = "customer_name", nullable = false, length = 150)
     private String customerName;
 
-    @Column(name = "agent_id", nullable = false, length = 6)
+    @Column(name = "agent_id", nullable = false, length = 36)
     private String agentId;
 
     @Column(name = "amount", nullable = false, precision = 19, scale = 2)

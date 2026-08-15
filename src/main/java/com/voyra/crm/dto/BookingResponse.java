@@ -20,16 +20,16 @@ import java.time.LocalDateTime;
 @Schema(description = "A Booking, with profit always server-computed")
 public class BookingResponse {
 
-    @Schema(example = "P4Q7R2")
+    @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String id;
 
-    @Schema(example = "K3M8P1")
+    @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String customerId;
 
     @Schema(description = "Denormalized snapshot, live-synced on customer rename", example = "Jane Doe")
     private String customerName;
 
-    @Schema(example = "CB9Y0N")
+    @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String agentId;
 
     @Schema(description = "Denormalized snapshot, live-synced on agent rename", example = "Liam Smith")

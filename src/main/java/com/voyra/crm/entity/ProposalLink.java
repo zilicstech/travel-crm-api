@@ -31,10 +31,10 @@ public class ProposalLink {
     @Column(name = "token", length = 32)
     private String token;
 
-    @Column(name = "tenant_id", nullable = false, length = 6)
+    @Column(name = "tenant_id", nullable = false, length = 36)
     private String tenantId;
 
-    @Column(name = "lead_id", nullable = false, length = 6)
+    @Column(name = "lead_id", nullable = false, length = 36)
     private String leadId;
 
     @Column(name = "created_date")

@@ -16,7 +16,7 @@ import java.time.LocalDateTime;
 @Schema(description = "An uploaded document (passport, visa, etc.), belonging to a customer or family member")
 public class DocumentResponse {
 
-    @Schema(example = "D4F8G2")
+    @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String id;
 
     @Schema(description = "Original uploaded filename", example = "passport.pdf")

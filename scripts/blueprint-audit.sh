@@ -46,9 +46,9 @@ PW_TOTAL=$(grep -rh 'private String password;' $SRC/entity/ | wc -l | tr -d ' ')
 PW_IGNORED=$(grep -rh -B1 'private String password;' $SRC/entity/ | grep -c '@JsonIgnore' | tr -d ' ')
 check "§8.4 all entity password fields @JsonIgnore" "$PW_TOTAL" "$PW_IGNORED"
 
-# §8.5 - every entity primary key is collision-checked, never a raw generate6()
-check "§8.5 no raw IdGenerator.generate6() in .id() builder calls" 0 \
-  "$(grep -rh '\.id(IdGenerator\.generate6())' $SRC/service/ 2>/dev/null | wc -l | tr -d ' ')"
+# §8.5 - every entity primary key is collision-checked, never a raw generateId()
+check "§8.5 no raw IdGenerator.generateId() in .id() builder calls" 0 \
+  "$(grep -rh '\.id(IdGenerator\.generateId())' $SRC/service/ 2>/dev/null | wc -l | tr -d ' ')"
 
 # §5.3 - services read the principal only via SecurityContextUtil
 check "§5.3 SecurityContextHolder only in security package" 0 \

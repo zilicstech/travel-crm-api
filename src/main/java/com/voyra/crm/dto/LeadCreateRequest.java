@@ -33,7 +33,7 @@ public class LeadCreateRequest {
     @Schema(example = "jane.doe@example.com")
     private String email;
 
-    @Schema(description = "Set when the phone-lookup step matched an existing customer", example = "K3M8P1")
+    @Schema(description = "Set when the phone-lookup step matched an existing customer", example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String customerId;
 
     // Step 2 - Trip Details

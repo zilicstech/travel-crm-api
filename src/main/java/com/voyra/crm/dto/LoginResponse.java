@@ -21,7 +21,7 @@ public class LoginResponse {
     @Schema(example = "Login successful")
     private String message;
 
-    @Schema(description = "The authenticated principal's id", example = "CB9Y0N")
+    @Schema(description = "The authenticated principal's id", example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String userId;
 
     @Schema(example = "Liam Smith")
@@ -30,7 +30,7 @@ public class LoginResponse {
     @Schema(example = "AGENT")
     private String role;
 
-    @Schema(description = "Omitted for SUPER_ADMIN", example = "4K2N7P")
+    @Schema(description = "Omitted for SUPER_ADMIN", example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String tenantId;
 
     @Schema(description = "Bearer JWT - pass as 'Authorization: Bearer <token>' on subsequent requests")

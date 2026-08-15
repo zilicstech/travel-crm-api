@@ -16,22 +16,22 @@ import java.time.LocalDate;
 @Schema(description = "A standalone Visa case, distinct from the lightweight tracker embedded on a Lead")
 public class VisaResponse {
 
-    @Schema(example = "Z2A6B0")
+    @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String id;
 
-    @Schema(example = "K3M8P1")
+    @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String customerId;
 
     @Schema(description = "Denormalized snapshot, live-synced on customer rename", example = "Jane Doe")
     private String customerName;
 
-    @Schema(example = "CB9Y0N")
+    @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String agentId;
 
     @Schema(description = "Denormalized snapshot, live-synced on agent rename", example = "Liam Smith")
     private String agentName;
 
-    @Schema(description = "Optional traceability link back to the originating lead", example = "L5N9P3")
+    @Schema(description = "Optional traceability link back to the originating lead", example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String leadId;
 
     @Schema(example = "United Arab Emirates")

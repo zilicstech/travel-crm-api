@@ -16,7 +16,7 @@ public class CustomerLookupResponse {
     @Schema(description = "True if a customer with this phone number was found", example = "true")
     private boolean matched;
 
-    @Schema(example = "K3M8P1")
+    @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String customerId;
 
     @Schema(example = "Jane Doe")

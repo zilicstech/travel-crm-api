@@ -17,7 +17,7 @@ import java.util.List;
 @Schema(description = "A family member linked to a Customer")
 public class FamilyMemberResponse {
 
-    @Schema(example = "F2H6J4")
+    @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String id;
 
     @Schema(example = "John Doe Jr.")

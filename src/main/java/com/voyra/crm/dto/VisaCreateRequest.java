@@ -11,13 +11,13 @@ import java.time.LocalDate;
 public class VisaCreateRequest {
 
     @NotBlank(message = "Customer is required")
-    @Schema(example = "K3M8P1")
+    @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String customerId;
 
     @Schema(description = "Owner-only: attribute the case to a specific agent. Ignored for the AGENT role (always self).", example = "CB9Y0N")
     private String agentId;
 
-    @Schema(description = "Optional traceability link back to the originating lead", example = "L5N9P3")
+    @Schema(description = "Optional traceability link back to the originating lead", example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String leadId;
 
     @NotBlank(message = "Country is required")

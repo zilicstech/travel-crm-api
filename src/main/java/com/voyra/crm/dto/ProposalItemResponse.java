@@ -16,7 +16,7 @@ import java.math.BigDecimal;
 @Schema(description = "A proposal line item on a Lead - never exposed to the public proposal endpoint")
 public class ProposalItemResponse {
 
-    @Schema(example = "T9U3V7")
+    @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String id;
 
     @Schema(example = "HOTEL")

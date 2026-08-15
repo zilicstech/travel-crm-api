@@ -14,7 +14,7 @@ import lombok.NoArgsConstructor;
 @Schema(description = "Result of adding a new Agent - carries the generated password once, on creation only")
 public class AgentCreateResponse {
 
-    @Schema(description = "Generated Agent id", example = "CB9Y0N")
+    @Schema(description = "Generated Agent id", example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String id;
 
     @Schema(description = "Agent's display name", example = "Liam Smith")

@@ -16,7 +16,7 @@ import java.math.BigDecimal;
 @Schema(description = "Agent profile plus performance KPIs, computed from real Lead/Booking/Note data (never stored counters)")
 public class AgentPerformanceResponse {
 
-    @Schema(description = "Agent id", example = "CB9Y0N")
+    @Schema(description = "Agent id", example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String id;
 
     @Schema(description = "Agent's display name", example = "Liam Smith")

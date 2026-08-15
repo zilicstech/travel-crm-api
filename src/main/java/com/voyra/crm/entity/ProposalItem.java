@@ -27,10 +27,10 @@ import java.time.LocalDateTime;
 public class ProposalItem {
 
     @Id
-    @Column(name = "id", length = 6)
+    @Column(name = "id", length = 36)
     private String id;
 
-    @Column(name = "lead_id", nullable = false, length = 6)
+    @Column(name = "lead_id", nullable = false, length = 36)
     private String leadId;
 
     @Enumerated(EnumType.STRING)

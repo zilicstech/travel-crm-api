@@ -9,6 +9,6 @@ import lombok.Data;
 public class LeadAssignRequest {
 
     @NotBlank(message = "agentId is required")
-    @Schema(example = "CB9Y0N")
+    @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String agentId;
 }

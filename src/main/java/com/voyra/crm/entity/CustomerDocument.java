@@ -23,10 +23,10 @@ import java.time.LocalDateTime;
 public class CustomerDocument {
 
     @Id
-    @Column(name = "id", length = 6)
+    @Column(name = "id", length = 36)
     private String id;
 
-    @Column(name = "customer_id", nullable = false, length = 6)
+    @Column(name = "customer_id", nullable = false, length = 36)
     private String customerId;
 
     @Column(name = "name", nullable = false, length = 255)

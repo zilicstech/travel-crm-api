@@ -12,8 +12,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 class TenantSearchPathUtilTest {
 
     @Test
-    void validTenantIdProducesLowercasedSchemaPath() {
-        assertThat(TenantSearchPathUtil.toSchemaPath("ABC123")).isEqualTo("tenant_abc123, public");
+    void validTenantIdProducesLowercasedDashStrippedSchemaPath() {
+        assertThat(TenantSearchPathUtil.toSchemaPath("F47AC10B-58CC-4372-A567-0E02B2C3D479"))
+                .isEqualTo("tenant_f47ac10b58cc4372a5670e02b2c3d479, public");
     }
 
     @Test

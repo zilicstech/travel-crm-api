@@ -42,7 +42,7 @@ public class LocalFileStorageService implements FileStorageService {
         }
         String sanitizedName = sanitizeFilename(file.getOriginalFilename());
         String fileKey = "%s/%s/%s/%s-%s".formatted(
-                TenantSchemaUtil.toSchemaName(tenantId), category, ownerId, IdGenerator.generate6(), sanitizedName);
+                TenantSchemaUtil.toSchemaName(tenantId), category, ownerId, IdGenerator.generateId(), sanitizedName);
 
         Path target = resolveWithinBaseDir(fileKey);
         try {

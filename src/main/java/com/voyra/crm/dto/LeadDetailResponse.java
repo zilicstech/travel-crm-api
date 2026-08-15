@@ -22,10 +22,10 @@ import java.util.List;
 @Schema(description = "Full Lead detail, including proposal items and margin - never exposed to the public proposal endpoint")
 public class LeadDetailResponse {
 
-    @Schema(example = "L5N9P3")
+    @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String id;
 
-    @Schema(example = "K3M8P1")
+    @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String customerId;
 
     @Schema(example = "Jane Doe")
@@ -64,7 +64,7 @@ public class LeadDetailResponse {
     @Schema(example = "HIGH")
     private LeadPriority priority;
 
-    @Schema(example = "CB9Y0N")
+    @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String assignedTo;
 
     @Schema(description = "Denormalized snapshot, live-synced on agent rename", example = "Liam Smith")

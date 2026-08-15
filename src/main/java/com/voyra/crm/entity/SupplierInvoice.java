@@ -29,7 +29,7 @@ import java.time.LocalDateTime;
 public class SupplierInvoice {
 
     @Id
-    @Column(name = "id", length = 6)
+    @Column(name = "id", length = 36)
     private String id;
 
     @Column(name = "supplier_name", nullable = false, length = 150)
@@ -50,7 +50,7 @@ public class SupplierInvoice {
     @Column(name = "due_date")
     private LocalDate dueDate;
 
-    @Column(name = "booking_ref", length = 6)
+    @Column(name = "booking_ref", length = 36)
     private String bookingRef;
 
     @Column(name = "created_date")

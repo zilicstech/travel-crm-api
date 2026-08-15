@@ -5,8 +5,8 @@
 -- live-synced by a bulk UPDATE in the same transaction whenever the source name changes.
 
 CREATE TABLE customer (
-    id                 VARCHAR(6) NOT NULL PRIMARY KEY,
-    agent_id           VARCHAR(6) NOT NULL,
+    id                 VARCHAR(36) NOT NULL PRIMARY KEY,
+    agent_id           VARCHAR(36) NOT NULL,
     agent_name         VARCHAR(150) NOT NULL,
     name               VARCHAR(150) NOT NULL,
     email              VARCHAR(150),
@@ -31,8 +31,8 @@ CREATE INDEX idx_customer_status ON customer (status);
 CREATE INDEX idx_customer_phone ON customer (phone);
 
 CREATE TABLE customer_document (
-    id            VARCHAR(6) NOT NULL PRIMARY KEY,
-    customer_id   VARCHAR(6) NOT NULL,
+    id            VARCHAR(36) NOT NULL PRIMARY KEY,
+    customer_id   VARCHAR(36) NOT NULL,
     name          VARCHAR(255) NOT NULL,
     file_key      VARCHAR(500) NOT NULL,
     doc_type      VARCHAR(50),
@@ -42,8 +42,8 @@ CREATE TABLE customer_document (
 CREATE INDEX idx_customer_document_customer ON customer_document (customer_id);
 
 CREATE TABLE family_member (
-    id          VARCHAR(6) NOT NULL PRIMARY KEY,
-    customer_id VARCHAR(6) NOT NULL,
+    id          VARCHAR(36) NOT NULL PRIMARY KEY,
+    customer_id VARCHAR(36) NOT NULL,
     name        VARCHAR(150) NOT NULL,
     relation    VARCHAR(20) NOT NULL,
     dob         DATE
@@ -52,8 +52,8 @@ CREATE TABLE family_member (
 CREATE INDEX idx_family_member_customer ON family_member (customer_id);
 
 CREATE TABLE family_member_document (
-    id               VARCHAR(6) NOT NULL PRIMARY KEY,
-    family_member_id VARCHAR(6) NOT NULL,
+    id               VARCHAR(36) NOT NULL PRIMARY KEY,
+    family_member_id VARCHAR(36) NOT NULL,
     name             VARCHAR(255) NOT NULL,
     file_key         VARCHAR(500) NOT NULL,
     doc_type         VARCHAR(50),
@@ -63,9 +63,9 @@ CREATE TABLE family_member_document (
 CREATE INDEX idx_family_member_document_member ON family_member_document (family_member_id);
 
 CREATE TABLE customer_interaction (
-    id              VARCHAR(6) NOT NULL PRIMARY KEY,
-    customer_id     VARCHAR(6) NOT NULL,
-    author_agent_id VARCHAR(6) NOT NULL,
+    id              VARCHAR(36) NOT NULL PRIMARY KEY,
+    customer_id     VARCHAR(36) NOT NULL,
+    author_agent_id VARCHAR(36) NOT NULL,
     author_name     VARCHAR(150) NOT NULL,
     note            TEXT NOT NULL,
     created_date    TIMESTAMP
@@ -74,8 +74,8 @@ CREATE TABLE customer_interaction (
 CREATE INDEX idx_customer_interaction_customer ON customer_interaction (customer_id);
 
 CREATE TABLE lead (
-    id                     VARCHAR(6) NOT NULL PRIMARY KEY,
-    customer_id            VARCHAR(6),
+    id                     VARCHAR(36) NOT NULL PRIMARY KEY,
+    customer_id            VARCHAR(36),
     name                   VARCHAR(150) NOT NULL,
     email                  VARCHAR(150),
     country_code           VARCHAR(6),
@@ -88,7 +88,7 @@ CREATE TABLE lead (
     source                 VARCHAR(20) NOT NULL,
     priority               VARCHAR(10) NOT NULL,
     categories             TEXT[] NOT NULL DEFAULT '{}',
-    assigned_to            VARCHAR(6) NOT NULL,
+    assigned_to            VARCHAR(36) NOT NULL,
     assigned_agent_name    VARCHAR(150) NOT NULL,
     follow_up_date         DATE,
     lost_reason            VARCHAR(255),
@@ -113,8 +113,8 @@ CREATE INDEX idx_lead_follow_up_date ON lead (follow_up_date);
 CREATE UNIQUE INDEX idx_lead_public_proposal_token ON lead (public_proposal_token) WHERE public_proposal_token IS NOT NULL;
 
 CREATE TABLE proposal_item (
-    id            VARCHAR(6) NOT NULL PRIMARY KEY,
-    lead_id       VARCHAR(6) NOT NULL,
+    id            VARCHAR(36) NOT NULL PRIMARY KEY,
+    lead_id       VARCHAR(36) NOT NULL,
     type          VARCHAR(20) NOT NULL,
     description   VARCHAR(255) NOT NULL,
     supplier      VARCHAR(150),
@@ -125,9 +125,9 @@ CREATE TABLE proposal_item (
 CREATE INDEX idx_proposal_item_lead ON proposal_item (lead_id);
 
 CREATE TABLE lead_note (
-    id              VARCHAR(6) NOT NULL PRIMARY KEY,
-    lead_id         VARCHAR(6) NOT NULL,
-    author_agent_id VARCHAR(6) NOT NULL,
+    id              VARCHAR(36) NOT NULL PRIMARY KEY,
+    lead_id         VARCHAR(36) NOT NULL,
+    author_agent_id VARCHAR(36) NOT NULL,
     author_name     VARCHAR(150) NOT NULL,
     text            TEXT NOT NULL,
     created_date    TIMESTAMP
@@ -136,12 +136,12 @@ CREATE TABLE lead_note (
 CREATE INDEX idx_lead_note_lead ON lead_note (lead_id);
 
 CREATE TABLE visa (
-    id                  VARCHAR(6) NOT NULL PRIMARY KEY,
-    customer_id         VARCHAR(6) NOT NULL,
+    id                  VARCHAR(36) NOT NULL PRIMARY KEY,
+    customer_id         VARCHAR(36) NOT NULL,
     customer_name       VARCHAR(150) NOT NULL,
-    agent_id            VARCHAR(6) NOT NULL,
+    agent_id            VARCHAR(36) NOT NULL,
     agent_name          VARCHAR(150) NOT NULL,
-    lead_id             VARCHAR(6),
+    lead_id             VARCHAR(36),
     country             VARCHAR(100) NOT NULL,
     visa_type           VARCHAR(50) NOT NULL,
     passport_number     VARCHAR(20),
@@ -166,10 +166,10 @@ CREATE INDEX idx_visa_agent ON visa (agent_id);
 CREATE INDEX idx_visa_status ON visa (status);
 
 CREATE TABLE booking (
-    id             VARCHAR(6) NOT NULL PRIMARY KEY,
-    customer_id    VARCHAR(6) NOT NULL,
+    id             VARCHAR(36) NOT NULL PRIMARY KEY,
+    customer_id    VARCHAR(36) NOT NULL,
     customer_name  VARCHAR(150) NOT NULL,
-    agent_id       VARCHAR(6) NOT NULL,
+    agent_id       VARCHAR(36) NOT NULL,
     agent_name     VARCHAR(150) NOT NULL,
     type           VARCHAR(20) NOT NULL,
     destination    VARCHAR(150) NOT NULL,
@@ -197,10 +197,10 @@ CREATE INDEX idx_booking_type ON booking (type);
 CREATE INDEX idx_booking_status ON booking (booking_status);
 
 CREATE TABLE client_invoice (
-    id              VARCHAR(6) NOT NULL PRIMARY KEY,
-    customer_id     VARCHAR(6) NOT NULL,
+    id              VARCHAR(36) NOT NULL PRIMARY KEY,
+    customer_id     VARCHAR(36) NOT NULL,
     customer_name   VARCHAR(150) NOT NULL,
-    agent_id        VARCHAR(6) NOT NULL,
+    agent_id        VARCHAR(36) NOT NULL,
     amount          NUMERIC(19, 2) NOT NULL DEFAULT 0,
     gst             NUMERIC(19, 2) NOT NULL DEFAULT 0,
     total_with_gst  NUMERIC(19, 2) NOT NULL DEFAULT 0,
@@ -218,13 +218,13 @@ CREATE INDEX idx_client_invoice_status ON client_invoice (status);
 CREATE INDEX idx_client_invoice_due_date ON client_invoice (due_date);
 
 CREATE TABLE supplier_invoice (
-    id            VARCHAR(6) NOT NULL PRIMARY KEY,
+    id            VARCHAR(36) NOT NULL PRIMARY KEY,
     supplier_name VARCHAR(150) NOT NULL,
     category      VARCHAR(20) NOT NULL,
     amount        NUMERIC(19, 2) NOT NULL DEFAULT 0,
     status        VARCHAR(20) NOT NULL,
     due_date      DATE,
-    booking_ref   VARCHAR(6),
+    booking_ref   VARCHAR(36),
     created_date  TIMESTAMP
 );
 

@@ -17,16 +17,16 @@ import java.time.LocalDate;
 @Schema(description = "A Client Invoice, with GST and payment status always server-derived")
 public class ClientInvoiceResponse {
 
-    @Schema(example = "V7X2Y9")
+    @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String id;
 
-    @Schema(example = "K3M8P1")
+    @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String customerId;
 
     @Schema(description = "Denormalized snapshot, live-synced on customer rename", example = "Jane Doe")
     private String customerName;
 
-    @Schema(example = "CB9Y0N")
+    @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String agentId;
 
     @Schema(description = "Invoice amount before GST", example = "10000.00")

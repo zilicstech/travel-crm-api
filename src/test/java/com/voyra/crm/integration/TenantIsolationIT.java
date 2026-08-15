@@ -55,7 +55,7 @@ class TenantIsolationIT extends AbstractIntegrationTest {
         try {
             TenantContext.setTenantId(tenantId);
             Lead lead = Lead.builder()
-                    .id(IdGenerator.generate6())
+                    .id(IdGenerator.generateId())
                     .name("Isolation Test Lead")
                     .phone("9999999999")
                     .destination("Nowhere")
@@ -82,7 +82,7 @@ class TenantIsolationIT extends AbstractIntegrationTest {
         try {
             TenantContext.setTenantId(tenantId);
             Customer customer = Customer.builder()
-                    .id(IdGenerator.generate6())
+                    .id(IdGenerator.generateId())
                     .agentId("A1")
                     .agentName("Test Agent")
                     .name("Isolation Test Customer")

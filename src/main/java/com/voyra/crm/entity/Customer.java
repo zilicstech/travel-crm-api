@@ -30,10 +30,10 @@ import java.util.List;
 public class Customer {
 
     @Id
-    @Column(name = "id", length = 6)
+    @Column(name = "id", length = 36)
     private String id;
 
-    @Column(name = "agent_id", nullable = false, length = 6)
+    @Column(name = "agent_id", nullable = false, length = 36)
     private String agentId;
 
     @Column(name = "agent_name", nullable = false, length = 150)

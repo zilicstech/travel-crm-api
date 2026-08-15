@@ -33,10 +33,10 @@ import java.util.List;
 public class Lead {
 
     @Id
-    @Column(name = "id", length = 6)
+    @Column(name = "id", length = 36)
     private String id;
 
-    @Column(name = "customer_id", length = 6)
+    @Column(name = "customer_id", length = 36)
     private String customerId;
 
     @Column(name = "name", nullable = false, length = 150)
@@ -81,7 +81,7 @@ public class Lead {
     @Builder.Default
     private List<LeadCategory> categories = List.of();
 
-    @Column(name = "assigned_to", nullable = false, length = 6)
+    @Column(name = "assigned_to", nullable = false, length = 36)
     private String assignedTo;
 
     @Column(name = "assigned_agent_name", nullable = false, length = 150)

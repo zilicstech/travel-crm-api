@@ -25,7 +25,7 @@ import java.time.LocalDateTime;
 public class PlatformAdmin {
 
     @Id
-    @Column(name = "id", length = 6)
+    @Column(name = "id", length = 36)
     private String id;
 
     @Column(name = "name", nullable = false, length = 150)

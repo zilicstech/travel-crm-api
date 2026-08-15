@@ -61,7 +61,7 @@ class ProposalLinkResolutionIT extends AbstractIntegrationTest {
         try {
             TenantContext.setTenantId(tenantId);
             Lead lead = Lead.builder()
-                    .id(IdGenerator.generate6())
+                    .id(IdGenerator.generateId())
                     .name(leadName)
                     .phone("9999999999")
                     .destination("Nowhere")
