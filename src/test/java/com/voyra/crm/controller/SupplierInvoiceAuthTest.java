@@ -8,6 +8,7 @@ import com.voyra.crm.enums.BookingType;
 import com.voyra.crm.enums.InvoiceStatus;
 import com.voyra.crm.security.JwtAuthenticationFilter;
 import com.voyra.crm.security.JwtService;
+import com.voyra.crm.security.RestAuthenticationEntryPoint;
 import com.voyra.crm.service.InvoiceService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -29,7 +30,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /** Supplier invoices are accounts-payable data: owner-only, per the method-level @PreAuthorize override. */
 @WebMvcTest(InvoiceController.class)
 @ActiveProfiles("test")
-@Import({SecurityConfig.class, JwtAuthenticationFilter.class, JwtService.class})
+@Import({SecurityConfig.class, JwtAuthenticationFilter.class, JwtService.class, RestAuthenticationEntryPoint.class})
 class SupplierInvoiceAuthTest {
 
     @Autowired

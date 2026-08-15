@@ -6,6 +6,7 @@ import com.voyra.crm.dto.PublicProposalResponse;
 import com.voyra.crm.enums.ProposalItemType;
 import com.voyra.crm.security.JwtAuthenticationFilter;
 import com.voyra.crm.security.JwtService;
+import com.voyra.crm.security.RestAuthenticationEntryPoint;
 import com.voyra.crm.service.PublicProposalService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -33,7 +34,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  */
 @WebMvcTest(PublicProposalController.class)
 @ActiveProfiles("test")
-@Import({SecurityConfig.class, JwtAuthenticationFilter.class, JwtService.class})
+@Import({SecurityConfig.class, JwtAuthenticationFilter.class, JwtService.class, RestAuthenticationEntryPoint.class})
 class PublicProposalControllerTest {
 
     @Autowired

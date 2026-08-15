@@ -5,6 +5,7 @@ import com.voyra.crm.config.SecurityConfig;
 import com.voyra.crm.dto.LeadAssignRequest;
 import com.voyra.crm.security.JwtAuthenticationFilter;
 import com.voyra.crm.security.JwtService;
+import com.voyra.crm.security.RestAuthenticationEntryPoint;
 import com.voyra.crm.service.LeadService;
 import com.voyra.crm.service.ProposalLinkService;
 import org.junit.jupiter.api.Test;
@@ -24,7 +25,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /** Only the Owner may reassign a lead to a different agent (blueprint §5.2, method-level @PreAuthorize override). */
 @WebMvcTest(LeadController.class)
 @ActiveProfiles("test")
-@Import({SecurityConfig.class, JwtAuthenticationFilter.class, JwtService.class})
+@Import({SecurityConfig.class, JwtAuthenticationFilter.class, JwtService.class, RestAuthenticationEntryPoint.class})
 class LeadControllerAuthTest {
 
     @Autowired
@@ -62,14 +63,16 @@ class LeadControllerAuthTest {
     }
 
     /**
-     * Spring Security's AnonymousAuthenticationToken reports isAuthenticated()=true, so the
-     * URL-level .anyRequest().authenticated() check passes for an anonymous caller; it is
-     * @PreAuthorize's role check that then fails, throwing AccessDeniedException, which
-     * GlobalExceptionHandler maps to 403 - not the 401 an unauthenticated request might suggest.
+     * AuthenticatedAuthorizationManager treats an AnonymousAuthenticationToken as NOT
+     * authenticated, so the URL-level .anyRequest().authenticated() check rejects an anonymous
+     * caller before the request ever reaches the controller/@PreAuthorize. ExceptionTranslationFilter
+     * then invokes RestAuthenticationEntryPoint, which returns 401 with an ApiErrorResponse body -
+     * distinct from the 403-with-body an authenticated-but-wrong-role caller gets (see
+     * assignAgent_agentForbidden above).
      */
     @Test
     void listLeads_unauthenticatedRequestIsRejected() throws Exception {
         mockMvc.perform(get("/api/leads"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
     }
 }
