@@ -20,7 +20,6 @@ import com.voyra.crm.security.AesPasswordEncoder;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.security.SecurityContextUtil;
 import com.voyra.crm.util.UniqueIdResolver;
-import com.voyra.crm.util.RandomPasswordGenerator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -63,15 +62,14 @@ public class AgentService {
             throw new IllegalArgumentException("An agent with this email already exists");
         }
 
-        String rawPassword = RandomPasswordGenerator.generate();
         Agent agent = Agent.builder()
                 .id(generateUniqueAgentId())
                 .tenantId(tenantId)
                 .name(request.getName())
                 .email(request.getEmail())
                 .phone(request.getPhone())
-                .department(request.getDepartment())
-                .password(passwordEncoder.encode(rawPassword))
+                .manageableServices(request.getManageableServices())
+                .password(passwordEncoder.encode(request.getPassword()))
                 .isActive(true)
                 .build();
 
@@ -84,8 +82,7 @@ public class AgentService {
                 .name(agent.getName())
                 .email(agent.getEmail())
                 .phone(agent.getPhone())
-                .department(agent.getDepartment())
-                .initialPassword(rawPassword)
+                .manageableServices(agent.getManageableServices())
                 .build();
     }
 
@@ -125,11 +122,11 @@ public class AgentService {
         if (request.getPhone() != null) {
             agent.setPhone(request.getPhone());
         }
-        if (request.getDepartment() != null) {
-            agent.setDepartment(request.getDepartment());
-        }
         if (request.getCommissionRate() != null) {
             agent.setCommissionRate(request.getCommissionRate());
+        }
+        if (request.getManageableServices() != null) {
+            agent.setManageableServices(request.getManageableServices());
         }
         agentRepository.save(agent);
 
@@ -234,6 +231,7 @@ public class AgentService {
                 .email(agent.getEmail())
                 .phone(agent.getPhone())
                 .department(agent.getDepartment())
+                .manageableServices(agent.getManageableServices())
                 .isActive(agent.getIsActive())
                 .leadsAssigned(stats.leadsAssigned())
                 .activeLeads(stats.activeLeads())

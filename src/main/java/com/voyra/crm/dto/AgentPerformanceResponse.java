@@ -1,6 +1,7 @@
 package com.voyra.crm.dto;
 
 import com.voyra.crm.enums.AgentDepartment;
+import com.voyra.crm.enums.ServiceType;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -8,6 +9,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 @Data
 @Builder
@@ -28,8 +30,11 @@ public class AgentPerformanceResponse {
     @Schema(description = "Agent's contact phone number", example = "+1 555 123 4567")
     private String phone;
 
-    @Schema(description = "Agent's department", example = "SALES")
+    @Schema(description = "Agent's department. Display-only legacy field - manageableServices is what governs access.", example = "SALES")
     private AgentDepartment department;
+
+    @Schema(description = "Which service types this agent may work on", example = "[\"FLIGHT\", \"HOTEL\"]")
+    private List<ServiceType> manageableServices;
 
     @Schema(description = "Whether the agent can currently log in", example = "true")
     private Boolean isActive;

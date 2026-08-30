@@ -13,7 +13,6 @@ import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.security.AesPasswordEncoder;
 import com.voyra.crm.security.SecurityContextUtil;
 import com.voyra.crm.util.UniqueIdResolver;
-import com.voyra.crm.util.RandomPasswordGenerator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.access.AccessDeniedException;
@@ -41,13 +40,12 @@ public class AgencyService {
             throw new IllegalArgumentException("An agency with this owner email already exists");
         }
 
-        String rawPassword = RandomPasswordGenerator.generate();
         Tenant tenant = Tenant.builder()
                 .id(generateUniqueTenantId())
                 .agencyName(request.getAgencyName())
                 .ownerName(request.getOwnerName())
                 .ownerEmail(request.getOwnerEmail())
-                .password(passwordEncoder.encode(rawPassword))
+                .password(passwordEncoder.encode(request.getOwnerPassword()))
                 .isActive(true)
                 .build();
 
@@ -61,7 +59,6 @@ public class AgencyService {
                 .agencyName(tenant.getAgencyName())
                 .ownerName(tenant.getOwnerName())
                 .ownerEmail(tenant.getOwnerEmail())
-                .initialPassword(rawPassword)
                 .build();
     }
 

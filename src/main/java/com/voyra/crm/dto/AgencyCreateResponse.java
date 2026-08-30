@@ -10,7 +10,7 @@ import lombok.NoArgsConstructor;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-@Schema(description = "Result of onboarding a new Agency - carries the generated Owner password once, on creation only")
+@Schema(description = "Result of onboarding a new Agency")
 public class AgencyCreateResponse {
 
     @Schema(description = "Generated Agency (tenant) id", example = "4K2N7P")
@@ -24,7 +24,4 @@ public class AgencyCreateResponse {
 
     @Schema(description = "Agency Owner's login email", example = "owner@globalexplorer.com")
     private String ownerEmail;
-
-    @Schema(description = "Generated Owner login password. Also retrievable later via the credentials endpoint.")
-    private String initialPassword;
 }

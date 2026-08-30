@@ -56,6 +56,7 @@ class TenantIsolationIT extends AbstractIntegrationTest {
         request.setAgencyName(agencyName);
         request.setOwnerName("Owner " + agencyName);
         request.setOwnerEmail(ownerEmail);
+        request.setOwnerPassword("TestPass123!");
         AgencyCreateResponse response = agencyService.createAgency(request);
         return response.getId();
     }
