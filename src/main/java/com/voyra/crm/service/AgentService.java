@@ -111,6 +111,13 @@ public class AgentService {
                 .getOrDefault(agent.getId(), AgentStats.empty()));
     }
 
+    /** Self-service lookup for the signed-in AGENT — same tenant scoping as {@link #getAgent}, but the id comes from the token, not a path variable. */
+    @Transactional(readOnly = true)
+    public AgentPerformanceResponse getCurrentAgent() {
+        String agentId = SecurityContextUtil.getCurrentUserOrThrow().userId();
+        return getAgent(agentId);
+    }
+
     @Transactional
     public AgentPerformanceResponse updateAgent(String id, AgentUpdateRequest request) {
         Agent agent = findOwnedAgent(id);

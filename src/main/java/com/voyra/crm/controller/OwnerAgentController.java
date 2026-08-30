@@ -61,6 +61,13 @@ public class OwnerAgentController {
         return ResponseEntity.ok(agentService.getAgent(id));
     }
 
+    @GetMapping("/me")
+    @PreAuthorize("hasRole('AGENT')")
+    @Operation(summary = "The signed-in agent's own profile", description = "Self-service equivalent of GET /{id}, scoped to the caller's own record so an AGENT can resolve their own manageableServices without owner-only list access.")
+    public ResponseEntity<AgentPerformanceResponse> getCurrentAgent() {
+        return ResponseEntity.ok(agentService.getCurrentAgent());
+    }
+
     @PutMapping("/{id}")
     @Operation(summary = "Update an agent's profile")
     public ResponseEntity<AgentPerformanceResponse> updateAgent(@PathVariable String id,
