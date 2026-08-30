@@ -7,6 +7,7 @@ import com.voyra.crm.security.JwtAuthenticationFilter;
 import com.voyra.crm.security.JwtService;
 import com.voyra.crm.security.RestAuthenticationEntryPoint;
 import com.voyra.crm.service.LeadService;
+import com.voyra.crm.service.LeadTimelineService;
 import com.voyra.crm.service.ProposalLinkService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -35,6 +36,8 @@ class LeadControllerAuthTest {
 
     @MockBean
     private LeadService leadService;
+    @MockBean
+    private LeadTimelineService leadTimelineService;
     @MockBean
     private ProposalLinkService proposalLinkService;
 

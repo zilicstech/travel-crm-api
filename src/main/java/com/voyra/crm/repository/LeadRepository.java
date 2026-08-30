@@ -20,9 +20,9 @@ public interface LeadRepository extends JpaRepository<Lead, String> {
 
     List<Lead> findByAssignedTo(String assignedTo);
 
-    List<Lead> findByCustomerId(String customerId);
+    List<Lead> findByClientId(String clientId);
 
-    long countByCustomerIdAndStatusNotIn(String customerId, Collection<LeadStatus> excludedStatuses);
+    long countByClientIdAndStatusNotIn(String clientId, Collection<LeadStatus> excludedStatuses);
 
     List<Lead> findByStatus(LeadStatus status);
 
@@ -97,4 +97,9 @@ public interface LeadRepository extends JpaRepository<Lead, String> {
     @Modifying
     @Query("UPDATE Lead l SET l.assignedAgentName = :name WHERE l.assignedTo = :agentId")
     void updateAssignedAgentNameForAgent(@Param("agentId") String agentId, @Param("name") String name);
+
+    /** Keeps the denormalized client_name snapshot live-synced on Client rename. */
+    @Modifying
+    @Query("UPDATE Lead l SET l.clientName = :name WHERE l.clientId = :clientId")
+    void updateClientNameForClient(@Param("clientId") String clientId, @Param("name") String name);
 }

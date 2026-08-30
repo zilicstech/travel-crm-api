@@ -21,10 +21,10 @@ public class ClientInvoiceResponse {
     private String id;
 
     @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
-    private String customerId;
+    private String clientId;
 
-    @Schema(description = "Denormalized snapshot, live-synced on customer rename", example = "Jane Doe")
-    private String customerName;
+    @Schema(description = "Denormalized snapshot, live-synced on client rename", example = "Jane Doe")
+    private String clientName;
 
     @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String agentId;

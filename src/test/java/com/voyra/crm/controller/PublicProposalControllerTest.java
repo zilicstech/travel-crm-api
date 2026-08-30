@@ -45,7 +45,7 @@ class PublicProposalControllerTest {
 
     private PublicProposalResponse sampleResponse() {
         return PublicProposalResponse.builder()
-                .customerName("Jane Doe")
+                .clientName("Jane Doe")
                 .destination("Dubai, UAE")
                 .travelDateFrom(LocalDate.of(2026, 9, 15))
                 .travelDateTo(LocalDate.of(2026, 9, 22))
@@ -70,7 +70,11 @@ class PublicProposalControllerTest {
 
         for (String forbidden : List.of("netCost", "margin", "marginPercent", "status", "priority",
                 "source", "assignedTo", "notes", "visaTracker", "phone", "email", "budget",
-                "lostReason", "customerId")) {
+                "lostReason", "clientId",
+                // The traveller manifest must never cross the public boundary: it carries
+                // passport numbers and dates of birth behind a link that needs no login.
+                "members", "memberName", "passportNumber", "passportExpiry", "dob",
+                "manifestComplete", "paxType")) {
             assertThat(body).doesNotContain(forbidden);
         }
     }

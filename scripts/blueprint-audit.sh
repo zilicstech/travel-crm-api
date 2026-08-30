@@ -21,9 +21,14 @@ for f in $SRC/controller/*.java; do
 done
 check "§5.3 all controllers guarded by @PreAuthorize" 0 "$UNGUARDED"
 
-# §7.3 - controllers never return JPA entities
+# §7.3 - controllers never return JPA entities.
+# The alternation is an explicit allowlist of entity class names, so it has to be extended
+# whenever entity/ gains a class - an entity missing from this list is silently unguarded.
+# Updated when the Client/Member party model replaced customer/family_member: the retired
+# names (Customer, FamilyMember, CustomerDocument, ProposalItem) are gone and the new ones
+# (Client, Member, MemberDocument, LeadMember, LeadProposal, LeadTimeline) are covered.
 check "§7.3 no entities returned from controllers" 0 \
-  "$(grep -rlE 'ResponseEntity<(List<)?(Lead|Customer|Booking|Visa|Agent|Tenant|ClientInvoice|SupplierInvoice|ProposalItem|LeadNote|PlatformAdmin|CustomerDocument|FamilyMember)[>,]' $SRC/controller/ 2>/dev/null | wc -l | tr -d ' ')"
+  "$(grep -rlE 'ResponseEntity<(List<)?(Lead|LeadMember|LeadNote|LeadProposal|LeadTimeline|Client|Member|MemberDocument|Booking|Visa|Agent|Tenant|ClientInvoice|SupplierInvoice|PlatformAdmin)[>,]' $SRC/controller/ 2>/dev/null | wc -l | tr -d ' ')"
 
 # §8.1 - controllers hold no repository access and no try/catch
 check "§8.1 no repository access in controllers" 0 \

@@ -2,12 +2,12 @@ package com.voyra.crm.service;
 
 import com.voyra.crm.dto.ClientInvoiceCreateRequest;
 import com.voyra.crm.dto.ClientInvoiceResponse;
-import com.voyra.crm.entity.Customer;
+import com.voyra.crm.entity.Client;
 import com.voyra.crm.enums.InvoiceStatus;
 import com.voyra.crm.enums.UserType;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.ClientInvoiceRepository;
-import com.voyra.crm.repository.CustomerRepository;
+import com.voyra.crm.repository.ClientRepository;
 import com.voyra.crm.repository.SupplierInvoiceRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.security.SecurityContextUtil;
@@ -37,7 +37,7 @@ class InvoiceServiceGstTest {
     @Mock
     private SupplierInvoiceRepository supplierInvoiceRepository;
     @Mock
-    private CustomerRepository customerRepository;
+    private ClientRepository clientRepository;
     @Mock
     private AgentRepository agentRepository;
 
@@ -56,17 +56,17 @@ class InvoiceServiceGstTest {
         SecurityContextHolder.clearContext();
     }
 
-    private void stubCustomerAndSave() {
-        Customer customer = Customer.builder().id("K1").name("Jane Doe").build();
-        when(customerRepository.findById("K1")).thenReturn(Optional.of(customer));
+    private void stubClientAndSave() {
+        Client client = Client.builder().id("K1").name("Jane Doe").build();
+        when(clientRepository.findById("K1")).thenReturn(Optional.of(client));
         when(clientInvoiceRepository.existsById(anyString())).thenReturn(false);
     }
 
     @Test
     void defaultGstRateIsEighteenPercent() {
-        stubCustomerAndSave();
+        stubClientAndSave();
         ClientInvoiceCreateRequest request = new ClientInvoiceCreateRequest();
-        request.setCustomerId("K1");
+        request.setClientId("K1");
         request.setAmount(new BigDecimal("10000"));
 
         ClientInvoiceResponse response = invoiceService.createClientInvoice(request);
@@ -77,9 +77,9 @@ class InvoiceServiceGstTest {
 
     @Test
     void explicitGstRateIsHonoured() {
-        stubCustomerAndSave();
+        stubClientAndSave();
         ClientInvoiceCreateRequest request = new ClientInvoiceCreateRequest();
-        request.setCustomerId("K1");
+        request.setClientId("K1");
         request.setAmount(new BigDecimal("10000"));
         request.setGstRate(new BigDecimal("5"));
 
@@ -91,9 +91,9 @@ class InvoiceServiceGstTest {
 
     @Test
     void newInvoiceIsAlwaysPendingWithZeroPaid() {
-        stubCustomerAndSave();
+        stubClientAndSave();
         ClientInvoiceCreateRequest request = new ClientInvoiceCreateRequest();
-        request.setCustomerId("K1");
+        request.setClientId("K1");
         request.setAmount(new BigDecimal("10000"));
 
         ClientInvoiceResponse response = invoiceService.createClientInvoice(request);

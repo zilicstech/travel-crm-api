@@ -1,5 +1,6 @@
 package com.voyra.crm.dto;
 
+import com.voyra.crm.enums.ClientType;
 import com.voyra.crm.enums.LeadCategory;
 import com.voyra.crm.enums.LeadPriority;
 import com.voyra.crm.enums.LeadSource;
@@ -18,26 +19,21 @@ import java.util.List;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-@Schema(description = "A Lead's list-view summary")
+@Schema(description = "A lead's list-view summary. Also the kanban card: group by status for a "
+        + "board, order by createdAt for a list - both views read this same payload.")
 public class LeadResponse {
 
     @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String id;
 
     @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
-    private String customerId;
+    private String clientId;
 
-    @Schema(example = "Jane Doe")
-    private String name;
+    @Schema(description = "Denormalized snapshot, live-synced on client rename", example = "Ajay Sharma")
+    private String clientName;
 
-    @Schema(example = "jane.doe@example.com")
-    private String email;
-
-    @Schema(example = "+91")
-    private String countryCode;
-
-    @Schema(example = "9876543210")
-    private String phone;
+    @Schema(description = "Denormalized snapshot of the client's type", example = "B2C")
+    private ClientType clientType;
 
     @Schema(example = "Dubai, UAE")
     private String destination;
@@ -51,7 +47,7 @@ public class LeadResponse {
     @Schema(description = "Multi-select, stored as a native array")
     private List<LeadCategory> categories;
 
-    @Schema(example = "₹1,50,000 - ₹2,00,000")
+    @Schema(example = "1,50,000 - 2,00,000")
     private String budget;
 
     @Schema(example = "PROPOSAL_SENT")
@@ -63,6 +59,12 @@ public class LeadResponse {
     @Schema(example = "HIGH")
     private LeadPriority priority;
 
+    @Schema(description = "Server-computed as adults + kids", example = "4")
+    private Integer totalTravellers;
+
+    @Schema(description = "Travellers on the manifest whose status is CONFIRMED", example = "3")
+    private Integer confirmedTravellers;
+
     @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String assignedTo;
 
@@ -73,7 +75,7 @@ public class LeadResponse {
     private LocalDate followUpDate;
 
     @Schema(example = "2026-08-13T09:15:22")
-    private LocalDateTime createdDate;
+    private LocalDateTime createdAt;
 
     @Schema(description = "followUpDate is in the past AND status is not BOOKED/LOST")
     private boolean overdue;

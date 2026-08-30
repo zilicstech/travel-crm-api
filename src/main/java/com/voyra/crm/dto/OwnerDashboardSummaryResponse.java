@@ -24,7 +24,7 @@ public class OwnerDashboardSummaryResponse {
     @Schema(description = "Total cost paid to suppliers across all bookings", example = "42000.00")
     private BigDecimal totalNetCost;
 
-    @Schema(description = "Customers with status CUSTOMER", example = "2")
+    @Schema(description = "Active clients in the agency", example = "2")
     private long activeClients;
 
     @Schema(example = "4")

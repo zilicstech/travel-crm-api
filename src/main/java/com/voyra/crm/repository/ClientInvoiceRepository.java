@@ -20,12 +20,12 @@ public interface ClientInvoiceRepository extends JpaRepository<ClientInvoice, St
 
     Page<ClientInvoice> findByAgentId(String agentId, Pageable pageable);
 
-    List<ClientInvoice> findByCustomerId(String customerId);
+    List<ClientInvoice> findByClientId(String clientId);
 
     @Query("SELECT COALESCE(SUM(c.totalWithGst - c.amountPaid), 0) FROM ClientInvoice c WHERE c.status <> :paid")
     BigDecimal sumOutstanding(@Param("paid") InvoiceStatus paid);
 
     @Modifying
-    @Query("UPDATE ClientInvoice c SET c.customerName = :name WHERE c.customerId = :customerId")
-    void updateCustomerNameForCustomer(@Param("customerId") String customerId, @Param("name") String name);
+    @Query("UPDATE ClientInvoice c SET c.clientName = :name WHERE c.clientId = :clientId")
+    void updateClientNameForClient(@Param("clientId") String clientId, @Param("name") String name);
 }

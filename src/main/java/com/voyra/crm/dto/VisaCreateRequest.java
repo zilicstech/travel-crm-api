@@ -10,9 +10,9 @@ import java.time.LocalDate;
 @Schema(description = "Request body for creating a standalone Visa case")
 public class VisaCreateRequest {
 
-    @NotBlank(message = "Customer is required")
+    @NotBlank(message = "Client is required")
     @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
-    private String customerId;
+    private String clientId;
 
     @Schema(description = "Owner-only: attribute the case to a specific agent. Ignored for the AGENT role (always self).", example = "CB9Y0N")
     private String agentId;

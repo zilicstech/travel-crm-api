@@ -1,0 +1,1432 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Voyra Lead Management LLD</title>
+
+<style>
+  /* Standalone copy of the review document. Self-contained: no scripts, no fonts,
+     no network. Open it in any browser, or print it to PDF. */
+  /* ── Tokens: light is the bare :root (complete palette) ─────────────────── */
+  /* ── Palette ────────────────────────────────────────────────────────────
+     Deliberately single-theme. This is a spec that gets shared and printed:
+     it must look identical on every machine regardless of the reader's OS
+     theme, so there is no dark variant. Every value is set explicitly and
+     every text/ground pair clears 4.5:1. */
+  :root {
+    color-scheme: light;
+
+    --paper:      #F1F5F5;
+    --surface:    #FFFFFF;
+    --surface-2:  #E8EFEF;
+    --line:       #C3D0D0;
+    --line-soft:  #DAE3E3;
+    --ink:        #0A1D21;
+    --ink-2:      #26393E;
+    --ink-3:      #4F6469;
+    --accent:     #0F4E5C;
+    --accent-2:   #17697C;
+    --accent-wash:#DAEAED;
+    --ok:         #1D5A3F;
+    --ok-wash:    #DAECE2;
+    --warn:       #78480A;
+    --warn-wash:  #F4E5CD;
+    --stop:       #8A2525;
+    --stop-wash:  #F6DDDD;
+    --code-bg:    #EBF1F1;
+    --shadow:     0 1px 2px rgba(10,29,33,.07), 0 8px 22px -18px rgba(10,29,33,.4);
+
+    --sans: ui-sans-serif, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --serif: Charter, "Bitstream Charter", "Iowan Old Style", Georgia, "Times New Roman", serif;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--serif);
+    font-size: 16.5px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .shell {
+    display: grid;
+    grid-template-columns: 232px minmax(0, 1fr);
+    gap: 40px;
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 0 28px 96px;
+  }
+
+  /* ── Left rail ──────────────────────────────────────────────────────────── */
+  .rail { position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto;
+          padding: 40px 0 40px; font-family: var(--sans); }
+  .rail-title { font-size: 11px; letter-spacing: .12em; text-transform: uppercase;
+                color: var(--ink-3); font-weight: 650; margin: 0 0 14px; }
+  .rail nav { display: flex; flex-direction: column; gap: 1px; }
+  .rail a { display: grid; grid-template-columns: 22px 1fr; gap: 8px; align-items: baseline;
+            text-decoration: none; color: var(--ink-2); font-size: 13.5px; line-height: 1.35;
+            padding: 6px 10px 6px 6px; border-left: 2px solid transparent; }
+  .rail a:hover { color: var(--accent); background: var(--surface-2); border-left-color: var(--line); }
+  .rail a .n { font-variant-numeric: tabular-nums; color: var(--ink-3); font-size: 11.5px; font-weight: 600; }
+  .rail a:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+  /* ── Main column ────────────────────────────────────────────────────────── */
+  main { padding-top: 40px; min-width: 0; }
+
+  .eyebrow { font-family: var(--sans); font-size: 11.5px; letter-spacing: .14em;
+             text-transform: uppercase; font-weight: 650; color: var(--accent); margin: 0 0 12px; }
+
+  h1 { font-family: var(--sans); font-size: clamp(30px, 4.4vw, 44px); line-height: 1.08;
+       letter-spacing: -.022em; font-weight: 700; margin: 0 0 14px; text-wrap: balance; }
+
+  .standfirst { font-size: 19px; line-height: 1.5; color: var(--ink-2); margin: 0 0 30px;
+                max-width: 62ch; }
+
+  h2 { font-family: var(--sans); font-size: 22px; letter-spacing: -.014em; font-weight: 680;
+       margin: 0 0 6px; text-wrap: balance; }
+  h3 { font-family: var(--sans); font-size: 15.5px; letter-spacing: -.005em; font-weight: 660;
+       margin: 28px 0 8px; }
+
+  section { padding-top: 56px; scroll-margin-top: 20px; }
+  .sec-head { display: grid; grid-template-columns: 34px 1fr; gap: 12px; align-items: start;
+              padding-bottom: 14px; margin-bottom: 22px; border-bottom: 1px solid var(--line); }
+  .sec-num { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--accent);
+             background: var(--accent-wash); border-radius: 2px; padding: 4px 0; text-align: center;
+             margin-top: 3px; font-variant-numeric: tabular-nums; }
+  .sec-sub { font-family: var(--sans); font-size: 13.5px; color: var(--ink-3); margin: 0; }
+
+  p { margin: 0 0 14px; max-width: 68ch; }
+  main a { color: var(--accent); }
+
+  /* ── Doc properties (Confluence page-properties feel) ───────────────────── */
+  .props { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+           gap: 1px; background: var(--line); border: 1px solid var(--line);
+           border-radius: 3px; overflow: hidden; margin: 0 0 12px; }
+  .prop { background: var(--surface); padding: 13px 15px; }
+  .prop dt { font-family: var(--sans); font-size: 10.5px; letter-spacing: .11em;
+             text-transform: uppercase; color: var(--ink-3); font-weight: 650; margin: 0 0 5px; }
+  .prop dd { margin: 0; font-family: var(--sans); font-size: 13.5px; color: var(--ink); line-height: 1.4; }
+
+  .pill { display: inline-flex; align-items: center; gap: 6px; font-family: var(--sans);
+          font-size: 11px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase;
+          padding: 3px 8px; border-radius: 2px; }
+  .pill.draft { background: var(--warn-wash); color: var(--warn); }
+  .pill.new   { background: var(--ok-wash);   color: var(--ok); }
+  .pill.alter { background: var(--accent-wash); color: var(--accent); }
+  .pill.open  { background: var(--stop-wash); color: var(--stop); }
+
+  /* ── Callouts ───────────────────────────────────────────────────────────── */
+  .note { border: 1px solid var(--line); border-left: 3px solid var(--accent);
+          background: var(--surface); padding: 15px 18px; margin: 20px 0; border-radius: 0 3px 3px 0;
+          box-shadow: var(--shadow); }
+  .note.rec  { border-left-color: var(--ok); }
+  .note.warn { border-left-color: var(--warn); }
+  .note-label { font-family: var(--sans); font-size: 10.5px; letter-spacing: .12em;
+                text-transform: uppercase; font-weight: 700; color: var(--accent); margin: 0 0 6px; }
+  .note.rec  .note-label { color: var(--ok); }
+  .note.warn .note-label { color: var(--warn); }
+  .note p:last-child { margin-bottom: 0; }
+
+  /* ── Principles ─────────────────────────────────────────────────────────── */
+  .principles { display: grid; grid-template-columns: repeat(auto-fit, minmax(268px, 1fr));
+                gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 3px;
+                overflow: hidden; }
+  .principle { background: var(--surface); padding: 16px 18px; }
+  .principle .tag { font-family: var(--mono); font-size: 11px; font-weight: 700; color: var(--accent);
+                    display: block; margin-bottom: 5px; }
+  .principle h4 { font-family: var(--sans); font-size: 14.5px; font-weight: 660; margin: 0 0 6px;
+                  line-height: 1.3; }
+  .principle p { font-size: 14px; color: var(--ink-2); margin: 0; line-height: 1.5; max-width: none; }
+
+  /* ── Tables ─────────────────────────────────────────────────────────────── */
+  .scroller { overflow-x: auto; border: 1px solid var(--line); border-radius: 3px;
+              background: var(--surface); margin: 18px 0; }
+  table { border-collapse: collapse; width: 100%; font-family: var(--sans); font-size: 13.5px; }
+  thead th { text-align: left; font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
+             color: var(--ink-3); font-weight: 700; padding: 10px 14px; white-space: nowrap;
+             background: var(--surface-2); border-bottom: 1px solid var(--line); }
+  tbody td { padding: 10px 14px; border-bottom: 1px solid var(--line-soft); vertical-align: top;
+             color: var(--ink-2); line-height: 1.45; }
+  tbody tr:last-child td { border-bottom: 0; }
+  tbody td:first-child { color: var(--ink); font-weight: 550; }
+  td code, th code, li code, p code { font-family: var(--mono); font-size: .88em;
+             background: var(--code-bg); padding: 1.5px 5px; border-radius: 2px; color: var(--ink); }
+  .yes { color: var(--ok); font-weight: 700; }
+  .no  { color: var(--ink-3); }
+  .cond { color: var(--warn); font-size: 12.5px; }
+
+  /* ── Schema cards ───────────────────────────────────────────────────────── */
+  .tables { display: flex; flex-direction: column; gap: 18px; }
+  .tbl { border: 1px solid var(--line); border-radius: 3px; background: var(--surface);
+         box-shadow: var(--shadow); overflow: hidden; }
+  .tbl-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+              padding: 12px 16px; background: var(--surface-2); border-bottom: 1px solid var(--line); }
+  .tbl-head .name { font-family: var(--mono); font-size: 14px; font-weight: 650; color: var(--ink); }
+  .tbl-head .why { font-family: var(--sans); font-size: 12.5px; color: var(--ink-3);
+                   margin-left: auto; text-align: right; }
+  .cols { display: grid; grid-template-columns: minmax(180px, 1.1fr) minmax(120px, .7fr) minmax(220px, 2fr);
+          font-family: var(--sans); font-size: 13px; }
+  .cols > div { padding: 8px 16px; border-bottom: 1px solid var(--line-soft); }
+  .cols > div:nth-child(3n+1) { font-family: var(--mono); font-size: 12.5px; color: var(--ink); }
+  .cols > div:nth-child(3n+2) { font-family: var(--mono); font-size: 11.5px; color: var(--ink-3);
+                                text-transform: uppercase; letter-spacing: .02em; }
+  .cols > div:nth-child(3n)   { color: var(--ink-2); line-height: 1.45; }
+  .cols .grp { grid-column: 1 / -1; background: var(--surface-2); font-family: var(--sans);
+               font-size: 10.5px; letter-spacing: .11em; text-transform: uppercase; font-weight: 700;
+               color: var(--ink-3); padding: 7px 16px; }
+  .key { display: inline-block; font-family: var(--sans); font-size: 9.5px; font-weight: 700;
+         letter-spacing: .06em; padding: 1px 5px; border-radius: 2px; margin-left: 6px;
+         vertical-align: 1.5px; background: var(--accent-wash); color: var(--accent); }
+  .key.idx { background: var(--surface-2); color: var(--ink-3); }
+  .key.js  { background: var(--warn-wash); color: var(--warn); }
+
+  /* ── Code ───────────────────────────────────────────────────────────────── */
+  pre.code { font-family: var(--mono); font-size: 12.5px; line-height: 1.62; background: var(--code-bg);
+             border: 1px solid var(--line); border-radius: 3px; padding: 14px 16px; overflow-x: auto;
+             margin: 18px 0; color: var(--ink); }
+
+  .diagram { background: var(--surface); border: 1px solid var(--line); border-radius: 3px;
+             padding: 20px; overflow-x: auto; margin: 18px 0; box-shadow: var(--shadow); }
+
+  ul.plain { margin: 0 0 16px; padding-left: 20px; max-width: 68ch; }
+  ul.plain li { margin-bottom: 7px; }
+
+  /* ── Open questions ─────────────────────────────────────────────────────── */
+  .q { border: 1px solid var(--line); border-radius: 3px; background: var(--surface);
+       padding: 18px 20px; margin-bottom: 14px; box-shadow: var(--shadow); }
+  .q-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+  .q-id { font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--stop); }
+  .q-head h3 { margin: 0; font-size: 15.5px; }
+  .q p { font-size: 14.5px; margin-bottom: 10px; }
+  .q .verdict { font-family: var(--sans); font-size: 13.5px; color: var(--ink-2);
+                border-top: 1px solid var(--line-soft); padding-top: 10px; margin: 0; }
+  .q .verdict strong { color: var(--ok); }
+
+  footer { margin-top: 64px; padding-top: 20px; border-top: 1px solid var(--line);
+           font-family: var(--sans); font-size: 13px; color: var(--ink-3); }
+
+  @media (max-width: 900px) {
+    .shell { grid-template-columns: 1fr; gap: 0; padding: 0 20px 72px; }
+    .rail { position: static; height: auto; padding: 28px 0 0; }
+    .rail nav { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0; }
+    .cols { grid-template-columns: 1fr; }
+    .cols > div { border-bottom: 0; padding: 3px 16px; }
+    .cols > div:nth-child(3n) { padding-bottom: 12px; border-bottom: 1px solid var(--line-soft); }
+  }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+  /* ── Relationship map (inline SVG) ──────────────────────────────────────── */
+  .map { width: 100%; height: auto; min-width: 760px; display: block; }
+  .map .box       { fill: var(--surface);   stroke: var(--line); stroke-width: 1; }
+  .map .box.hub   { fill: var(--accent-wash); stroke: var(--accent); stroke-width: 1.5; }
+  .map .box.fresh { fill: var(--ok-wash);   stroke: var(--ok); }
+  .map .nm        { font-family: var(--mono); font-size: 11.5px; fill: var(--ink); }
+  .map .sub       { font-family: var(--sans); font-size: 9.5px;  fill: var(--ink-3); }
+  .map .edge      { fill: none; stroke: var(--line); stroke-width: 1.25; }
+  .map .edge.soft { stroke: var(--ink-3); stroke-dasharray: 3 3; opacity: .75; }
+  .map .card      { font-family: var(--mono); font-size: 9px; fill: var(--ink-3); }
+  .map .head      { font-family: var(--sans); font-size: 9.5px; font-weight: 700; fill: var(--ink-3);
+                    letter-spacing: .1em; }
+  .legend { display: flex; gap: 20px; flex-wrap: wrap; font-family: var(--sans); font-size: 12px;
+            color: var(--ink-3); margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line-soft); }
+  .legend span { display: inline-flex; align-items: center; gap: 7px; }
+  .swatch { display: inline-block; flex: 0 0 auto; width: 22px; height: 10px;
+           border-radius: 2px; border: 1px solid var(--line); }
+  .swatch.hub { background: var(--accent-wash); border-color: var(--accent); }
+  .swatch.fresh { background: var(--ok-wash); border-color: var(--ok); }
+  .swatch.line { height: 0; border: 0; border-top: 1.5px solid var(--line); }
+  .swatch.dash { height: 0; border: 0; border-top: 1.5px dashed var(--ink-3); }
+
+  /* ── UML class cards ────────────────────────────────────────────────────── */
+  .classes { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+  .uml { border: 1px solid var(--line); border-radius: 3px; background: var(--surface);
+         box-shadow: var(--shadow); overflow: hidden; display: flex; flex-direction: column; }
+  .uml.hub { border-color: var(--accent); }
+  .uml-name { font-family: var(--mono); font-size: 13px; font-weight: 650; color: var(--ink);
+              background: var(--surface-2); padding: 9px 14px; border-bottom: 1px solid var(--line);
+              display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .uml.hub .uml-name { background: var(--accent-wash); color: var(--accent); }
+  .uml-fields { padding: 10px 14px; font-family: var(--mono); font-size: 11.5px; line-height: 1.85;
+                color: var(--ink-2); flex: 1; }
+  .uml-fields b { color: var(--ink); font-weight: 600; }
+  .uml-fields i { font-style: normal; color: var(--ink-3); }
+  .uml-fields .m { color: var(--accent); font-family: var(--sans); font-size: 9.5px; font-weight: 700;
+                   letter-spacing: .04em; }
+  .uml-fields .m.j { color: var(--warn); }
+  .uml-fields .grp { display: block; font-family: var(--sans); font-size: 9.5px; letter-spacing: .1em;
+                     text-transform: uppercase; font-weight: 700; color: var(--ink-3);
+                     margin: 9px 0 3px; }
+  .uml-fields .grp:first-child { margin-top: 0; }
+  .uml-rel { border-top: 1px solid var(--line-soft); background: var(--surface-2); padding: 9px 14px;
+             font-family: var(--sans); font-size: 11.5px; color: var(--ink-3); line-height: 1.6; }
+  .uml-rel code { font-size: 11px; }
+
+  /* ── Standalone diagrams (no Mermaid) ───────────────────────────────────── */
+  .flow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+          font-family: var(--sans); font-size: 12.5px; }
+  .flow .node { border: 1px solid var(--line); background: var(--surface-2); color: var(--ink);
+                border-radius: 2px; padding: 6px 11px; font-family: var(--mono); font-size: 11.5px;
+                white-space: nowrap; }
+  .flow .node.term { border-color: var(--ok); color: var(--ok); background: var(--ok-wash); }
+  .flow .node.stop { border-color: var(--stop); color: var(--stop); background: var(--stop-wash); }
+  .flow .arrow { color: var(--ink-3); font-family: var(--mono); }
+  .flow .arrow em { font-style: normal; font-family: var(--sans); font-size: 11px; color: var(--accent); }
+  .flow-note { font-family: var(--sans); font-size: 12.5px; color: var(--ink-3); margin: 14px 0 0; }
+
+  @media print {
+    .rail { display: none; }
+    .shell { display: block; max-width: none; padding: 0; }
+    section { page-break-inside: auto; padding-top: 28px; }
+    .note, .q, .tbl, .uml, .principle { page-break-inside: avoid; }
+    .map { min-width: 0; }
+    body { background: #fff; font-size: 10.5pt; }
+  }
+</style>
+</head>
+<body>
+
+<div class="shell">
+
+  <aside class="rail">
+    <p class="rail-title">On this page</p>
+    <nav>
+      <a href="#principles"><span class="n">01</span><span>Design principles</span></a>
+      <a href="#map"><span class="n">02</span><span>Class model</span></a>
+      <a href="#service"><span class="n">03</span><span>The service table</span></a>
+      <a href="#followups"><span class="n">04</span><span>Follow-ups</span></a>
+      <a href="#money"><span class="n">05</span><span>Money &amp; paper trail</span></a>
+      <a href="#derived"><span class="n">06</span><span>Derived vs stored</span></a>
+      <a href="#access"><span class="n">07</span><span>Access control</span></a>
+      <a href="#queries"><span class="n">08</span><span>Query catalog</span></a>
+      <a href="#writes"><span class="n">09</span><span>Write obligations</span></a>
+      <a href="#migration"><span class="n">10</span><span>Migration plan</span></a>
+      <a href="#questions"><span class="n">11</span><span>Open questions</span></a>
+      <a href="#scope"><span class="n">12</span><span>Out of scope</span></a>
+    </nav>
+  </aside>
+
+  <main>
+
+    <p class="eyebrow">Low-Level Design · Backend</p>
+    <h1>Lead Management</h1>
+    <p class="standfirst">
+      The schema, entities and relationships behind the whole lead module — travellers,
+      multi-instance services, follow-ups, costing, vouchers and the timeline. Denormalized on
+      purpose: every screen in the product resolves to one table, one <code>WHERE</code>, zero joins.
+    </p>
+
+    <dl class="props">
+      <div class="prop"><dt>Status</dt><dd><span class="pill draft">Draft · for review</span></dd></div>
+      <div class="prop"><dt>Author</dt><dd>Winston — System Architect</dd></div>
+      <div class="prop"><dt>Target</dt><dd>travel-crm-backend · Spring Boot 3.3 / Postgres</dd></div>
+      <div class="prop"><dt>Consumed by</dt><dd>travel-crm · Next.js 15</dd></div>
+      <div class="prop"><dt>Isolation</dt><dd>Schema-per-tenant (<code>tenant_&lt;id&gt;</code>)</dd></div>
+      <div class="prop"><dt>Blocked on</dt><dd><span class="pill open">5 open questions</span></dd></div>
+    </dl>
+
+    <div class="note">
+      <p class="note-label">How to read this</p>
+      <p>
+        Every field here traces to something the UI already renders — the shapes come from
+        <code>lib/mockData.ts</code>, the writes from <code>lib/leadActions.ts</code>, the permissions
+        from <code>lib/session.ts</code>. Anything the UI does not render is not in this design.
+        This <strong>extends</strong> the existing tenant schema rather than replacing it: the
+        <code>client → member → lead_members</code> spine is untouched.
+      </p>
+    </div>
+
+    <!-- ── 01 ─────────────────────────────────────────────────────────────── -->
+    <section id="principles">
+      <div class="sec-head">
+        <div class="sec-num">01</div>
+        <div>
+          <h2>Design principles</h2>
+          <p class="sec-sub">Eight rules the rest of the document obeys. Breaking one is a design change, not a detail.</p>
+        </div>
+      </div>
+
+      <div class="principles">
+        <div class="principle">
+          <span class="tag">P1</span>
+          <h4>One screen, one table, zero joins</h4>
+          <p>Every list view answers to a single <code>SELECT</code> with a <code>WHERE</code> and an <code>ORDER BY</code>. No joins, no subselects, no stitching in the app layer.</p>
+        </div>
+        <div class="principle">
+          <span class="tag">P2</span>
+          <h4>Denormalize names, never facts</h4>
+          <p>A row snapshots anything it shows but does not own — <code>client_name</code>, <code>agent_name</code>, <code>service_label</code>. Renames bulk-update every snapshot in the same transaction.</p>
+        </div>
+        <div class="principle">
+          <span class="tag">P3</span>
+          <h4>Money is recomputed, never trusted</h4>
+          <p>Stored totals exist for query speed only. Every write recomputes them from current lines. A stored value is never an input to a calculation.</p>
+        </div>
+        <div class="principle">
+          <span class="tag">P4</span>
+          <h4>One wide table, not one per variant</h4>
+          <p>All four service types live in one table with nullable per-type columns. Four tables or a supertype would cost a join on the most-loaded screen in the product.</p>
+        </div>
+        <div class="principle">
+          <span class="tag">P5</span>
+          <h4>JSONB only where the shape repeats</h4>
+          <p>Exactly two JSONB columns exist: flight sectors and per-traveller visa ticks. Everything else is typed. JSONB is an escape hatch, not the default.</p>
+        </div>
+        <div class="principle">
+          <span class="tag">P6</span>
+          <h4>Derived data is computed</h4>
+          <p>The trip schedule, the visa roll-up, margins — all computed on read. A column may only be stored if it removes a join from a named list screen.</p>
+        </div>
+        <div class="principle">
+          <span class="tag">P7</span>
+          <h4>Nothing a customer could dispute is deleted</h4>
+          <p>Travellers drop with a reason, follow-ups complete with a timestamp, services cancel. Hard deletes exist only for correctable clerical entries.</p>
+        </div>
+        <div class="principle">
+          <span class="tag">P8</span>
+          <h4>Every detail field is optional</h4>
+          <p>The agent takes an enquiry on a phone call and knows <em>which</em> services are wanted, rarely more. Completeness is gated at proposal time, never by <code>NOT NULL</code>.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── 02 ─────────────────────────────────────────────────────────────── -->
+    <section id="map">
+      <div class="sec-head">
+        <div class="sec-num">02</div>
+        <div>
+          <h2>Class model</h2>
+          <p class="sec-sub">Four new tables, five altered. Relationship map, class-by-class fields, and how each UI field maps to a column.</p>
+        </div>
+      </div>
+
+      <div class="diagram">
+        <svg class="map" viewBox="0 0 900 486" role="img"
+             aria-label="Relationship map: client and member feed the lead; the lead owns seven child tables; lead_service optionally scopes four of them.">
+
+          <text class="head" x="16"  y="26">THE PARTY SPINE</text>
+          <text class="head" x="452" y="26">OWNED BY THE LEAD</text>
+
+          <!-- edges: party spine -->
+          <path class="edge" d="M166,82 H226"/>
+          <path class="edge" d="M91,104 V170"/>
+          <path class="edge" d="M301,104 V170"/>
+          <path class="edge" d="M166,192 H226"/>
+
+          <!-- edges: lead → its children, routed on a bus at x=410 -->
+          <path class="edge" d="M376,82 H410 V63  H452"/>
+          <path class="edge" d="M376,82 H410 V131 H452"/>
+          <path class="edge" d="M376,82 H410 V191 H452"/>
+          <path class="edge" d="M376,82 H410 V251 H452"/>
+          <path class="edge" d="M376,82 H410 V311 H452"/>
+          <path class="edge" d="M376,82 H410 V371 H452"/>
+          <path class="edge" d="M376,82 H410 V431 H452"/>
+
+          <!-- edges: lead_service → the four it may scope, bus at x=712 -->
+          <path class="edge soft" d="M662,63 H712 V191 H662"/>
+          <path class="edge soft" d="M662,63 H712 V251 H662"/>
+          <path class="edge soft" d="M662,63 H712 V311 H662"/>
+          <path class="edge soft" d="M662,63 H712 V431 H662"/>
+
+          <!-- party spine -->
+          <rect class="box" x="16" y="60" width="150" height="44" rx="2"/>
+          <text class="nm"  x="30" y="80">client</text>
+          <text class="sub" x="30" y="94">B2C household · B2B group</text>
+
+          <rect class="box" x="16" y="170" width="150" height="44" rx="2"/>
+          <text class="nm"  x="30" y="190">member</text>
+          <text class="sub" x="30" y="204">a person · no age column</text>
+
+          <rect class="box hub" x="226" y="60" width="150" height="44" rx="2"/>
+          <text class="nm"  x="240" y="80">lead</text>
+          <text class="sub" x="240" y="94">one enquiry</text>
+
+          <rect class="box" x="226" y="170" width="150" height="44" rx="2"/>
+          <text class="nm"  x="240" y="190">lead_members</text>
+          <text class="sub" x="240" y="204">traveller manifest</text>
+
+          <!-- children -->
+          <rect class="box fresh" x="452" y="40" width="210" height="46" rx="2"/>
+          <text class="nm"  x="466" y="60">lead_service</text>
+          <text class="sub" x="466" y="76">0..n per type · all 4 types, 1 table</text>
+
+          <rect class="box fresh" x="452" y="112" width="210" height="38" rx="2"/>
+          <text class="nm"  x="466" y="130">lead_follow_up</text>
+          <text class="sub" x="466" y="143">scoped to a service TYPE</text>
+
+          <rect class="box" x="452" y="172" width="210" height="38" rx="2"/>
+          <text class="nm"  x="466" y="190">lead_proposal</text>
+          <text class="sub" x="466" y="203">quoted lines · flat on the lead</text>
+
+          <rect class="box fresh" x="452" y="232" width="210" height="38" rx="2"/>
+          <text class="nm"  x="466" y="250">lead_voucher</text>
+          <text class="sub" x="466" y="263">PNRs · confirmations</text>
+
+          <rect class="box" x="452" y="292" width="210" height="38" rx="2"/>
+          <text class="nm"  x="466" y="310">client_invoice</text>
+          <text class="sub" x="466" y="323">billing · lead_id added</text>
+
+          <rect class="box" x="452" y="352" width="210" height="38" rx="2"/>
+          <text class="nm"  x="466" y="370">lead_notes</text>
+          <text class="sub" x="466" y="383">human-authored log</text>
+
+          <rect class="box" x="452" y="412" width="210" height="38" rx="2"/>
+          <text class="nm"  x="466" y="430">lead_timeline</text>
+          <text class="sub" x="466" y="443">system log · append-only</text>
+
+          <!-- cardinalities -->
+          <text class="card" x="186" y="78">1 : n</text>
+          <text class="card" x="98"  y="141">1 : n</text>
+          <text class="card" x="308" y="141">1 : n</text>
+          <text class="card" x="186" y="188">1 : n</text>
+          <text class="card" x="418" y="55">1 : n</text>
+          <text class="card" x="724" y="60">0 : n</text>
+
+          <text class="sub" x="712" y="470" text-anchor="end">dashed = optional service_id</text>
+        </svg>
+
+        <div class="legend">
+          <span><i class="swatch hub"></i> the lead — every child hangs off it</span>
+          <span><i class="swatch fresh"></i> new table</span>
+          <span><i class="swatch line"></i> always set</span>
+          <span><i class="swatch dash"></i> nullable <code>service_id</code></span>
+        </div>
+      </div>
+
+      <p>
+        <strong>Ownership rule.</strong> <code>lead_id</code> is on every child row, always.
+        <code>service_id</code> is a <em>refinement</em>, never a replacement — cascade, agent-scoping
+        and tenant queries all travel through <code>lead_id</code>, so a child row is never orphaned by
+        a service being removed. That nullability is load-bearing: an agency fee, a courier charge or
+        an invoice covering flight-plus-hotel together has no single owning service, and forcing one
+        would either invent a fake service or lose the charge.
+      </p>
+
+      <h3>The classes</h3>
+      <p>
+        One card per persisted class, showing the fields that carry meaning. <span class="key">PK</span>
+        marks the identity, <span class="key idx">idx</span> an index, <span class="key js">jsonb</span>
+        a JSON column. Audit columns (<code>created_at</code>, <code>created_by</code>,
+        <code>modified_at</code>, <code>modified_by</code>) are on every table and are not repeated below.
+      </p>
+
+      <div class="classes">
+
+        <div class="uml">
+          <div class="uml-name">client</div>
+          <div class="uml-fields">
+            <b>id</b> <i>: varchar(36)</i> <span class="m">PK</span><br>
+            identifier <i>: varchar(150)</i> <span class="m">UQ</span><br>
+            name <i>: varchar(150)</i><br>
+            type <i>: B2C | B2B</i><br>
+            agent_id · agent_name <i>: varchar</i> <span class="m">SNAPSHOT</span><br>
+            is_active <i>: boolean</i>
+          </div>
+          <div class="uml-rel">→ <code>member</code> 1:n · → <code>lead</code> 1:n<br>
+            Deduplicated on <code>identifier</code> — phone for B2C, group handle for B2B.</div>
+        </div>
+
+        <div class="uml">
+          <div class="uml-name">member</div>
+          <div class="uml-fields">
+            <b>member_id</b> <i>: varchar(36)</i> <span class="m">PK</span><br>
+            client_id <i>: varchar(36)</i> <span class="m">IDX</span><br>
+            name · email · phone <i>: varchar</i><br>
+            type <i>: CLIENT | MEMBER</i><br>
+            dob <i>: date</i><br>
+            relation · gender · nationality <i>: varchar</i><br>
+            passport_number · passport_expiry<br>
+            is_active <i>: boolean</i>
+          </div>
+          <div class="uml-rel">→ <code>lead_members</code> 1:n · → <code>member_documents</code> 1:n<br>
+            <strong>No age column.</strong> Pax type is <code>dob</code> against the travel date.</div>
+        </div>
+
+        <div class="uml hub">
+          <div class="uml-name">lead <span class="pill alter">Alter</span></div>
+          <div class="uml-fields">
+            <span class="grp">Identity</span>
+            <b>id</b> <i>: varchar(36)</i> <span class="m">PK</span><br>
+            client_id · client_name · client_type <span class="m">SNAPSHOT</span><br>
+            destination <i>: varchar(150)</i><br>
+            <span class="grp">Enquiry</span>
+            current_status <i>: LeadStatus</i> <span class="m">IDX</span><br>
+            source · priority · budget <i>: varchar</i><br>
+            categories <i>: text[]</i><br>
+            adults · kids · kid_ages <i>: int · int[]</i><br>
+            lead_description · preferences <i>: text</i><br>
+            special_notes <i>: text</i> <span class="m">NEW</span><br>
+            travel_preferences <i>: text[]</i> <span class="m">NEW</span><br>
+            <span class="grp">Derived</span>
+            travel_date_from · travel_date_to <i>: date</i><br>
+            quoted_net_total · quoted_selling_total <span class="m">NEW</span><br>
+            open_follow_ups · service_count <i>: int</i> <span class="m">NEW</span><br>
+            follow_up_date <i>: date</i> <span class="m">REDEFINED</span><br>
+            <span class="grp">Ownership</span>
+            assigned_to · assigned_agent_name <span class="m">IDX</span><br>
+            public_proposal_token <i>: varchar(32)</i> <span class="m">UQ</span><br>
+            lost_reason <i>: varchar(255)</i>
+          </div>
+          <div class="uml-rel">→ 7 child tables, all keyed on <code>lead_id</code>.<br>
+            Every derived field is recomputed on write — never accepted from the client.</div>
+        </div>
+
+        <div class="uml">
+          <div class="uml-name">lead_members</div>
+          <div class="uml-fields">
+            <b>id</b> <i>: varchar(36)</i> <span class="m">PK</span><br>
+            lead_id · member_id <span class="m">UQ PAIR</span><br>
+            client_id <i>: varchar(36)</i><br>
+            member_name <i>: varchar(150)</i> <span class="m">SNAPSHOT</span><br>
+            status <i>: TENTATIVE | CONFIRMED | DROPPED</i><br>
+            dropped_reason <i>: varchar(255)</i><br>
+            fare_class <i>: ADULT | CHILD | INFANT</i> <span class="m">NEW</span>
+          </div>
+          <div class="uml-rel">A real entity, not a link table. A traveller leaves by moving to
+            <code>DROPPED</code> — never by deleting the row, or the documents collected for them vanish.</div>
+        </div>
+
+        <div class="uml hub">
+          <div class="uml-name">lead_service <span class="pill new">New</span></div>
+          <div class="uml-fields">
+            <span class="grp">Common</span>
+            <b>id</b> <i>: varchar(36)</i> <span class="m">PK</span><br>
+            lead_id <i>: varchar(36)</i> <span class="m">IDX</span><br>
+            client_id · client_name <span class="m">SNAPSHOT</span><br>
+            lead_destination · lead_status <span class="m">SNAPSHOT</span><br>
+            type <i>: FLIGHT | HOTEL | VISA | TRANSFER</i> <span class="m">IDX</span><br>
+            status <i>: ServiceStatus</i> <span class="m">IDX</span><br>
+            label <i>: varchar(200)</i> <span class="m">DERIVED</span><br>
+            sort_order <i>: int</i><br>
+            assigned_agent_id · assigned_agent_name <span class="m">IDX</span><br>
+            preferences <i>: text[]</i> · due_date <i>: date</i><br>
+            date_from · date_to <i>: date</i> <span class="m">DERIVED</span><br>
+            net_total · selling_total <i>: numeric</i> <span class="m">DERIVED</span><br>
+            <span class="grp">Flight only</span>
+            flight_trip_type · flight_cabin<br>
+            flight_sectors <span class="m j">JSONB</span> <i>[{from,to,date}]</i><br>
+            <span class="grp">Hotel only</span>
+            hotel_city · hotel_rooms<br>
+            hotel_check_in · hotel_check_out · hotel_nights<br>
+            <span class="grp">Visa only</span>
+            visa_country · visa_source_city · visa_source_country<br>
+            visa_intended_travel_date · visa_appointment_date<br>
+            visa_checklists <span class="m j">JSONB</span> <i>{memberId → ticks}</i><br>
+            <span class="grp">Transfer only</span>
+            transfer_pickup · transfer_dropoff<br>
+            transfer_date · transfer_time · transfer_vehicle_type<br>
+            transfer_passengers <i>: int</i>
+          </div>
+          <div class="uml-rel">Optionally scopes <code>lead_proposal</code>,
+            <code>lead_voucher</code>, <code>client_invoice</code>, <code>lead_timeline</code>.<br>
+            One row per instance. A lead may hold three flights and two hotels.</div>
+        </div>
+
+        <div class="uml">
+          <div class="uml-name">lead_follow_up <span class="pill new">New</span></div>
+          <div class="uml-fields">
+            <b>id</b> <i>: varchar(36)</i> <span class="m">PK</span><br>
+            lead_id <i>: varchar(36)</i> <span class="m">IDX</span><br>
+            client_name · lead_destination <span class="m">SNAPSHOT</span><br>
+            <b>service_type</b> <i>: ServiceType | null</i><br>
+            due_date <i>: date</i> <span class="m">IDX</span><br>
+            note <i>: varchar(500)</i><br>
+            assigned_agent_id · assigned_agent_name <span class="m">IDX</span><br>
+            status <i>: OPEN | DONE</i><br>
+            completed_at <i>: timestamp</i>
+          </div>
+          <div class="uml-rel">Scoped to a service <strong>type</strong>, never an instance.
+            <code>null</code> means the commitment is about the trip as a whole.</div>
+        </div>
+
+        <div class="uml">
+          <div class="uml-name">lead_proposal <span class="pill alter">Alter</span></div>
+          <div class="uml-fields">
+            <b>id</b> <i>: varchar(36)</i> <span class="m">PK</span><br>
+            lead_id <i>: varchar(36)</i> <span class="m">IDX</span><br>
+            service_id · service_label <i>: nullable</i> <span class="m">NEW</span><br>
+            type <i>: ProposalItemType</i><br>
+            description · supplier <i>: varchar</i><br>
+            net_cost · selling_price <i>: numeric(19,2)</i>
+          </div>
+          <div class="uml-rel">Flat on the lead, never nested in a service — one invoice routinely
+            covers flight and hotel together. <code>net_cost</code> never reaches the public surface.</div>
+        </div>
+
+        <div class="uml">
+          <div class="uml-name">lead_voucher <span class="pill new">New</span></div>
+          <div class="uml-fields">
+            <b>id</b> <i>: varchar(36)</i> <span class="m">PK</span><br>
+            lead_id <i>: varchar(36)</i> <span class="m">IDX</span><br>
+            service_id · service_label <i>: nullable</i><br>
+            supplier <i>: varchar(150)</i><br>
+            reference_number <i>: varchar(100)</i><br>
+            voucher_date <i>: date</i><br>
+            file_key <i>: varchar(500)</i><br>
+            notes <i>: text</i>
+          </div>
+          <div class="uml-rel"><code>file_key</code> is opaque — no filesystem path ever reaches
+            business logic.</div>
+        </div>
+
+        <div class="uml">
+          <div class="uml-name">client_invoice <span class="pill alter">Alter</span></div>
+          <div class="uml-fields">
+            <b>id</b> <i>: varchar(36)</i> <span class="m">PK</span><br>
+            client_id · client_name <span class="m">SNAPSHOT</span><br>
+            lead_id <i>: nullable</i> <span class="m">NEW IDX</span><br>
+            service_id · service_label <i>: nullable</i> <span class="m">NEW</span><br>
+            description <i>: varchar(255)</i> <span class="m">NEW</span><br>
+            amount · gst · total_with_gst <i>: numeric</i> <span class="m">DERIVED</span><br>
+            amount_paid <i>: numeric</i> <i>cumulative</i><br>
+            status <i>: DRAFT…OVERDUE</i> <span class="m">DERIVED</span><br>
+            invoice_date · due_date <i>: date</i>
+          </div>
+          <div class="uml-rel">A lead invoice <em>is</em> a client invoice that names its lead.
+            <code>lead_id</code> null = raised outside any lead. <a href="#questions">See Q1.</a></div>
+        </div>
+
+        <div class="uml">
+          <div class="uml-name">lead_timeline <span class="pill alter">Alter</span></div>
+          <div class="uml-fields">
+            <b>id</b> <i>: varchar(36)</i> <span class="m">PK</span><br>
+            lead_id <i>: varchar(36)</i> <span class="m">IDX</span><br>
+            service_id <i>: nullable</i> <span class="m">NEW IDX</span><br>
+            event_type <i>: TimelineEventType</i><br>
+            from_status · to_status <i>: varchar(20)</i><br>
+            actor_agent_id · actor_name <span class="m">SNAPSHOT</span><br>
+            description <i>: varchar(500)</i>
+          </div>
+          <div class="uml-rel">Append-only, system-written. <strong>No client-facing write endpoint.</strong>
+            One row per state change, same transaction as the change.</div>
+        </div>
+
+        <div class="uml">
+          <div class="uml-name">lead_notes</div>
+          <div class="uml-fields">
+            <b>id</b> <i>: varchar(36)</i> <span class="m">PK</span><br>
+            lead_id <i>: varchar(36)</i> <span class="m">IDX</span><br>
+            author_agent_id · author_name <span class="m">SNAPSHOT</span><br>
+            text <i>: text</i>
+          </div>
+          <div class="uml-rel">Human-authored, editable by its author. Deliberately separate from
+            the timeline.</div>
+        </div>
+
+        <div class="uml">
+          <div class="uml-name">agency_setting <span class="pill new">New</span></div>
+          <div class="uml-fields">
+            <b>id</b> <i>: varchar(36)</i> <span class="m">PK</span><br>
+            kind <i>: LEAD_SOURCE | TRAVEL_CATEGORY |</i><br>
+            <i>&nbsp;&nbsp;&nbsp;&nbsp;DOCUMENT_TYPE | SERVICE_PREFERENCE</i> <span class="m">IDX</span><br>
+            service_type <i>: nullable</i><br>
+            name <i>: varchar(150)</i><br>
+            is_active · is_default <i>: boolean</i><br>
+            sort_order <i>: int</i>
+          </div>
+          <div class="uml-rel">Replaces the browser <code>localStorage</code> config.
+            <code>service_type</code> is set only for preferences — "Window Seat" is a flight question.</div>
+        </div>
+
+      </div>
+
+      <h3>Field mapping — UI type to column</h3>
+      <p>
+        What the frontend calls a field today, and where it lands. Read this alongside
+        <code>travel-crm/lib/mockData.ts</code>; the left column is the TypeScript name the components
+        already use, so the API contract can keep those names and the component layer need not change.
+      </p>
+      <div class="scroller">
+        <table>
+          <thead><tr><th>UI type · field</th><th>Column</th><th>Note</th></tr></thead>
+          <tbody>
+            <tr><td><code>Lead.travellers[]</code></td><td><code>lead_members</code> rows</td><td>Array on the lead becomes rows keyed by <code>lead_id</code>.</td></tr>
+            <tr><td><code>Lead.services[]</code></td><td><code>lead_service</code> rows</td><td>Same. Optional in TS only because the seed predates services.</td></tr>
+            <tr><td><code>Lead.specialNotes</code></td><td><code>lead.special_notes</code></td><td>Direct.</td></tr>
+            <tr><td><code>Lead.travelPreferences[]</code></td><td><code>lead.travel_preferences</code></td><td>Native <code>text[]</code>, not a join table.</td></tr>
+            <tr><td><code>Lead.travelDateFrom/To</code></td><td><code>lead.travel_date_from/to</code></td><td>Derived from the services' date windows, excluding cancelled.</td></tr>
+            <tr><td><code>Lead.date</code></td><td><code>lead.created_at</code></td><td>Rename at the DTO boundary.</td></tr>
+            <tr><td><code>Traveller.memberId</code></td><td><code>lead_members.member_id</code></td><td>Direct.</td></tr>
+            <tr><td><code>Traveller.fareClass</code></td><td><code>lead_members.fare_class</code></td><td>Recomputed from <code>dob</code> on every write; stored for list speed.</td></tr>
+            <tr><td><code>Traveller.visaChecklist</code></td><td>— <span class="pill open">removed</span></td><td>Moved to <code>lead_service.visa_checklists</code>. Deprecated in the UI already. <a href="#questions">Q2.</a></td></tr>
+            <tr><td><code>LeadService.details.sectors[]</code></td><td><code>flight_sectors</code> <span class="key js">jsonb</span></td><td>Shape preserved exactly: <code>{from, to, date}</code>.</td></tr>
+            <tr><td><code>HotelDetails.checkIn/checkOut/nights/rooms/city</code></td><td><code>hotel_*</code></td><td>Flat columns, one per field.</td></tr>
+            <tr><td><code>VisaDetails.travellerChecklists</code></td><td><code>visa_checklists</code> <span class="key js">jsonb</span></td><td>Same <code>{memberId → ticks}</code> map. Read through one accessor, never directly.</td></tr>
+            <tr><td><code>TransferDetails.time</code></td><td><code>transfer_time varchar(5)</code></td><td>Local clock <code>HH:mm</code>, deliberately not a timestamp.</td></tr>
+            <tr><td><code>LeadService.preferences[]</code></td><td><code>lead_service.preferences</code></td><td>By <strong>name</strong>, not id — a deleted preference still reads on old leads.</td></tr>
+            <tr><td><code>FollowUp.serviceType</code></td><td><code>lead_follow_up.service_type</code></td><td>Was <code>serviceId</code>. Type-scoped is the current design.</td></tr>
+            <tr><td><code>ProposalItem.serviceId</code></td><td><code>lead_proposal.service_id</code></td><td>Nullable = trip-level charge.</td></tr>
+            <tr><td><code>BookingVoucher.*</code></td><td><code>lead_voucher.*</code></td><td><code>referenceNumber → reference_number</code>, <code>fileUrl → file_key</code>.</td></tr>
+            <tr><td><code>LeadInvoice.*</code></td><td><code>client_invoice.*</code></td><td>Folded into the existing invoice table. <a href="#questions">Q1.</a></td></tr>
+            <tr><td><code>TimelineEvent.actor / actorId</code></td><td><code>actor_name / actor_agent_id</code></td><td>Direct.</td></tr>
+            <tr><td><code>Agent.manageableServices[]</code></td><td><code>public.agent.manageable_services</code></td><td>The entire access model lives in this one array.</td></tr>
+            <tr><td><code>Itinerary</code> / Trip Schedule</td><td>— <em>computed</em></td><td>No table. Derived from the services' dated events on read.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>What changes, at a glance</h3>
+      <div class="scroller">
+        <table>
+          <thead><tr><th>Table</th><th>Change</th><th>Carries</th></tr></thead>
+          <tbody>
+            <tr><td><code>lead_service</code></td><td><span class="pill new">New</span></td><td>Every service instance on every lead — all four types, one row each</td></tr>
+            <tr><td><code>lead_follow_up</code></td><td><span class="pill new">New</span></td><td>Dated commitments, scoped to a service <em>type</em> or to the trip</td></tr>
+            <tr><td><code>lead_voucher</code></td><td><span class="pill new">New</span></td><td>PNRs, hotel confirmations, visa file numbers</td></tr>
+            <tr><td><code>agency_setting</code></td><td><span class="pill new">New</span></td><td>Lead sources, categories, document types, per-service preferences — replaces browser <code>localStorage</code></td></tr>
+            <tr><td><code>lead</code></td><td><span class="pill alter">Alter</span></td><td>+6 columns; <code>follow_up_date</code> redefined as derived</td></tr>
+            <tr><td><code>lead_proposal</code></td><td><span class="pill alter">Alter</span></td><td>+<code>service_id</code>, +<code>service_label</code></td></tr>
+            <tr><td><code>lead_timeline</code></td><td><span class="pill alter">Alter</span></td><td>+<code>service_id</code> — a service card shows its own history</td></tr>
+            <tr><td><code>client_invoice</code></td><td><span class="pill alter">Alter</span></td><td>+<code>lead_id</code>, +<code>service_id</code>, +<code>description</code></td></tr>
+            <tr><td><code>agent</code> <span class="key idx">public</span></td><td><span class="pill alter">Alter</span></td><td>+<code>manageable_services</code> — the entire access model</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Changes to <code>lead</code></h3>
+      <div class="scroller">
+        <table>
+          <thead><tr><th>Column</th><th>Type</th><th>Why it exists</th></tr></thead>
+          <tbody>
+            <tr><td><code>special_notes</code></td><td><code>TEXT</code></td><td>Trip-wide remarks from the create-lead wizard. Services no longer carry their own requirements text — one remark visible to everyone replaced it.</td></tr>
+            <tr><td><code>travel_preferences</code></td><td><code>TEXT[]</code></td><td>Trip-level preferences, distinct from the per-service ones. Native array, same as the existing <code>categories</code>.</td></tr>
+            <tr><td><code>quoted_net_total</code><br><code>quoted_selling_total</code></td><td><code>NUMERIC(19,2)</code></td><td>P3 snapshot. Leads list shows trip value with no join. Recomputed on every proposal write <em>and</em> on service status change — cancelling a service must stop its lines counting.</td></tr>
+            <tr><td><code>open_follow_ups</code></td><td><code>INTEGER</code></td><td>Overdue badge on the leads list, no join.</td></tr>
+            <tr><td><code>service_count</code></td><td><code>INTEGER</code></td><td>The "3 services" chip.</td></tr>
+            <tr><td><code>follow_up_date</code></td><td><code>DATE</code> <span class="key">redefined</span></td><td>No longer written by anyone. Now the earliest due date among <code>OPEN</code> follow-ups, re-derived on every follow-up write. A lead now holds many follow-ups; one date cannot represent them.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ── 03 ─────────────────────────────────────────────────────────────── -->
+    <section id="service">
+      <div class="sec-head">
+        <div class="sec-num">03</div>
+        <div>
+          <h2><code>lead_service</code> — the multi-instance table</h2>
+          <p class="sec-sub">The centre of the design. One row per instance, any number per type per lead.</p>
+        </div>
+      </div>
+
+      <div class="tables">
+        <div class="tbl">
+          <div class="tbl-head">
+            <span class="name">lead_service</span>
+            <span class="pill new">New</span>
+            <span class="why">~24 nullable columns, 2 JSONB, 0 joins</span>
+          </div>
+          <div class="cols">
+            <div class="grp">Identity &amp; lead context</div>
+            <div>id<span class="key">PK</span></div><div>varchar(36)</div><div>Stable identity behind deep links, vouchers and quoted lines.</div>
+            <div>lead_id<span class="key idx">idx</span></div><div>varchar(36)</div><div>Owning lead. Always set.</div>
+            <div>client_id · client_name</div><div>varchar</div><div>Snapshot (P2), so the cross-lead Services board needs no join.</div>
+            <div>lead_destination · lead_status</div><div>varchar</div><div>Same reason — the board shows trip context per row.</div>
+            <div>type</div><div>varchar(20)</div><div><code>FLIGHT</code> · <code>HOTEL</code> · <code>VISA</code> · <code>TRANSFER</code></div>
+            <div>status</div><div>varchar(20)</div><div><code>NOT_STARTED</code> · <code>IN_PROGRESS</code> · <code>AWAITING_CLIENT</code> · <code>CONFIRMED</code> · <code>CANCELLED</code></div>
+            <div>label</div><div>varchar(200)</div><div>Derived instance name — "Hotel — Phuket". Stored, see below.</div>
+            <div>sort_order</div><div>integer</div><div>Display order within the lead.</div>
+
+            <div class="grp">Assignment &amp; common</div>
+            <div>assigned_agent_id<span class="key idx">idx</span></div><div>varchar(36)</div><div>Null means unclaimed — and unclaimed work is what the "available" board lists.</div>
+            <div>assigned_agent_name</div><div>varchar(150)</div><div>Snapshot (P2).</div>
+            <div>preferences</div><div>text[]</div><div>Stored <strong>by name, not id</strong>, so a preference the owner later deletes still reads correctly on leads that chose it.</div>
+            <div>due_date</div><div>date</div><div>Internal deadline for the desk, distinct from any travel date.</div>
+            <div>date_from · date_to</div><div>date</div><div>Derived window, recomputed on every write. Powers the trip schedule and the lead-level travel window.</div>
+            <div>net_total · selling_total</div><div>numeric(19,2)</div><div>P3 snapshot of this service's quoted lines.</div>
+
+            <div class="grp">Flight</div>
+            <div>flight_trip_type</div><div>varchar(20)</div><div><code>ONE_WAY</code> · <code>ROUND_TRIP</code></div>
+            <div>flight_cabin</div><div>varchar(20)</div><div><code>ECONOMY</code> · <code>PREMIUM_ECONOMY</code> · <code>BUSINESS</code> · <code>FIRST</code></div>
+            <div>flight_sectors<span class="key js">jsonb</span></div><div>jsonb</div><div><code>[{from, to, date}, …]</code> — 1..n legs. A child table would be a join; parallel arrays can desynchronise in length. Read and written as one block.</div>
+
+            <div class="grp">Hotel</div>
+            <div>hotel_city</div><div>varchar(150)</div><div>Also the instance's natural name.</div>
+            <div>hotel_check_in · hotel_check_out</div><div>date</div><div>Either may be absent — the desk fills them in later.</div>
+            <div>hotel_nights · hotel_rooms</div><div>integer</div><div><code>nights</code> is the fallback when check-out is unknown.</div>
+
+            <div class="grp">Visa</div>
+            <div>visa_source_city · visa_source_country</div><div>varchar</div><div>Where the application is filed from — the consulate follows from jurisdiction.</div>
+            <div>visa_country</div><div>varchar(100)</div><div>Whose visa this is. Also the instance's natural name.</div>
+            <div>visa_intended_travel_date</div><div>date</div><div>Drives how urgently it must be filed.</div>
+            <div>visa_appointment_date</div><div>date</div><div>One embassy slot for the group — a service fact, not a traveller fact.</div>
+            <div>visa_checklists<span class="key js">jsonb</span></div><div>jsonb</div><div>Per-traveller document ticks for <em>this</em> application, keyed by <code>member_id</code>. See below.</div>
+
+            <div class="grp">Transfer</div>
+            <div>transfer_vehicle_type</div><div>varchar(50)</div><div>Seater class as quoted in the industry ("7 Seater (SUV/MPV)").</div>
+            <div>transfer_pickup · transfer_dropoff</div><div>varchar(150)</div><div>Pickup doubles as the instance's natural name.</div>
+            <div>transfer_date · transfer_time</div><div>date · varchar(5)</div><div>Time is <code>HH:mm</code> local clock, never a timestamp — a pickup at 14:30 is 14:30 wherever the server is.</div>
+            <div>transfer_passengers</div><div>integer</div><div>Sizes the vehicle.</div>
+          </div>
+        </div>
+      </div>
+
+      <h3>Why one wide table</h3>
+      <div class="scroller">
+        <table>
+          <thead><tr><th>Shape</th><th>What it costs</th></tr></thead>
+          <tbody>
+            <tr><td>Four tables, one per type</td><td>Lead detail needs 4 queries or 4 <code>LEFT JOIN</code>s. The cross-lead board becomes a 4-way <code>UNION</code>. A fifth type touches every query.</td></tr>
+            <tr><td>Supertype + subtype tables</td><td>Every read is a join. Worst of both worlds.</td></tr>
+            <tr><td>One table, all details in one JSON blob</td><td>No index on <code>hotel_check_in</code> or <code>visa_appointment_date</code>, no date typing, reporting becomes string-matching inside JSON.</td></tr>
+            <tr><td><strong>One wide table, typed columns + 2 JSONB</strong></td><td>Sparse rows — most columns <code>NULL</code> on any row. Postgres stores a <code>NULL</code> as roughly one bit in the row header. One entity, one query, no dispatch.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>The sparseness is the price, and it is the cheap side of the trade. A <code>NULL</code> column costs a bit; a join costs a query plan.</p>
+
+      <h3>The <code>label</code>, and why it is stored</h3>
+      <p>
+        A lead holding two hotels has to call them different things <em>everywhere</em> — the tab
+        strip, the trip details list, the costing table, the timeline entry, and a deep link pasted to
+        a colleague. The rule, ported from the frontend:
+      </p>
+      <ul class="plain">
+        <li>One service of this type on the lead → the plain type name: <code>Hotel</code>.</li>
+        <li>Otherwise use the type's natural naming field — flight route, hotel city, visa country, transfer pickup → <code>Hotel — Phuket</code>.</li>
+        <li>Two siblings resolving to the same source → append an ordinal: <code>Hotel — Phuket (2)</code>.</li>
+        <li>Source field still blank → positional fallback: <code>Hotel 2</code>.</li>
+      </ul>
+      <div class="note warn">
+        <p class="note-label">Sync obligation</p>
+        <p>
+          The label depends on its <em>siblings</em>, and the cross-lead board never loads the sibling
+          set — so it cannot be computed on read there. It is a P2 snapshot: any write that adds,
+          removes or renames a service <strong>re-derives and bulk-updates <code>label</code> for every
+          service on that lead, in the same transaction</strong>. One extra <code>UPDATE</code> over a
+          set that is realistically under ten rows.
+        </p>
+      </div>
+
+      <h3><code>visa_checklists</code> — one set of ticks per application</h3>
+      <pre class="code">{"M5":  {"passportCollected": true,  "photosCollected": true,  "formsFilled": false,
+         "submittedToEmbassy": false, "approved": false, "passportReturned": false},
+ "M12": {"passportCollected": true,  "photosCollected": false, "formsFilled": false,
+         "submittedToEmbassy": false, "approved": false, "passportReturned": false}}</pre>
+      <p>
+        Keyed by <code>member_id</code>, <strong>never by array index</strong> — the traveller list is
+        filtered and sorted in the UI, and an index would silently retarget the ticks onto the wrong
+        person. A trip carrying a Thailand visa and a Japan visa needs two fully independent sets; the
+        old lead-wide checklist made both applications share and overwrite each other.
+      </p>
+      <div class="note">
+        <p class="note-label">Known limitation, accepted</p>
+        <p>
+          <code>passportCollected</code> and <code>passportReturned</code> are physically one fact per
+          traveller per <em>trip</em> — you collect the passport once even if you file two visas with
+          it. The UI already shows a note to that effect when a lead holds more than one visa.
+          Splitting those two keys onto <code>lead_members</code> later is purely additive and does not
+          change this table.
+        </p>
+      </div>
+
+      <h3>Status and assignment</h3>
+      <div class="diagram">
+        <div class="flow">
+          <span class="node">NOT_STARTED</span>
+          <span class="arrow">──<em>accept</em>──▶</span>
+          <span class="node">IN_PROGRESS</span>
+          <span class="arrow">◀──▶</span>
+          <span class="node">AWAITING_CLIENT</span>
+          <span class="arrow">──▶</span>
+          <span class="node term">CONFIRMED</span>
+        </div>
+        <p class="flow-note">
+          <span class="node stop" style="display:inline-block">CANCELLED</span>
+          is reachable from every state above, including <code>CONFIRMED</code>. Accepting a service
+          claims it <em>and</em> starts it, in one step.
+        </p>
+      </div>
+      <ul class="plain">
+        <li><strong>Claiming sets the agent and the status together.</strong> An unclaimed, non-terminal service can be picked up by any agent whose role covers its type; doing so sets <code>assigned_agent_id</code> <em>and</em> moves it to <code>IN_PROGRESS</code>. Claiming a job and leaving it "Not Started" tells the agency nothing.</li>
+        <li><strong>Status changes require an assignee.</strong> No agent on the row means status is not editable. An unclaimed "Confirmed" is a status nobody can stand behind.</li>
+        <li><strong>Reassignment to another agent is owner-only.</strong> An agent may claim work; they may never hand it off.</li>
+      </ul>
+    </section>
+
+    <!-- ── 04 ─────────────────────────────────────────────────────────────── -->
+    <section id="followups">
+      <div class="sec-head">
+        <div class="sec-num">04</div>
+        <div>
+          <h2><code>lead_follow_up</code></h2>
+          <p class="sec-sub">Dated commitments, scoped to a service <em>type</em> — the decision most likely to be misread as a mistake.</p>
+        </div>
+      </div>
+
+      <div class="tbl">
+        <div class="tbl-head">
+          <span class="name">lead_follow_up</span>
+          <span class="pill new">New</span>
+          <span class="why">indexed on (agent, status, due_date)</span>
+        </div>
+        <div class="cols">
+          <div>id<span class="key">PK</span></div><div>varchar(36)</div><div>—</div>
+          <div>lead_id<span class="key idx">idx</span></div><div>varchar(36)</div><div>Owning lead.</div>
+          <div>client_name · lead_destination</div><div>varchar</div><div>Snapshot (P2) so an agent's "My follow-ups" dashboard is one flat select.</div>
+          <div>service_type</div><div>varchar(20)</div><div><strong>Nullable.</strong> Null means the commitment is about the trip as a whole.</div>
+          <div>due_date<span class="key idx">idx</span></div><div>date</div><div>Overdue is <code>due_date &lt; today AND status = OPEN</code>.</div>
+          <div>note</div><div>varchar(500)</div><div>What needs doing, in the agent's words.</div>
+          <div>assigned_agent_id<span class="key idx">idx</span></div><div>varchar(36)</div><div>Who owes it. Snapshot name alongside.</div>
+          <div>status · completed_at</div><div>varchar(10) · timestamp</div><div><code>OPEN</code> → <code>DONE</code>. Completed, never deleted.</div>
+        </div>
+      </div>
+
+      <div class="note rec">
+        <p class="note-label">Why type, not instance</p>
+        <p>
+          "Chase the embassy on Monday" is Visa work whichever visa it is about. A trip holding three
+          flights should not carry three separate follow-up lists that all read "nothing scheduled".
+          Scoping to the type caps the lists at five per lead — four service types plus trip-level —
+          regardless of how many instances exist. Scoping to the instance made the count grow with the
+          services, and every one of them was empty.
+        </p>
+      </div>
+
+      <p>
+        <strong>Completed, not deleted.</strong> "We said we would call on the 20th and we did" is
+        precisely the fact a customer disputes. Delete exists for a follow-up entered in error, and it
+        writes a timeline entry when used. Every insert, complete or delete also recomputes
+        <code>lead.open_follow_ups</code> and <code>lead.follow_up_date</code> in the same transaction.
+      </p>
+    </section>
+
+    <!-- ── 05 ─────────────────────────────────────────────────────────────── -->
+    <section id="money">
+      <div class="sec-head">
+        <div class="sec-num">05</div>
+        <div>
+          <h2>Money, confirmations, paper trail</h2>
+          <p class="sec-sub">Quoted lines stay flat on the lead. Vouchers are new. Invoices extend what already exists.</p>
+        </div>
+      </div>
+
+      <h3>Quoted lines stay flat</h3>
+      <p>
+        <code>lead_proposal</code> gains <code>service_id</code> and a <code>service_label</code>
+        snapshot, and stays a <strong>flat list on the lead</strong> rather than nesting inside each
+        service. A single invoice routinely covers flight and hotel together — that is how a trip is
+        actually billed — and nesting would make it unrepresentable. A null <code>service_id</code> is a
+        trip-level charge: agency fee, courier, anything spanning services.
+      </p>
+      <div class="note warn">
+        <p class="note-label">The cancellation trap</p>
+        <p>
+          A quoted line has no status of its own. Lines belonging to a <code>CANCELLED</code> service
+          must be excluded from every total, so the filter runs <em>through the owning service</em> —
+          otherwise a called-off service keeps quietly counting. This is why
+          <code>lead.quoted_*_total</code> is recomputed on service status change, not only on
+          proposal writes.
+        </p>
+      </div>
+
+      <h3>Vouchers</h3>
+      <div class="tbl">
+        <div class="tbl-head"><span class="name">lead_voucher</span><span class="pill new">New</span>
+          <span class="why">PNRs, confirmations, file numbers</span></div>
+        <div class="cols">
+          <div>id · lead_id<span class="key">PK</span></div><div>varchar(36)</div><div>—</div>
+          <div>service_id · service_label</div><div>varchar</div><div>Nullable — normally set, since a PNR is a fact about a flight, but a booking may legitimately cover two services.</div>
+          <div>supplier · reference_number</div><div>varchar</div><div>The confirmation itself.</div>
+          <div>voucher_date</div><div>date</div><div>When it was issued.</div>
+          <div>file_key</div><div>varchar(500)</div><div>Opaque, from <code>FileStorageService</code>. No filesystem path is ever baked into business logic.</div>
+          <div>notes</div><div>text</div><div>Free text.</div>
+        </div>
+      </div>
+
+      <h3>Invoices — extend, don't duplicate</h3>
+      <p>
+        The frontend has a lead-scoped invoice; the backend has an agency-wide <code>client_invoice</code>.
+        This design adds <code>lead_id</code>, <code>service_id</code>, <code>service_label</code> and
+        <code>description</code> to the existing table rather than creating a second one. A lead invoice
+        <em>is</em> a client invoice that happens to name its lead; a null <code>lead_id</code> is a
+        direct invoice raised outside any lead, which already exists today and must keep working.
+        <code>gst</code>, <code>total_with_gst</code> and <code>status</code> stay server-derived on
+        every write, and <code>amount_paid</code> stays cumulative — total paid to date, never a single
+        receipt. <a href="#questions">This one needs your call — see Q1.</a>
+      </p>
+
+      <h3>Two logs, kept apart</h3>
+      <div class="scroller">
+        <table>
+          <thead><tr><th>Table</th><th>Written by</th><th>Rules</th></tr></thead>
+          <tbody>
+            <tr><td><code>lead_notes</code></td><td>A human</td><td>Free text, editable by its author. The interaction log.</td></tr>
+            <tr><td><code>lead_timeline</code></td><td>The service layer</td><td>Append-only. <strong>No client-facing write endpoint.</strong> One row per state change, in the same transaction as the change. Gains <code>service_id</code> so a service card can show its own history without scanning the trip.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        A state change with no timeline row is a bug — which is the reason every write lives behind the
+        service layer instead of being spread across controllers.
+      </p>
+    </section>
+
+    <!-- ── 06 ─────────────────────────────────────────────────────────────── -->
+    <section id="derived">
+      <div class="sec-head">
+        <div class="sec-num">06</div>
+        <div>
+          <h2>Derived vs stored</h2>
+          <p class="sec-sub">A column may only be stored if it names the list screen that needs it.</p>
+        </div>
+      </div>
+
+      <h3>Computed on read — never stored</h3>
+      <div class="scroller">
+        <table>
+          <thead><tr><th>Thing</th><th>Derived from</th></tr></thead>
+          <tbody>
+            <tr><td>Trip Schedule (day by day)</td><td>Every service's dated events, grouped by day. A flight yields one event per dated sector; a hotel yields check-in and check-out; a visa yields its appointment; a transfer yields one. Within a day the order is fixed — check-out, flight, transfer, appointment, check-in — the shape of a real travel day, deterministic without times. <strong>Never invent a time for a flight.</strong> Services with no dated events fall into a trailing "not scheduled yet" bucket.</td></tr>
+            <tr><td>Visa roll-up on lead detail</td><td>Aggregate of every visa service's <code>visa_checklists</code>. Read-only.</td></tr>
+            <tr><td>Pax type / fare class</td><td><code>member.dob</code> against <code>lead.travel_date_from</code>. Never a stored age — a stored age mis-fares a child who turns 12 between enquiry and departure.</td></tr>
+            <tr><td>Trip margin %</td><td><code>(selling − net) / selling</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="note">
+        <p class="note-label">One deliberate asymmetry</p>
+        <p>
+          Cancelled services are <strong>excluded</strong> from the lead's travel window and
+          <strong>included</strong> in the Trip Schedule. The window is a commitment; the schedule is a
+          record. Do not unify these.
+        </p>
+      </div>
+
+      <h3>Stored — with the screen that justifies it</h3>
+      <div class="scroller">
+        <table>
+          <thead><tr><th>Column</th><th>Justified by</th></tr></thead>
+          <tbody>
+            <tr><td><code>lead.quoted_net_total</code> / <code>quoted_selling_total</code></td><td>Leads list — value column</td></tr>
+            <tr><td><code>lead.open_follow_ups</code>, <code>lead.follow_up_date</code></td><td>Leads list — overdue badge</td></tr>
+            <tr><td><code>lead.service_count</code></td><td>Leads list — service chip</td></tr>
+            <tr><td><code>lead.travel_date_from</code> / <code>to</code></td><td>Leads list date column, plus the fare-class calculation</td></tr>
+            <tr><td><code>lead_service.label</code></td><td>Cross-lead Services board (no sibling set available)</td></tr>
+            <tr><td><code>lead_service.date_from</code> / <code>date_to</code></td><td>Trip Schedule range query, lead window derivation</td></tr>
+            <tr><td><code>lead_service.net_total</code> / <code>selling_total</code></td><td>Services board — value column</td></tr>
+            <tr><td>every <code>*_name</code> / <code>*_label</code> snapshot</td><td>P2 — removes a join from every list screen</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ── 07 ─────────────────────────────────────────────────────────────── -->
+    <section id="access">
+      <div class="sec-head">
+        <div class="sec-num">07</div>
+        <div>
+          <h2>Access control</h2>
+          <p class="sec-sub">Two independent axes. The frontend's version is a UX affordance — this one is the boundary.</p>
+        </div>
+      </div>
+
+      <p>
+        <strong>Axis 1 — the lead belongs to the sales agent who took it.</strong> Lead-level fields
+        (destination, status, travellers, dates, notes) are editable by the owning agent or the Agency
+        Owner. Nobody else.
+      </p>
+      <p>
+        <strong>Axis 2 — a service belongs to whoever handles that type.</strong> An agent may edit a
+        service when its type appears in their <code>manageable_services</code>, <em>on any lead,
+        whoever owns it</em>. That is the whole point: a visa specialist works the visa on every lead
+        in the agency.
+      </p>
+
+      <div class="note warn">
+        <p class="note-label">The clause that is easy to drop and expensive to lose</p>
+        <p>
+          An agent may also edit a service they are <strong>personally assigned to</strong>, even if its
+          type is no longer in their <code>manageable_services</code>. Without it, an owner unticking
+          "Visa" on an agent's profile instantly yanks that agent off work they are named on and
+          half-way through — and that profile is editable in the agent form, so it happens.
+        </p>
+      </div>
+
+      <div class="scroller">
+        <table>
+          <thead>
+            <tr><th>Action</th><th>Owner</th><th>Agent · type matches</th><th>Agent · assigned</th><th>Agent · neither</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>View lead</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="no">—</td></tr>
+            <tr><td>Edit lead fields / travellers</td><td class="yes">✓</td><td class="cond">lead owner only</td><td class="cond">lead owner only</td><td class="no">—</td></tr>
+            <tr><td>Add a service to a lead</td><td class="yes">✓</td><td class="cond">lead owner only</td><td class="cond">lead owner only</td><td class="no">—</td></tr>
+            <tr><td>Edit service details / preferences</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="no">—</td></tr>
+            <tr><td>Claim an unassigned service</td><td class="yes">✓</td><td class="yes">✓</td><td class="no">—</td><td class="no">—</td></tr>
+            <tr><td>Change service status</td><td class="yes">✓</td><td class="cond">if assigned</td><td class="yes">✓</td><td class="no">—</td></tr>
+            <tr><td>Reassign service to another agent</td><td class="yes">✓</td><td class="no">—</td><td class="no">—</td><td class="no">—</td></tr>
+            <tr><td>Add a follow-up</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="no">—</td></tr>
+            <tr><td>Add / edit quoted lines</td><td class="yes">✓</td><td class="cond">own service</td><td class="yes">✓</td><td class="no">—</td></tr>
+            <tr><td>See net cost and margin</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="no">—</td></tr>
+            <tr><td>Raise an invoice</td><td class="yes">✓</td><td class="no">—</td><td class="no">—</td><td class="no">—</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        Denied access carries a <strong>reason and an owner label</strong>, never a bare boolean — the
+        UI is required to tell the agent who <em>can</em> do it.
+      </p>
+
+      <h3>The one unauthenticated surface</h3>
+      <p>
+        <code>GET /api/public/proposals/{token}</code> resolves a high-entropy token — never the lead's
+        real id — reads the owning tenant schema through a <code>REQUIRES_NEW</code> cross-tenant
+        transaction, and returns a <strong>hand-built DTO that is structurally incapable</strong> of
+        carrying net cost, margin, agent ids, internal notes, timeline or invoices. Not a filtered
+        entity: a separate class holding only what the customer may see. A controller-slice test asserts
+        those keys are <em>absent from the raw JSON</em>, not merely null.
+      </p>
+    </section>
+
+    <!-- ── 08 ─────────────────────────────────────────────────────────────── -->
+    <section id="queries">
+      <div class="sec-head">
+        <div class="sec-num">08</div>
+        <div>
+          <h2>Query catalog</h2>
+          <p class="sec-sub">The proof for P1. One table, one <code>WHERE</code>, no join — per screen.</p>
+        </div>
+      </div>
+
+      <pre class="code">-- Leads list (owner). Value, follow-up badge and service count all inline.
+SELECT id, client_name, destination, current_status, priority, assigned_agent_name,
+       travel_date_from, travel_date_to, categories, quoted_selling_total,
+       follow_up_date, open_follow_ups, service_count
+FROM   lead
+WHERE  is_active
+ORDER  BY created_at DESC;
+
+-- Cross-lead Services board: "every visa I handle, oldest first."
+SELECT id, label, type, status, client_name, lead_destination, lead_id,
+       assigned_agent_name, date_from, due_date, selling_total
+FROM   lead_service
+WHERE  type = ANY(:manageableTypes)
+ORDER  BY COALESCE(due_date, date_from) NULLS LAST;
+
+-- Unclaimed work anyone qualified can pick up.
+…  WHERE type = ANY(:manageableTypes)
+     AND assigned_agent_id IS NULL
+     AND status NOT IN ('CONFIRMED','CANCELLED');
+
+-- My follow-ups, overdue first.
+SELECT id, lead_id, client_name, lead_destination, service_type, due_date, note
+FROM   lead_follow_up
+WHERE  assigned_agent_id = :agentId AND status = 'OPEN'
+ORDER  BY due_date;</pre>
+
+      <p>
+        <strong>Lead detail is seven single-table reads by <code>lead_id</code>, issued in parallel</strong>
+        — <code>lead</code>, <code>lead_service</code>, <code>lead_members</code>,
+        <code>lead_follow_up</code>, <code>lead_proposal</code>, <code>lead_voucher</code>,
+        <code>lead_timeline</code> — assembled into one response in the service layer. Seven index seeks
+        beat one seven-way join, and each one is independently cacheable.
+      </p>
+
+      <div class="note">
+        <p class="note-label">Note what is absent</p>
+        <p>
+          Nothing in this catalog filters on <code>tenant_id</code>. Tenant isolation is the
+          <code>search_path</code> set at connection-borrow time. Manual tenant filtering on a
+          tenant-schema query is a bug, not a safety net.
+        </p>
+      </div>
+    </section>
+
+    <!-- ── 09 ─────────────────────────────────────────────────────────────── -->
+    <section id="writes">
+      <div class="sec-head">
+        <div class="sec-num">09</div>
+        <div>
+          <h2>Write obligations</h2>
+          <p class="sec-sub">Each row is one <code>@Transactional</code> method. Skipping any obligation is what makes a screen show a stale number — this table is the implementation checklist.</p>
+        </div>
+      </div>
+
+      <div class="scroller">
+        <table>
+          <thead><tr><th>Mutation</th><th>Must also do — same transaction</th></tr></thead>
+          <tbody>
+            <tr><td><code>createLead</code></td><td>Insert <code>lead_members</code> per traveller · timeline <code>CREATED</code></td></tr>
+            <tr><td><code>addServices</code></td><td>Re-derive <code>label</code> for <strong>all</strong> services on the lead · re-derive each date window · widen the lead's travel window · union into <code>categories</code> · bump <code>service_count</code> · timeline</td></tr>
+            <tr><td><code>saveService</code></td><td>Re-derive this service's label and date window · re-derive the lead window · timeline</td></tr>
+            <tr><td><code>setServiceStatus</code></td><td>Reject if unassigned · <strong>recompute <code>lead.quoted_*_total</code></strong> — cancelling changes the total · timeline</td></tr>
+            <tr><td><code>acceptService</code></td><td>Reject unless unclaimed and non-terminal · set agent <em>and</em> <code>IN_PROGRESS</code> · timeline</td></tr>
+            <tr><td><code>assignService</code></td><td>Owner-only · snapshot <code>assigned_agent_name</code> · timeline</td></tr>
+            <tr><td><code>toggleVisaStep</code></td><td>Merge one key into <code>visa_checklists[memberId]</code> · <strong>must not touch <code>lead_members</code></strong> · timeline naming which visa and which traveller</td></tr>
+            <tr><td><code>toggleServicePreference</code></td><td>Write immediately — no edit-mode round trip. A preference is one yes/no the customer just said on the phone. · timeline</td></tr>
+            <tr><td><code>addFollowUp</code> · <code>complete</code> · <code>delete</code></td><td>Recompute <code>open_follow_ups</code> and <code>follow_up_date</code> · timeline</td></tr>
+            <tr><td><code>addProposalItem</code> · <code>update</code> · <code>delete</code></td><td>Recompute service totals and lead totals, excluding cancelled services · timeline</td></tr>
+            <tr><td><code>addVoucher</code> · <code>delete</code></td><td>Snapshot <code>service_label</code> · timeline</td></tr>
+            <tr><td><code>addInvoice</code></td><td>Owner-only · derive GST and total · derive status from <code>amount_paid</code> · timeline</td></tr>
+            <tr><td><code>addTraveller</code> · <code>dropTraveller</code></td><td>Drop is a status change plus a reason, <strong>never a row delete</strong> · re-derive fare classes · timeline</td></tr>
+            <tr><td><code>renameClient</code> · <code>renameMember</code> · <code>renameAgent</code></td><td>Bulk <code>UPDATE</code> every <code>*_name</code> snapshot in the tenant schema (P2)</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="note warn">
+        <p class="note-label">Cross-tenant caution</p>
+        <p>
+          Any code that switches tenant mid-request must do the tenant-scoped work in a separate
+          <code>REQUIRES_NEW</code> bean — self-invocation bypasses the proxy — and restore the previous
+          tenant context in a <code>finally</code> block.
+        </p>
+      </div>
+    </section>
+
+    <!-- ── 10 ─────────────────────────────────────────────────────────────── -->
+    <section id="migration">
+      <div class="sec-head">
+        <div class="sec-num">10</div>
+        <div>
+          <h2>Migration plan</h2>
+          <p class="sec-sub">Two independent Flyway sequences. Never edit an applied migration.</p>
+        </div>
+      </div>
+
+      <pre class="code">tenant/V2__lead_management.sql
+    ALTER  lead            (+6 columns, follow_up_date redefined)
+    ALTER  lead_members    (+fare_class; visa booleans deprecated — see Q2)
+    CREATE lead_service
+    CREATE lead_follow_up
+    CREATE lead_voucher
+    ALTER  lead_proposal   (+service_id, +service_label)
+    ALTER  lead_timeline   (+service_id)
+    ALTER  client_invoice  (+lead_id, +service_id, +service_label, +description)
+    CREATE agency_setting
+
+public/V3__agent_manageable_services.sql
+    ALTER  agent           (+manageable_services TEXT[])</pre>
+
+      <p>
+        <code>agency_setting</code> replaces the browser <code>localStorage</code> configuration — lead
+        sources, travel categories, document types, and the per-service preference catalog — as one
+        table keyed by <code>kind</code>, with <code>service_type</code> set only for preferences
+        ("Window Seat" is a flight question and has no meaning on a visa).
+      </p>
+
+      <h3>Order of implementation</h3>
+      <p>Each step is independently shippable and testable.</p>
+      <div class="scroller">
+        <table>
+          <thead><tr><th>Step</th><th>Ships</th></tr></thead>
+          <tbody>
+            <tr><td>1</td><td>V2 + V3 migrations, entities, repositories. No behaviour change.</td></tr>
+            <tr><td>2</td><td>Lead CRUD, travellers, timeline. The spine.</td></tr>
+            <tr><td>3</td><td><code>lead_service</code>: create, edit, label derivation, date derivation, status, accept, assign.</td></tr>
+            <tr><td>4</td><td>Follow-ups and the lead counter sync.</td></tr>
+            <tr><td>5</td><td>Costing: proposal lines, per-service and trip totals, cancellation exclusion.</td></tr>
+            <tr><td>6</td><td>Vouchers and invoices.</td></tr>
+            <tr><td>7</td><td>Trip Schedule endpoint.</td></tr>
+            <tr><td>8</td><td>Public proposal DTO plus the key-absence test.</td></tr>
+            <tr><td>9</td><td>Frontend wiring — replace mock reads with an API client, keeping <code>leadActions.ts</code> as the call surface so component code does not change.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ── 11 ─────────────────────────────────────────────────────────────── -->
+    <section id="questions">
+      <div class="sec-head">
+        <div class="sec-num">11</div>
+        <div>
+          <h2>Open questions</h2>
+          <p class="sec-sub">Five calls needed before any code is written. Each carries a recommendation and its cost.</p>
+        </div>
+      </div>
+
+      <div class="q">
+        <div class="q-head"><span class="q-id">Q1</span><h3>Invoices — one table or two?</h3></div>
+        <p>
+          Extend <code>client_invoice</code> with <code>lead_id</code> / <code>service_id</code>, or add
+          a separate <code>lead_invoice</code>? A separate table leaves the finance module untouched but
+          permanently splits the answer to "what does this client owe us", and every finance screen has
+          to union them.
+        </p>
+        <p class="verdict"><strong>Recommend: extend.</strong> Cost — four nullable columns and one careful list query. Cost of the alternative — a reconciliation problem that never goes away.</p>
+      </div>
+
+      <div class="q">
+        <div class="q-head"><span class="q-id">Q2</span><h3>The five visa booleans on <code>lead_members</code></h3></div>
+        <p>
+          The existing traveller row carries <code>passport_collected</code>,
+          <code>photos_collected</code>, <code>forms_filled</code>, <code>submitted_to_embassy</code> and
+          <code>visa_approved</code>. This design moves them onto <code>lead_service.visa_checklists</code>.
+        </p>
+        <p class="verdict"><strong>Recommend: drop them in V2</strong>, since nothing is deployed. Keeping them means two places where the same tick can be written, and one of them will drift. If you prefer additive-only, we keep them documented as read-only-deprecated — the way the frontend already treats the legacy field.</p>
+      </div>
+
+      <div class="q">
+        <div class="q-head"><span class="q-id">Q3</span><h3>Does the standalone <code>visa</code> table survive?</h3></div>
+        <p>
+          There is a <code>visa</code> table for cases raised outside a lead, with its own screen. Once a
+          Visa <em>service</em> exists on a lead, the two overlap. Either keep both — that screen reads a
+          union — or fold standalone cases into a lead-less <code>lead_service</code> row, which is a
+          cleaner model but makes <code>lead_id</code> nullable and forces every query in §08 to think
+          about it.
+        </p>
+        <p class="verdict"><strong>Lean: keep both.</strong> The screens serve genuinely different jobs, and the alternative weakens the strongest invariant in the design.</p>
+      </div>
+
+      <div class="q">
+        <div class="q-head"><span class="q-id">Q4</span><h3><code>booking</code> has no <code>lead_id</code></h3></div>
+        <p>
+          The existing booking row is single-traveller and unlinked to any lead, so a multi-pax group
+          lead cannot convert into one booking. Out of scope for this LLD — but it surfaces the moment a
+          lead reaches <code>BOOKED</code>.
+        </p>
+        <p class="verdict"><strong>Flagging now</strong> so it is a decision rather than a surprise.</p>
+      </div>
+
+      <div class="q">
+        <div class="q-head"><span class="q-id">Q5</span><h3>Hard delete on a service?</h3></div>
+        <p>
+          Cancelled work is expressed by status, not deletion (P7). Confirm that a genuine
+          <code>DELETE</code> is still acceptable for a service added by mistake.
+        </p>
+        <p class="verdict"><strong>Recommend: allow it</strong>, and write a timeline row when it is used.</p>
+      </div>
+    </section>
+
+    <!-- ── 12 ─────────────────────────────────────────────────────────────── -->
+    <section id="scope">
+      <div class="sec-head">
+        <div class="sec-num">12</div>
+        <div>
+          <h2>Out of scope</h2>
+          <p class="sec-sub">Absent on purpose, each for a reason.</p>
+        </div>
+      </div>
+
+      <div class="scroller">
+        <table>
+          <thead><tr><th>Not here</th><th>Why</th></tr></thead>
+          <tbody>
+            <tr><td>Flight and hotel <em>search</em></td><td>Supplier-integration surfaces, not lead-management persistence. No schema.</td></tr>
+            <tr><td>Agent performance metrics</td><td>Reporting aggregates. Computed, never stored on the agent row.</td></tr>
+            <tr><td>File upload internals</td><td><code>file_key</code> is opaque. No filesystem path is ever baked into business logic.</td></tr>
+            <tr><td>Package presets</td><td>Currently a category name. If they gain structure they become their own module, not a column here.</td></tr>
+            <tr><td>Follow-up notifications</td><td>The data supports it — the index is already <code>(agent, status, due_date)</code>. Delivery is separate work.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer>
+      Draft for review · nothing in this document is implemented yet. Answer the five open questions in §11
+      and the V2 / V3 migrations are the first thing cut.
+    </footer>
+
+  </main>
+</div>
+
+</body>
+</html>

@@ -8,12 +8,12 @@ import com.voyra.crm.dto.BookingUpdateRequest;
 import com.voyra.crm.dto.PagedResponse;
 import com.voyra.crm.entity.Agent;
 import com.voyra.crm.entity.Booking;
-import com.voyra.crm.entity.Customer;
+import com.voyra.crm.entity.Client;
 import com.voyra.crm.enums.BookingStatus;
 import com.voyra.crm.enums.BookingType;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.BookingRepository;
-import com.voyra.crm.repository.CustomerRepository;
+import com.voyra.crm.repository.ClientRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.security.SecurityContextUtil;
 import com.voyra.crm.util.UniqueIdResolver;
@@ -36,19 +36,19 @@ import java.util.List;
 public class BookingService {
 
     private final BookingRepository bookingRepository;
-    private final CustomerRepository customerRepository;
+    private final ClientRepository clientRepository;
     private final AgentRepository agentRepository;
 
     @Transactional
     public BookingResponse createBooking(BookingCreateRequest request) {
         AuthorResolver.AuthorInfo owner = resolveOwningAgent(request.getAgentId());
-        Customer customer = customerRepository.findById(request.getCustomerId())
-                .orElseThrow(() -> new IllegalArgumentException("Customer not found: " + request.getCustomerId()));
+        Client client = clientRepository.findById(request.getClientId())
+                .orElseThrow(() -> new IllegalArgumentException("Client not found: " + request.getClientId()));
 
         Booking booking = Booking.builder()
                 .id(generateUniqueBookingId())
-                .customerId(customer.getId())
-                .customerName(customer.getName())
+                .clientId(client.getId())
+                .clientName(client.getName())
                 .agentId(owner.id())
                 .agentName(owner.name())
                 .type(request.getType())
@@ -227,7 +227,7 @@ public class BookingService {
 
     private BookingResponse toResponse(Booking b) {
         return BookingResponse.builder()
-                .id(b.getId()).customerId(b.getCustomerId()).customerName(b.getCustomerName())
+                .id(b.getId()).clientId(b.getClientId()).clientName(b.getClientName())
                 .agentId(b.getAgentId()).agentName(b.getAgentName()).type(b.getType())
                 .destination(b.getDestination()).pnr(b.getPnr()).ticketNo(b.getTicketNo())
                 .airline(b.getAirline()).supplier(b.getSupplier()).journeyDate(b.getJourneyDate())

@@ -1,5 +1,6 @@
 package com.voyra.crm.entity;
 
+import com.voyra.crm.enums.ClientType;
 import com.voyra.crm.enums.LeadCategory;
 import com.voyra.crm.enums.LeadPriority;
 import com.voyra.crm.enums.LeadSource;
@@ -23,6 +24,22 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 
+/**
+ * An enquiry, always belonging to exactly one {@link Client}.
+ *
+ * <p>Contact details are not duplicated here - they resolve through the client's primary
+ * member. {@code clientName} and {@code clientType} are denormalized snapshots so the leads
+ * list is a single flat SELECT; they are re-synced in bulk when the client is renamed.
+ *
+ * <p>{@code kidAges} holds each child's age as quoted by the client. The infant count is
+ * derived from it rather than stored, which is also why there is no {@code infants} column.
+ * {@code totalTravellers} is stored for list-query performance but recomputed from
+ * {@code adults + kids} on every write - the same treatment booking profit gets, and for the
+ * same reason: a stored aggregate that is never recomputed eventually lies.
+ *
+ * <p>Who actually travels is the {@link LeadMember} manifest, not these counts. The counts are
+ * what the client said on the phone; the manifest is who is on the ticket.
+ */
 @Entity
 @Table(name = "lead")
 @Getter
@@ -36,20 +53,15 @@ public class Lead {
     @Column(name = "id", length = 36)
     private String id;
 
-    @Column(name = "customer_id", length = 36)
-    private String customerId;
+    @Column(name = "client_id", nullable = false, length = 36)
+    private String clientId;
 
-    @Column(name = "name", nullable = false, length = 150)
-    private String name;
+    @Column(name = "client_name", nullable = false, length = 150)
+    private String clientName;
 
-    @Column(name = "email", length = 150)
-    private String email;
-
-    @Column(name = "country_code", length = 6)
-    private String countryCode;
-
-    @Column(name = "phone", nullable = false, length = 20)
-    private String phone;
+    @Enumerated(EnumType.STRING)
+    @Column(name = "client_type", nullable = false, length = 10)
+    private ClientType clientType;
 
     @Column(name = "destination", nullable = false, length = 150)
     private String destination;
@@ -60,11 +72,32 @@ public class Lead {
     @Column(name = "travel_date_to")
     private LocalDate travelDateTo;
 
-    @Column(name = "budget", length = 50)
-    private String budget;
+    @Column(name = "adults", nullable = false)
+    @Builder.Default
+    private Integer adults = 1;
 
+    @Column(name = "kids", nullable = false)
+    @Builder.Default
+    private Integer kids = 0;
+
+    @JdbcTypeCode(SqlTypes.ARRAY)
+    @Column(name = "kid_ages", columnDefinition = "integer[]")
+    @Builder.Default
+    private List<Integer> kidAges = List.of();
+
+    @Column(name = "total_travellers", nullable = false)
+    @Builder.Default
+    private Integer totalTravellers = 1;
+
+    @Column(name = "lead_description")
+    private String leadDescription;
+
+    @Column(name = "preferences")
+    private String preferences;
+
+    /** Column is {@code current_status} per the agreed schema; "current" is redundant in Java. */
     @Enumerated(EnumType.STRING)
-    @Column(name = "status", nullable = false, length = 20)
+    @Column(name = "current_status", nullable = false, length = 20)
     private LeadStatus status;
 
     @Enumerated(EnumType.STRING)
@@ -81,6 +114,9 @@ public class Lead {
     @Builder.Default
     private List<LeadCategory> categories = List.of();
 
+    @Column(name = "budget", length = 50)
+    private String budget;
+
     @Column(name = "assigned_to", nullable = false, length = 36)
     private String assignedTo;
 
@@ -93,46 +129,29 @@ public class Lead {
     @Column(name = "lost_reason", length = 255)
     private String lostReason;
 
-    @Column(name = "adults", nullable = false)
-    @Builder.Default
-    private Integer adults = 1;
-
-    @Column(name = "children", nullable = false)
-    @Builder.Default
-    private Integer children = 0;
-
-    @Column(name = "infants", nullable = false)
-    @Builder.Default
-    private Integer infants = 0;
-
-    @Column(name = "special_requirements")
-    private String specialRequirements;
-
-    @Column(name = "passport_collected")
-    private Boolean passportCollected;
-
-    @Column(name = "photos_collected")
-    private Boolean photosCollected;
-
-    @Column(name = "forms_filled")
-    private Boolean formsFilled;
-
-    @Column(name = "submitted_to_embassy")
-    private Boolean submittedToEmbassy;
-
-    @Column(name = "approved")
-    private Boolean approved;
-
     @Column(name = "public_proposal_token", length = 32)
     private String publicProposalToken;
 
-    @Column(name = "created_date")
-    private LocalDateTime createdDate;
+    @Column(name = "is_active", nullable = false)
+    @Builder.Default
+    private Boolean isActive = true;
+
+    @Column(name = "created_at")
+    private LocalDateTime createdAt;
+
+    @Column(name = "created_by", length = 36)
+    private String createdBy;
+
+    @Column(name = "updated_at")
+    private LocalDateTime updatedAt;
+
+    @Column(name = "updated_by", length = 36)
+    private String updatedBy;
 
     @PrePersist
     protected void onCreate() {
-        if (createdDate == null) {
-            createdDate = LocalDateTime.now();
+        if (createdAt == null) {
+            createdAt = LocalDateTime.now();
         }
     }
 }

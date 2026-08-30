@@ -30,11 +30,11 @@ public class Visa {
     @Column(name = "id", length = 36)
     private String id;
 
-    @Column(name = "customer_id", nullable = false, length = 36)
-    private String customerId;
+    @Column(name = "client_id", nullable = false, length = 36)
+    private String clientId;
 
-    @Column(name = "customer_name", nullable = false, length = 150)
-    private String customerName;
+    @Column(name = "client_name", nullable = false, length = 150)
+    private String clientName;
 
     @Column(name = "agent_id", nullable = false, length = 36)
     private String agentId;

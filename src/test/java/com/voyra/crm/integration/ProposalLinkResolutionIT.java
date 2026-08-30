@@ -6,6 +6,7 @@ import com.voyra.crm.dto.AgencyCreateRequest;
 import com.voyra.crm.dto.AgencyCreateResponse;
 import com.voyra.crm.dto.PublicProposalResponse;
 import com.voyra.crm.entity.Lead;
+import com.voyra.crm.enums.ClientType;
 import com.voyra.crm.enums.LeadPriority;
 import com.voyra.crm.enums.LeadSource;
 import com.voyra.crm.enums.LeadStatus;
@@ -56,22 +57,28 @@ class ProposalLinkResolutionIT extends AbstractIntegrationTest {
         return response.getId();
     }
 
-    private String createLeadInTenant(String tenantId, String leadName) {
+    private String createLeadInTenant(String tenantId, String clientName) {
         String previous = TenantContext.getTenantId();
         try {
             TenantContext.setTenantId(tenantId);
             Lead lead = Lead.builder()
                     .id(IdGenerator.generateId())
-                    .name(leadName)
-                    .phone("9999999999")
+                    .clientId(IdGenerator.generateId())
+                    .clientName(clientName)
+                    .clientType(ClientType.B2C)
                     .destination("Nowhere")
+                    .adults(2)
+                    .kids(0)
+                    .kidAges(List.of())
+                    .totalTravellers(2)
                     .status(LeadStatus.NEW)
                     .source(LeadSource.PHONE_CALL)
                     .priority(LeadPriority.MEDIUM)
                     .categories(List.of())
                     .assignedTo("A1")
                     .assignedAgentName("Test Agent")
-                    .createdDate(LocalDateTime.now())
+                    .isActive(true)
+                    .createdAt(LocalDateTime.now())
                     .build();
             return leadRepository.save(lead).getId();
         } finally {
@@ -114,7 +121,7 @@ class ProposalLinkResolutionIT extends AbstractIntegrationTest {
 
         PublicProposalResponse response = publicProposalService.getProposal(token);
 
-        assertThat(response.getCustomerName()).isEqualTo("Jane From Agency A");
+        assertThat(response.getClientName()).isEqualTo("Jane From Agency A");
     }
 
     @Test
@@ -129,10 +136,10 @@ class ProposalLinkResolutionIT extends AbstractIntegrationTest {
 
         TenantContext.clear();
         SecurityContextHolder.clearContext();
-        assertThat(publicProposalService.getProposal(tokenA).getCustomerName()).isEqualTo("Lead From Agency B");
+        assertThat(publicProposalService.getProposal(tokenA).getClientName()).isEqualTo("Lead From Agency B");
 
         TenantContext.clear();
         SecurityContextHolder.clearContext();
-        assertThat(publicProposalService.getProposal(tokenB).getCustomerName()).isEqualTo("Lead From Agency C");
+        assertThat(publicProposalService.getProposal(tokenB).getClientName()).isEqualTo("Lead From Agency C");
     }
 }

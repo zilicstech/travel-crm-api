@@ -8,12 +8,12 @@ import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
 
-/** Shared shape for both customer_document and family_member_document rows. */
+/** Shared shape for member_documents rows. */
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-@Schema(description = "An uploaded document (passport, visa, etc.), belonging to a customer or family member")
+@Schema(description = "An uploaded document (passport, visa, aadhaar) belonging to a member")
 public class DocumentResponse {
 
     @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")

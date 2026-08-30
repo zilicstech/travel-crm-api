@@ -8,13 +8,12 @@ import com.voyra.crm.entity.Booking;
 import com.voyra.crm.entity.ClientInvoice;
 import com.voyra.crm.entity.Lead;
 import com.voyra.crm.enums.BookingStatus;
-import com.voyra.crm.enums.CustomerStatus;
 import com.voyra.crm.enums.InvoiceStatus;
 import com.voyra.crm.enums.LeadStatus;
 import com.voyra.crm.repository.BookingRepository;
 import com.voyra.crm.repository.BookingRepository.AgentRevenueProjection;
 import com.voyra.crm.repository.ClientInvoiceRepository;
-import com.voyra.crm.repository.CustomerRepository;
+import com.voyra.crm.repository.ClientRepository;
 import com.voyra.crm.repository.LeadRepository;
 import com.voyra.crm.security.SecurityContextUtil;
 import lombok.RequiredArgsConstructor;
@@ -36,7 +35,7 @@ public class DashboardService {
 
     private final LeadRepository leadRepository;
     private final BookingRepository bookingRepository;
-    private final CustomerRepository customerRepository;
+    private final ClientRepository clientRepository;
     private final ClientInvoiceRepository clientInvoiceRepository;
 
     @Transactional(readOnly = true)
@@ -52,7 +51,7 @@ public class DashboardService {
                 .totalRevenue(revenue.getTotalRevenue())
                 .totalProfit(revenue.getTotalProfit())
                 .totalNetCost(revenue.getTotalNetCost())
-                .activeClients(customerRepository.countByStatus(CustomerStatus.CUSTOMER))
+                .activeClients(clientRepository.countByIsActiveTrue())
                 .totalLeads(totalLeads)
                 .bookedLeads(bookedLeads)
                 .lostLeads(lostLeads)
@@ -114,7 +113,7 @@ public class DashboardService {
 
     private BookingResponse toBookingResponse(Booking b) {
         return BookingResponse.builder()
-                .id(b.getId()).customerId(b.getCustomerId()).customerName(b.getCustomerName())
+                .id(b.getId()).clientId(b.getClientId()).clientName(b.getClientName())
                 .agentId(b.getAgentId()).agentName(b.getAgentName()).type(b.getType())
                 .destination(b.getDestination()).pnr(b.getPnr()).ticketNo(b.getTicketNo())
                 .airline(b.getAirline()).supplier(b.getSupplier()).journeyDate(b.getJourneyDate())
@@ -128,13 +127,14 @@ public class DashboardService {
 
     private LeadResponse toLeadResponse(Lead lead) {
         return LeadResponse.builder()
-                .id(lead.getId()).customerId(lead.getCustomerId()).name(lead.getName()).email(lead.getEmail())
-                .countryCode(lead.getCountryCode()).phone(lead.getPhone()).destination(lead.getDestination())
+                .id(lead.getId()).clientId(lead.getClientId()).clientName(lead.getClientName())
+                .clientType(lead.getClientType()).destination(lead.getDestination())
                 .travelDateFrom(lead.getTravelDateFrom()).travelDateTo(lead.getTravelDateTo())
                 .categories(lead.getCategories()).budget(lead.getBudget()).status(lead.getStatus())
                 .source(lead.getSource()).priority(lead.getPriority()).assignedTo(lead.getAssignedTo())
+                .totalTravellers(lead.getTotalTravellers())
                 .assignedAgentName(lead.getAssignedAgentName()).followUpDate(lead.getFollowUpDate())
-                .createdDate(lead.getCreatedDate()).overdue(true)
+                .createdAt(lead.getCreatedAt()).overdue(true)
                 .build();
     }
 }

@@ -13,7 +13,7 @@ import java.util.List;
 @Repository
 public interface LeadNoteRepository extends JpaRepository<LeadNote, String> {
 
-    List<LeadNote> findByLeadIdOrderByCreatedDateDesc(String leadId);
+    List<LeadNote> findByLeadIdOrderByCreatedAtDesc(String leadId);
 
     long countByAuthorAgentId(String authorAgentId);
 

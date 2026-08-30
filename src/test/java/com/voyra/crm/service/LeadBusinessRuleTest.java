@@ -8,7 +8,9 @@ import com.voyra.crm.enums.UserType;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.LeadNoteRepository;
 import com.voyra.crm.repository.LeadRepository;
-import com.voyra.crm.repository.ProposalItemRepository;
+import com.voyra.crm.repository.LeadMemberRepository;
+import com.voyra.crm.repository.LeadProposalRepository;
+import com.voyra.crm.repository.MemberRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -35,9 +37,19 @@ class LeadBusinessRuleTest {
     @Mock
     private LeadNoteRepository leadNoteRepository;
     @Mock
-    private ProposalItemRepository proposalItemRepository;
+    private LeadProposalRepository leadProposalRepository;
+    @Mock
+    private LeadMemberRepository leadMemberRepository;
+    @Mock
+    private MemberRepository memberRepository;
     @Mock
     private AgentRepository agentRepository;
+    @Mock
+    private ClientService clientService;
+    @Mock
+    private MemberService memberService;
+    @Mock
+    private LeadTimelineService leadTimelineService;
     @Mock
     private AuthorResolver authorResolver;
 

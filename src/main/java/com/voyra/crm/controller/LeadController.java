@@ -4,16 +4,20 @@ import com.voyra.crm.dto.LeadAssignRequest;
 import com.voyra.crm.dto.LeadCreateRequest;
 import com.voyra.crm.dto.LeadDetailResponse;
 import com.voyra.crm.dto.LeadFollowUpUpdateRequest;
+import com.voyra.crm.dto.LeadMemberAddRequest;
+import com.voyra.crm.dto.LeadMemberResponse;
+import com.voyra.crm.dto.LeadMemberUpdateRequest;
 import com.voyra.crm.dto.LeadNoteCreateRequest;
 import com.voyra.crm.dto.LeadNoteResponse;
 import com.voyra.crm.dto.LeadResponse;
 import com.voyra.crm.dto.LeadStatusUpdateRequest;
 import com.voyra.crm.dto.ProposalItemCreateRequest;
 import com.voyra.crm.dto.ProposalItemResponse;
+import com.voyra.crm.dto.LeadTimelineResponse;
 import com.voyra.crm.dto.ProposalLinkResponse;
-import com.voyra.crm.dto.VisaTrackerUpdateRequest;
 import com.voyra.crm.enums.LeadStatus;
 import com.voyra.crm.service.LeadService;
+import com.voyra.crm.service.LeadTimelineService;
 import com.voyra.crm.service.ProposalLinkService;
 import com.voyra.crm.util.PageRequestUtil;
 import io.swagger.v3.oas.annotations.Operation;
@@ -45,15 +49,18 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/leads")
 @RequiredArgsConstructor
-@Tag(name = "Leads", description = "Lead pipeline, proposal builder, and visa tracker")
+@Tag(name = "Leads", description = "Lead pipeline, traveller manifest, proposal builder, and activity timeline")
 @PreAuthorize("hasAnyRole('AGENCY_OWNER', 'AGENT')")
 public class LeadController {
 
     private final LeadService leadService;
+    private final LeadTimelineService leadTimelineService;
     private final ProposalLinkService proposalLinkService;
 
     @PostMapping
-    @Operation(summary = "Create a lead (3-step wizard payload)")
+    @Operation(summary = "Create a lead against an existing client",
+            description = "Contact details come from the client's primary member. Use the client "
+                    + "lookup endpoint first to find or create the client.")
     public ResponseEntity<LeadDetailResponse> createLead(@Valid @RequestBody LeadCreateRequest request) {
         return ResponseEntity.ok(leadService.createLead(request));
     }
@@ -121,11 +128,41 @@ public class LeadController {
         return ResponseEntity.noContent().build();
     }
 
-    @PatchMapping("/{id}/visa-tracker")
-    @Operation(summary = "Toggle one or more visa tracker steps")
-    public ResponseEntity<LeadDetailResponse> updateVisaTracker(@PathVariable String id,
-                                                                 @Valid @RequestBody VisaTrackerUpdateRequest request) {
-        return ResponseEntity.ok(leadService.updateVisaTracker(id, request));
+    @GetMapping("/{id}/members")
+    @Operation(summary = "The lead's traveller manifest",
+            description = "Includes DROPPED travellers, so the record of who was once on the trip and "
+                    + "what documents were collected for them survives.")
+    public ResponseEntity<List<LeadMemberResponse>> listMembers(@PathVariable String id) {
+        return ResponseEntity.ok(leadService.listMembers(id));
+    }
+
+    @PostMapping("/{id}/members")
+    @Operation(summary = "Add travellers to the lead",
+            description = "Pick from the client's existing roster with memberIds, and/or create ad-hoc "
+                    + "travellers inline with newMembers. Ad-hoc travellers join the client's roster so "
+                    + "they are reusable on the next enquiry.")
+    public ResponseEntity<List<LeadMemberResponse>> addMembers(@PathVariable String id,
+                                                               @Valid @RequestBody LeadMemberAddRequest request) {
+        return ResponseEntity.ok(leadService.addMembers(id, request));
+    }
+
+    @PatchMapping("/{id}/members/{memberId}")
+    @Operation(summary = "Update one traveller's status or document checklist",
+            description = "Removing a traveller means setting status to DROPPED with a reason - there is no "
+                    + "delete, because the documents already collected for them have to stay on the record.")
+    public ResponseEntity<LeadMemberResponse> updateMember(@PathVariable String id,
+                                                           @PathVariable String memberId,
+                                                           @Valid @RequestBody LeadMemberUpdateRequest request) {
+        return ResponseEntity.ok(leadService.updateMember(id, memberId, request));
+    }
+
+    @GetMapping("/{id}/timeline")
+    @Operation(summary = "The lead's activity stream, newest first",
+            description = "Server-written audit trail of status changes, assignments and manifest edits. "
+                    + "Read-only by design - agent-authored prose belongs in notes.")
+    public ResponseEntity<List<LeadTimelineResponse>> getTimeline(@PathVariable String id) {
+        leadService.getLead(id);
+        return ResponseEntity.ok(leadTimelineService.listForLead(id));
     }
 
     @PostMapping("/{id}/proposal-link")

@@ -6,38 +6,29 @@ import com.voyra.crm.enums.LeadSource;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
+import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 import java.time.LocalDate;
 import java.util.List;
 
 @Data
-@Schema(description = "Request body for the 3-step Add Lead wizard")
+@Schema(description = "Creates a lead against an existing client. Contact details are not "
+        + "repeated here - they resolve through the client's primary member, so there is one "
+        + "place to correct a phone number. Use the client lookup endpoint first to find or "
+        + "create the client.")
 public class LeadCreateRequest {
 
-    @Schema(description = "Owner-only: assign the lead to a specific agent. Ignored for the AGENT role (always self).", example = "CB9Y0N")
+    @Schema(description = "Owner-only: assign the lead to a specific agent. Ignored for the AGENT role (always self).",
+            example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String assignedTo;
 
-    // Step 1 - Contact
-    @Schema(example = "+91")
-    private String countryCode;
+    @NotBlank(message = "Client is required")
+    @Schema(description = "The client this enquiry belongs to", example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
+    private String clientId;
 
-    @NotBlank(message = "Phone is required")
-    @Schema(example = "9876543210")
-    private String phone;
-
-    @NotBlank(message = "Name is required")
-    @Schema(example = "Jane Doe")
-    private String name;
-
-    @Schema(example = "jane.doe@example.com")
-    private String email;
-
-    @Schema(description = "Set when the phone-lookup step matched an existing customer", example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
-    private String customerId;
-
-    // Step 2 - Trip Details
     @NotBlank(message = "Destination is required")
+    @Size(max = 150, message = "Destination must be 150 characters or fewer")
     @Schema(example = "Dubai, UAE")
     private String destination;
 
@@ -48,10 +39,12 @@ public class LeadCreateRequest {
     private LocalDate travelDateTo;
 
     @NotEmpty(message = "Select at least one category")
-    @Schema(description = "Multi-select, stored as a native array")
+    @Schema(description = "Multi-select, stored as a native array. Determines which traveller "
+            + "identity fields the manifest must carry before a booking can be made.")
     private List<LeadCategory> categories;
 
-    @Schema(description = "Free-text budget range as entered by the agent", example = "₹1,50,000 - ₹2,00,000")
+    @Size(max = 50, message = "Budget must be 50 characters or fewer")
+    @Schema(description = "Free-text budget range as entered by the agent", example = "1,50,000 - 2,00,000")
     private String budget;
 
     @Schema(example = "2026-08-20")
@@ -63,7 +56,14 @@ public class LeadCreateRequest {
     @Schema(defaultValue = "MEDIUM", example = "HIGH")
     private LeadPriority priority;
 
-    // Step 3 - Guests
     @Schema(description = "Traveller headcount; adults defaults to 1 if not supplied")
     private GuestDetails guestDetails;
+
+    @Schema(description = "What the client asked for, in the agent's words",
+            example = "Honeymoon package, wants a desert safari and a beach resort")
+    private String leadDescription;
+
+    @Schema(description = "Standing preferences for this trip - airline, cabin, meal, hotel category",
+            example = "Emirates preferred, vegetarian meals, 5-star only")
+    private String preferences;
 }

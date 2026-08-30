@@ -19,7 +19,7 @@ public interface BookingRepository extends JpaRepository<Booking, String> {
 
     List<Booking> findByAgentId(String agentId);
 
-    List<Booking> findByCustomerId(String customerId);
+    List<Booking> findByClientId(String clientId);
 
     List<Booking> findByType(BookingType type);
 
@@ -113,12 +113,12 @@ public interface BookingRepository extends JpaRepository<Booking, String> {
         java.math.BigDecimal getProfit();
     }
 
-    /** Keeps the denormalized agent_name/customer_name snapshots live-synced on rename. */
+    /** Keeps the denormalized agent_name/client_name snapshots live-synced on rename. */
     @Modifying
     @Query("UPDATE Booking b SET b.agentName = :name WHERE b.agentId = :agentId")
     void updateAgentNameForAgent(@Param("agentId") String agentId, @Param("name") String name);
 
     @Modifying
-    @Query("UPDATE Booking b SET b.customerName = :name WHERE b.customerId = :customerId")
-    void updateCustomerNameForCustomer(@Param("customerId") String customerId, @Param("name") String name);
+    @Query("UPDATE Booking b SET b.clientName = :name WHERE b.clientId = :clientId")
+    void updateClientNameForClient(@Param("clientId") String clientId, @Param("name") String name);
 }

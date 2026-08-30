@@ -13,8 +13,19 @@ import lombok.Setter;
 
 import java.time.LocalDateTime;
 
+/**
+ * An agent-authored note on a lead - what was said on the call.
+ *
+ * <p>Distinct from {@link LeadTimeline}, which the service writes automatically on state
+ * changes. Notes are human prose and can say anything; timeline rows are structured events
+ * and have no write endpoint. Both are needed: one is the conversation, the other is the
+ * audit trail.
+ *
+ * <p>{@code authorName} is a snapshot re-synced in bulk when the agent is renamed, so an old
+ * note never shows a stale name.
+ */
 @Entity
-@Table(name = "lead_note")
+@Table(name = "lead_notes")
 @Getter
 @Setter
 @NoArgsConstructor
@@ -38,13 +49,13 @@ public class LeadNote {
     @Column(name = "text", nullable = false)
     private String text;
 
-    @Column(name = "created_date")
-    private LocalDateTime createdDate;
+    @Column(name = "created_at")
+    private LocalDateTime createdAt;
 
     @PrePersist
     protected void onCreate() {
-        if (createdDate == null) {
-            createdDate = LocalDateTime.now();
+        if (createdAt == null) {
+            createdAt = LocalDateTime.now();
         }
     }
 }

@@ -18,13 +18,13 @@ public interface VisaRepository extends JpaRepository<Visa, String> {
 
     Page<Visa> findByAgentId(String agentId, Pageable pageable);
 
-    List<Visa> findByCustomerId(String customerId);
+    List<Visa> findByClientId(String clientId);
 
     @Modifying
     @Query("UPDATE Visa v SET v.agentName = :name WHERE v.agentId = :agentId")
     void updateAgentNameForAgent(@Param("agentId") String agentId, @Param("name") String name);
 
     @Modifying
-    @Query("UPDATE Visa v SET v.customerName = :name WHERE v.customerId = :customerId")
-    void updateCustomerNameForCustomer(@Param("customerId") String customerId, @Param("name") String name);
+    @Query("UPDATE Visa v SET v.clientName = :name WHERE v.clientId = :clientId")
+    void updateClientNameForClient(@Param("clientId") String clientId, @Param("name") String name);
 }

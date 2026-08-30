@@ -4,8 +4,7 @@ import com.voyra.crm.entity.Agent;
 import com.voyra.crm.enums.UserType;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.BookingRepository;
-import com.voyra.crm.repository.CustomerInteractionRepository;
-import com.voyra.crm.repository.CustomerRepository;
+import com.voyra.crm.repository.ClientRepository;
 import com.voyra.crm.repository.LeadNoteRepository;
 import com.voyra.crm.repository.LeadRepository;
 import com.voyra.crm.repository.VisaRepository;
@@ -42,9 +41,7 @@ class AgentRemovalTest {
     @Mock
     private BookingRepository bookingRepository;
     @Mock
-    private CustomerRepository customerRepository;
-    @Mock
-    private CustomerInteractionRepository customerInteractionRepository;
+    private ClientRepository clientRepository;
     @Mock
     private VisaRepository visaRepository;
     @Mock

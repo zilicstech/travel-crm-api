@@ -3,10 +3,10 @@ package com.voyra.crm.service;
 import com.voyra.crm.dto.PublicProposalItemResponse;
 import com.voyra.crm.dto.PublicProposalResponse;
 import com.voyra.crm.entity.Lead;
-import com.voyra.crm.entity.ProposalItem;
+import com.voyra.crm.entity.LeadProposal;
 import com.voyra.crm.enums.LeadStatus;
 import com.voyra.crm.repository.LeadRepository;
-import com.voyra.crm.repository.ProposalItemRepository;
+import com.voyra.crm.repository.LeadProposalRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -32,7 +32,7 @@ public class PublicProposalTenantService {
             Set.of(LeadStatus.NEGOTIATING, LeadStatus.BOOKED, LeadStatus.LOST);
 
     private final LeadRepository leadRepository;
-    private final ProposalItemRepository proposalItemRepository;
+    private final LeadProposalRepository leadProposalRepository;
 
     @Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
     public Optional<PublicProposalResponse> fetchProposal(String leadId) {
@@ -55,14 +55,17 @@ public class PublicProposalTenantService {
     }
 
     private PublicProposalResponse buildResponse(Lead lead) {
-        var items = proposalItemRepository.findByLeadId(lead.getId());
+        var items = leadProposalRepository.findByLeadId(lead.getId());
         BigDecimal grandTotal = items.stream()
-                .map(ProposalItem::getSellingPrice)
+                .map(LeadProposal::getSellingPrice)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
-        int guestCount = safe(lead.getAdults()) + safe(lead.getChildren()) + safe(lead.getInfants());
+        // Aggregate headcount only. The named traveller manifest deliberately never crosses
+        // this boundary - it carries passport numbers and dates of birth, and this endpoint
+        // needs no login.
+        int guestCount = safe(lead.getTotalTravellers());
 
         return PublicProposalResponse.builder()
-                .customerName(lead.getName())
+                .clientName(lead.getClientName())
                 .destination(lead.getDestination())
                 .travelDateFrom(lead.getTravelDateFrom())
                 .travelDateTo(lead.getTravelDateTo())

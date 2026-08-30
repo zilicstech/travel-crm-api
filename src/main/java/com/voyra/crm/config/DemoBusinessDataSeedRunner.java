@@ -5,9 +5,12 @@ import com.voyra.crm.dto.BookingCreateRequest;
 import com.voyra.crm.dto.BookingStatusUpdateRequest;
 import com.voyra.crm.dto.ClientInvoiceCreateRequest;
 import com.voyra.crm.dto.ClientInvoicePaymentRequest;
-import com.voyra.crm.dto.CustomerCreateRequest;
+import com.voyra.crm.dto.ClientCreateRequest;
 import com.voyra.crm.dto.GuestDetails;
 import com.voyra.crm.dto.LeadCreateRequest;
+import com.voyra.crm.dto.LeadMemberAddRequest;
+import com.voyra.crm.dto.LeadMemberUpdateRequest;
+import com.voyra.crm.dto.MemberCreateRequest;
 import com.voyra.crm.dto.LeadDetailResponse;
 import com.voyra.crm.dto.LeadStatusUpdateRequest;
 import com.voyra.crm.dto.ProposalItemCreateRequest;
@@ -18,27 +21,30 @@ import com.voyra.crm.dto.VisaCreateRequest;
 import com.voyra.crm.entity.Agent;
 import com.voyra.crm.entity.Booking;
 import com.voyra.crm.entity.ClientInvoice;
-import com.voyra.crm.entity.Customer;
+import com.voyra.crm.entity.Client;
 import com.voyra.crm.entity.Tenant;
 import com.voyra.crm.enums.AgentDepartment;
 import com.voyra.crm.enums.BookingStatus;
 import com.voyra.crm.enums.BookingType;
-import com.voyra.crm.enums.CustomerStatus;
+import com.voyra.crm.enums.ClientType;
 import com.voyra.crm.enums.InvoiceStatus;
+import com.voyra.crm.enums.LeadMemberStatus;
 import com.voyra.crm.enums.LeadCategory;
 import com.voyra.crm.enums.LeadPriority;
 import com.voyra.crm.enums.LeadSource;
 import com.voyra.crm.enums.LeadStatus;
+import com.voyra.crm.enums.MemberRelation;
 import com.voyra.crm.enums.PaymentStatus;
 import com.voyra.crm.enums.ProposalItemType;
 import com.voyra.crm.enums.UserType;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.BookingRepository;
-import com.voyra.crm.repository.CustomerRepository;
+import com.voyra.crm.repository.ClientRepository;
 import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.service.BookingService;
-import com.voyra.crm.service.CustomerService;
+import com.voyra.crm.service.ClientService;
+import com.voyra.crm.service.MemberService;
 import com.voyra.crm.service.InvoiceService;
 import com.voyra.crm.service.LeadService;
 import com.voyra.crm.service.VisaService;
@@ -62,7 +68,7 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Seeds realistic tenant-schema business data (customers/leads/bookings/invoices/visas) for
+ * Seeds realistic tenant-schema business data (clients/members/leads/bookings/invoices/visas) for
  * the demo agency, so every screen has something to show and the dashboards/reports have real
  * shape instead of rendering empty on a fresh database. Runs at Order(200) - strictly after
  * {@link DemoDataSeedRunner} (Order 0, creates the tenant/agent identities) and
@@ -95,10 +101,11 @@ public class DemoBusinessDataSeedRunner implements ApplicationRunner {
     private final AgentRepository agentRepository;
     private final PasswordEncoder passwordEncoder;
 
-    private final CustomerRepository customerRepository;
+    private final ClientRepository clientRepository;
     private final BookingRepository bookingRepository;
 
-    private final CustomerService customerService;
+    private final ClientService clientService;
+    private final MemberService memberService;
     private final LeadService leadService;
     private final BookingService bookingService;
     private final InvoiceService invoiceService;
@@ -116,16 +123,16 @@ public class DemoBusinessDataSeedRunner implements ApplicationRunner {
         TenantContext.setTenantId(tenantId);
         setOwnerSecurityContext(tenantId);
         try {
-            if (customerRepository.count() >= 8) {
+            if (clientRepository.count() >= 8) {
                 log.info("Demo business data already seeded for tenant {} - skipping", tenantId);
                 return;
             }
             List<Agent> agents = ensureAgents(tenantId);
-            List<String> customerIds = seedCustomers(agents);
-            seedLeads(agents, customerIds);
-            seedBookings(agents, customerIds);
-            seedInvoices(agents, customerIds);
-            seedVisas(agents, customerIds);
+            List<String> clientIds = seedClients(agents);
+            seedLeads(agents, clientIds);
+            seedBookings(agents, clientIds);
+            seedInvoices(agents, clientIds);
+            seedVisas(agents, clientIds);
             log.info("Demo business data seed complete for tenant {}", tenantId);
         } finally {
             SecurityContextHolder.clearContext();
@@ -170,128 +177,171 @@ public class DemoBusinessDataSeedRunner implements ApplicationRunner {
         });
     }
 
-    // ------------------------------------------------------------- customers
+    // --------------------------------------------------------------- clients
 
-    private record CustomerSeed(String name, String email, String phone, LocalDate dob, String gender, String city,
-            String passportNumber, LocalDate passportExpiry, String preferredAirline, String preferredCabin,
-            CustomerStatus status, List<String> tags, int agentIdx, long monthsAgo) {
+    private record ClientSeed(String name, String identifier, String email, LocalDate dob, String gender,
+            String passportNumber, LocalDate passportExpiry, ClientType type, int agentIdx, long monthsAgo,
+            List<MemberSeed> members) {
     }
 
-    private List<String> seedCustomers(List<Agent> agents) {
-        List<CustomerSeed> seeds = List.of(
-                new CustomerSeed("Arjun Mehta", "arjun.mehta.demo@example.com", "9812345601",
-                        LocalDate.of(1988, 3, 12), "Male", "Mumbai", "M1122334", LocalDate.of(2031, 3, 12),
-                        "Emirates", "Economy", CustomerStatus.CUSTOMER, List.of("Repeat Traveller"), 0, 5),
-                new CustomerSeed("Priya Nair", "priya.nair.demo@example.com", "9812345602",
-                        LocalDate.of(1990, 7, 22), "Female", "Bengaluru", "N2233445", LocalDate.of(2030, 7, 22),
-                        "Qatar Airways", "Business", CustomerStatus.VIP, List.of("VIP", "Corporate"), 1, 4),
-                new CustomerSeed("Rahul Verma", "rahul.verma.demo@example.com", "9812345603",
-                        LocalDate.of(1985, 11, 2), "Male", "Delhi", null, null,
-                        null, "Economy", CustomerStatus.LEAD, List.of(), 2, 1),
-                new CustomerSeed("Ananya Iyer", "ananya.iyer.demo@example.com", "9812345604",
-                        LocalDate.of(1993, 1, 18), "Female", "Chennai", "I3344556", LocalDate.of(2029, 1, 18),
-                        "Singapore Airlines", "Business", CustomerStatus.CORPORATE, List.of("Corporate"), 0, 3),
-                new CustomerSeed("Vikram Malhotra", "vikram.malhotra.demo@example.com", "9812345605",
-                        LocalDate.of(1979, 6, 9), "Male", "Pune", "V4455667", LocalDate.of(2028, 6, 9),
-                        "Emirates", "Economy", CustomerStatus.CUSTOMER, List.of(), 1, 2),
-                new CustomerSeed("Kavya Reddy", "kavya.reddy.demo@example.com", "9812345606",
-                        LocalDate.of(1995, 9, 30), "Female", "Hyderabad", "K5566778", LocalDate.of(2033, 9, 30),
-                        "Etihad", "First", CustomerStatus.VIP, List.of("VIP"), 2, 0),
-                new CustomerSeed("Rohan Kapoor", "rohan.kapoor.demo@example.com", "9812345607",
-                        LocalDate.of(1991, 12, 5), "Male", "Jaipur", null, null,
-                        null, "Economy", CustomerStatus.LEAD, List.of(), 0, 1),
-                new CustomerSeed("Sneha Joshi", "sneha.joshi.demo@example.com", "9812345608",
-                        LocalDate.of(1987, 4, 25), "Female", "Ahmedabad", "S6677889", LocalDate.of(2030, 4, 25),
-                        "Vistara", "Economy", CustomerStatus.CUSTOMER, List.of("Repeat Traveller"), 1, 3)
+    private record MemberSeed(String name, MemberRelation relation, LocalDate dob, String gender,
+            String passportNumber, LocalDate passportExpiry) {
+    }
+
+    /**
+     * Seeds a mix that exercises both halves of the model: B2C households with a family roster,
+     * and B2B group accounts whose members are colleagues rather than relatives. Two clients are
+     * left with only their primary member so the "roster of one" path is covered too.
+     */
+    private List<String> seedClients(List<Agent> agents) {
+        List<ClientSeed> seeds = List.of(
+                new ClientSeed("Arjun Mehta", "9812345601", "arjun.mehta.demo@example.com",
+                        LocalDate.of(1988, 3, 12), "Male", "M1122334", LocalDate.of(2031, 3, 12),
+                        ClientType.B2C, 0, 5, List.of(
+                                new MemberSeed("Sanya Mehta", MemberRelation.SPOUSE, LocalDate.of(1990, 8, 4),
+                                        "Female", "M1122335", LocalDate.of(2031, 8, 4)),
+                                new MemberSeed("Ira Mehta", MemberRelation.DAUGHTER, LocalDate.now().minusYears(6),
+                                        "Female", "M1122336", LocalDate.of(2030, 1, 15)),
+                                new MemberSeed("Veer Mehta", MemberRelation.SON, LocalDate.now().minusYears(1),
+                                        "Male", null, null))),
+                new ClientSeed("Priya Nair", "9812345602", "priya.nair.demo@example.com",
+                        LocalDate.of(1990, 7, 22), "Female", "N2233445", LocalDate.of(2030, 7, 22),
+                        ClientType.B2C, 1, 4, List.of(
+                                new MemberSeed("Rohit Nair", MemberRelation.SPOUSE, LocalDate.of(1987, 2, 11),
+                                        "Male", "N2233446", LocalDate.of(2029, 2, 11)))),
+                new ClientSeed("Rahul Verma", "9812345603", "rahul.verma.demo@example.com",
+                        LocalDate.of(1985, 11, 2), "Male", null, null,
+                        ClientType.B2C, 2, 1, List.of()),
+                new ClientSeed("Iyer Corporate Travel", "IYER-CORP", "ananya.iyer.demo@example.com",
+                        LocalDate.of(1993, 1, 18), "Female", "I3344556", LocalDate.of(2029, 1, 18),
+                        ClientType.B2B, 0, 3, List.of(
+                                new MemberSeed("Nikhil Raman", MemberRelation.COLLEAGUE, LocalDate.of(1989, 5, 30),
+                                        "Male", "I3344557", LocalDate.of(2030, 5, 30)),
+                                new MemberSeed("Divya Menon", MemberRelation.COLLEAGUE, LocalDate.of(1992, 9, 8),
+                                        "Female", "I3344558", LocalDate.of(2031, 9, 8)))),
+                new ClientSeed("Vikram Malhotra", "9812345605", "vikram.malhotra.demo@example.com",
+                        LocalDate.of(1979, 6, 9), "Male", "V4455667", LocalDate.of(2028, 6, 9),
+                        ClientType.B2C, 1, 2, List.of(
+                                new MemberSeed("Anita Malhotra", MemberRelation.SPOUSE, LocalDate.of(1982, 3, 19),
+                                        "Female", "V4455668", LocalDate.of(2028, 3, 19)))),
+                new ClientSeed("Kavya Reddy", "9812345606", "kavya.reddy.demo@example.com",
+                        LocalDate.of(1995, 9, 30), "Female", "K5566778", LocalDate.of(2033, 9, 30),
+                        ClientType.B2C, 2, 0, List.of()),
+                new ClientSeed("Kapoor Friends Group", "WA-KAPOOR-GOA", "rohan.kapoor.demo@example.com",
+                        LocalDate.of(1991, 12, 5), "Male", "P7788991", LocalDate.of(2032, 12, 5),
+                        ClientType.B2B, 0, 1, List.of(
+                                new MemberSeed("Dev Anand", MemberRelation.FRIEND, LocalDate.of(1990, 4, 2),
+                                        "Male", "P7788992", LocalDate.of(2031, 4, 2)),
+                                new MemberSeed("Tara Sethi", MemberRelation.FRIEND, LocalDate.of(1993, 10, 27),
+                                        "Female", null, null),
+                                new MemberSeed("Manav Bhatia", MemberRelation.FRIEND, LocalDate.of(1989, 7, 14),
+                                        "Male", "P7788993", LocalDate.of(2029, 7, 14)))),
+                new ClientSeed("Sneha Joshi", "9812345608", "sneha.joshi.demo@example.com",
+                        LocalDate.of(1987, 4, 25), "Female", "S6677889", LocalDate.of(2030, 4, 25),
+                        ClientType.B2C, 1, 3, List.of(
+                                new MemberSeed("Aarav Joshi", MemberRelation.SON, LocalDate.now().minusYears(11),
+                                        "Male", "S6677890", LocalDate.of(2032, 4, 25))))
         );
 
         return seeds.stream().map(s -> {
-            CustomerCreateRequest req = new CustomerCreateRequest();
+            ClientCreateRequest req = new ClientCreateRequest();
             req.setAgentId(agents.get(s.agentIdx()).getId());
+            req.setIdentifier(s.identifier());
             req.setName(s.name());
-            req.setCountryCode("+91");
-            req.setPhone(s.phone());
-            req.setEmail(s.email());
-            req.setDob(s.dob());
-            req.setGender(s.gender());
-            req.setCity(s.city());
-            req.setCountry("India");
-            req.setNationality("Indian");
-            req.setPassportNumber(s.passportNumber());
-            req.setPassportExpiry(s.passportExpiry());
-            req.setPreferredAirline(s.preferredAirline());
-            req.setPreferredCabin(s.preferredCabin());
-            req.setStatus(s.status());
-            req.setTags(s.tags());
-            String id = customerService.createCustomer(req).getId();
-            backdateCustomer(id, s.monthsAgo());
+            req.setType(s.type());
+            req.setPrimaryMemberName(s.name());
+            req.setPrimaryMemberEmail(s.email());
+            req.setPrimaryMemberCountryCode("+91");
+            req.setPrimaryMemberPhone(s.identifier().matches("\\d+") ? s.identifier() : "9800000000");
+            req.setPrimaryMemberDob(s.dob());
+            req.setPrimaryMemberGender(s.gender());
+            req.setPrimaryMemberNationality("Indian");
+            req.setPrimaryMemberPassportNumber(s.passportNumber());
+            req.setPrimaryMemberPassportExpiry(s.passportExpiry());
+            String id = clientService.createClient(req).getId();
+
+            for (MemberSeed m : s.members()) {
+                MemberCreateRequest memberReq = new MemberCreateRequest();
+                memberReq.setName(m.name());
+                memberReq.setRelation(m.relation());
+                memberReq.setDob(m.dob());
+                memberReq.setGender(m.gender());
+                memberReq.setNationality("Indian");
+                memberReq.setPassportNumber(m.passportNumber());
+                memberReq.setPassportExpiry(m.passportExpiry());
+                memberService.addMember(id, memberReq);
+            }
+
+            backdateClient(id, s.monthsAgo());
             return id;
         }).toList();
     }
 
-    private void backdateCustomer(String id, long monthsAgo) {
-        Customer c = customerRepository.findById(id).orElseThrow();
-        c.setCreatedDate(LocalDateTime.now().minusMonths(monthsAgo).minusDays(3));
-        customerRepository.save(c);
+    private void backdateClient(String id, long monthsAgo) {
+        Client c = clientRepository.findById(id).orElseThrow();
+        c.setCreatedAt(LocalDateTime.now().minusMonths(monthsAgo).minusDays(3));
+        clientRepository.save(c);
     }
 
     // ----------------------------------------------------------------- leads
 
-    private record LeadSeed(String name, String phone, String destination, List<LeadCategory> categories,
+    private record LeadSeed(int clientIdx, String destination, List<LeadCategory> categories,
             String budget, LeadStatus status, LeadSource source, LeadPriority priority, int agentIdx,
-            long followUpDays, String lostReason, Integer customerIdx) {
+            long followUpDays, String lostReason, int adults, List<Integer> kidAges, boolean seedManifest) {
     }
 
-    private void seedLeads(List<Agent> agents, List<String> customerIds) {
+    /**
+     * Every lead now hangs off a client, so the seed reuses the eight seeded clients rather than
+     * inventing loose contact rows. Three leads get a populated traveller manifest - a family, a
+     * group, and one with a dropped traveller - so the manifest, checklist roll-up and drop
+     * history all have something real to render.
+     */
+    private void seedLeads(List<Agent> agents, List<String> clientIds) {
         List<LeadSeed> seeds = List.of(
-                new LeadSeed("Karan Singh", "9812346101", "Bali, Indonesia",
-                        List.of(LeadCategory.HOLIDAY_PACKAGE, LeadCategory.HOTEL), "₹1,20,000 - ₹1,50,000",
-                        LeadStatus.NEW, LeadSource.WEBSITE, LeadPriority.MEDIUM, 0, 5, null, null),
-                new LeadSeed("Meera Pillai", "9812346102", "Paris, France",
-                        List.of(LeadCategory.FLIGHT, LeadCategory.HOTEL), "₹2,00,000 - ₹2,50,000",
-                        LeadStatus.CONTACTED, LeadSource.REFERRAL, LeadPriority.HIGH, 1, 2, null, null),
-                new LeadSeed("Aditya Rao", "9812346103", "Singapore",
-                        List.of(LeadCategory.HOLIDAY_PACKAGE), "₹90,000 - ₹1,10,000",
-                        LeadStatus.QUALIFIED, LeadSource.SOCIAL_MEDIA, LeadPriority.MEDIUM, 2, 7, null, null),
-                new LeadSeed("Ishita Bansal", "9812346104", "Bangkok, Thailand",
-                        List.of(LeadCategory.FLIGHT, LeadCategory.HOTEL, LeadCategory.VISA), "₹1,50,000 - ₹1,80,000",
-                        LeadStatus.PROPOSAL_SENT, LeadSource.WALK_IN, LeadPriority.HIGH, 0, -2, null, null),
-                new LeadSeed("Priya Nair", "9812345602", "Maldives",
-                        List.of(LeadCategory.HOLIDAY_PACKAGE, LeadCategory.HOTEL), "₹3,00,000 - ₹3,50,000",
-                        LeadStatus.NEGOTIATING, LeadSource.WHATSAPP, LeadPriority.HIGH, 1, 1, null, 1),
-                new LeadSeed("Ananya Iyer", "9812345604", "London, UK",
-                        List.of(LeadCategory.FLIGHT, LeadCategory.HOTEL, LeadCategory.VISA), "₹4,50,000",
-                        LeadStatus.BOOKED, LeadSource.PHONE_CALL, LeadPriority.HIGH, 2, 30, null, 3),
-                new LeadSeed("Devansh Oberoi", "9812346107", "Switzerland",
-                        List.of(LeadCategory.HOLIDAY_PACKAGE), "₹5,00,000",
+                new LeadSeed(2, "Bali, Indonesia",
+                        List.of(LeadCategory.HOLIDAY_PACKAGE, LeadCategory.HOTEL), "1,20,000 - 1,50,000",
+                        LeadStatus.NEW, LeadSource.WEBSITE, LeadPriority.MEDIUM, 0, 5, null, 2, List.of(), false),
+                new LeadSeed(1, "Paris, France",
+                        List.of(LeadCategory.FLIGHT, LeadCategory.HOTEL), "2,00,000 - 2,50,000",
+                        LeadStatus.CONTACTED, LeadSource.REFERRAL, LeadPriority.HIGH, 1, 2, null, 2, List.of(), true),
+                new LeadSeed(5, "Singapore",
+                        List.of(LeadCategory.HOLIDAY_PACKAGE), "90,000 - 1,10,000",
+                        LeadStatus.QUALIFIED, LeadSource.SOCIAL_MEDIA, LeadPriority.MEDIUM, 2, 7, null, 1, List.of(), false),
+                new LeadSeed(0, "Bangkok, Thailand",
+                        List.of(LeadCategory.FLIGHT, LeadCategory.HOTEL, LeadCategory.VISA), "1,50,000 - 1,80,000",
+                        LeadStatus.PROPOSAL_SENT, LeadSource.WALK_IN, LeadPriority.HIGH, 0, -2, null,
+                        2, List.of(6, 1), true),
+                new LeadSeed(1, "Maldives",
+                        List.of(LeadCategory.HOLIDAY_PACKAGE, LeadCategory.HOTEL), "3,00,000 - 3,50,000",
+                        LeadStatus.NEGOTIATING, LeadSource.WHATSAPP, LeadPriority.HIGH, 1, 1, null, 2, List.of(), false),
+                new LeadSeed(3, "London, UK",
+                        List.of(LeadCategory.FLIGHT, LeadCategory.HOTEL, LeadCategory.VISA), "4,50,000",
+                        LeadStatus.BOOKED, LeadSource.PHONE_CALL, LeadPriority.HIGH, 2, 30, null, 3, List.of(), true),
+                new LeadSeed(4, "Switzerland",
+                        List.of(LeadCategory.HOLIDAY_PACKAGE), "5,00,000",
                         LeadStatus.LOST, LeadSource.WEBSITE, LeadPriority.MEDIUM, 0, 10,
-                        "Booked with a competitor agency", null),
-                new LeadSeed("Neha Kulkarni", "9812346108", "Goa, India",
-                        List.of(LeadCategory.HOTEL), "₹40,000 - ₹60,000",
-                        LeadStatus.NEW, LeadSource.WALK_IN, LeadPriority.LOW, 1, 10, null, null),
-                new LeadSeed("Yash Trivedi", "9812346109", "Kerala, India",
-                        List.of(LeadCategory.HOLIDAY_PACKAGE, LeadCategory.HOTEL), "₹80,000 - ₹1,00,000",
-                        LeadStatus.CONTACTED, LeadSource.SOCIAL_MEDIA, LeadPriority.MEDIUM, 2, -1, null, null),
-                new LeadSeed("Simran Kaur", "9812346110", "Tokyo, Japan",
-                        List.of(LeadCategory.FLIGHT, LeadCategory.HOTEL, LeadCategory.VISA), "₹2,80,000",
-                        LeadStatus.QUALIFIED, LeadSource.REFERRAL, LeadPriority.HIGH, 0, 4, null, null),
-                new LeadSeed("Aryan Chopra", "9812346111", "New York, USA",
-                        List.of(LeadCategory.FLIGHT, LeadCategory.VISA), "₹3,20,000",
-                        LeadStatus.PROPOSAL_SENT, LeadSource.OTHER, LeadPriority.MEDIUM, 1, -3, null, null),
-                new LeadSeed("Rohan Kapoor", "9812345607", "Dubai, UAE",
-                        List.of(LeadCategory.HOLIDAY_PACKAGE, LeadCategory.HOTEL), "₹1,60,000 - ₹1,90,000",
-                        LeadStatus.NEGOTIATING, LeadSource.PHONE_CALL, LeadPriority.MEDIUM, 2, 6, null, 6)
+                        "Booked with a competitor agency", 2, List.of(), false),
+                new LeadSeed(7, "Goa, India",
+                        List.of(LeadCategory.HOTEL), "40,000 - 60,000",
+                        LeadStatus.NEW, LeadSource.WALK_IN, LeadPriority.LOW, 1, 10, null, 1, List.of(11), false),
+                new LeadSeed(5, "Kerala, India",
+                        List.of(LeadCategory.HOLIDAY_PACKAGE, LeadCategory.HOTEL), "80,000 - 1,00,000",
+                        LeadStatus.CONTACTED, LeadSource.SOCIAL_MEDIA, LeadPriority.MEDIUM, 2, -1, null, 2, List.of(), false),
+                new LeadSeed(0, "Tokyo, Japan",
+                        List.of(LeadCategory.FLIGHT, LeadCategory.HOTEL, LeadCategory.VISA), "2,80,000",
+                        LeadStatus.QUALIFIED, LeadSource.REFERRAL, LeadPriority.HIGH, 0, 4, null, 2, List.of(), false),
+                new LeadSeed(3, "New York, USA",
+                        List.of(LeadCategory.FLIGHT, LeadCategory.VISA), "3,20,000",
+                        LeadStatus.PROPOSAL_SENT, LeadSource.OTHER, LeadPriority.MEDIUM, 1, -3, null, 3, List.of(), false),
+                new LeadSeed(6, "Dubai, UAE",
+                        List.of(LeadCategory.HOLIDAY_PACKAGE, LeadCategory.HOTEL), "1,60,000 - 1,90,000",
+                        LeadStatus.NEGOTIATING, LeadSource.PHONE_CALL, LeadPriority.MEDIUM, 2, 6, null, 4, List.of(), true)
         );
 
         for (LeadSeed s : seeds) {
             LeadCreateRequest req = new LeadCreateRequest();
             req.setAssignedTo(agents.get(s.agentIdx()).getId());
-            req.setCountryCode("+91");
-            req.setPhone(s.phone());
-            req.setName(s.name());
-            if (s.customerIdx() != null) {
-                req.setCustomerId(customerIds.get(s.customerIdx()));
-            }
+            req.setClientId(clientIds.get(s.clientIdx()));
             req.setDestination(s.destination());
             req.setTravelDateFrom(LocalDate.now().plusDays(45));
             req.setTravelDateTo(LocalDate.now().plusDays(52));
@@ -300,9 +350,15 @@ public class DemoBusinessDataSeedRunner implements ApplicationRunner {
             req.setFollowUpDate(LocalDate.now().plusDays(s.followUpDays()));
             req.setSource(s.source());
             req.setPriority(s.priority());
-            req.setGuestDetails(GuestDetails.builder().adults(2).children(0).infants(0).build());
+            req.setGuestDetails(GuestDetails.builder()
+                    .adults(s.adults()).kids(s.kidAges().size()).kidAges(s.kidAges()).build());
+            req.setLeadDescription("Enquiry for " + s.destination());
 
             LeadDetailResponse created = leadService.createLead(req);
+
+            if (s.seedManifest()) {
+                seedManifest(created.getId(), clientIds.get(s.clientIdx()), s.destination());
+            }
 
             if (s.status() != LeadStatus.NEW) {
                 LeadStatusUpdateRequest statusReq = new LeadStatusUpdateRequest();
@@ -314,9 +370,42 @@ public class DemoBusinessDataSeedRunner implements ApplicationRunner {
             }
 
             // A little texture on the two leads carrying a live proposal.
-            if (s.name().equals("Ishita Bansal") || s.name().equals("Priya Nair")) {
+            if (s.destination().startsWith("Bangkok") || s.destination().startsWith("Maldives")) {
                 addProposalItems(created.getId());
             }
+        }
+    }
+
+    /**
+     * Attaches the whole of the client's roster to the lead, confirms everyone, and - on the
+     * larger groups - drops the last traveller with a reason so the DROPPED path and its
+     * preserved checklist are visible in the demo data rather than only in tests.
+     */
+    private void seedManifest(String leadId, String clientId, String destination) {
+        List<String> memberIds = memberService.listMembers(clientId).stream()
+                .map(m -> m.getMemberId())
+                .toList();
+        if (memberIds.isEmpty()) {
+            return;
+        }
+        LeadMemberAddRequest addReq = new LeadMemberAddRequest();
+        addReq.setMemberIds(memberIds);
+        leadService.addMembers(leadId, addReq);
+
+        for (int i = 0; i < memberIds.size(); i++) {
+            LeadMemberUpdateRequest update = new LeadMemberUpdateRequest();
+            boolean dropLast = memberIds.size() >= 3 && i == memberIds.size() - 1;
+            if (dropLast) {
+                update.setStatus(LeadMemberStatus.DROPPED);
+                update.setDroppedReason("Could not get leave approved for the " + destination + " dates");
+                update.setPassportCollected(true);
+            } else {
+                update.setStatus(LeadMemberStatus.CONFIRMED);
+                update.setPassportCollected(true);
+                update.setPhotosCollected(true);
+                update.setFormsFilled(i % 2 == 0);
+            }
+            leadService.updateMember(leadId, memberIds.get(i), update);
         }
     }
 
@@ -340,12 +429,12 @@ public class DemoBusinessDataSeedRunner implements ApplicationRunner {
 
     // -------------------------------------------------------------- bookings
 
-    private record BookingSeed(int customerIdx, BookingType type, String destination, BigDecimal netCost,
+    private record BookingSeed(int clientIdx, BookingType type, String destination, BigDecimal netCost,
             BigDecimal sellingPrice, int agentIdx, long monthsAgo, BookingStatus targetStatus,
             PaymentStatus paymentStatus, String cancelReason) {
     }
 
-    private void seedBookings(List<Agent> agents, List<String> customerIds) {
+    private void seedBookings(List<Agent> agents, List<String> clientIds) {
         List<BookingSeed> seeds = List.of(
                 new BookingSeed(0, BookingType.FLIGHT, "Dubai, UAE", new BigDecimal("35000"), new BigDecimal("42000"),
                         0, 5, BookingStatus.COMPLETED, PaymentStatus.PAID, null),
@@ -372,7 +461,7 @@ public class DemoBusinessDataSeedRunner implements ApplicationRunner {
 
         for (BookingSeed s : seeds) {
             BookingCreateRequest req = new BookingCreateRequest();
-            req.setCustomerId(customerIds.get(s.customerIdx()));
+            req.setClientId(clientIds.get(s.clientIdx()));
             req.setAgentId(agents.get(s.agentIdx()).getId());
             req.setType(s.type());
             req.setDestination(s.destination());
@@ -411,11 +500,11 @@ public class DemoBusinessDataSeedRunner implements ApplicationRunner {
 
     // -------------------------------------------------------------- invoices
 
-    private record ClientInvoiceSeed(int customerIdx, int agentIdx, BigDecimal amount, long dueDays,
+    private record ClientInvoiceSeed(int clientIdx, int agentIdx, BigDecimal amount, long dueDays,
             String paymentMode, BigDecimal paymentAmount) {
     }
 
-    private void seedInvoices(List<Agent> agents, List<String> customerIds) {
+    private void seedInvoices(List<Agent> agents, List<String> clientIds) {
         List<ClientInvoiceSeed> clientSeeds = List.of(
                 new ClientInvoiceSeed(0, 0, new BigDecimal("42000"), 10, "Bank Transfer", new BigDecimal("49560.00")),
                 new ClientInvoiceSeed(1, 1, new BigDecimal("78000"), 5, "Credit Card", new BigDecimal("50000")),
@@ -427,7 +516,7 @@ public class DemoBusinessDataSeedRunner implements ApplicationRunner {
 
         for (ClientInvoiceSeed s : clientSeeds) {
             ClientInvoiceCreateRequest req = new ClientInvoiceCreateRequest();
-            req.setCustomerId(customerIds.get(s.customerIdx()));
+            req.setClientId(clientIds.get(s.clientIdx()));
             req.setAgentId(agents.get(s.agentIdx()).getId());
             req.setAmount(s.amount());
             req.setDueDate(LocalDate.now().plusDays(s.dueDays()));
@@ -469,11 +558,11 @@ public class DemoBusinessDataSeedRunner implements ApplicationRunner {
 
     // ----------------------------------------------------------------- visas
 
-    private record VisaSeed(int customerIdx, int agentIdx, String country, String visaType, String passportNumber,
+    private record VisaSeed(int clientIdx, int agentIdx, String country, String visaType, String passportNumber,
             long applicationDaysAgo, String stage) {
     }
 
-    private void seedVisas(List<Agent> agents, List<String> customerIds) {
+    private void seedVisas(List<Agent> agents, List<String> clientIds) {
         List<VisaSeed> seeds = List.of(
                 new VisaSeed(0, 0, "United Arab Emirates", "Tourist", "M1122334", 3, "DOCUMENTS_PENDING"),
                 new VisaSeed(1, 1, "Schengen (France)", "Tourist", "N2233445", 10, "APPOINTMENT_SCHEDULED"),
@@ -484,7 +573,7 @@ public class DemoBusinessDataSeedRunner implements ApplicationRunner {
 
         for (VisaSeed s : seeds) {
             VisaCreateRequest req = new VisaCreateRequest();
-            req.setCustomerId(customerIds.get(s.customerIdx()));
+            req.setClientId(clientIds.get(s.clientIdx()));
             req.setAgentId(agents.get(s.agentIdx()).getId());
             req.setCountry(s.country());
             req.setVisaType(s.visaType());

@@ -11,12 +11,12 @@ import lombok.NoArgsConstructor;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 
-/** Lightweight booking shape embedded in the Customer detail view - see BookingResponse for the full shape. */
+/** Lightweight booking shape embedded in the client detail view - see BookingResponse for the full shape. */
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-@Schema(description = "Lightweight booking summary embedded in the Customer detail view")
+@Schema(description = "Lightweight booking summary embedded in the client detail view")
 public class BookingSummaryResponse {
 
     @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")

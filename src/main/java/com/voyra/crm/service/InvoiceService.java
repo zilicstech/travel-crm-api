@@ -10,12 +10,12 @@ import com.voyra.crm.dto.SupplierInvoiceResponse;
 import com.voyra.crm.dto.SupplierInvoiceStatusUpdateRequest;
 import com.voyra.crm.entity.Agent;
 import com.voyra.crm.entity.ClientInvoice;
-import com.voyra.crm.entity.Customer;
+import com.voyra.crm.entity.Client;
 import com.voyra.crm.entity.SupplierInvoice;
 import com.voyra.crm.enums.InvoiceStatus;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.ClientInvoiceRepository;
-import com.voyra.crm.repository.CustomerRepository;
+import com.voyra.crm.repository.ClientRepository;
 import com.voyra.crm.repository.SupplierInvoiceRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.security.SecurityContextUtil;
@@ -41,14 +41,14 @@ public class InvoiceService {
 
     private final ClientInvoiceRepository clientInvoiceRepository;
     private final SupplierInvoiceRepository supplierInvoiceRepository;
-    private final CustomerRepository customerRepository;
+    private final ClientRepository clientRepository;
     private final AgentRepository agentRepository;
 
     @Transactional
     public ClientInvoiceResponse createClientInvoice(ClientInvoiceCreateRequest request) {
         String agentId = resolveOwningAgentId(request.getAgentId());
-        Customer customer = customerRepository.findById(request.getCustomerId())
-                .orElseThrow(() -> new IllegalArgumentException("Customer not found: " + request.getCustomerId()));
+        Client client = clientRepository.findById(request.getClientId())
+                .orElseThrow(() -> new IllegalArgumentException("Client not found: " + request.getClientId()));
 
         BigDecimal gstRate = request.getGstRate() != null ? request.getGstRate() : DEFAULT_GST_RATE;
         BigDecimal amount = request.getAmount();
@@ -57,8 +57,8 @@ public class InvoiceService {
 
         ClientInvoice invoice = ClientInvoice.builder()
                 .id(generateUniqueId(clientInvoiceRepository::existsById))
-                .customerId(customer.getId())
-                .customerName(customer.getName())
+                .clientId(client.getId())
+                .clientName(client.getName())
                 .agentId(agentId)
                 .amount(amount)
                 .gst(gst)
@@ -70,7 +70,7 @@ public class InvoiceService {
                 .paymentMode(request.getPaymentMode())
                 .build();
         clientInvoiceRepository.save(invoice);
-        log.info("Client invoice created: invoiceId={}, customerId={}", invoice.getId(), customer.getId());
+        log.info("Client invoice created: invoiceId={}, clientId={}", invoice.getId(), client.getId());
         return toClientResponse(invoice);
     }
 
@@ -210,7 +210,7 @@ public class InvoiceService {
     private ClientInvoiceResponse toClientResponse(ClientInvoice i) {
         BigDecimal pending = i.getTotalWithGst().subtract(i.getAmountPaid());
         return ClientInvoiceResponse.builder()
-                .id(i.getId()).customerId(i.getCustomerId()).customerName(i.getCustomerName())
+                .id(i.getId()).clientId(i.getClientId()).clientName(i.getClientName())
                 .agentId(i.getAgentId()).amount(i.getAmount()).gst(i.getGst()).totalWithGst(i.getTotalWithGst())
                 .amountPaid(i.getAmountPaid()).pending(pending).status(i.getStatus())
                 .invoiceDate(i.getInvoiceDate()).dueDate(i.getDueDate()).paymentMode(i.getPaymentMode())

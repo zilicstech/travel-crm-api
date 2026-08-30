@@ -109,12 +109,13 @@ public class ReportService {
     @Transactional(readOnly = true)
     public String exportLeadsCsv() {
         List<LeadResponse> leads = leadService.listLeads(null);
-        List<String> header = List.of("id", "name", "phone", "destination", "status", "source", "priority",
-                "assignedAgentName", "followUpDate", "createdDate");
+        List<String> header = List.of("id", "clientName", "destination", "status", "source", "priority",
+                "totalTravellers", "assignedAgentName", "followUpDate", "createdAt");
         List<List<String>> rows = leads.stream()
-                .map(l -> List.of(l.getId(), l.getName(), l.getPhone(), l.getDestination(),
+                .map(l -> List.of(l.getId(), l.getClientName(), l.getDestination(),
                         l.getStatus().name(), l.getSource().name(), l.getPriority().name(),
-                        l.getAssignedAgentName(), str(l.getFollowUpDate()), str(l.getCreatedDate())))
+                        str(l.getTotalTravellers()),
+                        l.getAssignedAgentName(), str(l.getFollowUpDate()), str(l.getCreatedAt())))
                 .toList();
         return CsvWriter.write(header, rows);
     }
@@ -122,10 +123,10 @@ public class ReportService {
     @Transactional(readOnly = true)
     public String exportBookingsCsv() {
         List<BookingResponse> bookings = bookingService.listBookings(null, null);
-        List<String> header = List.of("id", "type", "customerName", "destination", "agentName",
+        List<String> header = List.of("id", "type", "clientName", "destination", "agentName",
                 "netCost", "sellingPrice", "profit", "bookingStatus", "paymentStatus", "bookingDate");
         List<List<String>> rows = bookings.stream()
-                .map(b -> List.of(b.getId(), b.getType().name(), b.getCustomerName(), b.getDestination(),
+                .map(b -> List.of(b.getId(), b.getType().name(), b.getClientName(), b.getDestination(),
                         b.getAgentName(), str(b.getNetCost()), str(b.getSellingPrice()), str(b.getProfit()),
                         b.getBookingStatus().name(), b.getPaymentStatus().name(), str(b.getBookingDate())))
                 .toList();

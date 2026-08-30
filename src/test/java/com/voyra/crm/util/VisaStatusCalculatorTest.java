@@ -12,7 +12,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class VisaStatusCalculatorTest {
 
     private Visa.VisaBuilder baseVisa() {
-        return Visa.builder().id("V1").customerId("C1").customerName("Jane").agentId("A1").agentName("Liam")
+        return Visa.builder().id("V1").clientId("C1").clientName("Jane").agentId("A1").agentName("Liam")
                 .country("UAE").visaType("Tourist");
     }
 

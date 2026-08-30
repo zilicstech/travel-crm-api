@@ -1,5 +1,6 @@
 package com.voyra.crm.dto;
 
+import com.voyra.crm.enums.ClientType;
 import com.voyra.crm.enums.LeadCategory;
 import com.voyra.crm.enums.LeadPriority;
 import com.voyra.crm.enums.LeadSource;
@@ -19,26 +20,30 @@ import java.util.List;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-@Schema(description = "Full Lead detail, including proposal items and margin - never exposed to the public proposal endpoint")
+@Schema(description = "Full lead detail, including the traveller manifest, proposal items and "
+        + "margin - none of which is ever exposed on the public proposal endpoint")
 public class LeadDetailResponse {
 
     @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String id;
 
     @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
-    private String customerId;
+    private String clientId;
 
-    @Schema(example = "Jane Doe")
-    private String name;
+    @Schema(description = "Denormalized snapshot, live-synced on client rename", example = "Ajay Sharma")
+    private String clientName;
 
-    @Schema(example = "jane.doe@example.com")
-    private String email;
+    @Schema(example = "B2C")
+    private ClientType clientType;
 
-    @Schema(example = "+91")
-    private String countryCode;
+    @Schema(description = "Resolved from the client's primary member", example = "ajay.sharma@example.com")
+    private String contactEmail;
 
-    @Schema(example = "9876543210")
-    private String phone;
+    @Schema(description = "Resolved from the client's primary member", example = "+91")
+    private String contactCountryCode;
+
+    @Schema(description = "Resolved from the client's primary member", example = "9876543210")
+    private String contactPhone;
 
     @Schema(example = "Dubai, UAE")
     private String destination;
@@ -52,7 +57,7 @@ public class LeadDetailResponse {
     @Schema(description = "Multi-select, stored as a native array")
     private List<LeadCategory> categories;
 
-    @Schema(example = "₹1,50,000 - ₹2,00,000")
+    @Schema(example = "1,50,000 - 2,00,000")
     private String budget;
 
     @Schema(example = "PROPOSAL_SENT")
@@ -73,19 +78,39 @@ public class LeadDetailResponse {
     @Schema(example = "2026-08-20")
     private LocalDate followUpDate;
 
-    @Schema(description = "Required when status is LOST")
+    @Schema(description = "Required when status is LOST", example = "Booked with a competitor")
     private String lostReason;
 
+    @Schema(description = "What the client asked for, in the agent's words",
+            example = "Honeymoon package, wants a desert safari and a beach resort")
+    private String leadDescription;
+
+    @Schema(description = "Standing preferences for this trip", example = "Emirates preferred, vegetarian meals")
+    private String preferences;
+
     @Schema(example = "2026-08-13T09:15:22")
-    private LocalDateTime createdDate;
+    private LocalDateTime createdAt;
+
+    @Schema(example = "2026-08-14T11:02:41")
+    private LocalDateTime updatedAt;
 
     @Schema(description = "followUpDate is in the past AND status is not BOOKED/LOST")
     private boolean overdue;
 
-    @Schema(description = "Traveller headcount")
+    @Schema(description = "Headcount as quoted by the client")
     private GuestDetails guestDetails;
 
-    @Schema(description = "Only present when VISA is in categories")
+    @Schema(description = "Named travellers. May legitimately be shorter than the headcount while "
+            + "the enquiry is still forming - see manifestComplete.")
+    private List<LeadMemberResponse> members;
+
+    @Schema(description = "Every non-dropped traveller is named and carries the identity fields "
+            + "this lead's categories require. A booking or visa filing should be gated on this.")
+    private Boolean manifestComplete;
+
+    @Schema(description = "Roll-up of the per-traveller checklists across all CONFIRMED travellers - "
+            + "each flag is true only when it is true for every one of them. Present only when "
+            + "VISA is in categories.")
     private VisaTrackerResponse visaTracker;
 
     @Schema(description = "This lead's proposal line items")
@@ -100,7 +125,7 @@ public class LeadDetailResponse {
     @Schema(description = "Server-computed margin %, based on the total net cost and selling price", example = "19.2")
     private BigDecimal marginPercent;
 
-    @Schema(description = "This lead's logged notes")
+    @Schema(description = "This lead's agent-authored notes")
     private List<LeadNoteResponse> notes;
 
     @Schema(description = "Whether a public share link has been generated for this lead's proposal")

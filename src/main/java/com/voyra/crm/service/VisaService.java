@@ -6,11 +6,11 @@ import com.voyra.crm.dto.VisaCreateRequest;
 import com.voyra.crm.dto.VisaDashboardSummaryResponse;
 import com.voyra.crm.dto.VisaResponse;
 import com.voyra.crm.entity.Agent;
-import com.voyra.crm.entity.Customer;
+import com.voyra.crm.entity.Client;
 import com.voyra.crm.entity.Visa;
 import com.voyra.crm.enums.VisaStatus;
 import com.voyra.crm.repository.AgentRepository;
-import com.voyra.crm.repository.CustomerRepository;
+import com.voyra.crm.repository.ClientRepository;
 import com.voyra.crm.repository.VisaRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.security.SecurityContextUtil;
@@ -32,19 +32,19 @@ import java.util.List;
 public class VisaService {
 
     private final VisaRepository visaRepository;
-    private final CustomerRepository customerRepository;
+    private final ClientRepository clientRepository;
     private final AgentRepository agentRepository;
 
     @Transactional
     public VisaResponse createVisa(VisaCreateRequest request) {
         AuthorResolver.AuthorInfo owner = resolveOwningAgent(request.getAgentId());
-        Customer customer = customerRepository.findById(request.getCustomerId())
-                .orElseThrow(() -> new IllegalArgumentException("Customer not found: " + request.getCustomerId()));
+        Client client = clientRepository.findById(request.getClientId())
+                .orElseThrow(() -> new IllegalArgumentException("Client not found: " + request.getClientId()));
 
         Visa visa = Visa.builder()
                 .id(UniqueIdResolver.resolve(visaRepository::existsById))
-                .customerId(customer.getId())
-                .customerName(customer.getName())
+                .clientId(client.getId())
+                .clientName(client.getName())
                 .agentId(owner.id())
                 .agentName(owner.name())
                 .leadId(request.getLeadId())
@@ -56,7 +56,7 @@ public class VisaService {
                 .build();
         visaRepository.save(visa);
 
-        log.info("Visa case created: visaId={}, customerId={}", visa.getId(), customer.getId());
+        log.info("Visa case created: visaId={}, clientId={}", visa.getId(), client.getId());
         return toResponse(visa);
     }
 
@@ -160,7 +160,7 @@ public class VisaService {
 
     private VisaResponse toResponse(Visa v) {
         return VisaResponse.builder()
-                .id(v.getId()).customerId(v.getCustomerId()).customerName(v.getCustomerName())
+                .id(v.getId()).clientId(v.getClientId()).clientName(v.getClientName())
                 .agentId(v.getAgentId()).agentName(v.getAgentName()).leadId(v.getLeadId())
                 .country(v.getCountry()).visaType(v.getVisaType()).passportNumber(v.getPassportNumber())
                 .status(v.getStatus()).passportCollected(v.getPassportCollected())
