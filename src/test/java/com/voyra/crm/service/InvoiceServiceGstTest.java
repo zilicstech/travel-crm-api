@@ -8,6 +8,8 @@ import com.voyra.crm.enums.UserType;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.ClientInvoiceRepository;
 import com.voyra.crm.repository.ClientRepository;
+import com.voyra.crm.repository.LeadRepository;
+import com.voyra.crm.repository.LeadServiceRepository;
 import com.voyra.crm.repository.SupplierInvoiceRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.security.SecurityContextUtil;
@@ -40,6 +42,12 @@ class InvoiceServiceGstTest {
     private ClientRepository clientRepository;
     @Mock
     private AgentRepository agentRepository;
+    @Mock
+    private LeadRepository leadRepository;
+    @Mock
+    private LeadServiceRepository leadServiceRepository;
+    @Mock
+    private LeadTimelineService leadTimelineService;
 
     @InjectMocks
     private InvoiceService invoiceService;

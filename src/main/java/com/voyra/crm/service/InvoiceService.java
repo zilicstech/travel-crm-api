@@ -11,15 +11,20 @@ import com.voyra.crm.dto.SupplierInvoiceStatusUpdateRequest;
 import com.voyra.crm.entity.Agent;
 import com.voyra.crm.entity.ClientInvoice;
 import com.voyra.crm.entity.Client;
+import com.voyra.crm.entity.Lead;
 import com.voyra.crm.entity.SupplierInvoice;
 import com.voyra.crm.enums.InvoiceStatus;
+import com.voyra.crm.enums.LeadTimelineEventType;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.ClientInvoiceRepository;
 import com.voyra.crm.repository.ClientRepository;
+import com.voyra.crm.repository.LeadRepository;
+import com.voyra.crm.repository.LeadServiceRepository;
 import com.voyra.crm.repository.SupplierInvoiceRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.security.SecurityContextUtil;
 import com.voyra.crm.util.UniqueIdResolver;
+import org.springframework.security.access.AccessDeniedException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -43,12 +48,25 @@ public class InvoiceService {
     private final SupplierInvoiceRepository supplierInvoiceRepository;
     private final ClientRepository clientRepository;
     private final AgentRepository agentRepository;
+    private final LeadRepository leadRepository;
+    private final LeadServiceRepository leadServiceRepository;
+    private final LeadTimelineService leadTimelineService;
 
     @Transactional
     public ClientInvoiceResponse createClientInvoice(ClientInvoiceCreateRequest request) {
         String agentId = resolveOwningAgentId(request.getAgentId());
         Client client = clientRepository.findById(request.getClientId())
                 .orElseThrow(() -> new IllegalArgumentException("Client not found: " + request.getClientId()));
+
+        String serviceLabel = null;
+        if (request.getLeadId() != null) {
+            assertLeadAccessible(request.getLeadId());
+            if (request.getServiceId() != null) {
+                serviceLabel = leadServiceRepository.findById(request.getServiceId())
+                        .orElseThrow(() -> new IllegalArgumentException("Service not found: " + request.getServiceId()))
+                        .getLabel();
+            }
+        }
 
         BigDecimal gstRate = request.getGstRate() != null ? request.getGstRate() : DEFAULT_GST_RATE;
         BigDecimal amount = request.getAmount();
@@ -60,6 +78,10 @@ public class InvoiceService {
                 .clientId(client.getId())
                 .clientName(client.getName())
                 .agentId(agentId)
+                .leadId(request.getLeadId())
+                .serviceId(request.getServiceId())
+                .serviceLabel(serviceLabel)
+                .description(request.getDescription())
                 .amount(amount)
                 .gst(gst)
                 .totalWithGst(totalWithGst)
@@ -70,8 +92,28 @@ public class InvoiceService {
                 .paymentMode(request.getPaymentMode())
                 .build();
         clientInvoiceRepository.save(invoice);
+
+        if (request.getLeadId() != null) {
+            leadTimelineService.record(request.getLeadId(), request.getServiceId(), LeadTimelineEventType.INVOICE_ADDED,
+                    "Invoice raised" + (request.getDescription() != null ? ": " + request.getDescription() : ""));
+        }
         log.info("Client invoice created: invoiceId={}, clientId={}", invoice.getId(), client.getId());
         return toClientResponse(invoice);
+    }
+
+    @Transactional(readOnly = true)
+    public List<ClientInvoiceResponse> listForLead(String leadId) {
+        return clientInvoiceRepository.findByLeadIdOrderByInvoiceDateDesc(leadId).stream()
+                .map(this::toClientResponse).toList();
+    }
+
+    private void assertLeadAccessible(String leadId) {
+        Lead lead = leadRepository.findById(leadId)
+                .orElseThrow(() -> new IllegalArgumentException("Lead not found: " + leadId));
+        CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
+        if (principal.isAgent() && !lead.getAssignedTo().equals(principal.userId())) {
+            throw new AccessDeniedException("This lead is not assigned to you");
+        }
     }
 
     @Transactional(readOnly = true)
@@ -211,7 +253,9 @@ public class InvoiceService {
         BigDecimal pending = i.getTotalWithGst().subtract(i.getAmountPaid());
         return ClientInvoiceResponse.builder()
                 .id(i.getId()).clientId(i.getClientId()).clientName(i.getClientName())
-                .agentId(i.getAgentId()).amount(i.getAmount()).gst(i.getGst()).totalWithGst(i.getTotalWithGst())
+                .agentId(i.getAgentId()).leadId(i.getLeadId()).serviceId(i.getServiceId())
+                .serviceLabel(i.getServiceLabel()).description(i.getDescription())
+                .amount(i.getAmount()).gst(i.getGst()).totalWithGst(i.getTotalWithGst())
                 .amountPaid(i.getAmountPaid()).pending(pending).status(i.getStatus())
                 .invoiceDate(i.getInvoiceDate()).dueDate(i.getDueDate()).paymentMode(i.getPaymentMode())
                 .overdue(isOverdue(i.getDueDate(), pending))

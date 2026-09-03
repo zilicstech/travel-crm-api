@@ -22,6 +22,8 @@ public interface ClientInvoiceRepository extends JpaRepository<ClientInvoice, St
 
     List<ClientInvoice> findByClientId(String clientId);
 
+    List<ClientInvoice> findByLeadIdOrderByInvoiceDateDesc(String leadId);
+
     @Query("SELECT COALESCE(SUM(c.totalWithGst - c.amountPaid), 0) FROM ClientInvoice c WHERE c.status <> :paid")
     BigDecimal sumOutstanding(@Param("paid") InvoiceStatus paid);
 

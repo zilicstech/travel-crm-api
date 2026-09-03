@@ -80,6 +80,8 @@ class LeadMemberManifestTest {
     private LeadFollowUpService leadFollowUpService;
     @Mock
     private LeadVoucherService leadVoucherService;
+    @Mock
+    private InvoiceService invoiceService;
 
     @InjectMocks
     private LeadService leadService;

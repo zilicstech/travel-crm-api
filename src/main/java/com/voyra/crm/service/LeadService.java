@@ -83,6 +83,7 @@ public class LeadService {
     private final ServiceInstanceService serviceInstanceService;
     private final LeadFollowUpService leadFollowUpService;
     private final LeadVoucherService leadVoucherService;
+    private final InvoiceService invoiceService;
 
     @Transactional
     public LeadDetailResponse createLead(LeadCreateRequest request) {
@@ -608,6 +609,7 @@ public class LeadService {
                 .services(serviceInstanceService.listForLead(lead.getId()))
                 .followUps(leadFollowUpService.listForLead(lead.getId()))
                 .vouchers(leadVoucherService.listForLead(lead.getId()))
+                .invoices(invoiceService.listForLead(lead.getId()))
                 .proposalItems(itemResponses)
                 .totalNetCost(totalNet)
                 .totalSellingPrice(totalSelling)

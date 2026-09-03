@@ -31,4 +31,13 @@ public class ClientInvoiceCreateRequest {
 
     @Schema(example = "Bank Transfer")
     private String paymentMode;
+
+    @Schema(description = "Set when this invoice is scoped to one lead rather than a standalone client charge", example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
+    private String leadId;
+
+    @Schema(description = "Set when this invoice covers one service instance on the lead - requires leadId", example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
+    private String serviceId;
+
+    @Schema(description = "Free-text description of what this invoice covers", example = "Flight tickets - Mumbai to Bangkok")
+    private String description;
 }

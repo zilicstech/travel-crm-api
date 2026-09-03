@@ -123,6 +123,9 @@ public class LeadDetailResponse {
     @Schema(description = "This lead's PNRs and supplier references")
     private List<VoucherResponse> vouchers;
 
+    @Schema(description = "This lead's client invoices, whole-trip and per-service")
+    private List<ClientInvoiceResponse> invoices;
+
     @Schema(description = "This lead's proposal line items")
     private List<ProposalItemResponse> proposalItems;
 
