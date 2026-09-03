@@ -3,7 +3,6 @@ package com.voyra.crm.service;
 import com.voyra.crm.dto.GuestDetails;
 import com.voyra.crm.dto.LeadCreateRequest;
 import com.voyra.crm.dto.LeadDetailResponse;
-import com.voyra.crm.dto.LeadFollowUpUpdateRequest;
 import com.voyra.crm.dto.LeadMemberAddRequest;
 import com.voyra.crm.dto.LeadMemberResponse;
 import com.voyra.crm.dto.LeadMemberUpdateRequest;
@@ -28,11 +27,13 @@ import com.voyra.crm.enums.LeadStatus;
 import com.voyra.crm.enums.LeadTimelineEventType;
 import com.voyra.crm.enums.MemberType;
 import com.voyra.crm.enums.PaxType;
+import com.voyra.crm.enums.ServiceStatus;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.LeadMemberRepository;
 import com.voyra.crm.repository.LeadNoteRepository;
 import com.voyra.crm.repository.LeadProposalRepository;
 import com.voyra.crm.repository.LeadRepository;
+import com.voyra.crm.repository.LeadServiceRepository;
 import com.voyra.crm.repository.MemberRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.security.SecurityContextUtil;
@@ -71,6 +72,7 @@ public class LeadService {
     private final LeadRepository leadRepository;
     private final LeadNoteRepository leadNoteRepository;
     private final LeadProposalRepository leadProposalRepository;
+    private final LeadServiceRepository leadServiceRepository;
     private final LeadMemberRepository leadMemberRepository;
     private final MemberRepository memberRepository;
     private final AgentRepository agentRepository;
@@ -78,6 +80,9 @@ public class LeadService {
     private final MemberService memberService;
     private final LeadTimelineService leadTimelineService;
     private final AuthorResolver authorResolver;
+    private final ServiceInstanceService serviceInstanceService;
+    private final LeadFollowUpService leadFollowUpService;
+    private final LeadVoucherService leadVoucherService;
 
     @Transactional
     public LeadDetailResponse createLead(LeadCreateRequest request) {
@@ -197,17 +202,6 @@ public class LeadService {
                 request.getStatus(), "Status changed from " + previous + " to " + request.getStatus());
 
         log.info("Lead status updated: leadId={}, status={}", id, request.getStatus());
-        return toDetailResponse(lead);
-    }
-
-    @Transactional
-    public LeadDetailResponse updateFollowUp(String id, LeadFollowUpUpdateRequest request) {
-        Lead lead = findAccessibleLead(id);
-        lead.setFollowUpDate(request.getFollowUpDate());
-        touch(lead);
-        leadRepository.save(lead);
-        leadTimelineService.record(id, LeadTimelineEventType.FOLLOW_UP_SET,
-                "Follow-up set for " + request.getFollowUpDate());
         return toDetailResponse(lead);
     }
 
@@ -365,13 +359,22 @@ public class LeadService {
 
     @Transactional
     public ProposalItemResponse addProposalItem(String id, ProposalItemCreateRequest request) {
-        findAccessibleLead(id);
+        Lead lead = findAccessibleLead(id);
         BigDecimal netCost = request.getNetCost() != null ? request.getNetCost() : BigDecimal.ZERO;
         BigDecimal sellingPrice = request.getSellingPrice() != null ? request.getSellingPrice() : BigDecimal.ZERO;
+
+        String serviceLabel = null;
+        if (request.getServiceId() != null) {
+            serviceLabel = leadServiceRepository.findById(request.getServiceId())
+                    .orElseThrow(() -> new IllegalArgumentException("Service not found: " + request.getServiceId()))
+                    .getLabel();
+        }
 
         LeadProposal item = LeadProposal.builder()
                 .id(UniqueIdResolver.resolve(leadProposalRepository::existsById))
                 .leadId(id)
+                .serviceId(request.getServiceId())
+                .serviceLabel(serviceLabel)
                 .type(request.getType())
                 .description(request.getDescription())
                 .supplier(request.getSupplier())
@@ -381,7 +384,8 @@ public class LeadService {
                 .createdBy(currentUserId())
                 .build();
         leadProposalRepository.save(item);
-        leadTimelineService.record(id, LeadTimelineEventType.PROPOSAL_ITEM_ADDED,
+        recomputeQuotedTotals(lead);
+        leadTimelineService.record(id, request.getServiceId(), LeadTimelineEventType.PROPOSAL_ITEM_ADDED,
                 "Proposal item added: " + item.getDescription());
         log.info("Proposal item added: leadId={}, itemId={}", id, item.getId());
         return toProposalItemResponse(item);
@@ -389,13 +393,51 @@ public class LeadService {
 
     @Transactional
     public void removeProposalItem(String id, String itemId) {
-        findAccessibleLead(id);
+        Lead lead = findAccessibleLead(id);
         LeadProposal item = leadProposalRepository.findByIdAndLeadId(itemId, id)
                 .orElseThrow(() -> new IllegalArgumentException("Proposal item not found: " + itemId));
         leadProposalRepository.delete(item);
-        leadTimelineService.record(id, LeadTimelineEventType.PROPOSAL_ITEM_REMOVED,
+        recomputeQuotedTotals(lead);
+        leadTimelineService.record(id, item.getServiceId(), LeadTimelineEventType.PROPOSAL_ITEM_REMOVED,
                 "Proposal item removed: " + item.getDescription());
         log.info("Proposal item removed: leadId={}, itemId={}", id, itemId);
+    }
+
+    /**
+     * A quoted line has no status of its own - lines belonging to a CANCELLED service are
+     * excluded from every total, so this has to run through the owning service. Also refreshes
+     * each affected service's own net/selling snapshot, since that is the only write path that
+     * touches a lead's proposal lines.
+     */
+    private void recomputeQuotedTotals(Lead lead) {
+        List<com.voyra.crm.entity.LeadService> services =
+                leadServiceRepository.findByLeadIdOrderBySortOrderAsc(lead.getId());
+        Map<String, ServiceStatus> statusByServiceId = services.stream()
+                .collect(Collectors.toMap(com.voyra.crm.entity.LeadService::getId, com.voyra.crm.entity.LeadService::getStatus));
+        Map<String, List<LeadProposal>> linesByService = leadProposalRepository.findByLeadId(lead.getId()).stream()
+                .filter(line -> line.getServiceId() != null)
+                .collect(Collectors.groupingBy(LeadProposal::getServiceId));
+
+        BigDecimal net = BigDecimal.ZERO;
+        BigDecimal selling = BigDecimal.ZERO;
+        for (LeadProposal line : leadProposalRepository.findByLeadId(lead.getId())) {
+            ServiceStatus owningStatus = line.getServiceId() != null ? statusByServiceId.get(line.getServiceId()) : null;
+            if (owningStatus == ServiceStatus.CANCELLED) {
+                continue;
+            }
+            net = net.add(line.getNetCost());
+            selling = selling.add(line.getSellingPrice());
+        }
+        lead.setQuotedNetTotal(net);
+        lead.setQuotedSellingTotal(selling);
+        leadRepository.save(lead);
+
+        for (com.voyra.crm.entity.LeadService service : services) {
+            List<LeadProposal> lines = linesByService.getOrDefault(service.getId(), List.of());
+            service.setNetTotal(lines.stream().map(LeadProposal::getNetCost).reduce(BigDecimal.ZERO, BigDecimal::add));
+            service.setSellingTotal(lines.stream().map(LeadProposal::getSellingPrice).reduce(BigDecimal.ZERO, BigDecimal::add));
+        }
+        leadServiceRepository.saveAll(services);
     }
 
     // ---------------------------------------------------------------------
@@ -531,9 +573,11 @@ public class LeadService {
         List<LeadProposal> items = leadProposalRepository.findByLeadId(lead.getId());
         List<ProposalItemResponse> itemResponses = items.stream().map(this::toProposalItemResponse).toList();
 
-        BigDecimal totalNet = items.stream().map(LeadProposal::getNetCost).reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal totalSelling = items.stream().map(LeadProposal::getSellingPrice)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        // lead.quotedNetTotal/quotedSellingTotal are the authoritative roll-up, kept in sync by
+        // recomputeQuotedTotals() on every proposal write and by ServiceInstanceService on every
+        // service status change - both exclude lines whose owning service is cancelled.
+        BigDecimal totalNet = lead.getQuotedNetTotal();
+        BigDecimal totalSelling = lead.getQuotedSellingTotal();
 
         List<LeadNoteResponse> notes = leadNoteRepository.findByLeadIdOrderByCreatedAtDesc(lead.getId()).stream()
                 .map(this::toNoteResponse).toList();
@@ -561,6 +605,9 @@ public class LeadService {
                 .guestDetails(toGuestDetails(lead))
                 .members(manifest)
                 .manifestComplete(isManifestComplete(lead, manifest))
+                .services(serviceInstanceService.listForLead(lead.getId()))
+                .followUps(leadFollowUpService.listForLead(lead.getId()))
+                .vouchers(leadVoucherService.listForLead(lead.getId()))
                 .proposalItems(itemResponses)
                 .totalNetCost(totalNet)
                 .totalSellingPrice(totalSelling)
@@ -606,7 +653,8 @@ public class LeadService {
 
     private ProposalItemResponse toProposalItemResponse(LeadProposal item) {
         return ProposalItemResponse.builder()
-                .id(item.getId()).type(item.getType()).description(item.getDescription())
+                .id(item.getId()).serviceId(item.getServiceId()).serviceLabel(item.getServiceLabel())
+                .type(item.getType()).description(item.getDescription())
                 .supplier(item.getSupplier()).netCost(item.getNetCost()).sellingPrice(item.getSellingPrice())
                 .marginPercent(MarginCalculator.marginPercent(item.getNetCost(), item.getSellingPrice()))
                 .build();

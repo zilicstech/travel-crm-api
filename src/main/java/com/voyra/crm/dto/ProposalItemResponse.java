@@ -22,6 +22,12 @@ public class ProposalItemResponse {
     @Schema(example = "HOTEL")
     private ProposalItemType type;
 
+    @Schema(description = "Null means a trip-level charge", example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
+    private String serviceId;
+
+    @Schema(description = "Snapshot of the service's label when this line was added", example = "Hotel — Bangkok")
+    private String serviceLabel;
+
     @Schema(example = "5 nights at Burj Al Arab, Deluxe Suite")
     private String description;
 

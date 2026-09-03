@@ -18,6 +18,7 @@ import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.LeadMemberRepository;
 import com.voyra.crm.repository.LeadNoteRepository;
 import com.voyra.crm.repository.LeadProposalRepository;
+import com.voyra.crm.repository.LeadServiceRepository;
 import com.voyra.crm.repository.LeadRepository;
 import com.voyra.crm.repository.MemberRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
@@ -58,6 +59,8 @@ class LeadMemberManifestTest {
     @Mock
     private LeadProposalRepository leadProposalRepository;
     @Mock
+    private LeadServiceRepository leadServiceRepository;
+    @Mock
     private LeadMemberRepository leadMemberRepository;
     @Mock
     private MemberRepository memberRepository;
@@ -71,6 +74,12 @@ class LeadMemberManifestTest {
     private LeadTimelineService leadTimelineService;
     @Mock
     private AuthorResolver authorResolver;
+    @Mock
+    private ServiceInstanceService serviceInstanceService;
+    @Mock
+    private LeadFollowUpService leadFollowUpService;
+    @Mock
+    private LeadVoucherService leadVoucherService;
 
     @InjectMocks
     private LeadService leadService;

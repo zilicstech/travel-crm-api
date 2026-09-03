@@ -16,6 +16,10 @@ public class ProposalItemCreateRequest {
     @Schema(example = "HOTEL")
     private ProposalItemType type;
 
+    @Schema(description = "Ties this line to one service instance; omit for a trip-level charge",
+            example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
+    private String serviceId;
+
     @NotBlank(message = "Description is required")
     @Schema(example = "5 nights at Burj Al Arab, Deluxe Suite")
     private String description;

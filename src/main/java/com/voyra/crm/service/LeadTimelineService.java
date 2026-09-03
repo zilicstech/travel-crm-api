@@ -35,16 +35,29 @@ public class LeadTimelineService {
     /** Records an event with no status transition - member changes, notes, proposal edits. */
     @Transactional
     public void record(String leadId, LeadTimelineEventType eventType, String description) {
-        recordTransition(leadId, eventType, null, null, description);
+        recordTransition(leadId, null, eventType, null, null, description);
+    }
+
+    /** Same, but scoped to one service instance - the timeline can be filtered by it. */
+    @Transactional
+    public void record(String leadId, String serviceId, LeadTimelineEventType eventType, String description) {
+        recordTransition(leadId, serviceId, eventType, null, null, description);
     }
 
     @Transactional
     public void recordTransition(String leadId, LeadTimelineEventType eventType,
                                  LeadStatus fromStatus, LeadStatus toStatus, String description) {
+        recordTransition(leadId, null, eventType, fromStatus, toStatus, description);
+    }
+
+    @Transactional
+    public void recordTransition(String leadId, String serviceId, LeadTimelineEventType eventType,
+                                 LeadStatus fromStatus, LeadStatus toStatus, String description) {
         AuthorResolver.AuthorInfo actor = authorResolver.resolveCurrentAuthor();
         LeadTimeline entry = LeadTimeline.builder()
                 .id(UniqueIdResolver.resolve(leadTimelineRepository::existsById))
                 .leadId(leadId)
+                .serviceId(serviceId)
                 .eventType(eventType)
                 .fromStatus(fromStatus)
                 .toStatus(toStatus)
@@ -74,6 +87,7 @@ public class LeadTimelineService {
     private LeadTimelineResponse toResponse(LeadTimeline entry) {
         return LeadTimelineResponse.builder()
                 .id(entry.getId())
+                .serviceId(entry.getServiceId())
                 .eventType(entry.getEventType())
                 .fromStatus(entry.getFromStatus())
                 .toStatus(entry.getToStatus())

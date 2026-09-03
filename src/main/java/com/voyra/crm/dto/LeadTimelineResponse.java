@@ -22,6 +22,10 @@ public class LeadTimelineResponse {
     @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String id;
 
+    @Schema(description = "Null for a lead-level event; set for one scoped to a service instance",
+            example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
+    private String serviceId;
+
     @Schema(example = "STATUS_CHANGED")
     private LeadTimelineEventType eventType;
 

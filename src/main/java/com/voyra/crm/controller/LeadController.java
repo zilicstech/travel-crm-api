@@ -3,7 +3,6 @@ package com.voyra.crm.controller;
 import com.voyra.crm.dto.LeadAssignRequest;
 import com.voyra.crm.dto.LeadCreateRequest;
 import com.voyra.crm.dto.LeadDetailResponse;
-import com.voyra.crm.dto.LeadFollowUpUpdateRequest;
 import com.voyra.crm.dto.LeadMemberAddRequest;
 import com.voyra.crm.dto.LeadMemberResponse;
 import com.voyra.crm.dto.LeadMemberUpdateRequest;
@@ -90,13 +89,6 @@ public class LeadController {
     public ResponseEntity<LeadDetailResponse> updateStatus(@PathVariable String id,
                                                             @Valid @RequestBody LeadStatusUpdateRequest request) {
         return ResponseEntity.ok(leadService.updateStatus(id, request));
-    }
-
-    @PatchMapping("/{id}/follow-up")
-    @Operation(summary = "Update the follow-up date")
-    public ResponseEntity<LeadDetailResponse> updateFollowUp(@PathVariable String id,
-                                                              @Valid @RequestBody LeadFollowUpUpdateRequest request) {
-        return ResponseEntity.ok(leadService.updateFollowUp(id, request));
     }
 
     @PatchMapping("/{id}/assign")

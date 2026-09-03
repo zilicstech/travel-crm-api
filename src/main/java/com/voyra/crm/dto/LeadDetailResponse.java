@@ -114,13 +114,24 @@ public class LeadDetailResponse {
             + "this lead's categories require. A booking or visa filing should be gated on this.")
     private Boolean manifestComplete;
 
+    @Schema(description = "This lead's service instances - any number of Flight/Hotel/Visa/Transfer")
+    private List<ServiceResponse> services;
+
+    @Schema(description = "This lead's follow-up promises")
+    private List<FollowUpResponse> followUps;
+
+    @Schema(description = "This lead's PNRs and supplier references")
+    private List<VoucherResponse> vouchers;
+
     @Schema(description = "This lead's proposal line items")
     private List<ProposalItemResponse> proposalItems;
 
-    @Schema(description = "Sum of proposalItems' netCost", example = "42000.00")
+    @Schema(description = "Sum of proposalItems' netCost, excluding lines whose owning service is cancelled",
+            example = "42000.00")
     private BigDecimal totalNetCost;
 
-    @Schema(description = "Sum of proposalItems' sellingPrice", example = "52000.00")
+    @Schema(description = "Sum of proposalItems' sellingPrice, excluding lines whose owning service is cancelled",
+            example = "52000.00")
     private BigDecimal totalSellingPrice;
 
     @Schema(description = "Server-computed margin %, based on the total net cost and selling price", example = "19.2")
