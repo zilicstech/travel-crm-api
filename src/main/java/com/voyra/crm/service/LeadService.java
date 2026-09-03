@@ -2,6 +2,8 @@ package com.voyra.crm.service;
 
 import com.voyra.crm.dto.GuestDetails;
 import com.voyra.crm.dto.LeadCreateRequest;
+import com.voyra.crm.dto.LeadDetailUpdateRequest;
+import com.voyra.crm.dto.ProposalItemUpdateRequest;
 import com.voyra.crm.dto.LeadDetailResponse;
 import com.voyra.crm.dto.LeadMemberAddRequest;
 import com.voyra.crm.dto.LeadMemberResponse;
@@ -206,6 +208,28 @@ public class LeadService {
         return toDetailResponse(lead);
     }
 
+    /** Edits the trip-level facts captured at Add Lead time - destination, budget, special remarks. */
+    @Transactional
+    public LeadDetailResponse updateDetails(String id, LeadDetailUpdateRequest request) {
+        Lead lead = findAccessibleLead(id);
+        if (request.getDestination() != null) {
+            lead.setDestination(request.getDestination());
+        }
+        if (request.getBudget() != null) {
+            lead.setBudget(request.getBudget());
+        }
+        if (request.getSpecialNotes() != null) {
+            lead.setSpecialNotes(request.getSpecialNotes());
+        }
+        touch(lead);
+        leadRepository.save(lead);
+
+        leadTimelineService.record(id, LeadTimelineEventType.DETAILS_UPDATED, "Trip information updated");
+
+        log.info("Lead details updated: leadId={}", id);
+        return toDetailResponse(lead);
+    }
+
     /** Owner-only, enforced at the controller layer - only the Owner may reassign a lead to a different agent. */
     @Transactional
     public LeadDetailResponse assignAgent(String id, String agentId) {
@@ -389,6 +413,31 @@ public class LeadService {
         leadTimelineService.record(id, request.getServiceId(), LeadTimelineEventType.PROPOSAL_ITEM_ADDED,
                 "Proposal item added: " + item.getDescription());
         log.info("Proposal item added: leadId={}, itemId={}", id, item.getId());
+        return toProposalItemResponse(item);
+    }
+
+    @Transactional
+    public ProposalItemResponse updateProposalItem(String id, String itemId, ProposalItemUpdateRequest request) {
+        Lead lead = findAccessibleLead(id);
+        LeadProposal item = leadProposalRepository.findByIdAndLeadId(itemId, id)
+                .orElseThrow(() -> new IllegalArgumentException("Proposal item not found: " + itemId));
+        if (request.getDescription() != null) {
+            item.setDescription(request.getDescription());
+        }
+        if (request.getSupplier() != null) {
+            item.setSupplier(request.getSupplier());
+        }
+        if (request.getNetCost() != null) {
+            item.setNetCost(request.getNetCost());
+        }
+        if (request.getSellingPrice() != null) {
+            item.setSellingPrice(request.getSellingPrice());
+        }
+        leadProposalRepository.save(item);
+        recomputeQuotedTotals(lead);
+        leadTimelineService.record(id, item.getServiceId(), LeadTimelineEventType.PROPOSAL_ITEM_ADDED,
+                "Proposal item updated: " + item.getDescription());
+        log.info("Proposal item updated: leadId={}, itemId={}", id, itemId);
         return toProposalItemResponse(item);
     }
 

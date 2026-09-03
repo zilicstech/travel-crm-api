@@ -3,6 +3,7 @@ package com.voyra.crm.controller;
 import com.voyra.crm.dto.LeadAssignRequest;
 import com.voyra.crm.dto.LeadCreateRequest;
 import com.voyra.crm.dto.LeadDetailResponse;
+import com.voyra.crm.dto.LeadDetailUpdateRequest;
 import com.voyra.crm.dto.LeadMemberAddRequest;
 import com.voyra.crm.dto.LeadMemberResponse;
 import com.voyra.crm.dto.LeadMemberUpdateRequest;
@@ -12,6 +13,7 @@ import com.voyra.crm.dto.LeadResponse;
 import com.voyra.crm.dto.LeadStatusUpdateRequest;
 import com.voyra.crm.dto.ProposalItemCreateRequest;
 import com.voyra.crm.dto.ProposalItemResponse;
+import com.voyra.crm.dto.ProposalItemUpdateRequest;
 import com.voyra.crm.dto.LeadTimelineResponse;
 import com.voyra.crm.dto.ProposalLinkResponse;
 import com.voyra.crm.enums.LeadStatus;
@@ -36,6 +38,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.PutMapping;
 
 import java.util.List;
 
@@ -84,6 +87,13 @@ public class LeadController {
         return ResponseEntity.ok(leadService.getLead(id));
     }
 
+    @PutMapping("/{id}")
+    @Operation(summary = "Update trip-level details", description = "destination, budget and specialNotes - patch semantics.")
+    public ResponseEntity<LeadDetailResponse> updateDetails(@PathVariable String id,
+                                                             @Valid @RequestBody LeadDetailUpdateRequest request) {
+        return ResponseEntity.ok(leadService.updateDetails(id, request));
+    }
+
     @PatchMapping("/{id}/status")
     @Operation(summary = "Update lead status", description = "lostReason is mandatory when status is LOST.")
     public ResponseEntity<LeadDetailResponse> updateStatus(@PathVariable String id,
@@ -111,6 +121,13 @@ public class LeadController {
     public ResponseEntity<ProposalItemResponse> addProposalItem(@PathVariable String id,
                                                                  @Valid @RequestBody ProposalItemCreateRequest request) {
         return ResponseEntity.ok(leadService.addProposalItem(id, request));
+    }
+
+    @PutMapping("/{id}/proposal-items/{itemId}")
+    @Operation(summary = "Edit a proposal line item", description = "Margin % is always server-computed.")
+    public ResponseEntity<ProposalItemResponse> updateProposalItem(@PathVariable String id, @PathVariable String itemId,
+                                                                    @Valid @RequestBody ProposalItemUpdateRequest request) {
+        return ResponseEntity.ok(leadService.updateProposalItem(id, itemId, request));
     }
 
     @DeleteMapping("/{id}/proposal-items/{itemId}")

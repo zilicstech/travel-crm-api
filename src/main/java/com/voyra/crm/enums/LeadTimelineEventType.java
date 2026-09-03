@@ -10,6 +10,7 @@ package com.voyra.crm.enums;
 public enum LeadTimelineEventType {
     LEAD_CREATED,
     STATUS_CHANGED,
+    DETAILS_UPDATED,
     ASSIGNED,
     FOLLOW_UP_SET,
     MEMBER_ADDED,
