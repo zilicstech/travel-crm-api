@@ -5,11 +5,13 @@ import com.voyra.crm.dto.VoucherResponse;
 import com.voyra.crm.entity.Lead;
 import com.voyra.crm.entity.LeadVoucher;
 import com.voyra.crm.enums.LeadTimelineEventType;
+import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.LeadRepository;
 import com.voyra.crm.repository.LeadServiceRepository;
 import com.voyra.crm.repository.LeadVoucherRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.security.SecurityContextUtil;
+import com.voyra.crm.util.LeadAccessChecker;
 import com.voyra.crm.util.UniqueIdResolver;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -32,6 +34,7 @@ public class LeadVoucherService {
     private final LeadVoucherRepository leadVoucherRepository;
     private final LeadRepository leadRepository;
     private final LeadServiceRepository leadServiceRepository;
+    private final AgentRepository agentRepository;
     private final LeadTimelineService leadTimelineService;
 
     @Transactional
@@ -86,7 +89,8 @@ public class LeadVoucherService {
         Lead lead = leadRepository.findById(leadId)
                 .orElseThrow(() -> new IllegalArgumentException("Lead not found: " + leadId));
         CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
-        if (principal.isAgent() && !lead.getAssignedTo().equals(principal.userId())) {
+        if (principal.isAgent() && !lead.getAssignedTo().equals(principal.userId())
+                && !LeadAccessChecker.hasServiceAccess(leadServiceRepository, agentRepository, leadId, principal.userId())) {
             throw new AccessDeniedException("This lead is not assigned to you");
         }
         return lead;

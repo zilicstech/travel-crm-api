@@ -23,6 +23,7 @@ import com.voyra.crm.repository.LeadServiceRepository;
 import com.voyra.crm.repository.SupplierInvoiceRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.security.SecurityContextUtil;
+import com.voyra.crm.util.LeadAccessChecker;
 import com.voyra.crm.util.UniqueIdResolver;
 import org.springframework.security.access.AccessDeniedException;
 import lombok.RequiredArgsConstructor;
@@ -111,7 +112,8 @@ public class InvoiceService {
         Lead lead = leadRepository.findById(leadId)
                 .orElseThrow(() -> new IllegalArgumentException("Lead not found: " + leadId));
         CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
-        if (principal.isAgent() && !lead.getAssignedTo().equals(principal.userId())) {
+        if (principal.isAgent() && !lead.getAssignedTo().equals(principal.userId())
+                && !LeadAccessChecker.hasServiceAccess(leadServiceRepository, agentRepository, leadId, principal.userId())) {
             throw new AccessDeniedException("This lead is not assigned to you");
         }
     }

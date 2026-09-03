@@ -390,15 +390,18 @@ public class ServiceInstanceService {
     // Shared helpers
     // ---------------------------------------------------------------------
 
-    /** Owner or the lead's assigned agent - same rule LeadService.findAccessibleLead applies. */
+    /**
+     * Existence check only - NOT an authorization gate. Who may act on a given service is
+     * decided per-service by {@link #assertEditAccess}, which every mutation here calls right
+     * after this: an agent's claim to a service comes from its type or from being personally
+     * assigned to it, never from owning the lead as a whole. Gating here on lead ownership
+     * (as an earlier version of this method did) silently broke every cross-lead "My Desk"
+     * flow - an agent could never accept, update or requote a service on a lead owned by
+     * someone else, which defeats the entire point of manageableServices.
+     */
     private Lead findAccessibleLead(String id) {
-        Lead lead = leadRepository.findById(id)
+        return leadRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Lead not found: " + id));
-        CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
-        if (principal.isAgent() && !lead.getAssignedTo().equals(principal.userId())) {
-            throw new AccessDeniedException("This lead is not assigned to you");
-        }
-        return lead;
     }
 
     private LeadService findServiceOnLead(String leadId, String serviceId) {

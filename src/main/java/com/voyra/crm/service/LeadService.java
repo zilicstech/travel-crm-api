@@ -509,15 +509,27 @@ public class LeadService {
         return new AuthorResolver.AuthorInfo(agent.getId(), agent.getName());
     }
 
-    /** Shared ownership check reused by ProposalLinkService. */
+    /**
+     * Shared access check reused by ProposalLinkService, and by every lead-level mutation
+     * below (status, trip details, notes, proposal items, traveller manifest). An agent
+     * reaches a lead either because it is assigned to them, or because they are personally
+     * assigned to - or manage the type of - at least one service on it: a Visa agent quoting
+     * their own service via ServiceProposalTable, or reading the manifest a Visa checklist
+     * needs, is not the lead's own sales agent and must not be locked out.
+     */
     public Lead findAccessibleLead(String id) {
         Lead lead = leadRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Lead not found: " + id));
         CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
-        if (principal.isAgent() && !lead.getAssignedTo().equals(principal.userId())) {
+        if (principal.isAgent() && !lead.getAssignedTo().equals(principal.userId())
+                && !hasServiceAccess(id, principal.userId())) {
             throw new AccessDeniedException("This lead is not assigned to you");
         }
         return lead;
+    }
+
+    private boolean hasServiceAccess(String leadId, String agentId) {
+        return com.voyra.crm.util.LeadAccessChecker.hasServiceAccess(leadServiceRepository, agentRepository, leadId, agentId);
     }
 
     private void touch(Lead lead) {

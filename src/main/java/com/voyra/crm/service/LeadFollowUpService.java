@@ -71,8 +71,8 @@ public class LeadFollowUpService {
 
     @Transactional
     public FollowUpResponse completeFollowUp(String leadId, String followUpId) {
-        Lead lead = findAccessibleLead(leadId, null);
         LeadFollowUp followUp = findOnLead(leadId, followUpId);
+        Lead lead = findAccessibleLead(leadId, followUp.getAssignedAgentId());
         followUp.setStatus(FollowUpStatus.DONE);
         followUp.setCompletedAt(LocalDateTime.now());
         leadFollowUpRepository.save(followUp);
@@ -86,8 +86,8 @@ public class LeadFollowUpService {
 
     @Transactional
     public void deleteFollowUp(String leadId, String followUpId) {
-        Lead lead = findAccessibleLead(leadId, null);
         LeadFollowUp followUp = findOnLead(leadId, followUpId);
+        Lead lead = findAccessibleLead(leadId, followUp.getAssignedAgentId());
         leadFollowUpRepository.delete(followUp);
 
         recomputeFollowUpRollup(lead);
