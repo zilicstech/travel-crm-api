@@ -15,6 +15,7 @@ import com.voyra.crm.security.SecurityContextUtil;
 import com.voyra.crm.util.UniqueIdResolver;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -160,6 +161,7 @@ public class MemberService {
                 .name(file.getOriginalFilename())
                 .fileKey(fileKey)
                 .docType(docType)
+                .contentType(file.getContentType())
                 .uploadedAt(LocalDateTime.now())
                 .uploadedBy(currentUserId())
                 .build();
@@ -176,6 +178,19 @@ public class MemberService {
         fileStorageService.delete(doc.getFileKey());
         memberDocumentRepository.delete(doc);
         log.info("Member document deleted: memberId={}, documentId={}", memberId, documentId);
+    }
+
+    @Transactional(readOnly = true)
+    public DocumentContent downloadDocument(String clientId, String memberId, String documentId) {
+        findMember(clientId, memberId);
+        MemberDocument doc = memberDocumentRepository.findByIdAndMemberId(documentId, memberId)
+                .orElseThrow(() -> new IllegalArgumentException("Document not found: " + documentId));
+        Resource resource = fileStorageService.retrieve(doc.getFileKey());
+        return new DocumentContent(resource, doc.getName(), doc.getContentType());
+    }
+
+    /** Not a DTO - never serialized to JSON, only unpacked into a binary response by the controller. */
+    public record DocumentContent(Resource resource, String filename, String contentType) {
     }
 
     /**

@@ -8,7 +8,6 @@ import com.voyra.crm.enums.ClientType;
 import com.voyra.crm.enums.MemberRelation;
 import com.voyra.crm.enums.MemberType;
 import com.voyra.crm.enums.UserType;
-import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.BookingRepository;
 import com.voyra.crm.repository.ClientInvoiceRepository;
 import com.voyra.crm.repository.ClientRepository;
@@ -23,7 +22,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 
@@ -37,7 +35,8 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/** Client and roster invariants: one primary member, no duplicate identifiers, agent scoping. */
+/** Client and roster invariants: one primary member, no duplicate identifiers. A client is not
+ *  owned by an agent - every agent and the Owner can read and edit any client. */
 @ExtendWith(MockitoExtension.class)
 class ClientMemberRuleTest {
 
@@ -57,8 +56,6 @@ class ClientMemberRuleTest {
     private com.voyra.crm.repository.VisaRepository visaRepository;
     @Mock
     private ClientInvoiceRepository clientInvoiceRepository;
-    @Mock
-    private AgentRepository agentRepository;
     @Mock
     private FileStorageService fileStorageService;
     @Mock
@@ -83,9 +80,9 @@ class ClientMemberRuleTest {
         SecurityContextHolder.clearContext();
     }
 
-    private Client client(String id, String agentId) {
+    private Client client(String id) {
         return Client.builder().id(id).identifier("9876543210").name("Ajay Sharma")
-                .type(ClientType.B2C).agentId(agentId).agentName("Liam Smith").isActive(true).build();
+                .type(ClientType.B2C).isActive(true).build();
     }
 
     /**
@@ -96,8 +93,6 @@ class ClientMemberRuleTest {
     @Test
     void creatingAClientAlsoCreatesItsPrimaryMemberAsSelf() {
         authenticateAs("A1", UserType.AGENT);
-        when(agentRepository.findById("A1")).thenReturn(Optional.of(
-                com.voyra.crm.entity.Agent.builder().id("A1").name("Liam Smith").build()));
         when(clientRepository.existsByIdentifierAndIsActiveTrue("9876543210")).thenReturn(false);
         when(clientRepository.existsById(any())).thenReturn(false);
         when(memberRepository.existsById(any())).thenReturn(false);
@@ -119,8 +114,6 @@ class ClientMemberRuleTest {
     @Test
     void creatingAClientWithAnIdentifierAlreadyInUseIsRejectedAsAConflict() {
         authenticateAs("A1", UserType.AGENT);
-        when(agentRepository.findById("A1")).thenReturn(Optional.of(
-                com.voyra.crm.entity.Agent.builder().id("A1").name("Liam Smith").build()));
         when(clientRepository.existsByIdentifierAndIsActiveTrue("9876543210")).thenReturn(true);
 
         ClientCreateRequest request = new ClientCreateRequest();
@@ -135,18 +128,18 @@ class ClientMemberRuleTest {
     }
 
     @Test
-    void anAgentCannotReadAClientBelongingToAColleague() {
+    void anAgentCanReadAnyClientInTheAgency() {
         authenticateAs("A1", UserType.AGENT);
-        when(clientRepository.findById("C1")).thenReturn(Optional.of(client("C1", "A2")));
+        when(clientRepository.findById("C1")).thenReturn(Optional.of(client("C1")));
+        when(memberRepository.findByClientIdAndIsActiveTrue("C1")).thenReturn(List.of());
 
-        assertThatThrownBy(() -> clientService.getClient("C1"))
-                .isInstanceOf(AccessDeniedException.class);
+        assertThat(clientService.getClient("C1").getId()).isEqualTo("C1");
     }
 
     @Test
     void theOwnerCanReadAnyClientInTheAgency() {
         authenticateAs("O1", UserType.AGENCY_OWNER);
-        when(clientRepository.findById("C1")).thenReturn(Optional.of(client("C1", "A2")));
+        when(clientRepository.findById("C1")).thenReturn(Optional.of(client("C1")));
         when(memberRepository.findByClientIdAndIsActiveTrue("C1")).thenReturn(List.of());
 
         assertThat(clientService.getClient("C1").getId()).isEqualTo("C1");
@@ -156,7 +149,7 @@ class ClientMemberRuleTest {
     @Test
     void addingARosterMemberWithRelationSelfIsRejected() {
         authenticateAs("A1", UserType.AGENT);
-        when(clientRepository.findById("C1")).thenReturn(Optional.of(client("C1", "A1")));
+        when(clientRepository.findById("C1")).thenReturn(Optional.of(client("C1")));
 
         MemberCreateRequest request = new MemberCreateRequest();
         request.setName("Ankita Sharma");
@@ -167,16 +160,18 @@ class ClientMemberRuleTest {
     }
 
     @Test
-    void anAgentCannotAddAMemberToAColleaguesClient() {
+    void anAgentCanAddAMemberToAnyClient() {
         authenticateAs("A1", UserType.AGENT);
-        when(clientRepository.findById("C1")).thenReturn(Optional.of(client("C1", "A2")));
+        when(clientRepository.findById("C1")).thenReturn(Optional.of(client("C1")));
+        when(memberRepository.existsById(any())).thenReturn(false);
 
         MemberCreateRequest request = new MemberCreateRequest();
         request.setName("Ankita Sharma");
         request.setRelation(MemberRelation.SPOUSE);
 
-        assertThatThrownBy(() -> memberService().addMember("C1", request))
-                .isInstanceOf(AccessDeniedException.class);
+        memberService().addMember("C1", request);
+
+        verify(memberRepository).save(any());
     }
 
     /**
@@ -186,7 +181,7 @@ class ClientMemberRuleTest {
     @Test
     void deactivatingThePrimaryMemberIsRejected() {
         authenticateAs("A1", UserType.AGENT);
-        when(clientRepository.findById("C1")).thenReturn(Optional.of(client("C1", "A1")));
+        when(clientRepository.findById("C1")).thenReturn(Optional.of(client("C1")));
         when(memberRepository.findByMemberIdAndClientId("M1", "C1")).thenReturn(Optional.of(
                 Member.builder().memberId("M1").clientId("C1").name("Ajay Sharma")
                         .type(MemberType.CLIENT).relation(MemberRelation.SELF).isActive(true).build()));
@@ -199,7 +194,7 @@ class ClientMemberRuleTest {
     @Test
     void deactivatingARosterMemberKeepsTheRowAndOnlyFlipsTheFlag() {
         authenticateAs("A1", UserType.AGENT);
-        when(clientRepository.findById("C1")).thenReturn(Optional.of(client("C1", "A1")));
+        when(clientRepository.findById("C1")).thenReturn(Optional.of(client("C1")));
         Member member = Member.builder().memberId("M2").clientId("C1").name("Ankita Sharma")
                 .type(MemberType.MEMBER).relation(MemberRelation.SPOUSE).isActive(true).build();
         when(memberRepository.findByMemberIdAndClientId("M2", "C1")).thenReturn(Optional.of(member));

@@ -50,4 +50,7 @@ public class OwnerDashboardSummaryResponse {
 
     @Schema(example = "5")
     private long confirmedBookings;
+
+    @Schema(description = "Every booking regardless of status - pendingBookings and confirmedBookings are each a subset of this, not a sum that equals it", example = "10")
+    private long totalBookings;
 }

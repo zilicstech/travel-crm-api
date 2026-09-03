@@ -28,12 +28,6 @@ public class ClientResponse {
     @Schema(example = "B2C")
     private ClientType type;
 
-    @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
-    private String agentId;
-
-    @Schema(description = "Denormalized snapshot, live-synced on agent rename", example = "Liam Smith")
-    private String agentName;
-
     @Schema(description = "Number of active members on this client's roster", example = "4")
     private Integer memberCount;
 

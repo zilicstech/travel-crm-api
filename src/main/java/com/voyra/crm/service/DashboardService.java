@@ -61,6 +61,7 @@ public class DashboardService {
                         LocalDate.now(), TERMINAL_STATUSES))
                 .pendingBookings(bookingRepository.countByBookingStatus(BookingStatus.PENDING))
                 .confirmedBookings(bookingRepository.countByBookingStatus(BookingStatus.CONFIRMED))
+                .totalBookings(bookingRepository.count())
                 .build();
     }
 

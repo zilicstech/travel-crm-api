@@ -12,7 +12,6 @@ import com.voyra.crm.enums.LeadStatus;
 import com.voyra.crm.models.AgentStats;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.BookingRepository;
-import com.voyra.crm.repository.ClientRepository;
 import com.voyra.crm.repository.LeadNoteRepository;
 import com.voyra.crm.repository.LeadRepository;
 import com.voyra.crm.repository.VisaRepository;
@@ -51,7 +50,6 @@ public class AgentService {
     private final LeadRepository leadRepository;
     private final LeadNoteRepository leadNoteRepository;
     private final BookingRepository bookingRepository;
-    private final ClientRepository clientRepository;
     private final VisaRepository visaRepository;
     private final AesPasswordEncoder passwordEncoder;
 
@@ -142,7 +140,6 @@ public class AgentService {
             leadRepository.updateAssignedAgentNameForAgent(agent.getId(), agent.getName());
             bookingRepository.updateAgentNameForAgent(agent.getId(), agent.getName());
             leadNoteRepository.updateAuthorNameForAgent(agent.getId(), agent.getName());
-            clientRepository.updateAgentNameForAgent(agent.getId(), agent.getName());
             visaRepository.updateAgentNameForAgent(agent.getId(), agent.getName());
         }
 

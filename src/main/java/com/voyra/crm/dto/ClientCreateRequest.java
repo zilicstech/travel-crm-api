@@ -16,10 +16,6 @@ import java.time.LocalDate;
         + "member's details are part of this request rather than a second round trip.")
 public class ClientCreateRequest {
 
-    @Schema(description = "Owner-only: assign the client to a specific agent. Ignored for the AGENT role (always self).",
-            example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
-    private String agentId;
-
     @NotBlank(message = "Identifier is required")
     @Size(max = 150, message = "Identifier must be 150 characters or fewer")
     @Schema(description = "Deduplication key: the phone number for a B2C client, or the group / company handle for a B2B client. Must be unique among active clients.",

@@ -25,8 +25,8 @@ import java.time.LocalDateTime;
  *
  * <p>{@code identifier} carries a partial unique index scoped to live rows, so re-creating a
  * client that already exists surfaces as a 409 rather than silently duplicating the account.
- * {@code agentName} is a denormalized snapshot re-synced in bulk by AgentService whenever the
- * owning agent is renamed.
+ * A client is not owned by an agent - every agent and the Owner can see and act on every
+ * client in the agency.
  */
 @Entity
 @Table(name = "client")
@@ -50,12 +50,6 @@ public class Client {
     @Enumerated(EnumType.STRING)
     @Column(name = "type", nullable = false, length = 10)
     private ClientType type;
-
-    @Column(name = "agent_id", nullable = false, length = 36)
-    private String agentId;
-
-    @Column(name = "agent_name", nullable = false, length = 150)
-    private String agentName;
 
     @Column(name = "is_active", nullable = false)
     @Builder.Default

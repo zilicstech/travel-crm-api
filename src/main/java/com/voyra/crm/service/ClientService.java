@@ -7,20 +7,17 @@ import com.voyra.crm.dto.ClientResponse;
 import com.voyra.crm.dto.ClientUpdateRequest;
 import com.voyra.crm.dto.MemberResponse;
 import com.voyra.crm.dto.PagedResponse;
-import com.voyra.crm.entity.Agent;
 import com.voyra.crm.entity.Client;
 import com.voyra.crm.entity.Member;
 import com.voyra.crm.enums.ClientType;
 import com.voyra.crm.enums.MemberRelation;
 import com.voyra.crm.enums.MemberType;
-import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.BookingRepository;
 import com.voyra.crm.repository.ClientInvoiceRepository;
 import com.voyra.crm.repository.ClientRepository;
 import com.voyra.crm.repository.LeadRepository;
 import com.voyra.crm.repository.MemberRepository;
 import com.voyra.crm.repository.VisaRepository;
-import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.security.SecurityContextUtil;
 import com.voyra.crm.util.UniqueIdResolver;
 import lombok.RequiredArgsConstructor;
@@ -28,7 +25,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
-import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -46,7 +42,6 @@ public class ClientService {
     private final BookingRepository bookingRepository;
     private final VisaRepository visaRepository;
     private final ClientInvoiceRepository clientInvoiceRepository;
-    private final AgentRepository agentRepository;
     private final MemberMapper memberMapper;
 
     /**
@@ -59,8 +54,6 @@ public class ClientService {
      */
     @Transactional
     public ClientDetailResponse createClient(ClientCreateRequest request) {
-        AuthorResolver.AuthorInfo owner = resolveOwningAgent(request.getAgentId());
-
         if (clientRepository.existsByIdentifierAndIsActiveTrue(request.getIdentifier())) {
             throw new IllegalStateException("A client already exists with identifier " + request.getIdentifier());
         }
@@ -70,8 +63,6 @@ public class ClientService {
                 .identifier(request.getIdentifier())
                 .name(request.getName())
                 .type(request.getType())
-                .agentId(owner.id())
-                .agentName(owner.name())
                 .isActive(true)
                 .createdAt(LocalDateTime.now())
                 .createdBy(currentUserId())
@@ -98,39 +89,24 @@ public class ClientService {
                 .build();
         memberRepository.save(primary);
 
-        log.info("Client created: clientId={}, type={}, agentId={}", client.getId(), client.getType(), owner.id());
+        log.info("Client created: clientId={}, type={}", client.getId(), client.getType());
         return toDetailResponse(client);
     }
 
     @Transactional(readOnly = true)
     public List<ClientResponse> listClients(ClientType typeFilter) {
-        CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
-        List<Client> clients = principal.isAgent()
-                ? clientRepository.findByAgentId(principal.userId())
-                : clientRepository.findAll();
-        return clients.stream()
+        return clientRepository.findAll().stream()
                 .filter(c -> typeFilter == null || c.getType() == typeFilter)
                 .map(this::toResponse)
                 .toList();
     }
 
-    /**
-     * Every combination resolves to an indexed derived query - never a full table read filtered
-     * in Java. Agent callers are structurally confined to the clients they own.
-     */
+    /** Every combination resolves to an indexed derived query - never a full table read filtered in Java. */
     @Transactional(readOnly = true)
     public PagedResponse<ClientResponse> listClients(ClientType typeFilter, Pageable pageable) {
-        CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
-        Page<Client> page;
-        if (principal.isAgent()) {
-            page = typeFilter == null
-                    ? clientRepository.findByAgentId(principal.userId(), pageable)
-                    : clientRepository.findByAgentIdAndType(principal.userId(), typeFilter, pageable);
-        } else {
-            page = typeFilter == null
-                    ? clientRepository.findAll(pageable)
-                    : clientRepository.findByType(typeFilter, pageable);
-        }
+        Page<Client> page = typeFilter == null
+                ? clientRepository.findAll(pageable)
+                : clientRepository.findByType(typeFilter, pageable);
         return PagedResponse.from(page, this::toResponse);
     }
 
@@ -140,13 +116,8 @@ public class ClientService {
     }
 
     /**
-     * Duplicate check for the Add Lead wizard.
-     *
-     * <p>Deliberately searches the whole agency rather than the caller's own clients. An agent
-     * who cannot see that a walk-in already exists under a colleague will create a second
-     * account for the same person, and the agency ends up unable to answer "what has this
-     * customer booked before". The response therefore names the owning agent rather than
-     * pretending the client does not exist.
+     * Duplicate check for the Add Lead wizard, so a walk-in already known to the agency is
+     * found instead of a second account being created for the same person.
      */
     @Transactional(readOnly = true)
     public ClientLookupResponse lookupByIdentifier(String identifier) {
@@ -157,7 +128,6 @@ public class ClientService {
                         .identifier(c.getIdentifier())
                         .name(c.getName())
                         .type(c.getType())
-                        .agentName(c.getAgentName())
                         .memberCount((int) memberRepository.countByClientIdAndIsActiveTrue(c.getId()))
                         .build())
                 .orElseGet(() -> ClientLookupResponse.builder().found(false).identifier(identifier).build());
@@ -180,17 +150,6 @@ public class ClientService {
         }
         if (request.getType() != null) {
             client.setType(request.getType());
-        }
-        if (request.getAgentId() != null) {
-            CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
-            if (principal.isAgent()) {
-                throw new AccessDeniedException("Only the Agency Owner can reassign a client");
-            }
-            Agent agent = agentRepository.findByIdAndTenantId(request.getAgentId(), principal.tenantId())
-                    .orElseThrow(() -> new IllegalArgumentException(
-                            "Agent not found in this agency: " + request.getAgentId()));
-            client.setAgentId(agent.getId());
-            client.setAgentName(agent.getName());
         }
 
         boolean renamed = request.getName() != null && !request.getName().equals(client.getName());
@@ -238,30 +197,11 @@ public class ClientService {
         return toDetailResponse(client);
     }
 
-    /** Shared ownership check, reused by MemberService and LeadService. */
+    /** Resolves a client by id, shared by MemberService and LeadService. No agent owns a
+     *  client, so every signed-in agent and the Owner can reach any client this way. */
     public Client findAccessibleClient(String id) {
-        Client client = clientRepository.findById(id)
+        return clientRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Client not found: " + id));
-        CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
-        if (principal.isAgent() && !client.getAgentId().equals(principal.userId())) {
-            throw new AccessDeniedException("This client does not belong to you");
-        }
-        return client;
-    }
-
-    private AuthorResolver.AuthorInfo resolveOwningAgent(String requestedAgentId) {
-        CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
-        if (principal.isAgent()) {
-            Agent agent = agentRepository.findById(principal.userId())
-                    .orElseThrow(() -> new IllegalStateException("Agent not found: " + principal.userId()));
-            return new AuthorResolver.AuthorInfo(agent.getId(), agent.getName());
-        }
-        if (requestedAgentId == null || requestedAgentId.isBlank()) {
-            throw new IllegalArgumentException("agentId is required when an Owner creates a client");
-        }
-        Agent agent = agentRepository.findByIdAndTenantId(requestedAgentId, principal.tenantId())
-                .orElseThrow(() -> new IllegalArgumentException("Agent not found in this agency: " + requestedAgentId));
-        return new AuthorResolver.AuthorInfo(agent.getId(), agent.getName());
     }
 
     private String currentUserId() {
@@ -271,7 +211,7 @@ public class ClientService {
     private ClientResponse toResponse(Client client) {
         return ClientResponse.builder()
                 .id(client.getId()).identifier(client.getIdentifier()).name(client.getName())
-                .type(client.getType()).agentId(client.getAgentId()).agentName(client.getAgentName())
+                .type(client.getType())
                 .memberCount((int) memberRepository.countByClientIdAndIsActiveTrue(client.getId()))
                 .isActive(client.getIsActive())
                 .createdAt(client.getCreatedAt()).createdBy(client.getCreatedBy())
@@ -284,7 +224,7 @@ public class ClientService {
                 memberRepository.findByClientIdAndIsActiveTrue(client.getId()));
         return ClientDetailResponse.builder()
                 .id(client.getId()).identifier(client.getIdentifier()).name(client.getName())
-                .type(client.getType()).agentId(client.getAgentId()).agentName(client.getAgentName())
+                .type(client.getType())
                 .isActive(client.getIsActive()).members(members)
                 .createdAt(client.getCreatedAt()).createdBy(client.getCreatedBy())
                 .modifiedAt(client.getModifiedAt()).modifiedBy(client.getModifiedBy())

@@ -29,12 +29,6 @@ public class ClientDetailResponse {
     @Schema(example = "B2C")
     private ClientType type;
 
-    @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
-    private String agentId;
-
-    @Schema(description = "Denormalized snapshot, live-synced on agent rename", example = "Liam Smith")
-    private String agentName;
-
     @Schema(description = "False once the client is deactivated")
     private Boolean isActive;
 

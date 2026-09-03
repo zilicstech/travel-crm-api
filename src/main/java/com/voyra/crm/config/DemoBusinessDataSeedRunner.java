@@ -243,7 +243,6 @@ public class DemoBusinessDataSeedRunner implements ApplicationRunner {
 
         return seeds.stream().map(s -> {
             ClientCreateRequest req = new ClientCreateRequest();
-            req.setAgentId(agents.get(s.agentIdx()).getId());
             req.setIdentifier(s.identifier());
             req.setName(s.name());
             req.setType(s.type());

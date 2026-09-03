@@ -21,8 +21,4 @@ public class ClientUpdateRequest {
 
     @Schema(example = "B2B")
     private ClientType type;
-
-    @Schema(description = "Owner-only: reassign the client to a different agent",
-            example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
-    private String agentId;
 }

@@ -11,9 +11,8 @@ import lombok.NoArgsConstructor;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-@Schema(description = "Result of the Add Lead wizard's duplicate check. Searches the whole "
-        + "agency rather than the caller's own clients, so a walk-in already known to a "
-        + "colleague is found instead of being created twice.")
+@Schema(description = "Result of the Add Lead wizard's duplicate check, so a walk-in already "
+        + "known to the agency is found instead of being created twice.")
 public class ClientLookupResponse {
 
     @Schema(description = "False when no active client carries this identifier")
@@ -30,9 +29,6 @@ public class ClientLookupResponse {
 
     @Schema(example = "B2C")
     private ClientType type;
-
-    @Schema(description = "Owning agent, so the caller can see the client belongs to a colleague", example = "Liam Smith")
-    private String agentName;
 
     @Schema(description = "Active members available to pick as travellers")
     private Integer memberCount;

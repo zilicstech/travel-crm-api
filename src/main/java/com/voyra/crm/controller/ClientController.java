@@ -29,9 +29,8 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * Clients: the commercial entities the agency deals with, B2C or B2B.
  *
- * <p>Shared between AGENCY_OWNER and AGENT. There is no per-method override here - which rows
- * an agent may touch is an ownership question the service answers, not something a role
- * expression can express (blueprint §5.2).
+ * <p>Shared between AGENCY_OWNER and AGENT. A client is not owned by an agent - every agent and
+ * the Owner can see and act on every client in the agency.
  */
 @Slf4j
 @RestController
@@ -53,7 +52,7 @@ public class ClientController {
 
     @GetMapping
     @Operation(summary = "List clients",
-            description = "Agents see only their own clients; Owners see the whole agency. Supply ?page= "
+            description = "Every client in the agency, regardless of who's signed in. Supply ?page= "
                     + "for a paged envelope; omit it for the full list as a plain array.")
     public ResponseEntity<Object> listClients(
             @RequestParam(value = "type", required = false) ClientType type,

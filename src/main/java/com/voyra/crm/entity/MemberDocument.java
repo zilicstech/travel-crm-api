@@ -48,6 +48,9 @@ public class MemberDocument {
     @Column(name = "doc_type", length = 50)
     private String docType;
 
+    @Column(name = "content_type", length = 150)
+    private String contentType;
+
     @Column(name = "uploaded_at")
     private LocalDateTime uploadedAt;
 

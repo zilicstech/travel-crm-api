@@ -11,6 +11,9 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.io.Resource;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -90,5 +93,20 @@ public class ClientSubResourceController {
                                                @PathVariable String documentId) {
         memberService.deleteDocument(clientId, memberId, documentId);
         return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/members/{memberId}/documents/{documentId}/download")
+    @Operation(summary = "Download or view a member document's stored file")
+    public ResponseEntity<Resource> downloadDocument(@PathVariable String clientId,
+                                                     @PathVariable String memberId,
+                                                     @PathVariable String documentId) {
+        MemberService.DocumentContent content = memberService.downloadDocument(clientId, memberId, documentId);
+        MediaType mediaType = content.contentType() != null
+                ? MediaType.parseMediaType(content.contentType())
+                : MediaType.APPLICATION_OCTET_STREAM;
+        return ResponseEntity.ok()
+                .contentType(mediaType)
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + content.filename() + "\"")
+                .body(content.resource());
     }
 }

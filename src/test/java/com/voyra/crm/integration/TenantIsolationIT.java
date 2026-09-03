@@ -86,8 +86,6 @@ class TenantIsolationIT extends AbstractIntegrationTest {
                     .identifier("9999999999")
                     .name("Isolation Test Client")
                     .type(ClientType.B2C)
-                    .agentId("A1")
-                    .agentName("Test Agent")
                     .isActive(true)
                     .createdAt(LocalDateTime.now())
                     .build();
