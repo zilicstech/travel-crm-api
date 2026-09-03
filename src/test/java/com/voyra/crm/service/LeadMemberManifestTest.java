@@ -161,12 +161,10 @@ class LeadMemberManifestTest {
      * their passport was collected must leave a record, not a hole.
      */
     @Test
-    void droppingATravellerKeepsTheRowAndItsCollectedDocuments() {
+    void droppingATravellerKeepsTheRowRatherThanDeletingIt() {
         when(leadRepository.findById("L1")).thenReturn(Optional.of(lead()));
         LeadMember row = LeadMember.builder().id("LM1").leadId("L1").memberId("M1").clientId("C1")
-                .memberName("Traveller M1").status(LeadMemberStatus.CONFIRMED)
-                .passportCollected(true).photosCollected(true).formsFilled(true)
-                .submittedToEmbassy(true).visaApproved(false).build();
+                .memberName("Traveller M1").status(LeadMemberStatus.CONFIRMED).build();
         when(leadMemberRepository.findByLeadIdAndMemberId("L1", "M1")).thenReturn(Optional.of(row));
         when(memberRepository.findById("M1")).thenReturn(Optional.of(member("M1", "C1", LocalDate.of(1990, 1, 1))));
 
@@ -178,8 +176,6 @@ class LeadMemberManifestTest {
 
         assertThat(response.getStatus()).isEqualTo(LeadMemberStatus.DROPPED);
         assertThat(response.getDroppedReason()).isEqualTo("Visa rejected");
-        assertThat(response.getPassportCollected()).isTrue();
-        assertThat(response.getSubmittedToEmbassy()).isTrue();
         verify(leadMemberRepository, never()).delete(any());
     }
 
@@ -208,10 +204,7 @@ class LeadMemberManifestTest {
         when(memberRepository.findById("M1"))
                 .thenReturn(Optional.of(member("M1", "C1", DEPARTURE.minusYears(12).minusDays(1))));
 
-        LeadMemberUpdateRequest request = new LeadMemberUpdateRequest();
-        request.setPassportCollected(true);
-
-        LeadMemberResponse response = leadService.updateMember("L1", "M1", request);
+        LeadMemberResponse response = leadService.updateMember("L1", "M1", new LeadMemberUpdateRequest());
 
         assertThat(response.getPaxType()).isEqualTo(PaxType.ADULT);
         assertThat(response.getAgeAtTravel()).isEqualTo(12);

@@ -12,6 +12,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
@@ -48,6 +49,21 @@ public class Tenant {
     @Column(name = "is_active", nullable = false)
     @Builder.Default
     private Boolean isActive = true;
+
+    @Column(name = "gst_number", length = 30)
+    private String gstNumber;
+
+    @Column(name = "address", length = 500)
+    private String address;
+
+    @Column(name = "currency", length = 10)
+    private String currency;
+
+    @Column(name = "default_commission", precision = 5, scale = 2)
+    private BigDecimal defaultCommission;
+
+    @Column(name = "logo_key", length = 500)
+    private String logoKey;
 
     @Column(name = "created_date")
     private LocalDateTime createdDate;

@@ -1,9 +1,7 @@
 package com.voyra.crm.dto;
 
 import com.voyra.crm.enums.ClientType;
-import com.voyra.crm.enums.LeadCategory;
 import com.voyra.crm.enums.LeadPriority;
-import com.voyra.crm.enums.LeadSource;
 import com.voyra.crm.enums.LeadStatus;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.AllArgsConstructor;
@@ -55,7 +53,7 @@ public class LeadDetailResponse {
     private LocalDate travelDateTo;
 
     @Schema(description = "Multi-select, stored as a native array")
-    private List<LeadCategory> categories;
+    private List<String> categories;
 
     @Schema(example = "1,50,000 - 2,00,000")
     private String budget;
@@ -64,7 +62,7 @@ public class LeadDetailResponse {
     private LeadStatus status;
 
     @Schema(example = "WEBSITE")
-    private LeadSource source;
+    private String source;
 
     @Schema(example = "HIGH")
     private LeadPriority priority;
@@ -88,6 +86,14 @@ public class LeadDetailResponse {
     @Schema(description = "Standing preferences for this trip", example = "Emirates preferred, vegetarian meals")
     private String preferences;
 
+    @Schema(description = "One remark for the whole trip, captured on Add Lead step 4",
+            example = "First time abroad, celebrating their anniversary")
+    private String specialNotes;
+
+    @Schema(description = "Trip-level standing preferences, validated against agency_setting "
+            + "(kind SERVICE_PREFERENCE) - distinct from a service's own preferences")
+    private List<String> travelPreferences;
+
     @Schema(example = "2026-08-13T09:15:22")
     private LocalDateTime createdAt;
 
@@ -107,11 +113,6 @@ public class LeadDetailResponse {
     @Schema(description = "Every non-dropped traveller is named and carries the identity fields "
             + "this lead's categories require. A booking or visa filing should be gated on this.")
     private Boolean manifestComplete;
-
-    @Schema(description = "Roll-up of the per-traveller checklists across all CONFIRMED travellers - "
-            + "each flag is true only when it is true for every one of them. Present only when "
-            + "VISA is in categories.")
-    private VisaTrackerResponse visaTracker;
 
     @Schema(description = "This lead's proposal line items")
     private List<ProposalItemResponse> proposalItems;

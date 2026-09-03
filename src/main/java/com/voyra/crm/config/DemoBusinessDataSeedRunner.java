@@ -29,9 +29,7 @@ import com.voyra.crm.enums.BookingType;
 import com.voyra.crm.enums.ClientType;
 import com.voyra.crm.enums.InvoiceStatus;
 import com.voyra.crm.enums.LeadMemberStatus;
-import com.voyra.crm.enums.LeadCategory;
 import com.voyra.crm.enums.LeadPriority;
-import com.voyra.crm.enums.LeadSource;
 import com.voyra.crm.enums.LeadStatus;
 import com.voyra.crm.enums.MemberRelation;
 import com.voyra.crm.enums.PaymentStatus;
@@ -285,8 +283,8 @@ public class DemoBusinessDataSeedRunner implements ApplicationRunner {
 
     // ----------------------------------------------------------------- leads
 
-    private record LeadSeed(int clientIdx, String destination, List<LeadCategory> categories,
-            String budget, LeadStatus status, LeadSource source, LeadPriority priority, int agentIdx,
+    private record LeadSeed(int clientIdx, String destination, List<String> categories,
+            String budget, LeadStatus status, String source, LeadPriority priority, int agentIdx,
             long followUpDays, String lostReason, int adults, List<Integer> kidAges, boolean seedManifest) {
     }
 
@@ -299,43 +297,43 @@ public class DemoBusinessDataSeedRunner implements ApplicationRunner {
     private void seedLeads(List<Agent> agents, List<String> clientIds) {
         List<LeadSeed> seeds = List.of(
                 new LeadSeed(2, "Bali, Indonesia",
-                        List.of(LeadCategory.HOLIDAY_PACKAGE, LeadCategory.HOTEL), "1,20,000 - 1,50,000",
-                        LeadStatus.NEW, LeadSource.WEBSITE, LeadPriority.MEDIUM, 0, 5, null, 2, List.of(), false),
+                        List.of("HOLIDAY_PACKAGE", "HOTEL"), "1,20,000 - 1,50,000",
+                        LeadStatus.NEW, "WEBSITE", LeadPriority.MEDIUM, 0, 5, null, 2, List.of(), false),
                 new LeadSeed(1, "Paris, France",
-                        List.of(LeadCategory.FLIGHT, LeadCategory.HOTEL), "2,00,000 - 2,50,000",
-                        LeadStatus.CONTACTED, LeadSource.REFERRAL, LeadPriority.HIGH, 1, 2, null, 2, List.of(), true),
+                        List.of("FLIGHT", "HOTEL"), "2,00,000 - 2,50,000",
+                        LeadStatus.CONTACTED, "REFERRAL", LeadPriority.HIGH, 1, 2, null, 2, List.of(), true),
                 new LeadSeed(5, "Singapore",
-                        List.of(LeadCategory.HOLIDAY_PACKAGE), "90,000 - 1,10,000",
-                        LeadStatus.QUALIFIED, LeadSource.SOCIAL_MEDIA, LeadPriority.MEDIUM, 2, 7, null, 1, List.of(), false),
+                        List.of("HOLIDAY_PACKAGE"), "90,000 - 1,10,000",
+                        LeadStatus.QUALIFIED, "SOCIAL_MEDIA", LeadPriority.MEDIUM, 2, 7, null, 1, List.of(), false),
                 new LeadSeed(0, "Bangkok, Thailand",
-                        List.of(LeadCategory.FLIGHT, LeadCategory.HOTEL, LeadCategory.VISA), "1,50,000 - 1,80,000",
-                        LeadStatus.PROPOSAL_SENT, LeadSource.WALK_IN, LeadPriority.HIGH, 0, -2, null,
+                        List.of("FLIGHT", "HOTEL", "VISA"), "1,50,000 - 1,80,000",
+                        LeadStatus.PROPOSAL_SENT, "WALK_IN", LeadPriority.HIGH, 0, -2, null,
                         2, List.of(6, 1), true),
                 new LeadSeed(1, "Maldives",
-                        List.of(LeadCategory.HOLIDAY_PACKAGE, LeadCategory.HOTEL), "3,00,000 - 3,50,000",
-                        LeadStatus.NEGOTIATING, LeadSource.WHATSAPP, LeadPriority.HIGH, 1, 1, null, 2, List.of(), false),
+                        List.of("HOLIDAY_PACKAGE", "HOTEL"), "3,00,000 - 3,50,000",
+                        LeadStatus.NEGOTIATING, "WHATSAPP", LeadPriority.HIGH, 1, 1, null, 2, List.of(), false),
                 new LeadSeed(3, "London, UK",
-                        List.of(LeadCategory.FLIGHT, LeadCategory.HOTEL, LeadCategory.VISA), "4,50,000",
-                        LeadStatus.BOOKED, LeadSource.PHONE_CALL, LeadPriority.HIGH, 2, 30, null, 3, List.of(), true),
+                        List.of("FLIGHT", "HOTEL", "VISA"), "4,50,000",
+                        LeadStatus.BOOKED, "PHONE_CALL", LeadPriority.HIGH, 2, 30, null, 3, List.of(), true),
                 new LeadSeed(4, "Switzerland",
-                        List.of(LeadCategory.HOLIDAY_PACKAGE), "5,00,000",
-                        LeadStatus.LOST, LeadSource.WEBSITE, LeadPriority.MEDIUM, 0, 10,
+                        List.of("HOLIDAY_PACKAGE"), "5,00,000",
+                        LeadStatus.LOST, "WEBSITE", LeadPriority.MEDIUM, 0, 10,
                         "Booked with a competitor agency", 2, List.of(), false),
                 new LeadSeed(7, "Goa, India",
-                        List.of(LeadCategory.HOTEL), "40,000 - 60,000",
-                        LeadStatus.NEW, LeadSource.WALK_IN, LeadPriority.LOW, 1, 10, null, 1, List.of(11), false),
+                        List.of("HOTEL"), "40,000 - 60,000",
+                        LeadStatus.NEW, "WALK_IN", LeadPriority.LOW, 1, 10, null, 1, List.of(11), false),
                 new LeadSeed(5, "Kerala, India",
-                        List.of(LeadCategory.HOLIDAY_PACKAGE, LeadCategory.HOTEL), "80,000 - 1,00,000",
-                        LeadStatus.CONTACTED, LeadSource.SOCIAL_MEDIA, LeadPriority.MEDIUM, 2, -1, null, 2, List.of(), false),
+                        List.of("HOLIDAY_PACKAGE", "HOTEL"), "80,000 - 1,00,000",
+                        LeadStatus.CONTACTED, "SOCIAL_MEDIA", LeadPriority.MEDIUM, 2, -1, null, 2, List.of(), false),
                 new LeadSeed(0, "Tokyo, Japan",
-                        List.of(LeadCategory.FLIGHT, LeadCategory.HOTEL, LeadCategory.VISA), "2,80,000",
-                        LeadStatus.QUALIFIED, LeadSource.REFERRAL, LeadPriority.HIGH, 0, 4, null, 2, List.of(), false),
+                        List.of("FLIGHT", "HOTEL", "VISA"), "2,80,000",
+                        LeadStatus.QUALIFIED, "REFERRAL", LeadPriority.HIGH, 0, 4, null, 2, List.of(), false),
                 new LeadSeed(3, "New York, USA",
-                        List.of(LeadCategory.FLIGHT, LeadCategory.VISA), "3,20,000",
-                        LeadStatus.PROPOSAL_SENT, LeadSource.OTHER, LeadPriority.MEDIUM, 1, -3, null, 3, List.of(), false),
+                        List.of("FLIGHT", "VISA"), "3,20,000",
+                        LeadStatus.PROPOSAL_SENT, "OTHER", LeadPriority.MEDIUM, 1, -3, null, 3, List.of(), false),
                 new LeadSeed(6, "Dubai, UAE",
-                        List.of(LeadCategory.HOLIDAY_PACKAGE, LeadCategory.HOTEL), "1,60,000 - 1,90,000",
-                        LeadStatus.NEGOTIATING, LeadSource.PHONE_CALL, LeadPriority.MEDIUM, 2, 6, null, 4, List.of(), true)
+                        List.of("HOLIDAY_PACKAGE", "HOTEL"), "1,60,000 - 1,90,000",
+                        LeadStatus.NEGOTIATING, "PHONE_CALL", LeadPriority.MEDIUM, 2, 6, null, 4, List.of(), true)
         );
 
         for (LeadSeed s : seeds) {
@@ -398,12 +396,8 @@ public class DemoBusinessDataSeedRunner implements ApplicationRunner {
             if (dropLast) {
                 update.setStatus(LeadMemberStatus.DROPPED);
                 update.setDroppedReason("Could not get leave approved for the " + destination + " dates");
-                update.setPassportCollected(true);
             } else {
                 update.setStatus(LeadMemberStatus.CONFIRMED);
-                update.setPassportCollected(true);
-                update.setPhotosCollected(true);
-                update.setFormsFilled(i % 2 == 0);
             }
             leadService.updateMember(leadId, memberIds.get(i), update);
         }

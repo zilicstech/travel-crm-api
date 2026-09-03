@@ -1,8 +1,6 @@
 package com.voyra.crm.dto;
 
-import com.voyra.crm.enums.LeadCategory;
 import com.voyra.crm.enums.LeadPriority;
-import com.voyra.crm.enums.LeadSource;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
@@ -39,9 +37,10 @@ public class LeadCreateRequest {
     private LocalDate travelDateTo;
 
     @NotEmpty(message = "Select at least one category")
-    @Schema(description = "Multi-select, stored as a native array. Determines which traveller "
+    @Schema(description = "Multi-select, stored as a native array, validated against this "
+            + "agency's agency_setting rows of kind TRAVEL_CATEGORY. Determines which traveller "
             + "identity fields the manifest must carry before a booking can be made.")
-    private List<LeadCategory> categories;
+    private List<String> categories;
 
     @Size(max = 50, message = "Budget must be 50 characters or fewer")
     @Schema(description = "Free-text budget range as entered by the agent", example = "1,50,000 - 2,00,000")
@@ -50,8 +49,9 @@ public class LeadCreateRequest {
     @Schema(example = "2026-08-20")
     private LocalDate followUpDate;
 
-    @Schema(defaultValue = "PHONE_CALL", example = "WEBSITE")
-    private LeadSource source;
+    @Schema(description = "Validated against agency_setting rows of kind LEAD_SOURCE",
+            defaultValue = "PHONE_CALL", example = "WEBSITE")
+    private String source;
 
     @Schema(defaultValue = "MEDIUM", example = "HIGH")
     private LeadPriority priority;

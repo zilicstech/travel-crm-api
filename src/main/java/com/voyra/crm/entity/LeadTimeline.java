@@ -43,6 +43,10 @@ public class LeadTimeline {
     @Column(name = "lead_id", nullable = false, length = 36)
     private String leadId;
 
+    /** Null means a lead-level event; set means this row is about one service instance. */
+    @Column(name = "service_id", length = 36)
+    private String serviceId;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "event_type", nullable = false, length = 30)
     private LeadTimelineEventType eventType;

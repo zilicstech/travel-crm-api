@@ -17,19 +17,4 @@ public class LeadMemberUpdateRequest {
     @Size(max = 255, message = "Dropped reason must be 255 characters or fewer")
     @Schema(description = "Required when status is DROPPED", example = "Visa rejected, travelling separately")
     private String droppedReason;
-
-    @Schema(description = "Per-traveller document checklist; each traveller in a group is tracked separately")
-    private Boolean passportCollected;
-
-    @Schema(description = "Photos meeting the destination's specification have been received")
-    private Boolean photosCollected;
-
-    @Schema(description = "Visa application forms completed for this traveller")
-    private Boolean formsFilled;
-
-    @Schema(description = "This traveller's application has been lodged with the embassy")
-    private Boolean submittedToEmbassy;
-
-    @Schema(description = "Visa granted for this traveller")
-    private Boolean visaApproved;
 }

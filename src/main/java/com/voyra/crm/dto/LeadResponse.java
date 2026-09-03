@@ -1,9 +1,7 @@
 package com.voyra.crm.dto;
 
 import com.voyra.crm.enums.ClientType;
-import com.voyra.crm.enums.LeadCategory;
 import com.voyra.crm.enums.LeadPriority;
-import com.voyra.crm.enums.LeadSource;
 import com.voyra.crm.enums.LeadStatus;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.AllArgsConstructor;
@@ -45,7 +43,7 @@ public class LeadResponse {
     private LocalDate travelDateTo;
 
     @Schema(description = "Multi-select, stored as a native array")
-    private List<LeadCategory> categories;
+    private List<String> categories;
 
     @Schema(example = "1,50,000 - 2,00,000")
     private String budget;
@@ -54,7 +52,7 @@ public class LeadResponse {
     private LeadStatus status;
 
     @Schema(example = "WEBSITE")
-    private LeadSource source;
+    private String source;
 
     @Schema(example = "HIGH")
     private LeadPriority priority;

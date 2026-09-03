@@ -1,6 +1,7 @@
 package com.voyra.crm.entity;
 
 import com.voyra.crm.enums.LeadMemberStatus;
+import com.voyra.crm.enums.PaxType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -60,25 +61,17 @@ public class LeadMember {
     @Column(name = "status", nullable = false, length = 15)
     private LeadMemberStatus status;
 
-    @Column(name = "passport_collected", nullable = false)
-    @Builder.Default
-    private Boolean passportCollected = false;
-
-    @Column(name = "photos_collected", nullable = false)
-    @Builder.Default
-    private Boolean photosCollected = false;
-
-    @Column(name = "forms_filled", nullable = false)
-    @Builder.Default
-    private Boolean formsFilled = false;
-
-    @Column(name = "submitted_to_embassy", nullable = false)
-    @Builder.Default
-    private Boolean submittedToEmbassy = false;
-
-    @Column(name = "visa_approved", nullable = false)
-    @Builder.Default
-    private Boolean visaApproved = false;
+    /**
+     * Recomputed from the member's dob against the lead's travel window on every traveller
+     * write; stored here purely for list-query speed. Never the source of truth - that stays
+     * {@code PaxTypeCalculator} run against live dates, which is what the manifest response
+     * exposes as {@code paxType}. The visa document checklist that used to live here as five
+     * booleans moved to {@code lead_service.visa_checklists}, per traveller AND per visa
+     * application - a trip with two Visa services needs two independent checklists, not one.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "fare_class", length = 10)
+    private PaxType fareClass;
 
     @Column(name = "dropped_reason", length = 255)
     private String droppedReason;

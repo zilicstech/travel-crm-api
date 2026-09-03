@@ -11,7 +11,6 @@ import com.voyra.crm.entity.Member;
 import com.voyra.crm.enums.ClientType;
 import com.voyra.crm.enums.LeadMemberStatus;
 import com.voyra.crm.enums.LeadPriority;
-import com.voyra.crm.enums.LeadSource;
 import com.voyra.crm.enums.LeadStatus;
 import com.voyra.crm.enums.MemberRelation;
 import com.voyra.crm.enums.MemberType;
@@ -124,7 +123,7 @@ class TenantIsolationIT extends AbstractIntegrationTest {
                     .kidAges(List.of())
                     .totalTravellers(1)
                     .status(LeadStatus.NEW)
-                    .source(LeadSource.PHONE_CALL)
+                    .source("PHONE_CALL")
                     .priority(LeadPriority.MEDIUM)
                     .categories(List.of())
                     .assignedTo("A1")

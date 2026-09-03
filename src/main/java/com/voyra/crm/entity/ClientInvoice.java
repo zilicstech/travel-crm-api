@@ -40,6 +40,19 @@ public class ClientInvoice {
     @Column(name = "agent_id", nullable = false, length = 36)
     private String agentId;
 
+    /** Null means a direct client invoice outside any lead - unchanged pre-existing behaviour. */
+    @Column(name = "lead_id", length = 36)
+    private String leadId;
+
+    @Column(name = "service_id", length = 36)
+    private String serviceId;
+
+    @Column(name = "service_label", length = 200)
+    private String serviceLabel;
+
+    @Column(name = "description", length = 255)
+    private String description;
+
     @Column(name = "amount", nullable = false, precision = 19, scale = 2)
     @Builder.Default
     private BigDecimal amount = BigDecimal.ZERO;

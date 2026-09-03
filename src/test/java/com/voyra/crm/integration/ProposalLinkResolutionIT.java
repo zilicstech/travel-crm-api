@@ -8,7 +8,6 @@ import com.voyra.crm.dto.PublicProposalResponse;
 import com.voyra.crm.entity.Lead;
 import com.voyra.crm.enums.ClientType;
 import com.voyra.crm.enums.LeadPriority;
-import com.voyra.crm.enums.LeadSource;
 import com.voyra.crm.enums.LeadStatus;
 import com.voyra.crm.enums.UserType;
 import com.voyra.crm.repository.LeadRepository;
@@ -73,7 +72,7 @@ class ProposalLinkResolutionIT extends AbstractIntegrationTest {
                     .kidAges(List.of())
                     .totalTravellers(2)
                     .status(LeadStatus.NEW)
-                    .source(LeadSource.PHONE_CALL)
+                    .source("PHONE_CALL")
                     .priority(LeadPriority.MEDIUM)
                     .categories(List.of())
                     .assignedTo("A1")

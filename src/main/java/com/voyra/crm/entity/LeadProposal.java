@@ -40,6 +40,13 @@ public class LeadProposal {
     @Column(name = "lead_id", nullable = false, length = 36)
     private String leadId;
 
+    /** Null means a trip-level charge; set means this line belongs to one service instance. */
+    @Column(name = "service_id", length = 36)
+    private String serviceId;
+
+    @Column(name = "service_label", length = 200)
+    private String serviceLabel;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "type", nullable = false, length = 20)
     private ProposalItemType type;

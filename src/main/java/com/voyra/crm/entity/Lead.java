@@ -1,9 +1,7 @@
 package com.voyra.crm.entity;
 
 import com.voyra.crm.enums.ClientType;
-import com.voyra.crm.enums.LeadCategory;
 import com.voyra.crm.enums.LeadPriority;
-import com.voyra.crm.enums.LeadSource;
 import com.voyra.crm.enums.LeadStatus;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -20,6 +18,7 @@ import lombok.Setter;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -100,19 +99,23 @@ public class Lead {
     @Column(name = "current_status", nullable = false, length = 20)
     private LeadStatus status;
 
-    @Enumerated(EnumType.STRING)
-    @Column(name = "source", nullable = false, length = 20)
-    private LeadSource source;
+    /**
+     * Agency-configurable free text, validated at write time against {@code agency_setting}
+     * (kind = LEAD_SOURCE) rather than a fixed Java enum - the Settings screen lets an agency
+     * add its own sources, and a hardcoded enum could never reflect that.
+     */
+    @Column(name = "source", nullable = false, length = 100)
+    private String source;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "priority", nullable = false, length = 10)
     private LeadPriority priority;
 
-    @Enumerated(EnumType.STRING)
+    /** Same reasoning as {@link #source} - validated against agency_setting (TRAVEL_CATEGORY), not an enum. */
     @JdbcTypeCode(SqlTypes.ARRAY)
     @Column(name = "categories", columnDefinition = "text[]")
     @Builder.Default
-    private List<LeadCategory> categories = List.of();
+    private List<String> categories = List.of();
 
     @Column(name = "budget", length = 50)
     private String budget;
@@ -147,6 +150,33 @@ public class Lead {
 
     @Column(name = "updated_by", length = 36)
     private String updatedBy;
+
+    /** One remark for the whole trip - see the LLD's rationale for retiring per-service notes. */
+    @Column(name = "special_notes")
+    private String specialNotes;
+
+    @JdbcTypeCode(SqlTypes.ARRAY)
+    @Column(name = "travel_preferences", columnDefinition = "text[]")
+    @Builder.Default
+    private List<String> travelPreferences = List.of();
+
+    /** Roll-up of every non-cancelled service's proposal lines - recomputed on every proposal or status write. */
+    @Column(name = "quoted_net_total", nullable = false, precision = 19, scale = 2)
+    @Builder.Default
+    private BigDecimal quotedNetTotal = BigDecimal.ZERO;
+
+    @Column(name = "quoted_selling_total", nullable = false, precision = 19, scale = 2)
+    @Builder.Default
+    private BigDecimal quotedSellingTotal = BigDecimal.ZERO;
+
+    /** Count of OPEN lead_follow_up rows - drives the overdue badge without a join on every list render. */
+    @Column(name = "open_follow_ups", nullable = false)
+    @Builder.Default
+    private Integer openFollowUps = 0;
+
+    @Column(name = "service_count", nullable = false)
+    @Builder.Default
+    private Integer serviceCount = 0;
 
     @PrePersist
     protected void onCreate() {

@@ -64,21 +64,6 @@ public class LeadMemberResponse {
     @Schema(description = "Date of birth falls inside the trip, so the outbound and inbound legs price differently")
     private Boolean crossesPaxBoundary;
 
-    @Schema(description = "Passport collected for this traveller")
-    private Boolean passportCollected;
-
-    @Schema(description = "Photos collected for this traveller")
-    private Boolean photosCollected;
-
-    @Schema(description = "Visa forms completed for this traveller")
-    private Boolean formsFilled;
-
-    @Schema(description = "This traveller's application lodged with the embassy")
-    private Boolean submittedToEmbassy;
-
-    @Schema(description = "Visa granted for this traveller")
-    private Boolean visaApproved;
-
     @Schema(description = "Server-computed: every identity field this lead's categories require is present. "
             + "FLIGHT needs name, date of birth and gender; VISA additionally needs passport number, "
             + "expiry and nationality; HOTEL needs only a name.")

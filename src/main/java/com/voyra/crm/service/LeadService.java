@@ -15,7 +15,6 @@ import com.voyra.crm.dto.MemberCreateRequest;
 import com.voyra.crm.dto.PagedResponse;
 import com.voyra.crm.dto.ProposalItemCreateRequest;
 import com.voyra.crm.dto.ProposalItemResponse;
-import com.voyra.crm.dto.VisaTrackerResponse;
 import com.voyra.crm.entity.Agent;
 import com.voyra.crm.entity.Client;
 import com.voyra.crm.entity.Lead;
@@ -23,10 +22,8 @@ import com.voyra.crm.entity.LeadMember;
 import com.voyra.crm.entity.LeadNote;
 import com.voyra.crm.entity.LeadProposal;
 import com.voyra.crm.entity.Member;
-import com.voyra.crm.enums.LeadCategory;
 import com.voyra.crm.enums.LeadMemberStatus;
 import com.voyra.crm.enums.LeadPriority;
-import com.voyra.crm.enums.LeadSource;
 import com.voyra.crm.enums.LeadStatus;
 import com.voyra.crm.enums.LeadTimelineEventType;
 import com.voyra.crm.enums.MemberType;
@@ -107,7 +104,7 @@ public class LeadService {
                 .leadDescription(request.getLeadDescription())
                 .preferences(request.getPreferences())
                 .status(LeadStatus.NEW)
-                .source(request.getSource() != null ? request.getSource() : LeadSource.PHONE_CALL)
+                .source(request.getSource() != null ? request.getSource() : "PHONE_CALL")
                 .priority(request.getPriority() != null ? request.getPriority() : LeadPriority.MEDIUM)
                 .categories(request.getCategories())
                 .budget(request.getBudget())
@@ -328,12 +325,6 @@ public class LeadService {
                     row.getMemberName() + " is now " + request.getStatus());
         }
 
-        if (request.getPassportCollected() != null) row.setPassportCollected(request.getPassportCollected());
-        if (request.getPhotosCollected() != null) row.setPhotosCollected(request.getPhotosCollected());
-        if (request.getFormsFilled() != null) row.setFormsFilled(request.getFormsFilled());
-        if (request.getSubmittedToEmbassy() != null) row.setSubmittedToEmbassy(request.getSubmittedToEmbassy());
-        if (request.getVisaApproved() != null) row.setVisaApproved(request.getVisaApproved());
-
         row.setModifiedAt(LocalDateTime.now());
         row.setModifiedBy(currentUserId());
         leadMemberRepository.save(row);
@@ -487,34 +478,32 @@ public class LeadService {
                 .ageAtTravel(member != null ? PaxTypeCalculator.ageAt(member.getDob(), departure) : null)
                 .crossesPaxBoundary(member != null && PaxTypeCalculator.crossesPaxBoundary(
                         member.getDob(), departure, lead.getTravelDateTo()))
-                .passportCollected(row.getPassportCollected())
-                .photosCollected(row.getPhotosCollected())
-                .formsFilled(row.getFormsFilled())
-                .submittedToEmbassy(row.getSubmittedToEmbassy())
-                .visaApproved(row.getVisaApproved())
                 .documentsComplete(member != null && hasRequiredFields(member, lead.getCategories()))
                 .createdAt(row.getCreatedAt())
                 .build();
     }
 
     /**
-     * Which identity fields a traveller must carry depends on what the lead is selling. All
-     * four categories have an explicit rule so a new category cannot fall through to a silent
-     * "no requirements" default.
+     * Which identity fields a traveller must carry depends on what the lead is selling. The
+     * four legacy category names (HOTEL/HOLIDAY_PACKAGE/FLIGHT/VISA) carry an explicit rule
+     * each; categories now come from agency_setting rather than a fixed Java enum, so any other
+     * agency-defined category (a "Cruise Package" or "Group Tour") falls back to requiring only
+     * a name rather than crashing on an unrecognised value.
      */
-    private boolean hasRequiredFields(Member member, List<LeadCategory> categories) {
+    private boolean hasRequiredFields(Member member, List<String> categories) {
         if (categories == null || categories.isEmpty()) {
             return isPresent(member.getName());
         }
         boolean ok = isPresent(member.getName());
-        for (LeadCategory category : categories) {
+        for (String category : categories) {
             ok = ok && switch (category) {
-                case HOTEL -> true;
-                case HOLIDAY_PACKAGE -> member.getDob() != null;
-                case FLIGHT -> member.getDob() != null && isPresent(member.getGender());
-                case VISA -> member.getDob() != null && isPresent(member.getGender())
+                case "HOTEL" -> true;
+                case "HOLIDAY_PACKAGE" -> member.getDob() != null;
+                case "FLIGHT" -> member.getDob() != null && isPresent(member.getGender());
+                case "VISA" -> member.getDob() != null && isPresent(member.getGender())
                         && isPresent(member.getPassportNumber()) && member.getPassportExpiry() != null
                         && isPresent(member.getNationality());
+                default -> true;
             };
         }
         return ok;
@@ -550,7 +539,6 @@ public class LeadService {
                 .map(this::toNoteResponse).toList();
 
         List<LeadMemberResponse> manifest = manifestFor(lead);
-        boolean hasVisa = lead.getCategories() != null && lead.getCategories().contains(LeadCategory.VISA);
 
         Member primary = memberRepository
                 .findByClientIdAndTypeAndIsActiveTrue(lead.getClientId(), MemberType.CLIENT).orElse(null);
@@ -568,11 +556,11 @@ public class LeadService {
                 .assignedAgentName(lead.getAssignedAgentName()).followUpDate(lead.getFollowUpDate())
                 .lostReason(lead.getLostReason()).leadDescription(lead.getLeadDescription())
                 .preferences(lead.getPreferences())
+                .specialNotes(lead.getSpecialNotes()).travelPreferences(lead.getTravelPreferences())
                 .createdAt(lead.getCreatedAt()).updatedAt(lead.getUpdatedAt()).overdue(isOverdue(lead))
                 .guestDetails(toGuestDetails(lead))
                 .members(manifest)
                 .manifestComplete(isManifestComplete(lead, manifest))
-                .visaTracker(hasVisa ? rollUpVisaTracker(manifest) : null)
                 .proposalItems(itemResponses)
                 .totalNetCost(totalNet)
                 .totalSellingPrice(totalSelling)
@@ -607,30 +595,6 @@ public class LeadService {
             return false;
         }
         return active.stream().allMatch(m -> Boolean.TRUE.equals(m.getDocumentsComplete()));
-    }
-
-    /**
-     * Lead-level visa progress is the intersection of the per-traveller checklists across
-     * CONFIRMED travellers - a step counts as done only when it is done for every one of them.
-     * Reporting "passports collected" while one traveller's is still outstanding is exactly the
-     * failure the per-traveller checklist exists to prevent.
-     */
-    private VisaTrackerResponse rollUpVisaTracker(List<LeadMemberResponse> manifest) {
-        List<LeadMemberResponse> confirmed = manifest.stream()
-                .filter(m -> m.getStatus() == LeadMemberStatus.CONFIRMED)
-                .toList();
-        if (confirmed.isEmpty()) {
-            return VisaTrackerResponse.builder()
-                    .passportCollected(false).photosCollected(false).formsFilled(false)
-                    .submittedToEmbassy(false).approved(false).build();
-        }
-        return VisaTrackerResponse.builder()
-                .passportCollected(confirmed.stream().allMatch(m -> Boolean.TRUE.equals(m.getPassportCollected())))
-                .photosCollected(confirmed.stream().allMatch(m -> Boolean.TRUE.equals(m.getPhotosCollected())))
-                .formsFilled(confirmed.stream().allMatch(m -> Boolean.TRUE.equals(m.getFormsFilled())))
-                .submittedToEmbassy(confirmed.stream().allMatch(m -> Boolean.TRUE.equals(m.getSubmittedToEmbassy())))
-                .approved(confirmed.stream().allMatch(m -> Boolean.TRUE.equals(m.getVisaApproved())))
-                .build();
     }
 
     private LeadNoteResponse toNoteResponse(LeadNote note) {

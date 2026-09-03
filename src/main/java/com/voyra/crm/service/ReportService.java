@@ -113,7 +113,7 @@ public class ReportService {
                 "totalTravellers", "assignedAgentName", "followUpDate", "createdAt");
         List<List<String>> rows = leads.stream()
                 .map(l -> List.of(l.getId(), l.getClientName(), l.getDestination(),
-                        l.getStatus().name(), l.getSource().name(), l.getPriority().name(),
+                        l.getStatus().name(), l.getSource(), l.getPriority().name(),
                         str(l.getTotalTravellers()),
                         l.getAssignedAgentName(), str(l.getFollowUpDate()), str(l.getCreatedAt())))
                 .toList();
