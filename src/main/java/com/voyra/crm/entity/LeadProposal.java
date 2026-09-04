@@ -71,6 +71,22 @@ public class LeadProposal {
     @Column(name = "created_by", length = 36)
     private String createdBy;
 
+    /** Null = plain add-on, always counted. Shared value = mutually-exclusive alternatives. */
+    @Column(name = "option_group", length = 36)
+    private String optionGroup;
+
+    /** Within an option group, which line currently counts toward the total. */
+    @Column(name = "is_selected", nullable = false)
+    @Builder.Default
+    private boolean isSelected = false;
+
+    /** Who made the selection: AGENT or CUSTOMER. Null until a selection has been made. */
+    @Column(name = "selected_by", length = 20)
+    private String selectedBy;
+
+    @Column(name = "selected_at")
+    private LocalDateTime selectedAt;
+
     @PrePersist
     protected void onCreate() {
         if (createdAt == null) {

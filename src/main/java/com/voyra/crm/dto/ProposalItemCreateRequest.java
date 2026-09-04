@@ -1,5 +1,6 @@
 package com.voyra.crm.dto;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.voyra.crm.enums.ProposalItemType;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotBlank;
@@ -32,4 +33,13 @@ public class ProposalItemCreateRequest {
 
     @Schema(description = "Price shown to the customer, defaults to 0 if not supplied", example = "22000.00")
     private BigDecimal sellingPrice;
+
+    @Schema(description = "Omit for a plain add-on that always counts. Set to group this line with "
+            + "other mutually-exclusive alternatives - typically the service id.", example = "svc-flight-1")
+    private String optionGroup;
+
+    @JsonProperty("isSelected")
+    @Schema(description = "Only meaningful with optionGroup set. When true, every other line in the "
+            + "same group is deselected in the same transaction.")
+    private boolean selected;
 }

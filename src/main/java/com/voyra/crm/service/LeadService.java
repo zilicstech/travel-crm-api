@@ -14,6 +14,8 @@ import com.voyra.crm.dto.LeadResponse;
 import com.voyra.crm.dto.LeadStatusUpdateRequest;
 import com.voyra.crm.dto.MemberCreateRequest;
 import com.voyra.crm.dto.PagedResponse;
+import com.voyra.crm.dto.ProposalItemBatchCreateRequest;
+import com.voyra.crm.dto.ProposalItemBatchLine;
 import com.voyra.crm.dto.ProposalItemCreateRequest;
 import com.voyra.crm.dto.ProposalItemResponse;
 import com.voyra.crm.entity.Agent;
@@ -386,15 +388,103 @@ public class LeadService {
                 .supplier(request.getSupplier())
                 .netCost(netCost)
                 .sellingPrice(sellingPrice)
+                .optionGroup(request.getOptionGroup())
                 .createdAt(LocalDateTime.now())
                 .createdBy(currentUserId())
                 .build();
         leadProposalRepository.save(item);
+        if (request.getOptionGroup() != null && request.isSelected()) {
+            enforceSingleSelection(id, request.getOptionGroup(), item.getId(), "AGENT");
+        }
         recomputeQuotedTotals(lead);
         leadTimelineService.record(id, request.getServiceId(), LeadTimelineEventType.PROPOSAL_ITEM_ADDED,
                 "Proposal item added: " + item.getDescription());
         log.info("Proposal item added: leadId={}, itemId={}", id, item.getId());
-        return toProposalItemResponse(item);
+        return toProposalItemResponse(leadProposalRepository.findByIdAndLeadId(item.getId(), id).orElse(item));
+    }
+
+    /**
+     * Creates every offered line under one option group in a single transaction - the shape a
+     * supplier search modal needs, since ticking three flight offers and clicking "Add to
+     * Proposal" must not be three separate round trips that could partially fail.
+     */
+    @Transactional
+    public List<ProposalItemResponse> addProposalItemsBatch(String id, ProposalItemBatchCreateRequest request) {
+        Lead lead = findAccessibleLead(id);
+        String serviceLabel = null;
+        if (request.getServiceId() != null) {
+            serviceLabel = leadServiceRepository.findById(request.getServiceId())
+                    .orElseThrow(() -> new IllegalArgumentException("Service not found: " + request.getServiceId()))
+                    .getLabel();
+        }
+        String optionGroup = request.getOptionGroup() != null ? request.getOptionGroup() : request.getServiceId();
+
+        List<LeadProposal> created = new ArrayList<>();
+        for (ProposalItemBatchLine line : request.getItems()) {
+            LeadProposal item = LeadProposal.builder()
+                    .id(UniqueIdResolver.resolve(leadProposalRepository::existsById))
+                    .leadId(id)
+                    .serviceId(request.getServiceId())
+                    .serviceLabel(serviceLabel)
+                    .type(line.getType())
+                    .description(line.getDescription())
+                    .supplier(line.getSupplier())
+                    .netCost(line.getNetCost() != null ? line.getNetCost() : BigDecimal.ZERO)
+                    .sellingPrice(line.getSellingPrice() != null ? line.getSellingPrice() : BigDecimal.ZERO)
+                    .optionGroup(optionGroup)
+                    .createdAt(LocalDateTime.now())
+                    .createdBy(currentUserId())
+                    .build();
+            created.add(item);
+        }
+        leadProposalRepository.saveAll(created);
+        recomputeQuotedTotals(lead);
+        leadTimelineService.record(id, request.getServiceId(), LeadTimelineEventType.PROPOSAL_ITEM_ADDED,
+                created.size() + " proposal option(s) added" + (serviceLabel != null ? " to " + serviceLabel : ""));
+        log.info("Proposal items batch-added: leadId={}, count={}, optionGroup={}", id, created.size(), optionGroup);
+        List<String> ids = created.stream().map(LeadProposal::getId).toList();
+        return leadProposalRepository.findAllById(ids).stream().map(this::toProposalItemResponse).toList();
+    }
+
+    /**
+     * Agent-side "make this the default option" - the customer can override this later via the
+     * public proposal selection endpoint, which stamps selectedBy=CUSTOMER instead.
+     */
+    @Transactional
+    public ProposalItemResponse selectProposalItem(String id, String itemId) {
+        Lead lead = findAccessibleLead(id);
+        LeadProposal item = leadProposalRepository.findByIdAndLeadId(itemId, id)
+                .orElseThrow(() -> new IllegalArgumentException("Proposal item not found: " + itemId));
+        if (item.getOptionGroup() == null) {
+            throw new IllegalArgumentException("Only an option line can be selected: " + itemId);
+        }
+        enforceSingleSelection(id, item.getOptionGroup(), itemId, "AGENT");
+        recomputeQuotedTotals(lead);
+        leadTimelineService.record(id, item.getServiceId(), LeadTimelineEventType.PROPOSAL_OPTION_SELECTED,
+                "Selected option: " + item.getDescription());
+        log.info("Proposal option selected: leadId={}, itemId={}", id, itemId);
+        return toProposalItemResponse(leadProposalRepository.findByIdAndLeadId(itemId, id).orElse(item));
+    }
+
+    /**
+     * The single write path that enforces "exactly one selected line per option group" -
+     * every caller that sets is_selected=true goes through here rather than setting the flag
+     * directly, so the invariant can never be bypassed by a partial update.
+     */
+    private void enforceSingleSelection(String leadId, String optionGroup, String selectedItemId, String selectedBy) {
+        List<LeadProposal> siblings = leadProposalRepository.findByLeadId(leadId).stream()
+                .filter(line -> optionGroup.equals(line.getOptionGroup()))
+                .toList();
+        LocalDateTime now = LocalDateTime.now();
+        for (LeadProposal sibling : siblings) {
+            boolean isTarget = sibling.getId().equals(selectedItemId);
+            sibling.setSelected(isTarget);
+            if (isTarget) {
+                sibling.setSelectedBy(selectedBy);
+                sibling.setSelectedAt(now);
+            }
+        }
+        leadProposalRepository.saveAll(siblings);
     }
 
     @Transactional
@@ -456,6 +546,9 @@ public class LeadService {
             if (owningStatus == ServiceStatus.CANCELLED) {
                 continue;
             }
+            if (line.getOptionGroup() != null && !line.isSelected()) {
+                continue;
+            }
             net = net.add(line.getNetCost());
             selling = selling.add(line.getSellingPrice());
         }
@@ -464,7 +557,9 @@ public class LeadService {
         leadRepository.save(lead);
 
         for (com.voyra.crm.entity.LeadService service : services) {
-            List<LeadProposal> lines = linesByService.getOrDefault(service.getId(), List.of());
+            List<LeadProposal> lines = linesByService.getOrDefault(service.getId(), List.of()).stream()
+                    .filter(line -> line.getOptionGroup() == null || line.isSelected())
+                    .toList();
             service.setNetTotal(lines.stream().map(LeadProposal::getNetCost).reduce(BigDecimal.ZERO, BigDecimal::add));
             service.setSellingTotal(lines.stream().map(LeadProposal::getSellingPrice).reduce(BigDecimal.ZERO, BigDecimal::add));
         }
@@ -686,6 +781,8 @@ public class LeadService {
                 .type(item.getType()).description(item.getDescription())
                 .supplier(item.getSupplier()).netCost(item.getNetCost()).sellingPrice(item.getSellingPrice())
                 .marginPercent(MarginCalculator.marginPercent(item.getNetCost(), item.getSellingPrice()))
+                .optionGroup(item.getOptionGroup()).selected(item.isSelected())
+                .selectedBy(item.getSelectedBy()).selectedAt(item.getSelectedAt())
                 .build();
     }
 }

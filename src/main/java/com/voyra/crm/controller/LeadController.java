@@ -10,6 +10,7 @@ import com.voyra.crm.dto.LeadNoteCreateRequest;
 import com.voyra.crm.dto.LeadNoteResponse;
 import com.voyra.crm.dto.LeadResponse;
 import com.voyra.crm.dto.LeadStatusUpdateRequest;
+import com.voyra.crm.dto.ProposalItemBatchCreateRequest;
 import com.voyra.crm.dto.ProposalItemCreateRequest;
 import com.voyra.crm.dto.ProposalItemResponse;
 import com.voyra.crm.dto.ProposalItemUpdateRequest;
@@ -114,11 +115,27 @@ public class LeadController {
         return ResponseEntity.ok(leadService.addProposalItem(id, request));
     }
 
+    @PostMapping("/{id}/proposal-items/batch")
+    @Operation(summary = "Add several option lines to a service's proposal in one request",
+            description = "All created lines share one option group (defaults to serviceId) as "
+                    + "mutually-exclusive alternatives - none is selected until chosen via /select.")
+    public ResponseEntity<List<ProposalItemResponse>> addProposalItemsBatch(
+            @PathVariable String id, @Valid @RequestBody ProposalItemBatchCreateRequest request) {
+        return ResponseEntity.ok(leadService.addProposalItemsBatch(id, request));
+    }
+
     @PutMapping("/{id}/proposal-items/{itemId}")
     @Operation(summary = "Edit a proposal line item", description = "Margin % is always server-computed.")
     public ResponseEntity<ProposalItemResponse> updateProposalItem(@PathVariable String id, @PathVariable String itemId,
                                                                     @Valid @RequestBody ProposalItemUpdateRequest request) {
         return ResponseEntity.ok(leadService.updateProposalItem(id, itemId, request));
+    }
+
+    @PatchMapping("/{id}/proposal-items/{itemId}/select")
+    @Operation(summary = "Make this option line the one that counts toward the total",
+            description = "Every other line in the same option group is deselected in the same step.")
+    public ResponseEntity<ProposalItemResponse> selectProposalItem(@PathVariable String id, @PathVariable String itemId) {
+        return ResponseEntity.ok(leadService.selectProposalItem(id, itemId));
     }
 
     @DeleteMapping("/{id}/proposal-items/{itemId}")
