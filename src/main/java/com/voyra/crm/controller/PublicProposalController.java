@@ -1,16 +1,19 @@
 package com.voyra.crm.controller;
 
 import com.voyra.crm.dto.PublicProposalResponse;
+import com.voyra.crm.dto.PublicProposalSelectionRequest;
 import com.voyra.crm.dto.SimpleAckResponse;
 import com.voyra.crm.service.PublicProposalService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -41,5 +44,14 @@ public class PublicProposalController {
     public ResponseEntity<SimpleAckResponse> approveProposal(@PathVariable String token) {
         publicProposalService.approveProposal(token);
         return ResponseEntity.ok(SimpleAckResponse.builder().success(true).message("Proposal approved").build());
+    }
+
+    @PostMapping("/{token}/selection")
+    @Operation(summary = "Pick one option per service", description = "No auth required. Every id must "
+            + "belong to this proposal and be an option line, or the whole request is rejected. Idempotent.")
+    public ResponseEntity<SimpleAckResponse> selectOptions(@PathVariable String token,
+                                                            @Valid @RequestBody PublicProposalSelectionRequest request) {
+        publicProposalService.selectOptions(token, request.getSelectedItemIds());
+        return ResponseEntity.ok(SimpleAckResponse.builder().success(true).message("Selection saved").build());
     }
 }

@@ -5,16 +5,24 @@ import com.voyra.crm.dto.PublicProposalResponse;
 import com.voyra.crm.entity.Lead;
 import com.voyra.crm.entity.LeadProposal;
 import com.voyra.crm.enums.LeadStatus;
+import com.voyra.crm.enums.LeadTimelineEventType;
+import com.voyra.crm.enums.ServiceStatus;
 import com.voyra.crm.repository.LeadRepository;
 import com.voyra.crm.repository.LeadProposalRepository;
+import com.voyra.crm.repository.LeadServiceRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * Tenant-scoped work for the unauthenticated public proposal endpoints. Runs in a fresh
@@ -33,10 +41,60 @@ public class PublicProposalTenantService {
 
     private final LeadRepository leadRepository;
     private final LeadProposalRepository leadProposalRepository;
+    private final LeadServiceRepository leadServiceRepository;
+    private final LeadTimelineService leadTimelineService;
 
     @Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
     public Optional<PublicProposalResponse> fetchProposal(String leadId) {
         return leadRepository.findById(leadId).map(this::buildResponse);
+    }
+
+    /**
+     * Every id must belong to this lead and be an option line, or the whole request is
+     * rejected - a customer choosing must not be able to select a trip-level add-on into
+     * "chosen" state, or reference another lead's line. Idempotent, like approve: picking
+     * the same option twice is a no-op success, not an error.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public boolean selectOptions(String leadId, List<String> selectedItemIds) {
+        if (leadRepository.findById(leadId).isEmpty()) {
+            return false;
+        }
+        List<LeadProposal> items = leadProposalRepository.findByLeadId(leadId);
+        Map<String, LeadProposal> byId = items.stream()
+                .collect(Collectors.toMap(LeadProposal::getId, Function.identity()));
+
+        for (String id : selectedItemIds) {
+            LeadProposal item = byId.get(id);
+            if (item == null || item.getOptionGroup() == null) {
+                throw new IllegalArgumentException("Invalid selection: " + id);
+            }
+        }
+
+        Map<String, String> chosenIdByGroup = new java.util.HashMap<>();
+        for (String id : selectedItemIds) {
+            chosenIdByGroup.put(byId.get(id).getOptionGroup(), id);
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        List<LeadProposal> changed = new java.util.ArrayList<>();
+        for (LeadProposal item : items) {
+            String group = item.getOptionGroup();
+            if (group == null || !chosenIdByGroup.containsKey(group)) {
+                continue;
+            }
+            boolean isTarget = item.getId().equals(chosenIdByGroup.get(group));
+            item.setSelected(isTarget);
+            if (isTarget) {
+                item.setSelectedBy("CUSTOMER");
+                item.setSelectedAt(now);
+            }
+            changed.add(item);
+        }
+        leadProposalRepository.saveAll(changed);
+        leadTimelineService.recordCustomerAction(leadId, null, LeadTimelineEventType.PROPOSAL_OPTION_SELECTED,
+                "Customer selected " + selectedItemIds.size() + " option(s) on the shared proposal");
+        return true;
     }
 
     /** Idempotent: approving an already-approved-or-further-along proposal is a no-op success. */
@@ -55,8 +113,21 @@ public class PublicProposalTenantService {
     }
 
     private PublicProposalResponse buildResponse(Lead lead) {
-        var items = leadProposalRepository.findByLeadId(lead.getId());
+        List<com.voyra.crm.entity.LeadService> services = leadServiceRepository.findByLeadIdOrderBySortOrderAsc(lead.getId());
+        Map<String, ServiceStatus> statusByServiceId = services.stream()
+                .collect(Collectors.toMap(com.voyra.crm.entity.LeadService::getId, com.voyra.crm.entity.LeadService::getStatus));
+        Map<String, String> labelByServiceId = services.stream()
+                .collect(Collectors.toMap(com.voyra.crm.entity.LeadService::getId, com.voyra.crm.entity.LeadService::getLabel));
+
+        // Cancelled work is never quoted to a customer - excluded from the items list
+        // entirely here, matching (and, for this endpoint, fixing) the internal
+        // recomputeQuotedTotals() rule, which this previously did not.
+        var items = leadProposalRepository.findByLeadId(lead.getId()).stream()
+                .filter(i -> i.getServiceId() == null || statusByServiceId.get(i.getServiceId()) != ServiceStatus.CANCELLED)
+                .toList();
+
         BigDecimal grandTotal = items.stream()
+                .filter(i -> i.getOptionGroup() == null || i.isSelected())
                 .map(LeadProposal::getSellingPrice)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         // Aggregate headcount only. The named traveller manifest deliberately never crosses
@@ -72,8 +143,11 @@ public class PublicProposalTenantService {
                 .guestCount(guestCount)
                 .items(items.stream()
                         .map(i -> PublicProposalItemResponse.builder()
-                                .type(i.getType()).description(i.getDescription())
+                                .id(i.getId()).type(i.getType())
+                                .serviceId(i.getServiceId()).serviceLabel(labelByServiceId.get(i.getServiceId()))
+                                .description(i.getDescription())
                                 .supplier(i.getSupplier()).sellingPrice(i.getSellingPrice())
+                                .optionGroup(i.getOptionGroup()).selected(i.isSelected())
                                 .build())
                         .toList())
                 .grandTotal(grandTotal)

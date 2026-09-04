@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -48,6 +49,19 @@ public class PublicProposalService {
         ProposalLink link = resolveLink(token);
         boolean approved = withTenant(link.getTenantId(), () -> tenantService.approve(link.getLeadId()));
         if (!approved) {
+            throw new IllegalArgumentException(NOT_FOUND_MESSAGE);
+        }
+    }
+
+    /**
+     * Not readOnly, same reasoning as {@link #approveProposal}: the write happens in the
+     * tenant-scoped delegate, this only resolves the token.
+     */
+    @Transactional
+    public void selectOptions(String token, List<String> selectedItemIds) {
+        ProposalLink link = resolveLink(token);
+        boolean applied = withTenant(link.getTenantId(), () -> tenantService.selectOptions(link.getLeadId(), selectedItemIds));
+        if (!applied) {
             throw new IllegalArgumentException(NOT_FOUND_MESSAGE);
         }
     }

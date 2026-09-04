@@ -44,6 +44,26 @@ public class LeadTimelineService {
         recordTransition(leadId, serviceId, eventType, null, null, description);
     }
 
+    /**
+     * For the one write path with no signed-in principal to resolve: the unauthenticated
+     * public proposal endpoints. {@code authorResolver} needs a JWT-backed
+     * SecurityContext, which does not exist on that path - this bypasses it with a fixed
+     * "customer" actor rather than throwing mid-transaction.
+     */
+    @Transactional
+    public void recordCustomerAction(String leadId, String serviceId, LeadTimelineEventType eventType, String description) {
+        LeadTimeline entry = LeadTimeline.builder()
+                .id(UniqueIdResolver.resolve(leadTimelineRepository::existsById))
+                .leadId(leadId)
+                .serviceId(serviceId)
+                .eventType(eventType)
+                .actorAgentId("customer")
+                .actorName("Customer")
+                .description(truncate(description))
+                .build();
+        leadTimelineRepository.save(entry);
+    }
+
     @Transactional
     public void recordTransition(String leadId, LeadTimelineEventType eventType,
                                  LeadStatus fromStatus, LeadStatus toStatus, String description) {
