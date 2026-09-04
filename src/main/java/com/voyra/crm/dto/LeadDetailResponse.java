@@ -145,4 +145,9 @@ public class LeadDetailResponse {
 
     @Schema(description = "Whether a public share link has been generated for this lead's proposal")
     private boolean hasPublicProposalLink;
+
+    @Schema(description = "When true, the whole proposal is frozen - the customer's public "
+            + "selection endpoint and every proposal-item write are rejected until an "
+            + "agent/owner unlocks it. Auto-set true when a customer confirms their option picks.")
+    private boolean proposalLocked;
 }

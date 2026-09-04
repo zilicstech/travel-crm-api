@@ -54,11 +54,21 @@ public class PublicProposalTenantService {
      * rejected - a customer choosing must not be able to select a trip-level add-on into
      * "chosen" state, or reference another lead's line. Idempotent, like approve: picking
      * the same option twice is a no-op success, not an error.
+     *
+     * <p>A locked proposal rejects the whole request with {@link IllegalStateException} - the
+     * customer has no way to unlock it themselves, only an agent/owner can via the internal
+     * lead-detail lock control. On success, the proposal auto-locks: the customer's picks are
+     * now a commitment, and an agent must consciously reopen it to change anything further.
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public boolean selectOptions(String leadId, List<String> selectedItemIds) {
-        if (leadRepository.findById(leadId).isEmpty()) {
+        Optional<Lead> leadOpt = leadRepository.findById(leadId);
+        if (leadOpt.isEmpty()) {
             return false;
+        }
+        Lead lead = leadOpt.get();
+        if (lead.isProposalLocked()) {
+            throw new IllegalStateException("This proposal is locked. Please contact your agent to make changes.");
         }
         List<LeadProposal> items = leadProposalRepository.findByLeadId(leadId);
         Map<String, LeadProposal> byId = items.stream()
@@ -92,8 +102,12 @@ public class PublicProposalTenantService {
             changed.add(item);
         }
         leadProposalRepository.saveAll(changed);
+        lead.setProposalLocked(true);
+        leadRepository.save(lead);
         leadTimelineService.recordCustomerAction(leadId, null, LeadTimelineEventType.PROPOSAL_OPTION_SELECTED,
                 "Customer selected " + selectedItemIds.size() + " option(s) on the shared proposal");
+        leadTimelineService.recordCustomerAction(leadId, null, LeadTimelineEventType.PROPOSAL_LOCKED,
+                "Proposal auto-locked after customer confirmed their choices");
         return true;
     }
 
@@ -151,6 +165,7 @@ public class PublicProposalTenantService {
                                 .build())
                         .toList())
                 .grandTotal(grandTotal)
+                .locked(lead.isProposalLocked())
                 .build();
     }
 

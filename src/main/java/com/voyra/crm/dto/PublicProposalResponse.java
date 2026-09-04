@@ -49,4 +49,8 @@ public class PublicProposalResponse {
 
     @Schema(description = "Sum of items' sellingPrice - net cost and margin are never exposed", example = "52000.00")
     private BigDecimal grandTotal;
+
+    @Schema(description = "When true, option selections are frozen - the customer cannot pick or "
+            + "confirm further until an agent unlocks it")
+    private boolean locked;
 }

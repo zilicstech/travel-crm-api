@@ -8,6 +8,7 @@ import com.voyra.crm.dto.LeadMemberResponse;
 import com.voyra.crm.dto.LeadMemberUpdateRequest;
 import com.voyra.crm.dto.LeadNoteCreateRequest;
 import com.voyra.crm.dto.LeadNoteResponse;
+import com.voyra.crm.dto.LeadProposalLockRequest;
 import com.voyra.crm.dto.LeadResponse;
 import com.voyra.crm.dto.LeadStatusUpdateRequest;
 import com.voyra.crm.dto.ProposalItemBatchCreateRequest;
@@ -99,6 +100,15 @@ public class LeadController {
     public ResponseEntity<LeadDetailResponse> updateStatus(@PathVariable String id,
                                                             @Valid @RequestBody LeadStatusUpdateRequest request) {
         return ResponseEntity.ok(leadService.updateStatus(id, request));
+    }
+
+    @PatchMapping("/{id}/proposal-lock")
+    @Operation(summary = "Lock or unlock the whole proposal", description = "Locking freezes every "
+            + "proposal-item write, agent-side included, and the customer's public selection endpoint. "
+            + "Only an agent/owner can call this - the customer has no equivalent action.")
+    public ResponseEntity<LeadDetailResponse> setProposalLocked(@PathVariable String id,
+                                                                 @Valid @RequestBody LeadProposalLockRequest request) {
+        return ResponseEntity.ok(leadService.setProposalLocked(id, request.getLocked()));
     }
 
     @PostMapping("/{id}/notes")

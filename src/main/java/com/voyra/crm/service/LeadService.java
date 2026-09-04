@@ -368,6 +368,7 @@ public class LeadService {
     @Transactional
     public ProposalItemResponse addProposalItem(String id, ProposalItemCreateRequest request) {
         Lead lead = findAccessibleLead(id);
+        assertProposalUnlocked(lead);
         BigDecimal netCost = request.getNetCost() != null ? request.getNetCost() : BigDecimal.ZERO;
         BigDecimal sellingPrice = request.getSellingPrice() != null ? request.getSellingPrice() : BigDecimal.ZERO;
 
@@ -411,6 +412,7 @@ public class LeadService {
     @Transactional
     public List<ProposalItemResponse> addProposalItemsBatch(String id, ProposalItemBatchCreateRequest request) {
         Lead lead = findAccessibleLead(id);
+        assertProposalUnlocked(lead);
         String serviceLabel = null;
         if (request.getServiceId() != null) {
             serviceLabel = leadServiceRepository.findById(request.getServiceId())
@@ -453,6 +455,7 @@ public class LeadService {
     @Transactional
     public ProposalItemResponse selectProposalItem(String id, String itemId) {
         Lead lead = findAccessibleLead(id);
+        assertProposalUnlocked(lead);
         LeadProposal item = leadProposalRepository.findByIdAndLeadId(itemId, id)
                 .orElseThrow(() -> new IllegalArgumentException("Proposal item not found: " + itemId));
         if (item.getOptionGroup() == null) {
@@ -490,6 +493,7 @@ public class LeadService {
     @Transactional
     public ProposalItemResponse updateProposalItem(String id, String itemId, ProposalItemUpdateRequest request) {
         Lead lead = findAccessibleLead(id);
+        assertProposalUnlocked(lead);
         LeadProposal item = leadProposalRepository.findByIdAndLeadId(itemId, id)
                 .orElseThrow(() -> new IllegalArgumentException("Proposal item not found: " + itemId));
         if (request.getDescription() != null) {
@@ -515,6 +519,7 @@ public class LeadService {
     @Transactional
     public void removeProposalItem(String id, String itemId) {
         Lead lead = findAccessibleLead(id);
+        assertProposalUnlocked(lead);
         LeadProposal item = leadProposalRepository.findByIdAndLeadId(itemId, id)
                 .orElseThrow(() -> new IllegalArgumentException("Proposal item not found: " + itemId));
         leadProposalRepository.delete(item);
@@ -591,6 +596,29 @@ public class LeadService {
 
     private boolean hasServiceAccess(String leadId, String agentId) {
         return com.voyra.crm.util.LeadAccessChecker.hasServiceAccess(leadServiceRepository, agentRepository, leadId, agentId);
+    }
+
+    /**
+     * Set true automatically once a customer confirms their option picks on the public
+     * proposal, and checked by every proposal-item write (agent-side included) so nothing
+     * can silently drift from what the customer saw and confirmed. Only an agent/owner can
+     * clear it via {@link #setProposalLocked} - never the customer.
+     */
+    private void assertProposalUnlocked(Lead lead) {
+        if (lead.isProposalLocked()) {
+            throw new IllegalStateException("This proposal is locked. Unlock it before making changes.");
+        }
+    }
+
+    @Transactional
+    public LeadDetailResponse setProposalLocked(String id, boolean locked) {
+        Lead lead = findAccessibleLead(id);
+        lead.setProposalLocked(locked);
+        leadRepository.save(lead);
+        leadTimelineService.record(id, locked ? LeadTimelineEventType.PROPOSAL_LOCKED : LeadTimelineEventType.PROPOSAL_UNLOCKED,
+                locked ? "Proposal locked" : "Proposal unlocked");
+        log.info("Proposal lock changed: leadId={}, locked={}", id, locked);
+        return toDetailResponse(lead);
     }
 
     private void touch(Lead lead) {
@@ -738,6 +766,7 @@ public class LeadService {
                 .marginPercent(MarginCalculator.marginPercent(totalNet, totalSelling))
                 .notes(notes)
                 .hasPublicProposalLink(lead.getPublicProposalToken() != null)
+                .proposalLocked(lead.isProposalLocked())
                 .build();
     }
 

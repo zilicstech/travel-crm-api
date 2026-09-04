@@ -166,6 +166,15 @@ public class Lead {
     @Builder.Default
     private BigDecimal quotedSellingTotal = BigDecimal.ZERO;
 
+    /**
+     * Freezes the whole proposal - both the customer's public selection endpoint and the
+     * agent's own line edits - once set. Auto-set true when a customer confirms their option
+     * picks; only an agent/owner can clear it again (never the customer).
+     */
+    @Column(name = "proposal_locked", nullable = false)
+    @Builder.Default
+    private boolean proposalLocked = false;
+
     /** Count of OPEN lead_follow_up rows - drives the overdue badge without a join on every list render. */
     @Column(name = "open_follow_ups", nullable = false)
     @Builder.Default
