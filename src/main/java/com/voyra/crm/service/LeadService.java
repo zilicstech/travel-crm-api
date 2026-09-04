@@ -89,7 +89,7 @@ public class LeadService {
 
     @Transactional
     public LeadDetailResponse createLead(LeadCreateRequest request) {
-        AuthorResolver.AuthorInfo owner = resolveOwningAgent(request.getAssignedTo());
+        AuthorResolver.AuthorInfo author = authorResolver.resolveCurrentAuthor();
         Client client = clientService.findAccessibleClient(request.getClientId());
         GuestDetails guests = request.getGuestDetails() != null ? request.getGuestDetails() : new GuestDetails();
 
@@ -116,19 +116,18 @@ public class LeadService {
                 .priority(request.getPriority() != null ? request.getPriority() : LeadPriority.MEDIUM)
                 .categories(request.getCategories())
                 .budget(request.getBudget())
-                .assignedTo(owner.id())
-                .assignedAgentName(owner.name())
                 .followUpDate(request.getFollowUpDate())
                 .isActive(true)
                 .createdAt(LocalDateTime.now())
-                .createdBy(currentUserId())
+                .createdBy(author.id())
+                .createdByName(author.name())
                 .build();
         leadRepository.save(lead);
 
         leadTimelineService.recordTransition(lead.getId(), LeadTimelineEventType.LEAD_CREATED,
                 null, LeadStatus.NEW, "Lead created for " + client.getName() + " to " + lead.getDestination());
 
-        log.info("Lead created: leadId={}, clientId={}, assignedTo={}", lead.getId(), client.getId(), owner.id());
+        log.info("Lead created: leadId={}, clientId={}, createdBy={}", lead.getId(), client.getId(), author.id());
         return toDetailResponse(lead);
     }
 
@@ -145,8 +144,8 @@ public class LeadService {
         Page<Lead> page;
         if (principal.isAgent()) {
             page = statusFilter == null
-                    ? leadRepository.findByAssignedTo(principal.userId(), pageable)
-                    : leadRepository.findByAssignedToAndStatus(principal.userId(), statusFilter, pageable);
+                    ? leadRepository.findByCreatedBy(principal.userId(), pageable)
+                    : leadRepository.findByCreatedByAndStatus(principal.userId(), statusFilter, pageable);
         } else {
             page = statusFilter == null
                     ? leadRepository.findAll(pageable)
@@ -158,14 +157,16 @@ public class LeadService {
 
     /**
      * Every combination resolves to an indexed derived query - never a full table read
-     * filtered in Java. Agent callers are structurally confined to their own assigned rows.
+     * filtered in Java. Agent callers are structurally confined to leads they created; a
+     * lead they only hold a service on is reached individually via {@link #findAccessibleLead}
+     * (through My Desk), not through this list.
      */
     private List<Lead> scopedLeads(LeadStatus statusFilter) {
         CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
         if (principal.isAgent()) {
             return statusFilter == null
-                    ? leadRepository.findByAssignedTo(principal.userId())
-                    : leadRepository.findByAssignedToAndStatus(principal.userId(), statusFilter);
+                    ? leadRepository.findByCreatedBy(principal.userId())
+                    : leadRepository.findByCreatedByAndStatus(principal.userId(), statusFilter);
         }
         return statusFilter == null
                 ? leadRepository.findAll()
@@ -227,26 +228,6 @@ public class LeadService {
         leadTimelineService.record(id, LeadTimelineEventType.DETAILS_UPDATED, "Trip information updated");
 
         log.info("Lead details updated: leadId={}", id);
-        return toDetailResponse(lead);
-    }
-
-    /** Owner-only, enforced at the controller layer - only the Owner may reassign a lead to a different agent. */
-    @Transactional
-    public LeadDetailResponse assignAgent(String id, String agentId) {
-        CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
-        Lead lead = leadRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("Lead not found: " + id));
-        Agent agent = agentRepository.findByIdAndTenantId(agentId, principal.tenantId())
-                .orElseThrow(() -> new IllegalArgumentException("Agent not found in this agency: " + agentId));
-
-        lead.setAssignedTo(agent.getId());
-        lead.setAssignedAgentName(agent.getName());
-        touch(lead);
-        leadRepository.save(lead);
-
-        leadTimelineService.record(id, LeadTimelineEventType.ASSIGNED, "Assigned to " + agent.getName());
-
-        log.info("Lead reassigned: leadId={}, agentId={}", id, agentId);
         return toDetailResponse(lead);
     }
 
@@ -494,36 +475,21 @@ public class LeadService {
     // Shared helpers
     // ---------------------------------------------------------------------
 
-    private AuthorResolver.AuthorInfo resolveOwningAgent(String requestedAgentId) {
-        CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
-        if (principal.isAgent()) {
-            Agent agent = agentRepository.findById(principal.userId())
-                    .orElseThrow(() -> new IllegalStateException("Agent not found: " + principal.userId()));
-            return new AuthorResolver.AuthorInfo(agent.getId(), agent.getName());
-        }
-        if (requestedAgentId == null || requestedAgentId.isBlank()) {
-            throw new IllegalArgumentException("assignedTo is required when an Owner creates a lead");
-        }
-        Agent agent = agentRepository.findByIdAndTenantId(requestedAgentId, principal.tenantId())
-                .orElseThrow(() -> new IllegalArgumentException("Agent not found in this agency: " + requestedAgentId));
-        return new AuthorResolver.AuthorInfo(agent.getId(), agent.getName());
-    }
-
     /**
      * Shared access check reused by ProposalLinkService, and by every lead-level mutation
      * below (status, trip details, notes, proposal items, traveller manifest). An agent
-     * reaches a lead either because it is assigned to them, or because they are personally
+     * reaches a lead either because they created it, or because they are personally
      * assigned to - or manage the type of - at least one service on it: a Visa agent quoting
      * their own service via ServiceProposalTable, or reading the manifest a Visa checklist
-     * needs, is not the lead's own sales agent and must not be locked out.
+     * needs, did not create this lead and must not be locked out.
      */
     public Lead findAccessibleLead(String id) {
         Lead lead = leadRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Lead not found: " + id));
         CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
-        if (principal.isAgent() && !lead.getAssignedTo().equals(principal.userId())
+        if (principal.isAgent() && !lead.getCreatedBy().equals(principal.userId())
                 && !hasServiceAccess(id, principal.userId())) {
-            throw new AccessDeniedException("This lead is not assigned to you");
+            throw new AccessDeniedException("This lead is not accessible to you");
         }
         return lead;
     }
@@ -626,7 +592,7 @@ public class LeadService {
                 .source(lead.getSource()).priority(lead.getPriority())
                 .totalTravellers(lead.getTotalTravellers())
                 .confirmedTravellers(confirmedByLead.getOrDefault(lead.getId(), 0L).intValue())
-                .assignedTo(lead.getAssignedTo()).assignedAgentName(lead.getAssignedAgentName())
+                .createdBy(lead.getCreatedBy()).createdByName(lead.getCreatedByName())
                 .followUpDate(lead.getFollowUpDate()).createdAt(lead.getCreatedAt()).overdue(isOverdue(lead))
                 .build();
     }
@@ -658,8 +624,8 @@ public class LeadService {
                 .destination(lead.getDestination())
                 .travelDateFrom(lead.getTravelDateFrom()).travelDateTo(lead.getTravelDateTo())
                 .categories(lead.getCategories()).budget(lead.getBudget()).status(lead.getStatus())
-                .source(lead.getSource()).priority(lead.getPriority()).assignedTo(lead.getAssignedTo())
-                .assignedAgentName(lead.getAssignedAgentName()).followUpDate(lead.getFollowUpDate())
+                .source(lead.getSource()).priority(lead.getPriority()).createdBy(lead.getCreatedBy())
+                .createdByName(lead.getCreatedByName()).followUpDate(lead.getFollowUpDate())
                 .lostReason(lead.getLostReason()).leadDescription(lead.getLeadDescription())
                 .preferences(lead.getPreferences())
                 .specialNotes(lead.getSpecialNotes()).travelPreferences(lead.getTravelPreferences())

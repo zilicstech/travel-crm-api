@@ -120,12 +120,6 @@ public class Lead {
     @Column(name = "budget", length = 50)
     private String budget;
 
-    @Column(name = "assigned_to", nullable = false, length = 36)
-    private String assignedTo;
-
-    @Column(name = "assigned_agent_name", nullable = false, length = 150)
-    private String assignedAgentName;
-
     @Column(name = "follow_up_date")
     private LocalDate followUpDate;
 
@@ -144,6 +138,9 @@ public class Lead {
 
     @Column(name = "created_by", length = 36)
     private String createdBy;
+
+    @Column(name = "created_by_name", length = 150)
+    private String createdByName;
 
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;

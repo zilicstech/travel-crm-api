@@ -81,7 +81,7 @@ class LeadBusinessRuleTest {
 
     @Test
     void markingLostWithNullReasonThrows() {
-        Lead lead = Lead.builder().id("L1").assignedTo("A1").status(LeadStatus.NEGOTIATING).build();
+        Lead lead = Lead.builder().id("L1").createdBy("A1").status(LeadStatus.NEGOTIATING).build();
         when(leadRepository.findById("L1")).thenReturn(Optional.of(lead));
 
         LeadStatusUpdateRequest request = new LeadStatusUpdateRequest();
@@ -93,7 +93,7 @@ class LeadBusinessRuleTest {
 
     @Test
     void markingLostWithBlankReasonThrows() {
-        Lead lead = Lead.builder().id("L1").assignedTo("A1").status(LeadStatus.NEGOTIATING).build();
+        Lead lead = Lead.builder().id("L1").createdBy("A1").status(LeadStatus.NEGOTIATING).build();
         when(leadRepository.findById("L1")).thenReturn(Optional.of(lead));
 
         LeadStatusUpdateRequest request = new LeadStatusUpdateRequest();
@@ -106,7 +106,7 @@ class LeadBusinessRuleTest {
 
     @Test
     void markingLostWithReasonSucceedsAndPersistsIt() {
-        Lead lead = Lead.builder().id("L1").assignedTo("A1").status(LeadStatus.NEGOTIATING).build();
+        Lead lead = Lead.builder().id("L1").createdBy("A1").status(LeadStatus.NEGOTIATING).build();
         when(leadRepository.findById("L1")).thenReturn(Optional.of(lead));
 
         LeadStatusUpdateRequest request = new LeadStatusUpdateRequest();
@@ -121,7 +121,7 @@ class LeadBusinessRuleTest {
 
     @Test
     void movingAwayFromLostClearsTheReason() {
-        Lead lead = Lead.builder().id("L1").assignedTo("A1").status(LeadStatus.LOST)
+        Lead lead = Lead.builder().id("L1").createdBy("A1").status(LeadStatus.LOST)
                 .lostReason("Budget too low").build();
         when(leadRepository.findById("L1")).thenReturn(Optional.of(lead));
 

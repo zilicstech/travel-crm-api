@@ -124,7 +124,7 @@ public class LeadFollowUpService {
 
     // ---------------------------------------------------------------------
 
-    /** Owner, the lead's own agent, or (for a type-scoped follow-up) an agent who manages that type. */
+    /** Owner, the lead's creator, or (for a type-scoped follow-up) an agent who manages that type. */
     private Lead findAccessibleLead(String leadId, String requestedAssigneeId) {
         Lead lead = leadRepository.findById(leadId)
                 .orElseThrow(() -> new IllegalArgumentException("Lead not found: " + leadId));
@@ -132,13 +132,13 @@ public class LeadFollowUpService {
         if (!principal.isAgent()) {
             return lead;
         }
-        if (lead.getAssignedTo().equals(principal.userId())) {
+        if (lead.getCreatedBy().equals(principal.userId())) {
             return lead;
         }
         if (requestedAssigneeId != null && requestedAssigneeId.equals(principal.userId())) {
             return lead;
         }
-        throw new AccessDeniedException("This lead is not assigned to you");
+        throw new AccessDeniedException("This lead is not accessible to you");
     }
 
     private LeadFollowUp findOnLead(String leadId, String followUpId) {

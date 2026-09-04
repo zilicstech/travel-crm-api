@@ -124,8 +124,8 @@ class TenantIsolationIT extends AbstractIntegrationTest {
                     .source("PHONE_CALL")
                     .priority(LeadPriority.MEDIUM)
                     .categories(List.of())
-                    .assignedTo("A1")
-                    .assignedAgentName("Test Agent")
+                    .createdBy("A1")
+                    .createdByName("Test Agent")
                     .isActive(true)
                     .createdAt(LocalDateTime.now())
                     .build();

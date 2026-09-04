@@ -18,7 +18,7 @@ import java.util.Optional;
 @Repository
 public interface LeadRepository extends JpaRepository<Lead, String> {
 
-    List<Lead> findByAssignedTo(String assignedTo);
+    List<Lead> findByCreatedBy(String createdBy);
 
     List<Lead> findByClientId(String clientId);
 
@@ -26,36 +26,36 @@ public interface LeadRepository extends JpaRepository<Lead, String> {
 
     List<Lead> findByStatus(LeadStatus status);
 
-    List<Lead> findByAssignedToAndStatus(String assignedTo, LeadStatus status);
+    List<Lead> findByCreatedByAndStatus(String createdBy, LeadStatus status);
 
-    Page<Lead> findByAssignedTo(String assignedTo, Pageable pageable);
+    Page<Lead> findByCreatedBy(String createdBy, Pageable pageable);
 
     Page<Lead> findByStatus(LeadStatus status, Pageable pageable);
 
-    Page<Lead> findByAssignedToAndStatus(String assignedTo, LeadStatus status, Pageable pageable);
+    Page<Lead> findByCreatedByAndStatus(String createdBy, LeadStatus status, Pageable pageable);
 
     Optional<Lead> findByPublicProposalToken(String publicProposalToken);
 
-    long countByAssignedTo(String assignedTo);
+    long countByCreatedBy(String createdBy);
 
     long countByStatus(LeadStatus status);
 
     long countByFollowUpDateLessThanEqualAndStatusNotIn(LocalDate date, Collection<LeadStatus> excludedStatuses);
 
-    long countByAssignedToAndStatus(String assignedTo, LeadStatus status);
+    long countByCreatedByAndStatus(String createdBy, LeadStatus status);
 
-    long countByAssignedToAndStatusIn(String assignedTo, Collection<LeadStatus> statuses);
+    long countByCreatedByAndStatusIn(String createdBy, Collection<LeadStatus> statuses);
 
-    long countByAssignedToAndStatusNotIn(String assignedTo, Collection<LeadStatus> statuses);
+    long countByCreatedByAndStatusNotIn(String createdBy, Collection<LeadStatus> statuses);
 
-    long countByAssignedToAndFollowUpDateLessThanEqualAndStatusNotIn(
-            String assignedTo, LocalDate date, Collection<LeadStatus> excludedStatuses);
+    long countByCreatedByAndFollowUpDateLessThanEqualAndStatusNotIn(
+            String createdBy, LocalDate date, Collection<LeadStatus> excludedStatuses);
 
-    boolean existsByAssignedToAndStatusNotIn(String assignedTo, Collection<LeadStatus> excludedStatuses);
+    boolean existsByCreatedByAndStatusNotIn(String createdBy, Collection<LeadStatus> excludedStatuses);
 
     /** One grouped row per agent - replaces five per-agent count queries. */
     @Query("""
-            SELECT l.assignedTo AS agentId,
+            SELECT l.createdBy AS agentId,
                    COUNT(l) AS leadsAssigned,
                    SUM(CASE WHEN l.status = :booked THEN 1L ELSE 0L END) AS bookedLeads,
                    SUM(CASE WHEN l.status NOT IN :terminal THEN 1L ELSE 0L END) AS activeLeads,
@@ -63,8 +63,8 @@ public interface LeadRepository extends JpaRepository<Lead, String> {
                    SUM(CASE WHEN l.followUpDate <= :today AND l.status NOT IN :terminal
                             THEN 1L ELSE 0L END) AS pendingFollowUps
             FROM Lead l
-            WHERE l.assignedTo IN :agentIds
-            GROUP BY l.assignedTo
+            WHERE l.createdBy IN :agentIds
+            GROUP BY l.createdBy
             """)
     List<AgentLeadStatsProjection> aggregateLeadStatsByAgent(
             @Param("agentIds") Collection<String> agentIds,
@@ -93,10 +93,10 @@ public interface LeadRepository extends JpaRepository<Lead, String> {
         long getCount();
     }
 
-    /** Keeps the denormalized assigned_agent_name snapshot live-synced on Agent rename. */
+    /** Keeps the denormalized created_by_name snapshot live-synced on Agent rename. */
     @Modifying
-    @Query("UPDATE Lead l SET l.assignedAgentName = :name WHERE l.assignedTo = :agentId")
-    void updateAssignedAgentNameForAgent(@Param("agentId") String agentId, @Param("name") String name);
+    @Query("UPDATE Lead l SET l.createdByName = :name WHERE l.createdBy = :agentId")
+    void updateCreatedByNameForAgent(@Param("agentId") String agentId, @Param("name") String name);
 
     /** Keeps the denormalized client_name snapshot live-synced on Client rename. */
     @Modifying

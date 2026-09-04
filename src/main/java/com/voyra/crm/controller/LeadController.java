@@ -1,6 +1,5 @@
 package com.voyra.crm.controller;
 
-import com.voyra.crm.dto.LeadAssignRequest;
 import com.voyra.crm.dto.LeadCreateRequest;
 import com.voyra.crm.dto.LeadDetailResponse;
 import com.voyra.crm.dto.LeadDetailUpdateRequest;
@@ -43,9 +42,9 @@ import org.springframework.web.bind.annotation.PutMapping;
 import java.util.List;
 
 /**
- * Shared between AGENCY_OWNER and AGENT for most actions - only /assign is genuinely
- * owner-only (per-method @PreAuthorize override, the blueprint's primary authorization
- * mechanism, §5.2), so a full audience-split controller pair isn't warranted here.
+ * Shared between AGENCY_OWNER and AGENT for every lead-level action - a lead has no
+ * owner-only reassignment any more (see LeadServiceController for the per-service
+ * accept/assign split, which is where an owner-only action still lives on this model).
  */
 @Slf4j
 @RestController
@@ -69,7 +68,7 @@ public class LeadController {
 
     @GetMapping
     @Operation(summary = "List leads",
-            description = "Agents see only their own assigned leads; Owners see the whole agency. Supply ?page= "
+            description = "Agents see only leads they created; Owners see the whole agency. Supply ?page= "
                     + "for a paged envelope; omit it for the full list as a plain array.")
     public ResponseEntity<Object> listLeads(
             @RequestParam(value = "status", required = false) LeadStatus status,
@@ -99,14 +98,6 @@ public class LeadController {
     public ResponseEntity<LeadDetailResponse> updateStatus(@PathVariable String id,
                                                             @Valid @RequestBody LeadStatusUpdateRequest request) {
         return ResponseEntity.ok(leadService.updateStatus(id, request));
-    }
-
-    @PatchMapping("/{id}/assign")
-    @PreAuthorize("hasRole('AGENCY_OWNER')")
-    @Operation(summary = "Reassign the lead to a different agent", description = "Owner-only.")
-    public ResponseEntity<LeadDetailResponse> assignAgent(@PathVariable String id,
-                                                           @Valid @RequestBody LeadAssignRequest request) {
-        return ResponseEntity.ok(leadService.assignAgent(id, request.getAgentId()));
     }
 
     @PostMapping("/{id}/notes")

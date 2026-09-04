@@ -17,10 +17,6 @@ import java.util.List;
         + "create the client.")
 public class LeadCreateRequest {
 
-    @Schema(description = "Owner-only: assign the lead to a specific agent. Ignored for the AGENT role (always self).",
-            example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
-    private String assignedTo;
-
     @NotBlank(message = "Client is required")
     @Schema(description = "The client this enquiry belongs to", example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String clientId;

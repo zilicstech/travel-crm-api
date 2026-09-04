@@ -69,7 +69,7 @@ class PublicProposalControllerTest {
                 .andReturn().getResponse().getContentAsString();
 
         for (String forbidden : List.of("netCost", "margin", "marginPercent", "status", "priority",
-                "source", "assignedTo", "notes", "visaTracker", "phone", "email", "budget",
+                "source", "createdBy", "createdByName", "notes", "visaTracker", "phone", "email", "budget",
                 "lostReason", "clientId",
                 // The traveller manifest must never cross the public boundary: it carries
                 // passport numbers and dates of birth behind a link that needs no login.

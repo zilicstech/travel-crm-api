@@ -137,7 +137,7 @@ public class AgentService {
 
         // Live-sync denormalized name snapshots in the same transaction as the rename.
         if (nameChanged) {
-            leadRepository.updateAssignedAgentNameForAgent(agent.getId(), agent.getName());
+            leadRepository.updateCreatedByNameForAgent(agent.getId(), agent.getName());
             bookingRepository.updateAgentNameForAgent(agent.getId(), agent.getName());
             leadNoteRepository.updateAuthorNameForAgent(agent.getId(), agent.getName());
             visaRepository.updateAgentNameForAgent(agent.getId(), agent.getName());
@@ -162,9 +162,9 @@ public class AgentService {
     @Transactional
     public void removeAgent(String id) {
         Agent agent = findOwnedAgent(id);
-        if (leadRepository.existsByAssignedToAndStatusNotIn(id, TERMINAL_STATUSES)) {
+        if (leadRepository.existsByCreatedByAndStatusNotIn(id, TERMINAL_STATUSES)) {
             throw new IllegalStateException(
-                    "Agent has active leads assigned - reassign or close them before removing this agent");
+                    "Agent has active leads they created - close them before removing this agent");
         }
         agentRepository.delete(agent);
         AgentCache.remove(id);

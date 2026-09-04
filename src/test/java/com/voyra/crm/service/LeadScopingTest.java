@@ -27,7 +27,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
 
-/** The mock UI's original scoping bug, fixed: an agent may only ever touch their own leads. */
+/** An agent may only ever touch leads they created (or hold a service on); the Owner touches any. */
 @ExtendWith(MockitoExtension.class)
 class LeadScopingTest {
 
@@ -77,9 +77,9 @@ class LeadScopingTest {
     }
 
     @Test
-    void agentCannotAccessALeadAssignedToSomeoneElse() {
+    void agentCannotAccessALeadCreatedBySomeoneElse() {
         authenticateAs("A1", UserType.AGENT);
-        Lead lead = Lead.builder().id("L1").assignedTo("A2").status(LeadStatus.NEW).build();
+        Lead lead = Lead.builder().id("L1").createdBy("A2").status(LeadStatus.NEW).build();
         when(leadRepository.findById("L1")).thenReturn(Optional.of(lead));
 
         assertThatThrownBy(() -> leadService.findAccessibleLead("L1"))
@@ -89,7 +89,7 @@ class LeadScopingTest {
     @Test
     void agentCanAccessTheirOwnLead() {
         authenticateAs("A1", UserType.AGENT);
-        Lead lead = Lead.builder().id("L1").assignedTo("A1").status(LeadStatus.NEW).build();
+        Lead lead = Lead.builder().id("L1").createdBy("A1").status(LeadStatus.NEW).build();
         when(leadRepository.findById("L1")).thenReturn(Optional.of(lead));
 
         Lead result = leadService.findAccessibleLead("L1");
@@ -100,7 +100,7 @@ class LeadScopingTest {
     @Test
     void ownerCanAccessAnyLeadInTheAgency() {
         authenticateAs("O1", UserType.AGENCY_OWNER);
-        Lead lead = Lead.builder().id("L1").assignedTo("A2").status(LeadStatus.NEW).build();
+        Lead lead = Lead.builder().id("L1").createdBy("A2").status(LeadStatus.NEW).build();
         when(leadRepository.findById("L1")).thenReturn(Optional.of(lead));
 
         Lead result = leadService.findAccessibleLead("L1");

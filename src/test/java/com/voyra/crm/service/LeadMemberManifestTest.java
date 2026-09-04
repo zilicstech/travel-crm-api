@@ -102,7 +102,7 @@ class LeadMemberManifestTest {
         return Lead.builder().id("L1").clientId("C1").clientName("Ajay Sharma").clientType(ClientType.B2C)
                 .destination("Dubai, UAE").travelDateFrom(DEPARTURE).travelDateTo(DEPARTURE.plusDays(7))
                 .adults(2).kids(0).kidAges(List.of()).totalTravellers(2)
-                .status(LeadStatus.NEW).assignedTo("A1").assignedAgentName("Liam Smith").build();
+                .status(LeadStatus.NEW).createdBy("A1").createdByName("Liam Smith").build();
     }
 
     private Member member(String id, String clientId, LocalDate dob) {

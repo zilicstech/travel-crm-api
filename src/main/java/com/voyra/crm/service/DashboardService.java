@@ -69,8 +69,8 @@ public class DashboardService {
     public AgentDashboardSummaryResponse getAgentSummary() {
         String agentId = SecurityContextUtil.getCurrentUserOrThrow().userId();
 
-        long myLeadsCount = leadRepository.countByAssignedTo(agentId);
-        long bookedCount = leadRepository.countByAssignedToAndStatus(agentId, LeadStatus.BOOKED);
+        long myLeadsCount = leadRepository.countByCreatedBy(agentId);
+        long bookedCount = leadRepository.countByCreatedByAndStatus(agentId, LeadStatus.BOOKED);
         AgentRevenueProjection revenue = bookingRepository.sumRevenueByAgentId(agentId);
 
         List<BookingResponse> recentBookings = bookingRepository.findByAgentId(agentId).stream()
@@ -79,15 +79,15 @@ public class DashboardService {
                 .map(this::toBookingResponse)
                 .toList();
 
-        List<LeadResponse> overdueFollowUps = leadRepository.findByAssignedTo(agentId).stream()
+        List<LeadResponse> overdueFollowUps = leadRepository.findByCreatedBy(agentId).stream()
                 .filter(this::isOverdue)
                 .map(this::toLeadResponse)
                 .toList();
 
         return AgentDashboardSummaryResponse.builder()
                 .myLeadsCount(myLeadsCount)
-                .newLeadsCount(leadRepository.countByAssignedToAndStatus(agentId, LeadStatus.NEW))
-                .todayFollowUpsCount(leadRepository.countByAssignedToAndFollowUpDateLessThanEqualAndStatusNotIn(
+                .newLeadsCount(leadRepository.countByCreatedByAndStatus(agentId, LeadStatus.NEW))
+                .todayFollowUpsCount(leadRepository.countByCreatedByAndFollowUpDateLessThanEqualAndStatusNotIn(
                         agentId, LocalDate.now(), TERMINAL_STATUSES))
                 .bookingsCount(bookingRepository.countByAgentId(agentId))
                 .pendingBookingsCount(bookingRepository.countByAgentIdAndBookingStatus(agentId, BookingStatus.PENDING))
@@ -132,9 +132,9 @@ public class DashboardService {
                 .clientType(lead.getClientType()).destination(lead.getDestination())
                 .travelDateFrom(lead.getTravelDateFrom()).travelDateTo(lead.getTravelDateTo())
                 .categories(lead.getCategories()).budget(lead.getBudget()).status(lead.getStatus())
-                .source(lead.getSource()).priority(lead.getPriority()).assignedTo(lead.getAssignedTo())
+                .source(lead.getSource()).priority(lead.getPriority()).createdBy(lead.getCreatedBy())
                 .totalTravellers(lead.getTotalTravellers())
-                .assignedAgentName(lead.getAssignedAgentName()).followUpDate(lead.getFollowUpDate())
+                .createdByName(lead.getCreatedByName()).followUpDate(lead.getFollowUpDate())
                 .createdAt(lead.getCreatedAt()).overdue(true)
                 .build();
     }

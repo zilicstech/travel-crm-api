@@ -63,11 +63,11 @@ public class LeadResponse {
     @Schema(description = "Travellers on the manifest whose status is CONFIRMED", example = "3")
     private Integer confirmedTravellers;
 
-    @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
-    private String assignedTo;
+    @Schema(description = "The agent (or the Owner's own id) who created this lead - the lead's owner for access control", example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
+    private String createdBy;
 
     @Schema(description = "Denormalized snapshot, live-synced on agent rename", example = "Liam Smith")
-    private String assignedAgentName;
+    private String createdByName;
 
     @Schema(example = "2026-08-20")
     private LocalDate followUpDate;

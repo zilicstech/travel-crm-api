@@ -28,7 +28,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
-/** Removing an agent is blocked while they still have open leads assigned. */
+/** Removing an agent is blocked while they still have open leads they created. */
 @ExtendWith(MockitoExtension.class)
 class AgentRemovalTest {
 
@@ -66,7 +66,7 @@ class AgentRemovalTest {
     void removalBlockedWhileAgentHasActiveLeads() {
         Agent agent = Agent.builder().id("A1").tenantId("T1").name("Liam").build();
         when(agentRepository.findById("A1")).thenReturn(Optional.of(agent));
-        when(leadRepository.existsByAssignedToAndStatusNotIn(eq("A1"), any())).thenReturn(true);
+        when(leadRepository.existsByCreatedByAndStatusNotIn(eq("A1"), any())).thenReturn(true);
 
         assertThatThrownBy(() -> agentService.removeAgent("A1"))
                 .isInstanceOf(IllegalStateException.class);
@@ -76,7 +76,7 @@ class AgentRemovalTest {
     void removalSucceedsWhenNoActiveLeadsRemain() {
         Agent agent = Agent.builder().id("A1").tenantId("T1").name("Liam").build();
         when(agentRepository.findById("A1")).thenReturn(Optional.of(agent));
-        when(leadRepository.existsByAssignedToAndStatusNotIn(eq("A1"), any())).thenReturn(false);
+        when(leadRepository.existsByCreatedByAndStatusNotIn(eq("A1"), any())).thenReturn(false);
 
         assertThatCode(() -> agentService.removeAgent("A1")).doesNotThrowAnyException();
     }

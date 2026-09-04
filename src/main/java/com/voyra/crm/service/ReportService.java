@@ -110,12 +110,12 @@ public class ReportService {
     public String exportLeadsCsv() {
         List<LeadResponse> leads = leadService.listLeads(null);
         List<String> header = List.of("id", "clientName", "destination", "status", "source", "priority",
-                "totalTravellers", "assignedAgentName", "followUpDate", "createdAt");
+                "totalTravellers", "createdByName", "followUpDate", "createdAt");
         List<List<String>> rows = leads.stream()
                 .map(l -> List.of(l.getId(), l.getClientName(), l.getDestination(),
                         l.getStatus().name(), l.getSource(), l.getPriority().name(),
                         str(l.getTotalTravellers()),
-                        l.getAssignedAgentName(), str(l.getFollowUpDate()), str(l.getCreatedAt())))
+                        l.getCreatedByName(), str(l.getFollowUpDate()), str(l.getCreatedAt())))
                 .toList();
         return CsvWriter.write(header, rows);
     }

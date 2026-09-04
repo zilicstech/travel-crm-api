@@ -89,9 +89,9 @@ public class LeadVoucherService {
         Lead lead = leadRepository.findById(leadId)
                 .orElseThrow(() -> new IllegalArgumentException("Lead not found: " + leadId));
         CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
-        if (principal.isAgent() && !lead.getAssignedTo().equals(principal.userId())
+        if (principal.isAgent() && !lead.getCreatedBy().equals(principal.userId())
                 && !LeadAccessChecker.hasServiceAccess(leadServiceRepository, agentRepository, leadId, principal.userId())) {
-            throw new AccessDeniedException("This lead is not assigned to you");
+            throw new AccessDeniedException("This lead is not accessible to you");
         }
         return lead;
     }

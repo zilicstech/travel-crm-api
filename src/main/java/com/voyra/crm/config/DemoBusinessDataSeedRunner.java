@@ -127,7 +127,7 @@ public class DemoBusinessDataSeedRunner implements ApplicationRunner {
             }
             List<Agent> agents = ensureAgents(tenantId);
             List<String> clientIds = seedClients(agents);
-            seedLeads(agents, clientIds);
+            seedLeads(agents, clientIds, tenantId);
             seedBookings(agents, clientIds);
             seedInvoices(agents, clientIds);
             seedVisas(agents, clientIds);
@@ -142,6 +142,16 @@ public class DemoBusinessDataSeedRunner implements ApplicationRunner {
         CustomUserPrincipal principal = new CustomUserPrincipal(tenantId, OWNER_EMAIL, UserType.AGENCY_OWNER, tenantId);
         var auth = new UsernamePasswordAuthenticationToken(
                 principal, null, List.of(new SimpleGrantedAuthority("ROLE_AGENCY_OWNER")));
+        SecurityContextHolder.getContext().setAuthentication(auth);
+    }
+
+    /** So a seeded lead's createdBy actually varies by agent instead of always being the
+     *  Owner - createLead() reads whoever is currently authenticated, there is no explicit
+     *  "create on behalf of" parameter any more. */
+    private void setAgentSecurityContext(Agent agent, String tenantId) {
+        CustomUserPrincipal principal = new CustomUserPrincipal(agent.getId(), agent.getEmail(), UserType.AGENT, tenantId);
+        var auth = new UsernamePasswordAuthenticationToken(
+                principal, null, List.of(new SimpleGrantedAuthority("ROLE_AGENT")));
         SecurityContextHolder.getContext().setAuthentication(auth);
     }
 
@@ -293,7 +303,7 @@ public class DemoBusinessDataSeedRunner implements ApplicationRunner {
      * group, and one with a dropped traveller - so the manifest, checklist roll-up and drop
      * history all have something real to render.
      */
-    private void seedLeads(List<Agent> agents, List<String> clientIds) {
+    private void seedLeads(List<Agent> agents, List<String> clientIds, String tenantId) {
         List<LeadSeed> seeds = List.of(
                 new LeadSeed(2, "Bali, Indonesia",
                         List.of("HOLIDAY_PACKAGE", "HOTEL"), "1,20,000 - 1,50,000",
@@ -337,7 +347,6 @@ public class DemoBusinessDataSeedRunner implements ApplicationRunner {
 
         for (LeadSeed s : seeds) {
             LeadCreateRequest req = new LeadCreateRequest();
-            req.setAssignedTo(agents.get(s.agentIdx()).getId());
             req.setClientId(clientIds.get(s.clientIdx()));
             req.setDestination(s.destination());
             req.setTravelDateFrom(LocalDate.now().plusDays(45));
@@ -351,7 +360,12 @@ public class DemoBusinessDataSeedRunner implements ApplicationRunner {
                     .adults(s.adults()).kids(s.kidAges().size()).kidAges(s.kidAges()).build());
             req.setLeadDescription("Enquiry for " + s.destination());
 
+            // Owns (createdBy) whichever agent the seed names, so the new access model has
+            // real variety to test against - createLead() has no explicit "on behalf of"
+            // field any more, it always reads the current principal.
+            setAgentSecurityContext(agents.get(s.agentIdx()), tenantId);
             LeadDetailResponse created = leadService.createLead(req);
+            setOwnerSecurityContext(tenantId);
 
             if (s.seedManifest()) {
                 seedManifest(created.getId(), clientIds.get(s.clientIdx()), s.destination());

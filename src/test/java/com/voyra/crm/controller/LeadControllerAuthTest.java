@@ -1,8 +1,6 @@
 package com.voyra.crm.controller;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.voyra.crm.config.SecurityConfig;
-import com.voyra.crm.dto.LeadAssignRequest;
 import com.voyra.crm.security.JwtAuthenticationFilter;
 import com.voyra.crm.security.JwtService;
 import com.voyra.crm.security.RestAuthenticationEntryPoint;
@@ -14,16 +12,19 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Import;
-import org.springframework.http.MediaType;
 import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/** Only the Owner may reassign a lead to a different agent (blueprint §5.2, method-level @PreAuthorize override). */
+/**
+ * Leads are shared between AGENCY_OWNER and AGENT for every action - there is no owner-only
+ * lead-level endpoint any more (assignment lives per-service on LeadServiceController). What
+ * this asserts is the outer boundary: no anonymous access, no SUPER_ADMIN reaching into a
+ * tenant's leads; who sees which leads is answered in the service (createdBy scoping).
+ */
 @WebMvcTest(LeadController.class)
 @ActiveProfiles("test")
 @Import({SecurityConfig.class, JwtAuthenticationFilter.class, JwtService.class, RestAuthenticationEntryPoint.class})
@@ -31,8 +32,6 @@ class LeadControllerAuthTest {
 
     @Autowired
     private MockMvc mockMvc;
-    @Autowired
-    private ObjectMapper objectMapper;
 
     @MockBean
     private LeadService leadService;
@@ -42,40 +41,30 @@ class LeadControllerAuthTest {
     private ProposalLinkService proposalLinkService;
 
     @Test
-    void assignAgent_agentForbidden() throws Exception {
-        LeadAssignRequest request = new LeadAssignRequest();
-        request.setAgentId("A1");
-
-        mockMvc.perform(patch("/api/leads/L1/assign")
-                        .with(SecurityMockMvcRequestPostProcessors.user("agent1").roles("AGENT"))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isForbidden());
-    }
-
-    @Test
-    void assignAgent_ownerAllowed() throws Exception {
-        LeadAssignRequest request = new LeadAssignRequest();
-        request.setAgentId("A1");
-
-        mockMvc.perform(patch("/api/leads/L1/assign")
-                        .with(SecurityMockMvcRequestPostProcessors.user("owner1").roles("AGENCY_OWNER"))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isOk());
-    }
-
-    /**
-     * AuthenticatedAuthorizationManager treats an AnonymousAuthenticationToken as NOT
-     * authenticated, so the URL-level .anyRequest().authenticated() check rejects an anonymous
-     * caller before the request ever reaches the controller/@PreAuthorize. ExceptionTranslationFilter
-     * then invokes RestAuthenticationEntryPoint, which returns 401 with an ApiErrorResponse body -
-     * distinct from the 403-with-body an authenticated-but-wrong-role caller gets (see
-     * assignAgent_agentForbidden above).
-     */
-    @Test
     void listLeads_unauthenticatedRequestIsRejected() throws Exception {
         mockMvc.perform(get("/api/leads"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void listLeads_agentAllowed() throws Exception {
+        mockMvc.perform(get("/api/leads")
+                        .with(SecurityMockMvcRequestPostProcessors.user("agent1").roles("AGENT")))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void listLeads_ownerAllowed() throws Exception {
+        mockMvc.perform(get("/api/leads")
+                        .with(SecurityMockMvcRequestPostProcessors.user("owner1").roles("AGENCY_OWNER")))
+                .andExpect(status().isOk());
+    }
+
+    /** The platform admin manages agencies, never the business data inside one. */
+    @Test
+    void listLeads_superAdminForbidden() throws Exception {
+        mockMvc.perform(get("/api/leads")
+                        .with(SecurityMockMvcRequestPostProcessors.user("root").roles("SUPER_ADMIN")))
+                .andExpect(status().isForbidden());
     }
 }
