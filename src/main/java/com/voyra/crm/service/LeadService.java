@@ -32,6 +32,7 @@ import com.voyra.crm.enums.LeadTimelineEventType;
 import com.voyra.crm.enums.MemberType;
 import com.voyra.crm.enums.PaxType;
 import com.voyra.crm.enums.ServiceStatus;
+import com.voyra.crm.enums.ServiceType;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.LeadMemberRepository;
 import com.voyra.crm.repository.LeadNoteRepository;
@@ -145,9 +146,17 @@ public class LeadService {
         CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
         Page<Lead> page;
         if (principal.isAgent()) {
-            page = statusFilter == null
-                    ? leadRepository.findByCreatedBy(principal.userId(), pageable)
-                    : leadRepository.findByCreatedByAndStatus(principal.userId(), statusFilter, pageable);
+            List<ServiceType> types = manageableServiceTypes(principal.userId());
+            if (types.isEmpty()) {
+                page = statusFilter == null
+                        ? leadRepository.findAccessibleToAgentWithNoManagedTypes(principal.userId(), pageable)
+                        : leadRepository.findAccessibleToAgentWithNoManagedTypesAndStatus(
+                                principal.userId(), statusFilter, pageable);
+            } else {
+                page = statusFilter == null
+                        ? leadRepository.findAccessibleToAgent(principal.userId(), types, pageable)
+                        : leadRepository.findAccessibleToAgentAndStatus(principal.userId(), statusFilter, types, pageable);
+            }
         } else {
             page = statusFilter == null
                     ? leadRepository.findAll(pageable)
@@ -158,21 +167,30 @@ public class LeadService {
     }
 
     /**
-     * Every combination resolves to an indexed derived query - never a full table read
-     * filtered in Java. Agent callers are structurally confined to leads they created; a
-     * lead they only hold a service on is reached individually via {@link #findAccessibleLead}
-     * (through My Desk), not through this list.
+     * Every lead an agent may reach: ones they created, plus ones where they hold or
+     * manage a service - the same rule {@link #findAccessibleLead} enforces on the door,
+     * so the list never under-reports what an agent can already open individually.
      */
     private List<Lead> scopedLeads(LeadStatus statusFilter) {
         CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
         if (principal.isAgent()) {
+            List<ServiceType> types = manageableServiceTypes(principal.userId());
+            if (types.isEmpty()) {
+                return statusFilter == null
+                        ? leadRepository.findAccessibleToAgentWithNoManagedTypes(principal.userId())
+                        : leadRepository.findAccessibleToAgentWithNoManagedTypesAndStatus(principal.userId(), statusFilter);
+            }
             return statusFilter == null
-                    ? leadRepository.findByCreatedBy(principal.userId())
-                    : leadRepository.findByCreatedByAndStatus(principal.userId(), statusFilter);
+                    ? leadRepository.findAccessibleToAgent(principal.userId(), types)
+                    : leadRepository.findAccessibleToAgentAndStatus(principal.userId(), statusFilter, types);
         }
         return statusFilter == null
                 ? leadRepository.findAll()
                 : leadRepository.findByStatus(statusFilter);
+    }
+
+    private List<ServiceType> manageableServiceTypes(String agentId) {
+        return agentRepository.findById(agentId).map(Agent::getManageableServices).orElse(List.of());
     }
 
     /** One manifest query for a whole page rather than one per lead. */

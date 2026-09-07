@@ -52,6 +52,16 @@ class GlobalExceptionHandlerTest {
                 .andExpect(status().isForbidden());
     }
 
+    /** The client message must never echo the real exception - it would leak the request URI. */
+    @Test
+    void supplierExceptionMapsTo502WithAFixedMessage() throws Exception {
+        mockMvc.perform(get("/test/supplier-failure"))
+                .andExpect(status().isBadGateway())
+                .andExpect(jsonPath("$.message").value("The supplier could not be reached. Please try again."))
+                .andExpect(jsonPath("$.message", org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("tripjack"))));
+    }
+
     @Test
     void validationFailureMapsTo400WithFieldErrors() throws Exception {
         GlobalExceptionHandlerFixtureController.FixtureRequest invalid =

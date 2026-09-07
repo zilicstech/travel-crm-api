@@ -7,9 +7,12 @@ import com.voyra.crm.dto.OwnerDashboardSummaryResponse;
 import com.voyra.crm.entity.Booking;
 import com.voyra.crm.entity.ClientInvoice;
 import com.voyra.crm.entity.Lead;
+import com.voyra.crm.entity.Agent;
 import com.voyra.crm.enums.BookingStatus;
 import com.voyra.crm.enums.InvoiceStatus;
 import com.voyra.crm.enums.LeadStatus;
+import com.voyra.crm.enums.ServiceType;
+import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.BookingRepository;
 import com.voyra.crm.repository.BookingRepository.AgentRevenueProjection;
 import com.voyra.crm.repository.ClientInvoiceRepository;
@@ -37,6 +40,7 @@ public class DashboardService {
     private final BookingRepository bookingRepository;
     private final ClientRepository clientRepository;
     private final ClientInvoiceRepository clientInvoiceRepository;
+    private final AgentRepository agentRepository;
 
     @Transactional(readOnly = true)
     public OwnerDashboardSummaryResponse getOwnerSummary() {
@@ -65,12 +69,29 @@ public class DashboardService {
                 .build();
     }
 
+    /**
+     * Same accessible set as the Leads list ({@link com.voyra.crm.service.LeadService}) -
+     * leads this agent created, plus ones where they hold or manage a service. The old
+     * version counted only created leads, so an agent working someone else's lead via a
+     * managed service type saw a dashboard that disagreed with the list it links to.
+     */
     @Transactional(readOnly = true)
     public AgentDashboardSummaryResponse getAgentSummary() {
         String agentId = SecurityContextUtil.getCurrentUserOrThrow().userId();
+        List<ServiceType> types = agentRepository.findById(agentId).map(Agent::getManageableServices).orElse(List.of());
 
-        long myLeadsCount = leadRepository.countByCreatedBy(agentId);
-        long bookedCount = leadRepository.countByCreatedByAndStatus(agentId, LeadStatus.BOOKED);
+        List<Lead> myLeads = types.isEmpty()
+                ? leadRepository.findAccessibleToAgentWithNoManagedTypes(agentId)
+                : leadRepository.findAccessibleToAgent(agentId, types);
+
+        long myLeadsCount = myLeads.size();
+        long bookedCount = myLeads.stream().filter(l -> l.getStatus() == LeadStatus.BOOKED).count();
+        long newCount = myLeads.stream().filter(l -> l.getStatus() == LeadStatus.NEW).count();
+        long todayFollowUpsCount = myLeads.stream()
+                .filter(l -> l.getFollowUpDate() != null && !l.getFollowUpDate().isAfter(LocalDate.now())
+                        && !TERMINAL_STATUSES.contains(l.getStatus()))
+                .count();
+
         AgentRevenueProjection revenue = bookingRepository.sumRevenueByAgentId(agentId);
 
         List<BookingResponse> recentBookings = bookingRepository.findByAgentId(agentId).stream()
@@ -79,16 +100,15 @@ public class DashboardService {
                 .map(this::toBookingResponse)
                 .toList();
 
-        List<LeadResponse> overdueFollowUps = leadRepository.findByCreatedBy(agentId).stream()
+        List<LeadResponse> overdueFollowUps = myLeads.stream()
                 .filter(this::isOverdue)
                 .map(this::toLeadResponse)
                 .toList();
 
         return AgentDashboardSummaryResponse.builder()
                 .myLeadsCount(myLeadsCount)
-                .newLeadsCount(leadRepository.countByCreatedByAndStatus(agentId, LeadStatus.NEW))
-                .todayFollowUpsCount(leadRepository.countByCreatedByAndFollowUpDateLessThanEqualAndStatusNotIn(
-                        agentId, LocalDate.now(), TERMINAL_STATUSES))
+                .newLeadsCount(newCount)
+                .todayFollowUpsCount(todayFollowUpsCount)
                 .bookingsCount(bookingRepository.countByAgentId(agentId))
                 .pendingBookingsCount(bookingRepository.countByAgentIdAndBookingStatus(agentId, BookingStatus.PENDING))
                 .revenue(revenue.getTotalRevenue())

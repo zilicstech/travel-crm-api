@@ -78,6 +78,11 @@ Local dev environment (Java 17, Maven, Postgres 16 — all installed and verifie
 - `GET /api/dashboard/owner/summary`, `GET /api/dashboard/agent/summary` — live-computed KPIs, not client-side math.
 - `GET /api/reports/revenue-trend`, `.../agent-leaderboard`, `.../lead-pipeline`, `.../lead-source-distribution`, `.../booking-type-distribution`, `.../conversion-funnel`, plus CSV export for leads/bookings/revenue/agents.
 
+### Supplier search (Tripjack integration, search-only)
+- `POST /api/flights/search`, `POST /api/hotels/search` — stateless supplier search feeding the proposal builder via the existing `POST /api/leads/{id}/proposal-items/batch`. Vendor is a `FlightSearchProvider`/`HotelSearchProvider` strategy, `mock` by default (`FLIGHT_SUPPLIER`/`HOTEL_SUPPLIER=mock`); a real vendor is a `@ConditionalOnProperty` implementation with no caller changes.
+- `PUT/GET /api/supplier-credentials`, `GET .../{provider}/reveal` — owner-only, per-agency credentials in the tenant schema (`supplier_credential`), AES-256-GCM encrypted with the same key as agent password retrieval. Every reveal is logged, never cached.
+- No booking/ticketing call exists yet — see "Explicitly out of scope" below.
+
 ## Tenant schema rebuild (Client / Member party model)
 
 The tenant schema was rebuilt from scratch to replace `customer`/`family_member` with the
@@ -204,7 +209,7 @@ environment, see `docs/DEPLOYMENT.md`):
 ## Explicitly out of scope (per earlier decisions)
 
 - Audit log and notification system.
-- Flight/Hotel search integration (the mock UI's search pages stay client-side mock for now).
+- Supplier booking/ticketing (search only — see below; no PNR, no wallet, no ticketing call).
 - GCS file storage (local disk only; the storage layer is already abstracted so this is a config flip + one new class later).
 - Department-specific portals, monthly targets, and other full-BRD features beyond what the current UI needs.
 

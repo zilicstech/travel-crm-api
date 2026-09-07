@@ -4,6 +4,7 @@ import com.voyra.crm.entity.Agent;
 import com.voyra.crm.entity.PlatformAdmin;
 import com.voyra.crm.entity.Tenant;
 import com.voyra.crm.enums.AgentDepartment;
+import com.voyra.crm.enums.ServiceType;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.PlatformAdminRepository;
 import com.voyra.crm.repository.TenantRepository;
@@ -16,6 +17,8 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.core.annotation.Order;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
+
+import java.util.List;
 
 /**
  * Idempotent local-dev seed data, mirroring the mock UI's demo persona (Global Explorer
@@ -96,6 +99,7 @@ public class DemoDataSeedRunner implements ApplicationRunner {
                 .email(AGENT_EMAIL)
                 .phone("+1 555 123 4567")
                 .department(AgentDepartment.SALES)
+                .manageableServices(List.of(ServiceType.FLIGHT, ServiceType.HOTEL))
                 .password(passwordEncoder.encode(DEMO_PASSWORD))
                 .isActive(true)
                 .build();

@@ -1,7 +1,9 @@
 package com.voyra.crm.service;
 
+import com.voyra.crm.entity.Agent;
 import com.voyra.crm.entity.Lead;
 import com.voyra.crm.enums.LeadStatus;
+import com.voyra.crm.enums.ServiceType;
 import com.voyra.crm.enums.UserType;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.LeadNoteRepository;
@@ -21,10 +23,16 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 
+import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /** An agent may only ever touch leads they created (or hold a service on); the Owner touches any. */
@@ -106,5 +114,48 @@ class LeadScopingTest {
         Lead result = leadService.findAccessibleLead("L1");
 
         assertThat(result.getId()).isEqualTo("L1");
+    }
+
+    // -- listLeads() must return the same set findAccessibleLead() lets an agent open --
+
+    @Test
+    void agentWithManageableServicesListsViaTheAccessibleFinder() {
+        authenticateAs("A1", UserType.AGENT);
+        Agent agent = Agent.builder().id("A1").manageableServices(List.of(ServiceType.VISA)).build();
+        when(agentRepository.findById("A1")).thenReturn(Optional.of(agent));
+        Lead notCreatedButVisaOwned = Lead.builder().id("L2").createdBy("A2").status(LeadStatus.NEW).build();
+        when(leadRepository.findAccessibleToAgent(eq("A1"), anyCollection()))
+                .thenReturn(List.of(notCreatedButVisaOwned));
+
+        List<com.voyra.crm.dto.LeadResponse> result = leadService.listLeads(null);
+
+        assertThat(result).extracting(com.voyra.crm.dto.LeadResponse::getId).containsExactly("L2");
+        verify(leadRepository, never()).findByCreatedBy("A1");
+    }
+
+    @Test
+    void agentWithNoManageableServicesListsOnlyCreatedOrPersonallyAssignedLeads() {
+        authenticateAs("A1", UserType.AGENT);
+        Agent agent = Agent.builder().id("A1").manageableServices(List.of()).build();
+        when(agentRepository.findById("A1")).thenReturn(Optional.of(agent));
+        Lead ownLead = Lead.builder().id("L1").createdBy("A1").status(LeadStatus.NEW).build();
+        when(leadRepository.findAccessibleToAgentWithNoManagedTypes("A1")).thenReturn(List.of(ownLead));
+
+        List<com.voyra.crm.dto.LeadResponse> result = leadService.listLeads(null);
+
+        assertThat(result).extracting(com.voyra.crm.dto.LeadResponse::getId).containsExactly("L1");
+        verify(leadRepository, never()).findAccessibleToAgent(any(), anyCollection());
+    }
+
+    @Test
+    void ownerListLeadsReturnsEveryLead() {
+        authenticateAs("O1", UserType.AGENCY_OWNER);
+        Lead l1 = Lead.builder().id("L1").createdBy("A1").status(LeadStatus.NEW).build();
+        Lead l2 = Lead.builder().id("L2").createdBy("A2").status(LeadStatus.NEW).build();
+        when(leadRepository.findAll()).thenReturn(List.of(l1, l2));
+
+        List<com.voyra.crm.dto.LeadResponse> result = leadService.listLeads(null);
+
+        assertThat(result).extracting(com.voyra.crm.dto.LeadResponse::getId).containsExactlyInAnyOrder("L1", "L2");
     }
 }

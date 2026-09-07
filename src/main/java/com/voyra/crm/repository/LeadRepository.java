@@ -2,6 +2,7 @@ package com.voyra.crm.repository;
 
 import com.voyra.crm.entity.Lead;
 import com.voyra.crm.enums.LeadStatus;
+import com.voyra.crm.enums.ServiceType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -19,6 +20,115 @@ import java.util.Optional;
 public interface LeadRepository extends JpaRepository<Lead, String> {
 
     List<Lead> findByCreatedBy(String createdBy);
+
+    /**
+     * Every lead an agent may reach: ones they created, plus ones where at least one
+     * service is personally assigned to them or of a type they manage - the same rule
+     * {@link com.voyra.crm.util.LeadAccessChecker#hasServiceAccess} enforces on the door,
+     * so this is what makes the Leads list match what {@code findAccessibleLead} already
+     * lets them open (an agent could always reach these leads individually via My Desk;
+     * this only stops the list from under-reporting that access).
+     */
+    @Query("""
+            SELECT DISTINCT l FROM Lead l
+            WHERE l.createdBy = :agentId
+               OR EXISTS (SELECT 1 FROM LeadService s
+                          WHERE s.leadId = l.id
+                            AND (s.assignedAgentId = :agentId OR s.type IN :types))
+            """)
+    List<Lead> findAccessibleToAgent(@Param("agentId") String agentId, @Param("types") Collection<ServiceType> types);
+
+    /** Same rule, no manageable-service branch - for an agent whose manageableServices is empty. */
+    @Query("""
+            SELECT DISTINCT l FROM Lead l
+            WHERE l.createdBy = :agentId
+               OR EXISTS (SELECT 1 FROM LeadService s WHERE s.leadId = l.id AND s.assignedAgentId = :agentId)
+            """)
+    List<Lead> findAccessibleToAgentWithNoManagedTypes(@Param("agentId") String agentId);
+
+    @Query("""
+            SELECT DISTINCT l FROM Lead l
+            WHERE l.status = :status
+              AND (l.createdBy = :agentId
+                   OR EXISTS (SELECT 1 FROM LeadService s
+                              WHERE s.leadId = l.id
+                                AND (s.assignedAgentId = :agentId OR s.type IN :types)))
+            """)
+    List<Lead> findAccessibleToAgentAndStatus(@Param("agentId") String agentId, @Param("status") LeadStatus status,
+                                               @Param("types") Collection<ServiceType> types);
+
+    @Query("""
+            SELECT DISTINCT l FROM Lead l
+            WHERE l.status = :status
+              AND (l.createdBy = :agentId
+                   OR EXISTS (SELECT 1 FROM LeadService s WHERE s.leadId = l.id AND s.assignedAgentId = :agentId))
+            """)
+    List<Lead> findAccessibleToAgentWithNoManagedTypesAndStatus(@Param("agentId") String agentId,
+                                                                 @Param("status") LeadStatus status);
+
+    @Query(value = """
+            SELECT DISTINCT l FROM Lead l
+            WHERE l.createdBy = :agentId
+               OR EXISTS (SELECT 1 FROM LeadService s
+                          WHERE s.leadId = l.id
+                            AND (s.assignedAgentId = :agentId OR s.type IN :types))
+            """,
+            countQuery = """
+            SELECT COUNT(DISTINCT l) FROM Lead l
+            WHERE l.createdBy = :agentId
+               OR EXISTS (SELECT 1 FROM LeadService s
+                          WHERE s.leadId = l.id
+                            AND (s.assignedAgentId = :agentId OR s.type IN :types))
+            """)
+    Page<Lead> findAccessibleToAgent(@Param("agentId") String agentId, @Param("types") Collection<ServiceType> types,
+                                      Pageable pageable);
+
+    @Query(value = """
+            SELECT DISTINCT l FROM Lead l
+            WHERE l.createdBy = :agentId
+               OR EXISTS (SELECT 1 FROM LeadService s WHERE s.leadId = l.id AND s.assignedAgentId = :agentId)
+            """,
+            countQuery = """
+            SELECT COUNT(DISTINCT l) FROM Lead l
+            WHERE l.createdBy = :agentId
+               OR EXISTS (SELECT 1 FROM LeadService s WHERE s.leadId = l.id AND s.assignedAgentId = :agentId)
+            """)
+    Page<Lead> findAccessibleToAgentWithNoManagedTypes(@Param("agentId") String agentId, Pageable pageable);
+
+    @Query(value = """
+            SELECT DISTINCT l FROM Lead l
+            WHERE l.status = :status
+              AND (l.createdBy = :agentId
+                   OR EXISTS (SELECT 1 FROM LeadService s
+                              WHERE s.leadId = l.id
+                                AND (s.assignedAgentId = :agentId OR s.type IN :types)))
+            """,
+            countQuery = """
+            SELECT COUNT(DISTINCT l) FROM Lead l
+            WHERE l.status = :status
+              AND (l.createdBy = :agentId
+                   OR EXISTS (SELECT 1 FROM LeadService s
+                              WHERE s.leadId = l.id
+                                AND (s.assignedAgentId = :agentId OR s.type IN :types)))
+            """)
+    Page<Lead> findAccessibleToAgentAndStatus(@Param("agentId") String agentId, @Param("status") LeadStatus status,
+                                               @Param("types") Collection<ServiceType> types, Pageable pageable);
+
+    @Query(value = """
+            SELECT DISTINCT l FROM Lead l
+            WHERE l.status = :status
+              AND (l.createdBy = :agentId
+                   OR EXISTS (SELECT 1 FROM LeadService s WHERE s.leadId = l.id AND s.assignedAgentId = :agentId))
+            """,
+            countQuery = """
+            SELECT COUNT(DISTINCT l) FROM Lead l
+            WHERE l.status = :status
+              AND (l.createdBy = :agentId
+                   OR EXISTS (SELECT 1 FROM LeadService s WHERE s.leadId = l.id AND s.assignedAgentId = :agentId))
+            """)
+    Page<Lead> findAccessibleToAgentWithNoManagedTypesAndStatus(@Param("agentId") String agentId,
+                                                                 @Param("status") LeadStatus status,
+                                                                 Pageable pageable);
 
     List<Lead> findByClientId(String clientId);
 

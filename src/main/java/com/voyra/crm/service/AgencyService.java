@@ -62,10 +62,17 @@ public class AgencyService {
                 .build();
     }
 
+    /**
+     * Includes each agency's revenue - the platform dashboard sums this field across every
+     * row for its "Platform Revenue" tile, so leaving it null here (as an earlier version
+     * did) silently summed to zero regardless of real revenue. Tenant count on this console
+     * is small by nature (one row per onboarded agency), so N cross-tenant reads here costs
+     * nothing a Super Admin would notice.
+     */
     @Transactional(readOnly = true)
     public List<AgencyResponse> listAgencies() {
         return tenantRepository.findAll().stream()
-                .map(t -> toResponse(t, false))
+                .map(t -> toResponse(t, true))
                 .toList();
     }
 
@@ -83,7 +90,10 @@ public class AgencyService {
         // Same-method cache sync: a stale auth cache is a security bug (blueprint §8.10 rule 2).
         TenantCache.put(tenant.getId(), tenant.getAgencyName(), isActive);
         log.info("Agency status updated: tenantId={}, isActive={}", id, isActive);
-        return toResponse(tenant, false);
+        // includeRevenue=true - a caller updating one agency's status in place (the detail
+        // modal) would otherwise see its revenue silently reset to zero on the very next
+        // render, since a null totalRevenue reads as 0 wherever this response gets cached.
+        return toResponse(tenant, true);
     }
 
     @Transactional(readOnly = true)

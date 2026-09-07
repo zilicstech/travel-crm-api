@@ -34,7 +34,13 @@ import com.voyra.crm.enums.LeadStatus;
 import com.voyra.crm.enums.MemberRelation;
 import com.voyra.crm.enums.PaymentStatus;
 import com.voyra.crm.enums.ProposalItemType;
+import com.voyra.crm.enums.ServiceStatus;
+import com.voyra.crm.enums.ServiceType;
 import com.voyra.crm.enums.UserType;
+import com.voyra.crm.dto.FollowUpCreateRequest;
+import com.voyra.crm.dto.ServiceAssignRequest;
+import com.voyra.crm.dto.ServiceDraft;
+import com.voyra.crm.dto.ServiceStatusUpdateRequest;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.BookingRepository;
 import com.voyra.crm.repository.ClientRepository;
@@ -44,7 +50,9 @@ import com.voyra.crm.service.BookingService;
 import com.voyra.crm.service.ClientService;
 import com.voyra.crm.service.MemberService;
 import com.voyra.crm.service.InvoiceService;
+import com.voyra.crm.service.LeadFollowUpService;
 import com.voyra.crm.service.LeadService;
+import com.voyra.crm.service.ServiceInstanceService;
 import com.voyra.crm.service.VisaService;
 import com.voyra.crm.util.UniqueIdResolver;
 import lombok.RequiredArgsConstructor;
@@ -108,6 +116,8 @@ public class DemoBusinessDataSeedRunner implements ApplicationRunner {
     private final BookingService bookingService;
     private final InvoiceService invoiceService;
     private final VisaService visaService;
+    private final ServiceInstanceService serviceInstanceService;
+    private final LeadFollowUpService leadFollowUpService;
 
     @Override
     public void run(ApplicationArguments args) {
@@ -127,7 +137,8 @@ public class DemoBusinessDataSeedRunner implements ApplicationRunner {
             }
             List<Agent> agents = ensureAgents(tenantId);
             List<String> clientIds = seedClients(agents);
-            seedLeads(agents, clientIds, tenantId);
+            List<String> leadIds = seedLeads(agents, clientIds, tenantId);
+            seedServicesAndFollowUps(agents, leadIds, tenantId);
             seedBookings(agents, clientIds);
             seedInvoices(agents, clientIds);
             seedVisas(agents, clientIds);
@@ -157,17 +168,25 @@ public class DemoBusinessDataSeedRunner implements ApplicationRunner {
 
     // ---------------------------------------------------------------- agents
 
+    /** Index 0 = Liam (FLIGHT, HOTEL), 1 = Emma (HOTEL, TRANSFER), 2 = Priya (VISA, TRANSFER) -
+     *  deliberately overlapping so a service of one type is claimable by more than one agent,
+     *  and every agent has at least one type nobody else on the demo roster manages. */
     private List<Agent> ensureAgents(String tenantId) {
         Agent liam = agentRepository.findByEmailIgnoreCase(LIAM_EMAIL)
                 .orElseThrow(() -> new IllegalStateException("Expected demo agent Liam Smith to already be seeded"));
+        if (liam.getManageableServices().isEmpty()) {
+            liam.setManageableServices(List.of(ServiceType.FLIGHT, ServiceType.HOTEL));
+            agentRepository.save(liam);
+        }
         Agent emma = ensureAgent(tenantId, "Emma Wilson", "emma.wilson.demo@globalexplorer.com",
-                "+1 555 234 5678", AgentDepartment.OPERATIONS);
+                "+1 555 234 5678", AgentDepartment.OPERATIONS, List.of(ServiceType.HOTEL, ServiceType.TRANSFER));
         Agent priya = ensureAgent(tenantId, "Priya Sharma", "priya.sharma.demo@globalexplorer.com",
-                "+91 98765 43210", AgentDepartment.VISA);
+                "+91 98765 43210", AgentDepartment.VISA, List.of(ServiceType.VISA, ServiceType.TRANSFER));
         return List.of(liam, emma, priya);
     }
 
-    private Agent ensureAgent(String tenantId, String name, String email, String phone, AgentDepartment department) {
+    private Agent ensureAgent(String tenantId, String name, String email, String phone, AgentDepartment department,
+                               List<ServiceType> manageableServices) {
         return agentRepository.findByEmailIgnoreCase(email).orElseGet(() -> {
             Agent agent = Agent.builder()
                     .id(UniqueIdResolver.resolve(agentRepository::existsById))
@@ -176,6 +195,7 @@ public class DemoBusinessDataSeedRunner implements ApplicationRunner {
                     .email(email)
                     .phone(phone)
                     .department(department)
+                    .manageableServices(manageableServices)
                     .password(passwordEncoder.encode(DEMO_PASSWORD))
                     .isActive(true)
                     .build();
@@ -303,48 +323,49 @@ public class DemoBusinessDataSeedRunner implements ApplicationRunner {
      * group, and one with a dropped traveller - so the manifest, checklist roll-up and drop
      * history all have something real to render.
      */
-    private void seedLeads(List<Agent> agents, List<String> clientIds, String tenantId) {
+    private List<String> seedLeads(List<Agent> agents, List<String> clientIds, String tenantId) {
         List<LeadSeed> seeds = List.of(
                 new LeadSeed(2, "Bali, Indonesia",
                         List.of("HOLIDAY_PACKAGE", "HOTEL"), "1,20,000 - 1,50,000",
-                        LeadStatus.NEW, "WEBSITE", LeadPriority.MEDIUM, 0, 5, null, 2, List.of(), false),
+                        LeadStatus.NEW, "Website", LeadPriority.MEDIUM, 0, 5, null, 2, List.of(), false),
                 new LeadSeed(1, "Paris, France",
                         List.of("FLIGHT", "HOTEL"), "2,00,000 - 2,50,000",
-                        LeadStatus.CONTACTED, "REFERRAL", LeadPriority.HIGH, 1, 2, null, 2, List.of(), true),
+                        LeadStatus.CONTACTED, "Referral", LeadPriority.HIGH, 1, 2, null, 2, List.of(), true),
                 new LeadSeed(5, "Singapore",
                         List.of("HOLIDAY_PACKAGE"), "90,000 - 1,10,000",
-                        LeadStatus.QUALIFIED, "SOCIAL_MEDIA", LeadPriority.MEDIUM, 2, 7, null, 1, List.of(), false),
+                        LeadStatus.QUALIFIED, "Social Media", LeadPriority.MEDIUM, 2, 7, null, 1, List.of(), false),
                 new LeadSeed(0, "Bangkok, Thailand",
                         List.of("FLIGHT", "HOTEL", "VISA"), "1,50,000 - 1,80,000",
-                        LeadStatus.PROPOSAL_SENT, "WALK_IN", LeadPriority.HIGH, 0, -2, null,
+                        LeadStatus.PROPOSAL_SENT, "Walk-in", LeadPriority.HIGH, 0, -2, null,
                         2, List.of(6, 1), true),
                 new LeadSeed(1, "Maldives",
                         List.of("HOLIDAY_PACKAGE", "HOTEL"), "3,00,000 - 3,50,000",
-                        LeadStatus.NEGOTIATING, "WHATSAPP", LeadPriority.HIGH, 1, 1, null, 2, List.of(), false),
+                        LeadStatus.NEGOTIATING, "WhatsApp", LeadPriority.HIGH, 1, 1, null, 2, List.of(), false),
                 new LeadSeed(3, "London, UK",
                         List.of("FLIGHT", "HOTEL", "VISA"), "4,50,000",
-                        LeadStatus.BOOKED, "PHONE_CALL", LeadPriority.HIGH, 2, 30, null, 3, List.of(), true),
+                        LeadStatus.BOOKED, "Phone Call", LeadPriority.HIGH, 2, 30, null, 3, List.of(), true),
                 new LeadSeed(4, "Switzerland",
                         List.of("HOLIDAY_PACKAGE"), "5,00,000",
-                        LeadStatus.LOST, "WEBSITE", LeadPriority.MEDIUM, 0, 10,
+                        LeadStatus.LOST, "Website", LeadPriority.MEDIUM, 0, 10,
                         "Booked with a competitor agency", 2, List.of(), false),
                 new LeadSeed(7, "Goa, India",
                         List.of("HOTEL"), "40,000 - 60,000",
-                        LeadStatus.NEW, "WALK_IN", LeadPriority.LOW, 1, 10, null, 1, List.of(11), false),
+                        LeadStatus.NEW, "Walk-in", LeadPriority.LOW, 1, 10, null, 1, List.of(11), false),
                 new LeadSeed(5, "Kerala, India",
                         List.of("HOLIDAY_PACKAGE", "HOTEL"), "80,000 - 1,00,000",
-                        LeadStatus.CONTACTED, "SOCIAL_MEDIA", LeadPriority.MEDIUM, 2, -1, null, 2, List.of(), false),
+                        LeadStatus.CONTACTED, "Social Media", LeadPriority.MEDIUM, 2, -1, null, 2, List.of(), false),
                 new LeadSeed(0, "Tokyo, Japan",
                         List.of("FLIGHT", "HOTEL", "VISA"), "2,80,000",
-                        LeadStatus.QUALIFIED, "REFERRAL", LeadPriority.HIGH, 0, 4, null, 2, List.of(), false),
+                        LeadStatus.QUALIFIED, "Referral", LeadPriority.HIGH, 0, 4, null, 2, List.of(), false),
                 new LeadSeed(3, "New York, USA",
                         List.of("FLIGHT", "VISA"), "3,20,000",
-                        LeadStatus.PROPOSAL_SENT, "OTHER", LeadPriority.MEDIUM, 1, -3, null, 3, List.of(), false),
+                        LeadStatus.PROPOSAL_SENT, "Corporate Direct", LeadPriority.MEDIUM, 1, -3, null, 3, List.of(), false),
                 new LeadSeed(6, "Dubai, UAE",
                         List.of("HOLIDAY_PACKAGE", "HOTEL"), "1,60,000 - 1,90,000",
-                        LeadStatus.NEGOTIATING, "PHONE_CALL", LeadPriority.MEDIUM, 2, 6, null, 4, List.of(), true)
+                        LeadStatus.NEGOTIATING, "Phone Call", LeadPriority.MEDIUM, 2, 6, null, 4, List.of(), true)
         );
 
+        List<String> leadIds = new java.util.ArrayList<>();
         for (LeadSeed s : seeds) {
             LeadCreateRequest req = new LeadCreateRequest();
             req.setClientId(clientIds.get(s.clientIdx()));
@@ -384,7 +405,10 @@ public class DemoBusinessDataSeedRunner implements ApplicationRunner {
             if (s.destination().startsWith("Bangkok") || s.destination().startsWith("Maldives")) {
                 addProposalItems(created.getId());
             }
+
+            leadIds.add(created.getId());
         }
+        return leadIds;
     }
 
     /**
@@ -432,6 +456,115 @@ public class DemoBusinessDataSeedRunner implements ApplicationRunner {
         hotel.setNetCost(new BigDecimal("38000"));
         hotel.setSellingPrice(new BigDecimal("49000"));
         leadService.addProposalItem(leadId, hotel);
+    }
+
+    // ------------------------------------------------------ services & follow-ups
+
+    /**
+     * Populates lead_service and lead_follow_up on a handful of the leads just created, with a
+     * deliberate mix: an unassigned service of a type someone other than the lead's creator
+     * manages (the claimable-by-a-different-agent case the whole access model exists for), a
+     * service self-accepted by the agent who created the lead, and one already CONFIRMED (not
+     * claimable). Without this the lead_service table is empty on every fresh demo tenant, so
+     * there is nothing to browse, accept, or see on My Desk.
+     *
+     * leadIds is in the same order as the LeadSeed list in {@link #seedLeads}: index 1 is Paris
+     * (Emma), 3 is Bangkok (Liam), 5 is London (Priya, BOOKED), 11 is Dubai (Priya).
+     */
+    private void seedServicesAndFollowUps(List<Agent> agents, List<String> leadIds, String tenantId) {
+        Agent liam = agents.get(0);
+        Agent emma = agents.get(1);
+        Agent priya = agents.get(2);
+
+        String parisLeadId = leadIds.get(1);
+        String bangkokLeadId = leadIds.get(3);
+        String londonLeadId = leadIds.get(5);
+        String dubaiLeadId = leadIds.get(11);
+
+        // Paris (created by Emma): a HOTEL service Emma accepts herself, and an unassigned
+        // FLIGHT service that only Liam - who did not create this lead - can claim.
+        var parisServices = serviceInstanceService.createServices(parisLeadId, List.of(
+                hotelDraft("Paris", LocalDate.now().plusDays(45), LocalDate.now().plusDays(50)),
+                flightDraft()));
+        acceptAsAgent(emma, tenantId, parisLeadId, parisServices.get(0).getId());
+
+        // Bangkok (created by Liam): an unassigned FLIGHT service (Liam's own type, claimable by
+        // him), and a VISA service the owner hands straight to Priya - a cross-agent assignment
+        // on a lead she did not create.
+        var bangkokServices = serviceInstanceService.createServices(bangkokLeadId, List.of(
+                flightDraft(),
+                visaDraft("Thailand")));
+        ServiceAssignRequest assignToPriya = new ServiceAssignRequest();
+        assignToPriya.setAgentId(priya.getId());
+        serviceInstanceService.assignService(bangkokLeadId, bangkokServices.get(1).getId(), assignToPriya);
+
+        // London (created by Priya, already BOOKED): a VISA service she accepts and takes all
+        // the way to CONFIRMED - the "not claimable, already done" case.
+        var londonServices = serviceInstanceService.createServices(londonLeadId, List.of(visaDraft("United Kingdom")));
+        acceptAsAgent(priya, tenantId, londonLeadId, londonServices.get(0).getId());
+        ServiceStatusUpdateRequest confirm = new ServiceStatusUpdateRequest();
+        confirm.setStatus(ServiceStatus.CONFIRMED);
+        serviceInstanceService.setStatus(londonLeadId, londonServices.get(0).getId(), confirm);
+
+        // Dubai (created by Priya): an unassigned TRANSFER service only Emma - who did not
+        // create this lead either - can claim.
+        serviceInstanceService.createServices(dubaiLeadId, List.of(transferDraft()));
+
+        // Follow-ups: one across agents (Liam's lead, chased by Priya - visa work is hers
+        // whichever lead it is on), one the creating agent owns themselves.
+        addFollowUp(bangkokLeadId, LocalDate.now().plusDays(4), "Chase the Thai embassy for the visa appointment",
+                priya.getId(), ServiceType.VISA);
+        addFollowUp(parisLeadId, LocalDate.now().plusDays(2), "Confirm hotel booking reference with Emma",
+                emma.getId(), ServiceType.HOTEL);
+        addFollowUp(bangkokLeadId, LocalDate.now().plusDays(1), "Call back with the finalised flight quote",
+                liam.getId(), null);
+    }
+
+    private ServiceDraft flightDraft() {
+        ServiceDraft draft = new ServiceDraft();
+        draft.setType(ServiceType.FLIGHT);
+        return draft;
+    }
+
+    private ServiceDraft hotelDraft(String city, LocalDate checkIn, LocalDate checkOut) {
+        ServiceDraft draft = new ServiceDraft();
+        draft.setType(ServiceType.HOTEL);
+        draft.setHotelCity(city);
+        draft.setHotelCheckIn(checkIn);
+        draft.setHotelCheckOut(checkOut);
+        draft.setHotelRooms(1);
+        return draft;
+    }
+
+    private ServiceDraft visaDraft(String country) {
+        ServiceDraft draft = new ServiceDraft();
+        draft.setType(ServiceType.VISA);
+        draft.setVisaCountry(country);
+        return draft;
+    }
+
+    private ServiceDraft transferDraft() {
+        ServiceDraft draft = new ServiceDraft();
+        draft.setType(ServiceType.TRANSFER);
+        draft.setTransferVehicleType("4 Seater (Sedan)");
+        draft.setTransferPickup("Airport");
+        draft.setTransferDropoff("Hotel");
+        return draft;
+    }
+
+    private void acceptAsAgent(Agent agent, String tenantId, String leadId, String serviceId) {
+        setAgentSecurityContext(agent, tenantId);
+        serviceInstanceService.acceptService(leadId, serviceId);
+        setOwnerSecurityContext(tenantId);
+    }
+
+    private void addFollowUp(String leadId, LocalDate dueDate, String note, String assignedAgentId, ServiceType type) {
+        FollowUpCreateRequest req = new FollowUpCreateRequest();
+        req.setDueDate(dueDate);
+        req.setNote(note);
+        req.setAssignedAgentId(assignedAgentId);
+        req.setServiceType(type);
+        leadFollowUpService.addFollowUp(leadId, req);
     }
 
     // -------------------------------------------------------------- bookings

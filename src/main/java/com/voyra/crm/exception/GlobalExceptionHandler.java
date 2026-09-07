@@ -125,6 +125,16 @@ public class GlobalExceptionHandler {
                         "Forbidden", null, HttpStatus.FORBIDDEN.value(), path));
     }
 
+    @ExceptionHandler(SupplierException.class)
+    public ResponseEntity<ApiErrorResponse> handleSupplierException(SupplierException ex, HttpServletRequest request) {
+        String path = getPath(request);
+        log.error("Supplier call failed - path: {}", path, ex);
+
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(
+                ApiErrorResponse.of("The supplier could not be reached. Please try again.",
+                        "Supplier unavailable", null, HttpStatus.BAD_GATEWAY.value(), path));
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiErrorResponse> handleGeneric(Exception ex, HttpServletRequest request) {
         String path = getPath(request);

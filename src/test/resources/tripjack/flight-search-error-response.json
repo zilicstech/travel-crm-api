@@ -1,0 +1,12 @@
+{
+  "status": {
+    "success": false,
+    "httpStatus": 403
+  },
+  "errors": [
+    {
+      "errCode": "412",
+      "message": "UnAuthorized Access!, The provided API key is invalid."
+    }
+  ]
+}

@@ -28,6 +28,12 @@ public class GlobalExceptionHandlerFixtureController {
         throw new AccessDeniedException("denied");
     }
 
+    @GetMapping("/test/supplier-failure")
+    public String supplierFailure() {
+        throw new SupplierException("Connection to https://apitest.tripjack.com/api/v1/search timed out",
+                new java.io.IOException("timeout"));
+    }
+
     @PostMapping("/test/validate")
     public String validate(@Valid @RequestBody FixtureRequest request) {
         return "ok";

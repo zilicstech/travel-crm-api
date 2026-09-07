@@ -1,0 +1,54 @@
+{
+  "status": { "success": true },
+  "searchResult": {
+    "tripInfos": {
+      "ONWARD": [
+        {
+          "sI": [
+            {
+              "fD": {
+                "aI": { "name": "IndiGo", "code": "6E", "isLcc": true },
+                "fN": "6E-204",
+                "eT": "A320"
+              },
+              "stops": 0,
+              "duration": "3h 05m",
+              "da": { "code": "BLR", "name": "Kempegowda International Airport", "city": "Bangalore", "terminal": "1" },
+              "aa": { "code": "HKT", "name": "Phuket International Airport", "city": "Phuket", "terminal": "1" },
+              "dt": "2026-10-09T06:15:00",
+              "at": "2026-10-09T09:20:00"
+            }
+          ],
+          "totalPriceList": [
+            {
+              "id": "off-saver-1",
+              "fareIdentifier": "Saver",
+              "fd": {
+                "ADULT": {
+                  "fC": { "TF": "8400.00", "TAF": "1200.00" },
+                  "sR": 4,
+                  "bI": { "iB": "15KG", "cB": "7KG" },
+                  "rT": "NON_REFUNDABLE",
+                  "mI": false
+                }
+              }
+            },
+            {
+              "id": "off-flexi-1",
+              "fareIdentifier": "Flexi",
+              "fd": {
+                "ADULT": {
+                  "fC": { "TF": "10200.00", "TAF": "1400.00" },
+                  "sR": 9,
+                  "bI": { "iB": "20KG", "cB": "7KG" },
+                  "rT": "REFUNDABLE",
+                  "mI": true
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
