@@ -31,10 +31,16 @@ public class AgencySettingService {
 
     @Transactional
     public AgencySettingResponse create(AgencySettingCreateRequest request) {
-        if (request.getKind() == AgencySettingKind.SERVICE_PREFERENCE && request.getServiceType() == null) {
-            throw new IllegalArgumentException("serviceType is required for a SERVICE_PREFERENCE setting");
+        boolean requiresServiceType = request.getKind() == AgencySettingKind.SERVICE_PREFERENCE
+                || request.getKind() == AgencySettingKind.SUPPLIER;
+        if (requiresServiceType && request.getServiceType() == null) {
+            throw new IllegalArgumentException("serviceType is required for a " + request.getKind() + " setting");
         }
-        if (agencySettingRepository.existsByKindAndNameIgnoreCase(request.getKind(), request.getName())) {
+        boolean duplicate = request.getServiceType() != null
+                ? agencySettingRepository.existsByKindAndServiceTypeAndNameIgnoreCase(
+                        request.getKind(), request.getServiceType(), request.getName())
+                : agencySettingRepository.existsByKindAndNameIgnoreCase(request.getKind(), request.getName());
+        if (duplicate) {
             throw new IllegalStateException("\"" + request.getName() + "\" already exists");
         }
 

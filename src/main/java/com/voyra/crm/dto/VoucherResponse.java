@@ -42,4 +42,10 @@ public class VoucherResponse {
 
     @Schema(example = "2026-08-13T09:15:22")
     private LocalDateTime createdAt;
+
+    @Schema(description = "Whether a confirmation file has been attached", example = "true")
+    private boolean hasFile;
+
+    @Schema(description = "Original filename of the attached confirmation, if any", example = "emirates-eticket.pdf")
+    private String fileName;
 }

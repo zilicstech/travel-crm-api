@@ -18,4 +18,6 @@ public interface AgencySettingRepository extends JpaRepository<AgencySetting, St
     boolean existsByKind(AgencySettingKind kind);
 
     boolean existsByKindAndNameIgnoreCase(AgencySettingKind kind, String name);
+
+    boolean existsByKindAndServiceTypeAndNameIgnoreCase(AgencySettingKind kind, ServiceType serviceType, String name);
 }

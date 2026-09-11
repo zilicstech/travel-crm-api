@@ -54,6 +54,12 @@ public class LeadVoucher {
     @Column(name = "file_key", length = 500)
     private String fileKey;
 
+    @Column(name = "file_name", length = 255)
+    private String fileName;
+
+    @Column(name = "content_type", length = 150)
+    private String contentType;
+
     @Column(name = "notes")
     private String notes;
 

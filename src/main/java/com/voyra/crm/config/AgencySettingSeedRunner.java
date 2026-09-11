@@ -45,6 +45,7 @@ public class AgencySettingSeedRunner implements ApplicationRunner {
                 seedIfEmpty(AgencySettingKind.LEAD_SOURCE, null, LEAD_SOURCES);
                 for (ServiceType type : ServiceType.values()) {
                     seedIfEmpty(AgencySettingKind.SERVICE_PREFERENCE, type, preferencesFor(type));
+                    seedIfEmpty(AgencySettingKind.SUPPLIER, type, suppliersFor(type));
                 }
             } finally {
                 TenantContext.clear();
@@ -113,6 +114,16 @@ public class AgencySettingSeedRunner implements ApplicationRunner {
                     Default.of("Appointment Assistance"), Default.of("Document Pickup"));
             case TRANSFER -> List.of(Default.of("Child Seat"), Default.of("Meet & Greet"),
                     Default.of("Extra Luggage Space"), Default.of("Wheelchair Accessible"));
+        };
+    }
+
+    private static List<Default> suppliersFor(ServiceType type) {
+        return switch (type) {
+            case FLIGHT -> List.of(Default.of("IndiGo"), Default.of("Air India"), Default.of("Vistara"),
+                    Default.of("Tripjack"));
+            case HOTEL -> List.of(Default.of("Booking.com"), Default.of("Agoda"), Default.of("Tripjack"));
+            case VISA -> List.of(Default.of("VFS Global"), Default.of("BLS International"));
+            case TRANSFER -> List.of(Default.of("Local Cab Operator"), Default.of("Savaari"));
         };
     }
 }

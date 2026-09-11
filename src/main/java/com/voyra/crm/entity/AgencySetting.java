@@ -20,8 +20,9 @@ import java.time.LocalDateTime;
 /**
  * Agency-editable configuration - lead sources, travel categories, document types and
  * per-service preferences - replacing what used to live only in the frontend's localStorage.
- * {@code serviceType} is set only when {@code kind} is SERVICE_PREFERENCE. Preferences are
- * matched onto {@code lead_service.preferences} by name, not id.
+ * {@code serviceType} is set only when {@code kind} is SERVICE_PREFERENCE or SUPPLIER.
+ * Preferences and suppliers are matched onto {@code lead_service.preferences} /
+ * proposal-item supplier fields by name, not id.
  */
 @Entity
 @Table(name = "agency_setting")
