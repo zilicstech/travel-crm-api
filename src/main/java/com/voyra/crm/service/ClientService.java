@@ -1,5 +1,6 @@
 package com.voyra.crm.service;
 
+import com.voyra.crm.dto.AuditChange;
 import com.voyra.crm.dto.ClientCreateRequest;
 import com.voyra.crm.dto.ClientDetailResponse;
 import com.voyra.crm.dto.ClientLookupResponse;
@@ -9,6 +10,7 @@ import com.voyra.crm.dto.MemberResponse;
 import com.voyra.crm.dto.PagedResponse;
 import com.voyra.crm.entity.Client;
 import com.voyra.crm.entity.Member;
+import com.voyra.crm.enums.AuditEntityType;
 import com.voyra.crm.enums.ClientType;
 import com.voyra.crm.enums.MemberRelation;
 import com.voyra.crm.enums.MemberType;
@@ -19,6 +21,7 @@ import com.voyra.crm.repository.LeadRepository;
 import com.voyra.crm.repository.MemberRepository;
 import com.voyra.crm.repository.VisaRepository;
 import com.voyra.crm.security.SecurityContextUtil;
+import com.voyra.crm.util.AuditSnapshot;
 import com.voyra.crm.util.UniqueIdResolver;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -30,11 +33,14 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class ClientService {
+
+    private static final String[] AUDITED = { "identifier", "name", "type", "isActive" };
 
     private final ClientRepository clientRepository;
     private final MemberRepository memberRepository;
@@ -43,6 +49,7 @@ public class ClientService {
     private final VisaRepository visaRepository;
     private final ClientInvoiceRepository clientInvoiceRepository;
     private final MemberMapper memberMapper;
+    private final AuditService auditService;
 
     /**
      * Creates the client and its primary member together.
@@ -88,6 +95,7 @@ public class ClientService {
                 .createdBy(currentUserId())
                 .build();
         memberRepository.save(primary);
+        auditService.recordCreate(AuditEntityType.CLIENT, client.getId(), client.getName());
 
         log.info("Client created: clientId={}, type={}", client.getId(), client.getType());
         return toDetailResponse(client);
@@ -141,6 +149,7 @@ public class ClientService {
     @Transactional
     public ClientDetailResponse updateClient(String id, ClientUpdateRequest request) {
         Client client = findAccessibleClient(id);
+        Map<String, String> before = AuditSnapshot.of(client, AUDITED);
 
         if (request.getIdentifier() != null && !request.getIdentifier().equals(client.getIdentifier())) {
             if (clientRepository.existsByIdentifierAndIsActiveTrue(request.getIdentifier())) {
@@ -168,6 +177,11 @@ public class ClientService {
             clientInvoiceRepository.updateClientNameForClient(client.getId(), client.getName());
         }
 
+        // The *_name bulk re-sync above is a denormalisation fix-up, not a business change - it
+        // is deliberately excluded from the audited diff, which already captured the real edit.
+        List<AuditChange> changes = AuditSnapshot.diff(before, AuditSnapshot.of(client, AUDITED));
+        auditService.recordUpdate(AuditEntityType.CLIENT, client.getId(), client.getName(), changes);
+
         log.info("Client updated: clientId={}, renamed={}", id, renamed);
         return toDetailResponse(client);
     }
@@ -185,6 +199,7 @@ public class ClientService {
         if (!active && leadRepository.countByClientIdAndStatusNotIn(id, LeadService.TERMINAL_STATUSES) > 0) {
             throw new IllegalStateException("This client still has open leads - close or reassign them first");
         }
+        Map<String, String> before = AuditSnapshot.of(client, AUDITED);
         client.setIsActive(active);
         client.setModifiedAt(LocalDateTime.now());
         client.setModifiedBy(currentUserId());
@@ -193,6 +208,8 @@ public class ClientService {
         } catch (DataIntegrityViolationException e) {
             throw new IllegalStateException("Another active client already uses identifier " + client.getIdentifier());
         }
+        auditService.recordUpdate(AuditEntityType.CLIENT, client.getId(), client.getName(),
+                AuditSnapshot.diff(before, AuditSnapshot.of(client, AUDITED)));
         log.info("Client status updated: clientId={}, active={}", id, active);
         return toDetailResponse(client);
     }

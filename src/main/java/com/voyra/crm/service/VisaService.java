@@ -1,5 +1,6 @@
 package com.voyra.crm.service;
 
+import com.voyra.crm.dto.AuditChange;
 import com.voyra.crm.dto.PagedResponse;
 import com.voyra.crm.dto.VisaChecklistUpdateRequest;
 import com.voyra.crm.dto.VisaCreateRequest;
@@ -8,12 +9,14 @@ import com.voyra.crm.dto.VisaResponse;
 import com.voyra.crm.entity.Agent;
 import com.voyra.crm.entity.Client;
 import com.voyra.crm.entity.Visa;
+import com.voyra.crm.enums.AuditEntityType;
 import com.voyra.crm.enums.VisaStatus;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.ClientRepository;
 import com.voyra.crm.repository.VisaRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.security.SecurityContextUtil;
+import com.voyra.crm.util.AuditSnapshot;
 import com.voyra.crm.util.UniqueIdResolver;
 import com.voyra.crm.util.VisaStatusCalculator;
 import lombok.RequiredArgsConstructor;
@@ -24,16 +27,26 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class VisaService {
 
+    private static final String[] AUDITED = {
+            "country", "visaType", "passportNumber", "status", "passportCollected",
+            "photosCollected", "formsFilled", "appointmentDate", "biometricsDone",
+            "submittedToEmbassy", "approved", "rejected", "passportReturned",
+            "visaValidity", "expiryDate"
+    };
+
     private final VisaRepository visaRepository;
     private final ClientRepository clientRepository;
     private final AgentRepository agentRepository;
+    private final AuditService auditService;
 
     @Transactional
     public VisaResponse createVisa(VisaCreateRequest request) {
@@ -53,8 +66,10 @@ public class VisaService {
                 .passportNumber(request.getPassportNumber())
                 .applicationDate(request.getApplicationDate() != null ? request.getApplicationDate() : java.time.LocalDate.now())
                 .status(VisaStatus.DOCUMENTS_PENDING)
+                .createdBy(owner.id())
                 .build();
         visaRepository.save(visa);
+        auditService.recordCreate(AuditEntityType.VISA, visa.getId(), labelFor(visa));
 
         log.info("Visa case created: visaId={}, clientId={}", visa.getId(), client.getId());
         return toResponse(visa);
@@ -86,6 +101,7 @@ public class VisaService {
     @Transactional
     public VisaResponse updateChecklist(String id, VisaChecklistUpdateRequest request) {
         Visa visa = findAccessibleVisa(id);
+        Map<String, String> before = AuditSnapshot.of(visa, AUDITED);
 
         if (request.getPassportCollected() != null) visa.setPassportCollected(request.getPassportCollected());
         if (request.getPhotosCollected() != null) visa.setPhotosCollected(request.getPhotosCollected());
@@ -107,9 +123,21 @@ public class VisaService {
         }
 
         visa.setStatus(VisaStatusCalculator.calculate(visa));
+        List<AuditChange> changes = AuditSnapshot.diff(before, AuditSnapshot.of(visa, AUDITED));
+        touch(visa);
         visaRepository.save(visa);
+        auditService.recordUpdate(AuditEntityType.VISA, visa.getId(), labelFor(visa), changes);
         log.info("Visa checklist updated: visaId={}, status={}", id, visa.getStatus());
         return toResponse(visa);
+    }
+
+    private void touch(Visa visa) {
+        visa.setUpdatedAt(LocalDateTime.now());
+        visa.setUpdatedBy(SecurityContextUtil.getCurrentUserOrThrow().userId());
+    }
+
+    private String labelFor(Visa v) {
+        return v.getClientName() + " / " + v.getCountry();
     }
 
     @Transactional(readOnly = true)

@@ -1,17 +1,20 @@
 package com.voyra.crm.service;
 
+import com.voyra.crm.dto.AuditChange;
 import com.voyra.crm.dto.DocumentResponse;
 import com.voyra.crm.dto.MemberCreateRequest;
 import com.voyra.crm.dto.MemberResponse;
 import com.voyra.crm.dto.MemberUpdateRequest;
 import com.voyra.crm.entity.Member;
 import com.voyra.crm.entity.MemberDocument;
+import com.voyra.crm.enums.AuditEntityType;
 import com.voyra.crm.enums.MemberRelation;
 import com.voyra.crm.enums.MemberType;
 import com.voyra.crm.repository.LeadMemberRepository;
 import com.voyra.crm.repository.MemberDocumentRepository;
 import com.voyra.crm.repository.MemberRepository;
 import com.voyra.crm.security.SecurityContextUtil;
+import com.voyra.crm.util.AuditSnapshot;
 import com.voyra.crm.util.UniqueIdResolver;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -22,6 +25,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 /** A client's roster: the people who travel, and the identity documents that let them. */
 @Service
@@ -30,6 +34,10 @@ import java.util.List;
 public class MemberService {
 
     private static final String MEMBER_DOC_CATEGORY = "member-documents";
+    private static final String[] AUDITED = {
+            "name", "relation", "email", "countryCode", "phone", "dob", "gender",
+            "nationality", "passportNumber", "passportExpiry", "isActive"
+    };
 
     private final ClientService clientService;
     private final MemberRepository memberRepository;
@@ -37,6 +45,7 @@ public class MemberService {
     private final LeadMemberRepository leadMemberRepository;
     private final FileStorageService fileStorageService;
     private final MemberMapper memberMapper;
+    private final AuditService auditService;
 
     @Transactional(readOnly = true)
     public List<MemberResponse> listMembers(String clientId) {
@@ -79,6 +88,7 @@ public class MemberService {
                 .createdBy(currentUserId())
                 .build();
         memberRepository.save(member);
+        auditService.recordCreate(AuditEntityType.MEMBER, member.getMemberId(), member.getName());
         log.info("Member added: clientId={}, memberId={}, relation={}",
                 clientId, member.getMemberId(), member.getRelation());
         return member;
@@ -92,6 +102,7 @@ public class MemberService {
     @Transactional
     public MemberResponse updateMember(String clientId, String memberId, MemberUpdateRequest request) {
         Member member = findMember(clientId, memberId);
+        Map<String, String> before = AuditSnapshot.of(member, AUDITED);
 
         if (request.getRelation() != null) {
             if (member.getType() == MemberType.CLIENT || request.getRelation() == MemberRelation.SELF) {
@@ -122,6 +133,8 @@ public class MemberService {
             leadMemberRepository.updateMemberNameForMember(member.getMemberId(), member.getName());
         }
 
+        auditService.recordUpdate(AuditEntityType.MEMBER, member.getMemberId(), member.getName(),
+                AuditSnapshot.diff(before, AuditSnapshot.of(member, AUDITED)));
         log.info("Member updated: clientId={}, memberId={}, renamed={}", clientId, memberId, renamed);
         return memberMapper.toResponse(member, memberDocumentRepository.findByMemberId(memberId));
     }
@@ -141,10 +154,13 @@ public class MemberService {
             throw new IllegalStateException(
                     "The primary member cannot be deactivated - deactivate the client instead");
         }
+        Map<String, String> before = AuditSnapshot.of(member, AUDITED);
         member.setIsActive(active);
         member.setModifiedAt(LocalDateTime.now());
         member.setModifiedBy(currentUserId());
         memberRepository.save(member);
+        auditService.recordUpdate(AuditEntityType.MEMBER, member.getMemberId(), member.getName(),
+                AuditSnapshot.diff(before, AuditSnapshot.of(member, AUDITED)));
         log.info("Member status updated: clientId={}, memberId={}, active={}", clientId, memberId, active);
         return memberMapper.toResponse(member, memberDocumentRepository.findByMemberId(memberId));
     }

@@ -63,6 +63,8 @@ class LeadBusinessRuleTest {
     private LeadVoucherService leadVoucherService;
     @Mock
     private InvoiceService invoiceService;
+    @Mock
+    private AuditService auditService;
 
     @InjectMocks
     private LeadService leadService;

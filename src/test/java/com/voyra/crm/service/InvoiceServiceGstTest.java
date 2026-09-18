@@ -48,6 +48,8 @@ class InvoiceServiceGstTest {
     private LeadServiceRepository leadServiceRepository;
     @Mock
     private LeadTimelineService leadTimelineService;
+    @Mock
+    private AuditService auditService;
 
     @InjectMocks
     private InvoiceService invoiceService;

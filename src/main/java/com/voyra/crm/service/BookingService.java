@@ -1,5 +1,6 @@
 package com.voyra.crm.service;
 
+import com.voyra.crm.dto.AuditChange;
 import com.voyra.crm.dto.BookingCreateRequest;
 import com.voyra.crm.dto.BookingPaymentStatusUpdateRequest;
 import com.voyra.crm.dto.BookingResponse;
@@ -9,6 +10,7 @@ import com.voyra.crm.dto.PagedResponse;
 import com.voyra.crm.entity.Agent;
 import com.voyra.crm.entity.Booking;
 import com.voyra.crm.entity.Client;
+import com.voyra.crm.enums.AuditEntityType;
 import com.voyra.crm.enums.BookingStatus;
 import com.voyra.crm.enums.BookingType;
 import com.voyra.crm.repository.AgentRepository;
@@ -16,6 +18,7 @@ import com.voyra.crm.repository.BookingRepository;
 import com.voyra.crm.repository.ClientRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.security.SecurityContextUtil;
+import com.voyra.crm.util.AuditSnapshot;
 import com.voyra.crm.util.UniqueIdResolver;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -29,15 +32,24 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class BookingService {
 
+    /** The audited surface of a booking - read this array to know exactly what history records. */
+    private static final String[] AUDITED = {
+            "pnr", "ticketNo", "airline", "supplier", "journeyDate", "returnDate", "tripType",
+            "netCost", "sellingPrice", "profit", "bookingStatus", "paymentStatus",
+            "cancelReason", "refundStatus"
+    };
+
     private final BookingRepository bookingRepository;
     private final ClientRepository clientRepository;
     private final AgentRepository agentRepository;
+    private final AuditService auditService;
 
     @Transactional
     public BookingResponse createBooking(BookingCreateRequest request) {
@@ -68,8 +80,10 @@ public class BookingService {
                         : com.voyra.crm.enums.PaymentStatus.PENDING)
                 .bookingDate(LocalDate.now())
                 .createdDate(LocalDateTime.now())
+                .createdBy(owner.id())
                 .build();
         bookingRepository.save(booking);
+        auditService.recordCreate(AuditEntityType.BOOKING, booking.getId(), labelFor(booking));
 
         log.info("Booking created: bookingId={}, agentId={}", booking.getId(), owner.id());
         return toResponse(booking);
@@ -149,6 +163,7 @@ public class BookingService {
     @Transactional
     public BookingResponse updateBooking(String id, BookingUpdateRequest request) {
         Booking booking = findAccessibleBooking(id);
+        Map<String, String> before = AuditSnapshot.of(booking, AUDITED);
 
         if (request.getPnr() != null) booking.setPnr(request.getPnr());
         if (request.getTicketNo() != null) booking.setTicketNo(request.getTicketNo());
@@ -162,14 +177,19 @@ public class BookingService {
         // Profit is never client-trusted - always recomputed server-side from the current values.
         booking.setProfit(computeProfit(booking.getSellingPrice(), booking.getNetCost()));
 
+        List<AuditChange> changes = AuditSnapshot.diff(before, AuditSnapshot.of(booking, AUDITED));
+        touch(booking);
         bookingRepository.save(booking);
-        log.info("Booking updated: bookingId={}", id);
+        // Same transaction as the save - a rollback loses the booking edit and its audit row together.
+        auditService.recordUpdate(AuditEntityType.BOOKING, booking.getId(), labelFor(booking), changes);
+        log.info("Booking updated: bookingId={}, changedFields={}", id, changes.size());
         return toResponse(booking);
     }
 
     @Transactional
     public BookingResponse updateStatus(String id, BookingStatusUpdateRequest request) {
         Booking booking = findAccessibleBooking(id);
+        Map<String, String> before = AuditSnapshot.of(booking, AUDITED);
         if (request.getBookingStatus() == BookingStatus.CANCELLED
                 && (request.getCancelReason() == null || request.getCancelReason().isBlank())) {
             throw new IllegalArgumentException("A reason is required when cancelling a booking");
@@ -181,7 +201,10 @@ public class BookingService {
                 booking.setRefundStatus(request.getRefundStatus());
             }
         }
+        List<AuditChange> changes = AuditSnapshot.diff(before, AuditSnapshot.of(booking, AUDITED));
+        touch(booking);
         bookingRepository.save(booking);
+        auditService.recordUpdate(AuditEntityType.BOOKING, booking.getId(), labelFor(booking), changes);
         log.info("Booking status updated: bookingId={}, status={}", id, request.getBookingStatus());
         return toResponse(booking);
     }
@@ -189,9 +212,23 @@ public class BookingService {
     @Transactional
     public BookingResponse updatePaymentStatus(String id, BookingPaymentStatusUpdateRequest request) {
         Booking booking = findAccessibleBooking(id);
+        Map<String, String> before = AuditSnapshot.of(booking, AUDITED);
         booking.setPaymentStatus(request.getPaymentStatus());
+        List<AuditChange> changes = AuditSnapshot.diff(before, AuditSnapshot.of(booking, AUDITED));
+        touch(booking);
         bookingRepository.save(booking);
+        auditService.recordUpdate(AuditEntityType.BOOKING, booking.getId(), labelFor(booking), changes);
         return toResponse(booking);
+    }
+
+    /** Explicit, not a @PreUpdate - a JPA listener cannot reach the current principal (§5.3). */
+    private void touch(Booking booking) {
+        booking.setUpdatedAt(LocalDateTime.now());
+        booking.setUpdatedBy(SecurityContextUtil.getCurrentUserOrThrow().userId());
+    }
+
+    private String labelFor(Booking b) {
+        return b.getClientName() + " / " + b.getDestination();
     }
 
     private BigDecimal computeProfit(BigDecimal sellingPrice, BigDecimal netCost) {

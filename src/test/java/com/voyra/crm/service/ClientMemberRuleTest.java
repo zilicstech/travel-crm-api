@@ -60,13 +60,15 @@ class ClientMemberRuleTest {
     private FileStorageService fileStorageService;
     @Mock
     private MemberMapper memberMapper;
+    @Mock
+    private AuditService auditService;
 
     @InjectMocks
     private ClientService clientService;
 
     private MemberService memberService() {
         return new MemberService(clientService, memberRepository, memberDocumentRepository,
-                leadMemberRepository, fileStorageService, memberMapper);
+                leadMemberRepository, fileStorageService, memberMapper, auditService);
     }
 
     private void authenticateAs(String userId, UserType role) {

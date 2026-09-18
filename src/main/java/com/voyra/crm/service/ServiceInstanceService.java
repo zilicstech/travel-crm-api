@@ -1,5 +1,6 @@
 package com.voyra.crm.service;
 
+import com.voyra.crm.dto.AuditChange;
 import com.voyra.crm.dto.ServiceAssignRequest;
 import com.voyra.crm.dto.ServiceDraft;
 import com.voyra.crm.dto.ServicePreferenceToggleRequest;
@@ -11,6 +12,7 @@ import com.voyra.crm.entity.Agent;
 import com.voyra.crm.entity.Lead;
 import com.voyra.crm.entity.LeadProposal;
 import com.voyra.crm.entity.LeadService;
+import com.voyra.crm.enums.AuditEntityType;
 import com.voyra.crm.enums.LeadTimelineEventType;
 import com.voyra.crm.enums.ServiceStatus;
 import com.voyra.crm.enums.ServiceType;
@@ -20,6 +22,7 @@ import com.voyra.crm.repository.LeadRepository;
 import com.voyra.crm.repository.LeadServiceRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.security.SecurityContextUtil;
+import com.voyra.crm.util.AuditSnapshot;
 import com.voyra.crm.util.ServiceDateRangeDeriver;
 import com.voyra.crm.util.ServiceLabelDeriver;
 import com.voyra.crm.util.UniqueIdResolver;
@@ -59,11 +62,22 @@ public class ServiceInstanceService {
     private static final Set<ServiceStatus> CLAIMABLE_BLOCKING_STATUSES =
             Set.of(ServiceStatus.CONFIRMED, ServiceStatus.CANCELLED);
 
+    /** flightSectors and visaChecklists are deliberately excluded - nested JSON collections, not
+     *  scalar fields AuditSnapshot's stringify formats meaningfully. */
+    private static final String[] AUDITED = {
+            "status", "assignedAgentId", "dueDate", "preferences",
+            "flightTripType", "flightCabin",
+            "hotelCity", "hotelCheckIn", "hotelCheckOut", "hotelNights", "hotelRooms",
+            "visaSourceCity", "visaSourceCountry", "visaCountry", "visaIntendedTravelDate", "visaAppointmentDate",
+            "transferVehicleType", "transferPickup", "transferDropoff", "transferDate", "transferTime", "transferPassengers"
+    };
+
     private final LeadServiceRepository leadServiceRepository;
     private final LeadRepository leadRepository;
     private final LeadProposalRepository leadProposalRepository;
     private final AgentRepository agentRepository;
     private final LeadTimelineService leadTimelineService;
+    private final AuditService auditService;
 
     // ---------------------------------------------------------------------
     // Create / read
@@ -131,6 +145,7 @@ public class ServiceInstanceService {
         for (LeadService service : created) {
             leadTimelineService.record(leadId, service.getId(), LeadTimelineEventType.SERVICE_ADDED,
                     service.getLabel() + " added");
+            auditService.recordCreate(AuditEntityType.LEAD_SERVICE, service.getId(), service.getLabel());
         }
         log.info("Services added to lead: leadId={}, count={}", leadId, created.size());
 
@@ -176,6 +191,7 @@ public class ServiceInstanceService {
         Lead lead = findAccessibleLead(leadId);
         LeadService service = findServiceOnLead(leadId, serviceId);
         assertEditAccess(service);
+        Map<String, String> before = AuditSnapshot.of(service, AUDITED);
 
         service.setDueDate(draft.getDueDate());
         if (draft.getPreferences() != null) {
@@ -217,6 +233,8 @@ public class ServiceInstanceService {
         LeadService saved = siblings.stream().filter(s -> s.getId().equals(serviceId)).findFirst().orElse(service);
         leadTimelineService.record(leadId, serviceId, LeadTimelineEventType.SERVICE_UPDATED,
                 saved.getLabel() + " updated");
+        auditService.recordUpdate(AuditEntityType.LEAD_SERVICE, saved.getId(), saved.getLabel(),
+                AuditSnapshot.diff(before, AuditSnapshot.of(saved, AUDITED)));
         log.info("Service updated: leadId={}, serviceId={}", leadId, serviceId);
         return toResponse(saved);
     }
@@ -235,6 +253,7 @@ public class ServiceInstanceService {
         if (service.getAssignedAgentId() == null) {
             throw new IllegalStateException("Assign this service before changing its status");
         }
+        Map<String, String> before = AuditSnapshot.of(service, AUDITED);
 
         service.setStatus(request.getStatus());
         service.setUpdatedAt(LocalDateTime.now());
@@ -247,6 +266,8 @@ public class ServiceInstanceService {
 
         leadTimelineService.record(leadId, serviceId, LeadTimelineEventType.SERVICE_UPDATED,
                 service.getLabel() + " status changed to " + request.getStatus());
+        auditService.recordUpdate(AuditEntityType.LEAD_SERVICE, service.getId(), service.getLabel(),
+                AuditSnapshot.diff(before, AuditSnapshot.of(service, AUDITED)));
         log.info("Service status updated: leadId={}, serviceId={}, status={}", leadId, serviceId, request.getStatus());
         return toResponse(service);
     }
@@ -268,6 +289,7 @@ public class ServiceInstanceService {
         if (service.getAssignedAgentId() != null || CLAIMABLE_BLOCKING_STATUSES.contains(service.getStatus())) {
             throw new IllegalStateException("This service is not open to be accepted");
         }
+        Map<String, String> before = AuditSnapshot.of(service, AUDITED);
 
         service.setAssignedAgentId(agent.getId());
         service.setAssignedAgentName(agent.getName());
@@ -278,6 +300,8 @@ public class ServiceInstanceService {
 
         leadTimelineService.record(leadId, serviceId, LeadTimelineEventType.SERVICE_UPDATED,
                 agent.getName() + " accepted " + service.getLabel());
+        auditService.recordUpdate(AuditEntityType.LEAD_SERVICE, service.getId(), service.getLabel(),
+                AuditSnapshot.diff(before, AuditSnapshot.of(service, AUDITED)));
         log.info("Service accepted: leadId={}, serviceId={}, agentId={}", leadId, serviceId, agent.getId());
         return toResponse(service);
     }
@@ -290,6 +314,7 @@ public class ServiceInstanceService {
         CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
         Agent agent = agentRepository.findByIdAndTenantId(request.getAgentId(), principal.tenantId())
                 .orElseThrow(() -> new IllegalArgumentException("Agent not found in this agency: " + request.getAgentId()));
+        Map<String, String> before = AuditSnapshot.of(service, AUDITED);
 
         service.setAssignedAgentId(agent.getId());
         service.setAssignedAgentName(agent.getName());
@@ -299,6 +324,8 @@ public class ServiceInstanceService {
 
         leadTimelineService.record(leadId, serviceId, LeadTimelineEventType.SERVICE_UPDATED,
                 service.getLabel() + " assigned to " + agent.getName());
+        auditService.recordUpdate(AuditEntityType.LEAD_SERVICE, service.getId(), service.getLabel(),
+                AuditSnapshot.diff(before, AuditSnapshot.of(service, AUDITED)));
         log.info("Service reassigned: leadId={}, serviceId={}, agentId={}", leadId, serviceId, agent.getId());
         return toResponse(service);
     }
@@ -309,6 +336,7 @@ public class ServiceInstanceService {
         LeadService service = findServiceOnLead(leadId, serviceId);
         assertEditAccess(service);
 
+        Map<String, String> before = AuditSnapshot.of(service, AUDITED);
         List<String> preferences = new ArrayList<>(
                 service.getPreferences() != null ? service.getPreferences() : List.of());
         if (Boolean.TRUE.equals(request.getOn())) {
@@ -326,6 +354,8 @@ public class ServiceInstanceService {
         leadTimelineService.record(leadId, serviceId, LeadTimelineEventType.SERVICE_UPDATED,
                 request.getName() + (Boolean.TRUE.equals(request.getOn()) ? " added to " : " removed from ")
                         + service.getLabel() + "'s preferences");
+        auditService.recordUpdate(AuditEntityType.LEAD_SERVICE, service.getId(), service.getLabel(),
+                AuditSnapshot.diff(before, AuditSnapshot.of(service, AUDITED)));
         return toResponse(service);
     }
 
@@ -372,6 +402,7 @@ public class ServiceInstanceService {
         LeadService service = findServiceOnLead(leadId, serviceId);
         assertEditAccess(service);
         String label = service.getLabel();
+        List<AuditChange> finalSnapshot = AuditSnapshot.asFullSnapshot(AuditSnapshot.of(service, AUDITED));
 
         leadServiceRepository.delete(service);
 
@@ -383,6 +414,7 @@ public class ServiceInstanceService {
         leadRepository.save(lead);
 
         leadTimelineService.record(leadId, LeadTimelineEventType.SERVICE_REMOVED, label + " removed");
+        auditService.recordDelete(AuditEntityType.LEAD_SERVICE, serviceId, label, finalSnapshot);
         log.info("Service removed: leadId={}, serviceId={}", leadId, serviceId);
     }
 

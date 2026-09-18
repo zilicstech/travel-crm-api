@@ -1,5 +1,6 @@
 package com.voyra.crm.service;
 
+import com.voyra.crm.dto.AuditChange;
 import com.voyra.crm.dto.GuestDetails;
 import com.voyra.crm.dto.LeadCreateRequest;
 import com.voyra.crm.dto.LeadDetailUpdateRequest;
@@ -25,6 +26,7 @@ import com.voyra.crm.entity.LeadMember;
 import com.voyra.crm.entity.LeadNote;
 import com.voyra.crm.entity.LeadProposal;
 import com.voyra.crm.entity.Member;
+import com.voyra.crm.enums.AuditEntityType;
 import com.voyra.crm.enums.LeadMemberStatus;
 import com.voyra.crm.enums.LeadPriority;
 import com.voyra.crm.enums.LeadStatus;
@@ -42,6 +44,7 @@ import com.voyra.crm.repository.LeadServiceRepository;
 import com.voyra.crm.repository.MemberRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.security.SecurityContextUtil;
+import com.voyra.crm.util.AuditSnapshot;
 import com.voyra.crm.util.MarginCalculator;
 import com.voyra.crm.util.PaxTypeCalculator;
 import com.voyra.crm.util.UniqueIdResolver;
@@ -69,6 +72,7 @@ import java.util.stream.Collectors;
 public class LeadService {
 
     static final Set<LeadStatus> TERMINAL_STATUSES = Set.of(LeadStatus.BOOKED, LeadStatus.LOST);
+    private static final String[] AUDITED = { "status", "lostReason", "destination", "budget", "specialNotes" };
 
     /** Travellers who are still expected to fly. DROPPED rows stay for history but stop counting. */
     private static final Set<LeadMemberStatus> ACTIVE_MANIFEST_STATUSES =
@@ -89,6 +93,7 @@ public class LeadService {
     private final LeadFollowUpService leadFollowUpService;
     private final LeadVoucherService leadVoucherService;
     private final InvoiceService invoiceService;
+    private final AuditService auditService;
 
     @Transactional
     public LeadDetailResponse createLead(LeadCreateRequest request) {
@@ -129,6 +134,7 @@ public class LeadService {
 
         leadTimelineService.recordTransition(lead.getId(), LeadTimelineEventType.LEAD_CREATED,
                 null, LeadStatus.NEW, "Lead created for " + client.getName() + " to " + lead.getDestination());
+        auditService.recordCreate(AuditEntityType.LEAD, lead.getId(), lead.getClientName() + " / " + lead.getDestination());
 
         log.info("Lead created: leadId={}, clientId={}, createdBy={}", lead.getId(), client.getId(), author.id());
         return toDetailResponse(lead);
@@ -216,6 +222,7 @@ public class LeadService {
                 && (request.getLostReason() == null || request.getLostReason().isBlank())) {
             throw new IllegalArgumentException("A reason is required when marking a lead as Lost");
         }
+        Map<String, String> before = AuditSnapshot.of(lead, AUDITED);
         LeadStatus previous = lead.getStatus();
         lead.setStatus(request.getStatus());
         lead.setLostReason(request.getStatus() == LeadStatus.LOST ? request.getLostReason() : null);
@@ -224,6 +231,8 @@ public class LeadService {
 
         leadTimelineService.recordTransition(id, LeadTimelineEventType.STATUS_CHANGED, previous,
                 request.getStatus(), "Status changed from " + previous + " to " + request.getStatus());
+        auditService.recordUpdate(AuditEntityType.LEAD, lead.getId(), lead.getClientName() + " / " + lead.getDestination(),
+                AuditSnapshot.diff(before, AuditSnapshot.of(lead, AUDITED)));
 
         log.info("Lead status updated: leadId={}, status={}", id, request.getStatus());
         return toDetailResponse(lead);
@@ -233,6 +242,7 @@ public class LeadService {
     @Transactional
     public LeadDetailResponse updateDetails(String id, LeadDetailUpdateRequest request) {
         Lead lead = findAccessibleLead(id);
+        Map<String, String> before = AuditSnapshot.of(lead, AUDITED);
         if (request.getDestination() != null) {
             lead.setDestination(request.getDestination());
         }
@@ -246,6 +256,8 @@ public class LeadService {
         leadRepository.save(lead);
 
         leadTimelineService.record(id, LeadTimelineEventType.DETAILS_UPDATED, "Trip information updated");
+        auditService.recordUpdate(AuditEntityType.LEAD, lead.getId(), lead.getClientName() + " / " + lead.getDestination(),
+                AuditSnapshot.diff(before, AuditSnapshot.of(lead, AUDITED)));
 
         log.info("Lead details updated: leadId={}", id);
         return toDetailResponse(lead);

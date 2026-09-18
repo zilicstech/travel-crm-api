@@ -40,6 +40,8 @@ class BookingProfitTest {
     private ClientRepository clientRepository;
     @Mock
     private AgentRepository agentRepository;
+    @Mock
+    private AuditService auditService;
 
     @InjectMocks
     private BookingService bookingService;

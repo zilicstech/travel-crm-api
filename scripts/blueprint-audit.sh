@@ -27,8 +27,9 @@ check "§5.3 all controllers guarded by @PreAuthorize" 0 "$UNGUARDED"
 # Updated when the Client/Member party model replaced customer/family_member: the retired
 # names (Customer, FamilyMember, CustomerDocument, ProposalItem) are gone and the new ones
 # (Client, Member, MemberDocument, LeadMember, LeadProposal, LeadTimeline) are covered.
+# Extended for the audit trail: AuditLog (entity/AuditLog.java).
 check "§7.3 no entities returned from controllers" 0 \
-  "$(grep -rlE 'ResponseEntity<(List<)?(Lead|LeadMember|LeadNote|LeadProposal|LeadTimeline|LeadService|LeadFollowUp|LeadVoucher|AgencySetting|Client|Member|MemberDocument|Booking|Visa|Agent|Tenant|ClientInvoice|SupplierInvoice|PlatformAdmin|SupplierCredential)[>,]' $SRC/controller/ 2>/dev/null | wc -l | tr -d ' ')"
+  "$(grep -rlE 'ResponseEntity<(List<)?(Lead|LeadMember|LeadNote|LeadProposal|LeadTimeline|LeadService|LeadFollowUp|LeadVoucher|AgencySetting|Client|Member|MemberDocument|Booking|Visa|Agent|Tenant|ClientInvoice|SupplierInvoice|PlatformAdmin|SupplierCredential|AuditLog)[>,]' $SRC/controller/ 2>/dev/null | wc -l | tr -d ' ')"
 
 # §8.1 - controllers hold no repository access and no try/catch
 check "§8.1 no repository access in controllers" 0 \

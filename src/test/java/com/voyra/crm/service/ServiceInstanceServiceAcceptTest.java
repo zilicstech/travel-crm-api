@@ -49,6 +49,8 @@ class ServiceInstanceServiceAcceptTest {
     private AgentRepository agentRepository;
     @Mock
     private LeadTimelineService leadTimelineService;
+    @Mock
+    private AuditService auditService;
 
     @InjectMocks
     private ServiceInstanceService serviceInstanceService;

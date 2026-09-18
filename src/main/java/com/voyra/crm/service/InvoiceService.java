@@ -1,5 +1,6 @@
 package com.voyra.crm.service;
 
+import com.voyra.crm.dto.AuditChange;
 import com.voyra.crm.dto.ClientInvoiceCreateRequest;
 import com.voyra.crm.dto.ClientInvoicePaymentRequest;
 import com.voyra.crm.dto.ClientInvoiceResponse;
@@ -13,6 +14,7 @@ import com.voyra.crm.entity.ClientInvoice;
 import com.voyra.crm.entity.Client;
 import com.voyra.crm.entity.Lead;
 import com.voyra.crm.entity.SupplierInvoice;
+import com.voyra.crm.enums.AuditEntityType;
 import com.voyra.crm.enums.InvoiceStatus;
 import com.voyra.crm.enums.LeadTimelineEventType;
 import com.voyra.crm.repository.AgentRepository;
@@ -23,6 +25,7 @@ import com.voyra.crm.repository.LeadServiceRepository;
 import com.voyra.crm.repository.SupplierInvoiceRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.security.SecurityContextUtil;
+import com.voyra.crm.util.AuditSnapshot;
 import com.voyra.crm.util.LeadAccessChecker;
 import com.voyra.crm.util.UniqueIdResolver;
 import org.springframework.security.access.AccessDeniedException;
@@ -36,7 +39,9 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
@@ -44,6 +49,12 @@ import java.util.List;
 public class InvoiceService {
 
     private static final BigDecimal DEFAULT_GST_RATE = new BigDecimal("18.00");
+    private static final String[] CLIENT_INVOICE_AUDITED = {
+            "description", "amount", "gst", "totalWithGst", "amountPaid", "status", "dueDate", "paymentMode"
+    };
+    private static final String[] SUPPLIER_INVOICE_AUDITED = {
+            "supplierName", "category", "amount", "status", "dueDate", "bookingRef"
+    };
 
     private final ClientInvoiceRepository clientInvoiceRepository;
     private final SupplierInvoiceRepository supplierInvoiceRepository;
@@ -52,6 +63,7 @@ public class InvoiceService {
     private final LeadRepository leadRepository;
     private final LeadServiceRepository leadServiceRepository;
     private final LeadTimelineService leadTimelineService;
+    private final AuditService auditService;
 
     @Transactional
     public ClientInvoiceResponse createClientInvoice(ClientInvoiceCreateRequest request) {
@@ -91,8 +103,10 @@ public class InvoiceService {
                 .invoiceDate(LocalDate.now())
                 .dueDate(request.getDueDate())
                 .paymentMode(request.getPaymentMode())
+                .createdBy(agentId)
                 .build();
         clientInvoiceRepository.save(invoice);
+        auditService.recordCreate(AuditEntityType.CLIENT_INVOICE, invoice.getId(), labelFor(invoice));
 
         if (request.getLeadId() != null) {
             leadTimelineService.record(request.getLeadId(), request.getServiceId(), LeadTimelineEventType.INVOICE_ADDED,
@@ -136,6 +150,7 @@ public class InvoiceService {
     public ClientInvoiceResponse recordPayment(String id, ClientInvoicePaymentRequest request) {
         ClientInvoice invoice = clientInvoiceRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Invoice not found: " + id));
+        Map<String, String> before = AuditSnapshot.of(invoice, CLIENT_INVOICE_AUDITED);
         invoice.setAmountPaid(request.getAmountPaid());
         if (request.getPaymentMode() != null) {
             invoice.setPaymentMode(request.getPaymentMode());
@@ -147,7 +162,10 @@ public class InvoiceService {
         } else {
             invoice.setStatus(InvoiceStatus.PENDING);
         }
+        List<AuditChange> changes = AuditSnapshot.diff(before, AuditSnapshot.of(invoice, CLIENT_INVOICE_AUDITED));
+        touch(invoice);
         clientInvoiceRepository.save(invoice);
+        auditService.recordUpdate(AuditEntityType.CLIENT_INVOICE, invoice.getId(), labelFor(invoice), changes);
         log.info("Client invoice payment recorded: invoiceId={}, amountPaid={}", id, request.getAmountPaid());
         return toClientResponse(invoice);
     }
@@ -162,8 +180,10 @@ public class InvoiceService {
                 .status(InvoiceStatus.PENDING)
                 .dueDate(request.getDueDate())
                 .bookingRef(request.getBookingRef())
+                .createdBy(SecurityContextUtil.getCurrentUserOrThrow().userId())
                 .build();
         supplierInvoiceRepository.save(invoice);
+        auditService.recordCreate(AuditEntityType.SUPPLIER_INVOICE, invoice.getId(), invoice.getSupplierName());
         log.info("Supplier invoice created: invoiceId={}", invoice.getId());
         return toSupplierResponse(invoice);
     }
@@ -177,9 +197,23 @@ public class InvoiceService {
     public SupplierInvoiceResponse updateSupplierInvoiceStatus(String id, SupplierInvoiceStatusUpdateRequest request) {
         SupplierInvoice invoice = supplierInvoiceRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Supplier invoice not found: " + id));
+        Map<String, String> before = AuditSnapshot.of(invoice, SUPPLIER_INVOICE_AUDITED);
         invoice.setStatus(request.getStatus());
+        List<AuditChange> changes = AuditSnapshot.diff(before, AuditSnapshot.of(invoice, SUPPLIER_INVOICE_AUDITED));
+        invoice.setUpdatedAt(LocalDateTime.now());
+        invoice.setUpdatedBy(SecurityContextUtil.getCurrentUserOrThrow().userId());
         supplierInvoiceRepository.save(invoice);
+        auditService.recordUpdate(AuditEntityType.SUPPLIER_INVOICE, invoice.getId(), invoice.getSupplierName(), changes);
         return toSupplierResponse(invoice);
+    }
+
+    private void touch(ClientInvoice invoice) {
+        invoice.setUpdatedAt(LocalDateTime.now());
+        invoice.setUpdatedBy(SecurityContextUtil.getCurrentUserOrThrow().userId());
+    }
+
+    private String labelFor(ClientInvoice i) {
+        return i.getClientName() + " / " + (i.getDescription() != null ? i.getDescription() : i.getId());
     }
 
     /**

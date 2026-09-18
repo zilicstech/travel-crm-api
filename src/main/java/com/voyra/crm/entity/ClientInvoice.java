@@ -85,6 +85,15 @@ public class ClientInvoice {
     @Column(name = "created_date")
     private LocalDateTime createdDate;
 
+    @Column(name = "created_by", length = 36)
+    private String createdBy;
+
+    @Column(name = "updated_at")
+    private LocalDateTime updatedAt;
+
+    @Column(name = "updated_by", length = 36)
+    private String updatedBy;
+
     @PrePersist
     protected void onCreate() {
         if (createdDate == null) {
