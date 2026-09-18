@@ -3,6 +3,8 @@ package com.voyra.crm.controller;
 import com.voyra.crm.dto.ActiveStatusUpdateRequest;
 import com.voyra.crm.dto.ClientCreateRequest;
 import com.voyra.crm.dto.ClientDetailResponse;
+import com.voyra.crm.dto.ClientDuplicateCandidateResponse;
+import com.voyra.crm.dto.ClientDuplicateCheckRequest;
 import com.voyra.crm.dto.ClientLookupResponse;
 import com.voyra.crm.dto.ClientUpdateRequest;
 import com.voyra.crm.enums.ClientType;
@@ -25,6 +27,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 /**
  * Clients: the commercial entities the agency deals with, B2C or B2B.
@@ -62,6 +66,14 @@ public class ClientController {
         return ResponseEntity.ok(pageable == null
                 ? clientService.listClients(type)
                 : clientService.listClients(type, pageable));
+    }
+
+    @PostMapping("/duplicate-check")
+    @Operation(summary = "Pre-save advisory duplicate check", description = "Never blocks - matches on "
+            + "exact identifier, a B2C phone written differently, or a similar name. The caller decides "
+            + "whether to proceed.")
+    public ResponseEntity<List<ClientDuplicateCandidateResponse>> checkDuplicates(@RequestBody ClientDuplicateCheckRequest request) {
+        return ResponseEntity.ok(clientService.checkDuplicates(request));
     }
 
     @GetMapping("/lookup")

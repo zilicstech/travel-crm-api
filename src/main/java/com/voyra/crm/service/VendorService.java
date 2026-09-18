@@ -69,6 +69,7 @@ public class VendorService {
                 .isActive(true)
                 .sortOrder(nextSortOrder())
                 .createdBy(SecurityContextUtil.getCurrentUserOrThrow().userId())
+                .createdAt(LocalDateTime.now())
                 .build();
         vendorRepository.save(vendor);
         auditService.recordCreate(AuditEntityType.VENDOR, vendor.getId(), vendor.getName());

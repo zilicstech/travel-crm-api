@@ -45,4 +45,7 @@ public class ClientResponse {
 
     @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String modifiedBy;
+
+    @Schema(description = "Set when this client was created despite a duplicate-check warning", example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
+    private String possibleDuplicateOf;
 }

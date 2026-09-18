@@ -3,6 +3,8 @@ package com.voyra.crm.service;
 import com.voyra.crm.dto.AuditChange;
 import com.voyra.crm.dto.ClientCreateRequest;
 import com.voyra.crm.dto.ClientDetailResponse;
+import com.voyra.crm.dto.ClientDuplicateCandidateResponse;
+import com.voyra.crm.dto.ClientDuplicateCheckRequest;
 import com.voyra.crm.dto.ClientLookupResponse;
 import com.voyra.crm.dto.ClientResponse;
 import com.voyra.crm.dto.ClientUpdateRequest;
@@ -32,6 +34,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -73,6 +76,7 @@ public class ClientService {
                 .isActive(true)
                 .createdAt(LocalDateTime.now())
                 .createdBy(currentUserId())
+                .possibleDuplicateOf(request.getPossibleDuplicateOf())
                 .build();
         clientRepository.save(client);
 
@@ -139,6 +143,31 @@ public class ClientService {
                         .memberCount((int) memberRepository.countByClientIdAndIsActiveTrue(c.getId()))
                         .build())
                 .orElseGet(() -> ClientLookupResponse.builder().found(false).identifier(identifier).build());
+    }
+
+    /**
+     * Pre-save advisory check, beyond the exact-identifier block above: a B2C phone written
+     * differently (matched on the last 10 digits) or a name that is merely similar via pg_trgm.
+     * Read-only - never blocks; the caller decides whether to proceed and, if so, may pass the
+     * chosen candidate's id back as {@code possibleDuplicateOf} on the actual create call.
+     */
+    @Transactional(readOnly = true)
+    public List<ClientDuplicateCandidateResponse> checkDuplicates(ClientDuplicateCheckRequest request) {
+        Map<String, ClientDuplicateCandidateResponse> byId = new LinkedHashMap<>();
+
+        if (request.getIdentifier() != null && !request.getIdentifier().isBlank()) {
+            clientRepository.findByIdentifierAndIsActiveTrue(request.getIdentifier())
+                    .ifPresent(c -> byId.put(c.getId(), toDuplicateCandidate(c, "EXACT_IDENTIFIER")));
+            for (Client c : clientRepository.findByPhoneSuffix(request.getIdentifier())) {
+                byId.putIfAbsent(c.getId(), toDuplicateCandidate(c, "PHONE_SUFFIX"));
+            }
+        }
+        if (request.getName() != null && !request.getName().isBlank()) {
+            for (Client c : clientRepository.findSimilarByName(request.getName())) {
+                byId.putIfAbsent(c.getId(), toDuplicateCandidate(c, "NAME_SIMILARITY"));
+            }
+        }
+        return List.copyOf(byId.values());
     }
 
     /**
@@ -233,6 +262,7 @@ public class ClientService {
                 .isActive(client.getIsActive())
                 .createdAt(client.getCreatedAt()).createdBy(client.getCreatedBy())
                 .modifiedAt(client.getModifiedAt()).modifiedBy(client.getModifiedBy())
+                .possibleDuplicateOf(client.getPossibleDuplicateOf())
                 .build();
     }
 
@@ -245,6 +275,14 @@ public class ClientService {
                 .isActive(client.getIsActive()).members(members)
                 .createdAt(client.getCreatedAt()).createdBy(client.getCreatedBy())
                 .modifiedAt(client.getModifiedAt()).modifiedBy(client.getModifiedBy())
+                .possibleDuplicateOf(client.getPossibleDuplicateOf())
+                .build();
+    }
+
+    private ClientDuplicateCandidateResponse toDuplicateCandidate(Client c, String reason) {
+        return ClientDuplicateCandidateResponse.builder()
+                .id(c.getId()).name(c.getName()).identifier(c.getIdentifier()).type(c.getType())
+                .matchReason(reason)
                 .build();
     }
 }

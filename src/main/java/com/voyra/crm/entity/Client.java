@@ -67,6 +67,11 @@ public class Client {
     @Column(name = "modified_by", length = 36)
     private String modifiedBy;
 
+    /** Set only when this client was created despite a duplicate-check warning - see
+     *  {@link com.voyra.crm.service.ClientService#checkDuplicates}. Advisory, not a merge; no FK. */
+    @Column(name = "possible_duplicate_of", length = 36)
+    private String possibleDuplicateOf;
+
     @PrePersist
     protected void onCreate() {
         if (createdAt == null) {

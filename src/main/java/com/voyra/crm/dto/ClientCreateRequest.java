@@ -66,4 +66,8 @@ public class ClientCreateRequest {
 
     @Schema(example = "2032-05-20")
     private LocalDate primaryMemberPassportExpiry;
+
+    @Schema(description = "Set when the agent created this client despite a duplicate-check warning - "
+            + "the id of the existing client it might be the same as", example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
+    private String possibleDuplicateOf;
 }

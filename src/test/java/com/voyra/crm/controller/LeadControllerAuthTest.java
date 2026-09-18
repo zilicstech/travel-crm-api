@@ -4,6 +4,7 @@ import com.voyra.crm.config.SecurityConfig;
 import com.voyra.crm.security.JwtAuthenticationFilter;
 import com.voyra.crm.security.JwtService;
 import com.voyra.crm.security.RestAuthenticationEntryPoint;
+import com.voyra.crm.service.CommunicationLogService;
 import com.voyra.crm.service.LeadService;
 import com.voyra.crm.service.LeadTimelineService;
 import com.voyra.crm.service.ProposalLinkService;
@@ -39,6 +40,8 @@ class LeadControllerAuthTest {
     private LeadTimelineService leadTimelineService;
     @MockBean
     private ProposalLinkService proposalLinkService;
+    @MockBean
+    private CommunicationLogService communicationLogService;
 
     @Test
     void listLeads_unauthenticatedRequestIsRejected() throws Exception {

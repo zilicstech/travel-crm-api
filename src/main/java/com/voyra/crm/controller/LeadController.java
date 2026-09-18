@@ -1,5 +1,6 @@
 package com.voyra.crm.controller;
 
+import com.voyra.crm.dto.CommunicationLogResponse;
 import com.voyra.crm.dto.LeadCreateRequest;
 import com.voyra.crm.dto.LeadDetailResponse;
 import com.voyra.crm.dto.LeadDetailUpdateRequest;
@@ -19,6 +20,7 @@ import com.voyra.crm.dto.ProposalItemUpdateRequest;
 import com.voyra.crm.dto.LeadTimelineResponse;
 import com.voyra.crm.dto.ProposalLinkResponse;
 import com.voyra.crm.enums.LeadStatus;
+import com.voyra.crm.service.CommunicationLogService;
 import com.voyra.crm.service.LeadService;
 import com.voyra.crm.service.LeadTimelineService;
 import com.voyra.crm.service.ProposalLinkService;
@@ -60,6 +62,7 @@ public class LeadController {
     private final LeadService leadService;
     private final LeadTimelineService leadTimelineService;
     private final ProposalLinkService proposalLinkService;
+    private final CommunicationLogService communicationLogService;
 
     @PostMapping
     @Operation(summary = "Create a lead against an existing client",
@@ -190,6 +193,14 @@ public class LeadController {
                                                            @PathVariable String memberId,
                                                            @Valid @RequestBody LeadMemberUpdateRequest request) {
         return ResponseEntity.ok(leadService.updateMember(id, memberId, request));
+    }
+
+    @GetMapping("/{id}/communications")
+    @Operation(summary = "Communications logged against this lead", description = "Subset of the "
+            + "client's full communication history where leadId matches this lead.")
+    public ResponseEntity<List<CommunicationLogResponse>> getCommunications(@PathVariable String id) {
+        leadService.getLead(id);
+        return ResponseEntity.ok(communicationLogService.listForLead(id));
     }
 
     @GetMapping("/{id}/timeline")
