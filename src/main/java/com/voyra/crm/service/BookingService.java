@@ -2,7 +2,9 @@ package com.voyra.crm.service;
 
 import com.voyra.crm.dto.AuditChange;
 import com.voyra.crm.dto.BookingCreateRequest;
+import com.voyra.crm.dto.BookingDeadlineUpdateRequest;
 import com.voyra.crm.dto.BookingPaymentStatusUpdateRequest;
+import com.voyra.crm.dto.BookingRefundUpdateRequest;
 import com.voyra.crm.dto.BookingResponse;
 import com.voyra.crm.dto.BookingStatusUpdateRequest;
 import com.voyra.crm.dto.BookingUpdateRequest;
@@ -13,6 +15,7 @@ import com.voyra.crm.entity.Client;
 import com.voyra.crm.enums.AuditEntityType;
 import com.voyra.crm.enums.BookingStatus;
 import com.voyra.crm.enums.BookingType;
+import com.voyra.crm.enums.RefundState;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.BookingRepository;
 import com.voyra.crm.repository.ClientRepository;
@@ -42,8 +45,9 @@ public class BookingService {
     /** The audited surface of a booking - read this array to know exactly what history records. */
     private static final String[] AUDITED = {
             "pnr", "ticketNo", "airline", "supplier", "journeyDate", "returnDate", "tripType",
-            "netCost", "sellingPrice", "profit", "bookingStatus", "paymentStatus",
-            "cancelReason", "refundStatus"
+            "netCost", "sellingPrice", "profit", "bookingStatus", "paymentStatus", "cancelReason",
+            "refundState", "refundAmount", "refundDueDate",
+            "ticketingDeadline", "cancellationDeadline", "deadlineNote"
     };
 
     private final BookingRepository bookingRepository;
@@ -200,12 +204,59 @@ public class BookingService {
             if (request.getRefundStatus() != null) {
                 booking.setRefundStatus(request.getRefundStatus());
             }
+            // A cancellation always needs a refund decision from someone - defaulting to
+            // NOT_APPLICABLE here would make every cancelled booking silently invisible to the
+            // "who still owes us money" view. updateRefund() moves it on from here.
+            if (booking.getRefundState() == RefundState.NOT_APPLICABLE) {
+                booking.setRefundState(RefundState.REFUND_PENDING);
+            }
+            booking.setCancelledAt(LocalDateTime.now());
+            booking.setCancelledBy(SecurityContextUtil.getCurrentUserOrThrow().userId());
         }
         List<AuditChange> changes = AuditSnapshot.diff(before, AuditSnapshot.of(booking, AUDITED));
         touch(booking);
         bookingRepository.save(booking);
         auditService.recordUpdate(AuditEntityType.BOOKING, booking.getId(), labelFor(booking), changes);
         log.info("Booking status updated: bookingId={}, status={}", id, request.getBookingStatus());
+        return toResponse(booking);
+    }
+
+    @Transactional
+    public BookingResponse updateRefund(String id, BookingRefundUpdateRequest request) {
+        Booking booking = findAccessibleBooking(id);
+        if (booking.getBookingStatus() != BookingStatus.CANCELLED) {
+            throw new IllegalStateException("Only a cancelled booking can carry a refund state");
+        }
+        Map<String, String> before = AuditSnapshot.of(booking, AUDITED);
+        booking.setRefundState(request.getRefundState());
+        if (request.getRefundAmount() != null) {
+            booking.setRefundAmount(request.getRefundAmount());
+        }
+        if (request.getRefundDueDate() != null) {
+            booking.setRefundDueDate(request.getRefundDueDate());
+        }
+        if (request.getRefundState() == RefundState.REFUNDED || request.getRefundState() == RefundState.PARTIALLY_REFUNDED) {
+            booking.setRefundedAt(LocalDateTime.now());
+        }
+        List<AuditChange> changes = AuditSnapshot.diff(before, AuditSnapshot.of(booking, AUDITED));
+        touch(booking);
+        bookingRepository.save(booking);
+        auditService.recordUpdate(AuditEntityType.BOOKING, booking.getId(), labelFor(booking), changes);
+        log.info("Booking refund updated: bookingId={}, refundState={}", id, request.getRefundState());
+        return toResponse(booking);
+    }
+
+    @Transactional
+    public BookingResponse updateDeadlines(String id, BookingDeadlineUpdateRequest request) {
+        Booking booking = findAccessibleBooking(id);
+        Map<String, String> before = AuditSnapshot.of(booking, AUDITED);
+        if (request.getTicketingDeadline() != null) booking.setTicketingDeadline(request.getTicketingDeadline());
+        if (request.getCancellationDeadline() != null) booking.setCancellationDeadline(request.getCancellationDeadline());
+        if (request.getDeadlineNote() != null) booking.setDeadlineNote(request.getDeadlineNote());
+        List<AuditChange> changes = AuditSnapshot.diff(before, AuditSnapshot.of(booking, AUDITED));
+        touch(booking);
+        bookingRepository.save(booking);
+        auditService.recordUpdate(AuditEntityType.BOOKING, booking.getId(), labelFor(booking), changes);
         return toResponse(booking);
     }
 
@@ -272,6 +323,11 @@ public class BookingService {
                 .sellingPrice(b.getSellingPrice()).profit(b.getProfit()).bookingStatus(b.getBookingStatus())
                 .paymentStatus(b.getPaymentStatus()).bookingDate(b.getBookingDate())
                 .cancelReason(b.getCancelReason()).refundStatus(b.getRefundStatus())
+                .refundState(b.getRefundState()).refundAmount(b.getRefundAmount())
+                .refundDueDate(b.getRefundDueDate()).refundedAt(b.getRefundedAt())
+                .cancelledAt(b.getCancelledAt())
+                .ticketingDeadline(b.getTicketingDeadline()).cancellationDeadline(b.getCancellationDeadline())
+                .deadlineNote(b.getDeadlineNote())
                 .createdDate(b.getCreatedDate())
                 .build();
     }

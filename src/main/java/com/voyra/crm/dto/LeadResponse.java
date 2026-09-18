@@ -77,4 +77,7 @@ public class LeadResponse {
 
     @Schema(description = "followUpDate is in the past AND status is not BOOKED/LOST")
     private boolean overdue;
+
+    @Schema(description = "Manually flagged by an owner/agent for senior attention", example = "false")
+    private Boolean escalated;
 }

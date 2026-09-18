@@ -121,4 +121,23 @@ public interface BookingRepository extends JpaRepository<Booking, String> {
     @Modifying
     @Query("UPDATE Booking b SET b.clientName = :name WHERE b.clientId = :clientId")
     void updateClientNameForClient(@Param("clientId") String clientId, @Param("name") String name);
+
+    /** booking.supplier is a live reference stored as a name string, not an FK - see VendorService. */
+    @Modifying
+    @Query("UPDATE Booking b SET b.supplier = :newName WHERE b.supplier = :oldName")
+    void updateSupplierName(@Param("oldName") String oldName, @Param("newName") String newName);
+
+    /** Owner-wide escalation feed - bookings whose ticketing time limit has passed. */
+    List<Booking> findByBookingStatusNotInAndTicketingDeadlineLessThan(
+            Collection<BookingStatus> excludedStatuses, java.time.LocalDate date);
+
+    List<Booking> findByAgentIdAndBookingStatusNotInAndTicketingDeadlineLessThan(
+            String agentId, Collection<BookingStatus> excludedStatuses, java.time.LocalDate date);
+
+    /** Owner-wide escalation feed - bookings past their free-cancellation window. */
+    List<Booking> findByBookingStatusNotInAndCancellationDeadlineLessThan(
+            Collection<BookingStatus> excludedStatuses, java.time.LocalDate date);
+
+    List<Booking> findByAgentIdAndBookingStatusNotInAndCancellationDeadlineLessThan(
+            String agentId, Collection<BookingStatus> excludedStatuses, java.time.LocalDate date);
 }

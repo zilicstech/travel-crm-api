@@ -3,6 +3,7 @@ package com.voyra.crm.entity;
 import com.voyra.crm.enums.BookingStatus;
 import com.voyra.crm.enums.BookingType;
 import com.voyra.crm.enums.PaymentStatus;
+import com.voyra.crm.enums.RefundState;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -99,8 +100,39 @@ public class Booking {
     @Column(name = "cancel_reason", length = 255)
     private String cancelReason;
 
+    /** @deprecated superseded by {@link #refundState}; kept read-only for one release. */
+    @Deprecated
     @Column(name = "refund_status", length = 100)
     private String refundStatus;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "refund_state", nullable = false, length = 20)
+    @Builder.Default
+    private RefundState refundState = RefundState.NOT_APPLICABLE;
+
+    @Column(name = "refund_amount", precision = 19, scale = 2)
+    private BigDecimal refundAmount;
+
+    @Column(name = "refund_due_date")
+    private LocalDate refundDueDate;
+
+    @Column(name = "refunded_at")
+    private LocalDateTime refundedAt;
+
+    @Column(name = "cancelled_at")
+    private LocalDateTime cancelledAt;
+
+    @Column(name = "cancelled_by", length = 36)
+    private String cancelledBy;
+
+    @Column(name = "ticketing_deadline")
+    private LocalDate ticketingDeadline;
+
+    @Column(name = "cancellation_deadline")
+    private LocalDate cancellationDeadline;
+
+    @Column(name = "deadline_note", length = 255)
+    private String deadlineNote;
 
     @Column(name = "created_date")
     private LocalDateTime createdDate;

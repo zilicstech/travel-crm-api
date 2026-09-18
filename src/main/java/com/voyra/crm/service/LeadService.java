@@ -72,7 +72,9 @@ import java.util.stream.Collectors;
 public class LeadService {
 
     static final Set<LeadStatus> TERMINAL_STATUSES = Set.of(LeadStatus.BOOKED, LeadStatus.LOST);
-    private static final String[] AUDITED = { "status", "lostReason", "destination", "budget", "specialNotes" };
+    private static final String[] AUDITED = {
+            "status", "lostReason", "destination", "budget", "specialNotes", "escalated", "escalationReason"
+    };
 
     /** Travellers who are still expected to fly. DROPPED rows stay for history but stop counting. */
     private static final Set<LeadMemberStatus> ACTIVE_MANIFEST_STATUSES =
@@ -640,6 +642,24 @@ public class LeadService {
         }
     }
 
+    /** In-app surfacing only - flags a lead for a senior's attention. No push, no email. */
+    @Transactional
+    public LeadDetailResponse setEscalated(String id, boolean escalated, String reason) {
+        if (escalated && (reason == null || reason.isBlank())) {
+            throw new IllegalArgumentException("A reason is required when escalating a lead");
+        }
+        Lead lead = findAccessibleLead(id);
+        Map<String, String> before = AuditSnapshot.of(lead, AUDITED);
+        lead.setEscalated(escalated);
+        lead.setEscalationReason(escalated ? reason : null);
+        lead.setEscalatedAt(escalated ? LocalDateTime.now() : null);
+        List<AuditChange> changes = AuditSnapshot.diff(before, AuditSnapshot.of(lead, AUDITED));
+        leadRepository.save(lead);
+        auditService.recordUpdate(AuditEntityType.LEAD, lead.getId(), lead.getClientName() + " / " + lead.getDestination(), changes);
+        log.info("Lead escalation changed: leadId={}, escalated={}", id, escalated);
+        return toDetailResponse(lead);
+    }
+
     @Transactional
     public LeadDetailResponse setProposalLocked(String id, boolean locked) {
         Lead lead = findAccessibleLead(id);
@@ -747,6 +767,7 @@ public class LeadService {
                 .confirmedTravellers(confirmedByLead.getOrDefault(lead.getId(), 0L).intValue())
                 .createdBy(lead.getCreatedBy()).createdByName(lead.getCreatedByName())
                 .followUpDate(lead.getFollowUpDate()).createdAt(lead.getCreatedAt()).overdue(isOverdue(lead))
+                .escalated(lead.getEscalated())
                 .build();
     }
 
@@ -797,6 +818,8 @@ public class LeadService {
                 .notes(notes)
                 .hasPublicProposalLink(lead.getPublicProposalToken() != null)
                 .proposalLocked(lead.isProposalLocked())
+                .escalated(lead.getEscalated()).escalatedAt(lead.getEscalatedAt())
+                .escalationReason(lead.getEscalationReason())
                 .build();
     }
 

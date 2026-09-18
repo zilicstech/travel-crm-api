@@ -1,7 +1,9 @@
 package com.voyra.crm.controller;
 
 import com.voyra.crm.dto.BookingCreateRequest;
+import com.voyra.crm.dto.BookingDeadlineUpdateRequest;
 import com.voyra.crm.dto.BookingPaymentStatusUpdateRequest;
+import com.voyra.crm.dto.BookingRefundUpdateRequest;
 import com.voyra.crm.dto.BookingResponse;
 import com.voyra.crm.dto.BookingStatusUpdateRequest;
 import com.voyra.crm.dto.BookingUpdateRequest;
@@ -86,5 +88,19 @@ public class BookingController {
     public ResponseEntity<BookingResponse> updatePaymentStatus(@PathVariable String id,
                                                                 @Valid @RequestBody BookingPaymentStatusUpdateRequest request) {
         return ResponseEntity.ok(bookingService.updatePaymentStatus(id, request));
+    }
+
+    @PatchMapping("/{id}/refund")
+    @Operation(summary = "Update a cancelled booking's refund state", description = "Only valid once bookingStatus is CANCELLED.")
+    public ResponseEntity<BookingResponse> updateRefund(@PathVariable String id,
+                                                         @Valid @RequestBody BookingRefundUpdateRequest request) {
+        return ResponseEntity.ok(bookingService.updateRefund(id, request));
+    }
+
+    @PatchMapping("/{id}/deadlines")
+    @Operation(summary = "Set ticketing/cancellation deadlines")
+    public ResponseEntity<BookingResponse> updateDeadlines(@PathVariable String id,
+                                                            @Valid @RequestBody BookingDeadlineUpdateRequest request) {
+        return ResponseEntity.ok(bookingService.updateDeadlines(id, request));
     }
 }

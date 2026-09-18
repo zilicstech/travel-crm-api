@@ -28,11 +28,12 @@ import java.util.List;
 public class AgencySettingService {
 
     private final AgencySettingRepository agencySettingRepository;
+    private final VendorService vendorService;
 
     @Transactional
     public AgencySettingResponse create(AgencySettingCreateRequest request) {
-        boolean requiresServiceType = request.getKind() == AgencySettingKind.SERVICE_PREFERENCE
-                || request.getKind() == AgencySettingKind.SUPPLIER;
+        rejectSupplierWrite(request.getKind());
+        boolean requiresServiceType = request.getKind() == AgencySettingKind.SERVICE_PREFERENCE;
         if (requiresServiceType && request.getServiceType() == null) {
             throw new IllegalArgumentException("serviceType is required for a " + request.getKind() + " setting");
         }
@@ -61,6 +62,9 @@ public class AgencySettingService {
 
     @Transactional(readOnly = true)
     public List<AgencySettingResponse> list(AgencySettingKind kind, ServiceType serviceType) {
+        if (kind == AgencySettingKind.SUPPLIER) {
+            return vendorService.listAsLegacySettings(serviceType);
+        }
         List<AgencySetting> rows = serviceType != null
                 ? agencySettingRepository.findByKindAndServiceTypeOrderBySortOrderAsc(kind, serviceType)
                 : agencySettingRepository.findByKindOrderBySortOrderAsc(kind);
@@ -71,6 +75,7 @@ public class AgencySettingService {
     public AgencySettingResponse update(String id, AgencySettingUpdateRequest request) {
         AgencySetting setting = agencySettingRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Setting not found: " + id));
+        rejectSupplierWrite(setting.getKind());
         if (request.getName() != null) {
             setting.setName(request.getName());
         }
@@ -88,8 +93,16 @@ public class AgencySettingService {
     public void delete(String id) {
         AgencySetting setting = agencySettingRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Setting not found: " + id));
+        rejectSupplierWrite(setting.getKind());
         agencySettingRepository.delete(setting);
         log.info("Agency setting removed: id={}", id);
+    }
+
+    /** Suppliers moved to /api/vendors - see AgencySettingKind.SUPPLIER's javadoc. */
+    private void rejectSupplierWrite(AgencySettingKind kind) {
+        if (kind == AgencySettingKind.SUPPLIER) {
+            throw new IllegalStateException("Suppliers are now managed at /api/vendors");
+        }
     }
 
     private int nextSortOrder(AgencySettingKind kind, ServiceType serviceType) {

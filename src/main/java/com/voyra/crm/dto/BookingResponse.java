@@ -3,6 +3,7 @@ package com.voyra.crm.dto;
 import com.voyra.crm.enums.BookingStatus;
 import com.voyra.crm.enums.BookingType;
 import com.voyra.crm.enums.PaymentStatus;
+import com.voyra.crm.enums.RefundState;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -83,8 +84,32 @@ public class BookingResponse {
     @Schema(description = "Required when bookingStatus is CANCELLED")
     private String cancelReason;
 
-    @Schema(description = "e.g. 'Refunded ₹62,000' - set when a cancellation has been refunded")
+    @Schema(description = "Deprecated - superseded by refundState", example = "Refunded ₹62,000")
     private String refundStatus;
+
+    @Schema(example = "REFUND_PENDING")
+    private RefundState refundState;
+
+    @Schema(example = "42000.00")
+    private BigDecimal refundAmount;
+
+    @Schema(example = "2026-10-01")
+    private LocalDate refundDueDate;
+
+    @Schema(example = "2026-09-25T11:00:00")
+    private LocalDateTime refundedAt;
+
+    @Schema(example = "2026-09-10T16:30:00")
+    private LocalDateTime cancelledAt;
+
+    @Schema(description = "Ticketing time limit", example = "2026-09-18")
+    private LocalDate ticketingDeadline;
+
+    @Schema(description = "Last date to cancel without penalty", example = "2026-09-15")
+    private LocalDate cancellationDeadline;
+
+    @Schema(example = "Fare holds ticket only until 6 PM IST")
+    private String deadlineNote;
 
     @Schema(example = "2026-08-13T09:15:22")
     private LocalDateTime createdDate;

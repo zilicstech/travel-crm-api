@@ -11,6 +11,7 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.List;
 
 @Repository
@@ -21,6 +22,11 @@ public interface ClientInvoiceRepository extends JpaRepository<ClientInvoice, St
     Page<ClientInvoice> findByAgentId(String agentId, Pageable pageable);
 
     List<ClientInvoice> findByClientId(String clientId);
+
+    /** Owner-wide escalation feed. */
+    List<ClientInvoice> findByStatusNotAndDueDateLessThan(InvoiceStatus status, LocalDate date);
+
+    List<ClientInvoice> findByAgentIdAndStatusNotAndDueDateLessThan(String agentId, InvoiceStatus status, LocalDate date);
 
     List<ClientInvoice> findByLeadIdOrderByInvoiceDateDesc(String leadId);
 

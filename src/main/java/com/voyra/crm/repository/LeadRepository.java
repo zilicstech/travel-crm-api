@@ -21,6 +21,11 @@ public interface LeadRepository extends JpaRepository<Lead, String> {
 
     List<Lead> findByCreatedBy(String createdBy);
 
+    /** Owner-wide escalation feed. Agent's own is {@link #findByEscalatedTrueAndCreatedBy}. */
+    List<Lead> findByEscalatedTrue();
+
+    List<Lead> findByEscalatedTrueAndCreatedBy(String createdBy);
+
     /**
      * Every lead an agent may reach: ones they created, plus ones where at least one
      * service is personally assigned to them or of a type they manage - the same rule

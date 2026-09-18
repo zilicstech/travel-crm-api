@@ -184,6 +184,16 @@ public class Lead {
     @Builder.Default
     private Integer serviceCount = 0;
 
+    @Column(name = "escalated", nullable = false)
+    @Builder.Default
+    private Boolean escalated = false;
+
+    @Column(name = "escalated_at")
+    private LocalDateTime escalatedAt;
+
+    @Column(name = "escalation_reason", length = 255)
+    private String escalationReason;
+
     @PrePersist
     protected void onCreate() {
         if (createdAt == null) {

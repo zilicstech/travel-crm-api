@@ -150,4 +150,13 @@ public class LeadDetailResponse {
             + "selection endpoint and every proposal-item write are rejected until an "
             + "agent/owner unlocks it. Auto-set true when a customer confirms their option picks.")
     private boolean proposalLocked;
+
+    @Schema(description = "Manually flagged by an owner/agent for senior attention", example = "false")
+    private Boolean escalated;
+
+    @Schema(example = "2026-09-12T10:00:00")
+    private LocalDateTime escalatedAt;
+
+    @Schema(example = "Client threatening to cancel over a pricing dispute")
+    private String escalationReason;
 }

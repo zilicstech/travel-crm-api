@@ -3,6 +3,7 @@ package com.voyra.crm.controller;
 import com.voyra.crm.dto.LeadCreateRequest;
 import com.voyra.crm.dto.LeadDetailResponse;
 import com.voyra.crm.dto.LeadDetailUpdateRequest;
+import com.voyra.crm.dto.LeadEscalateRequest;
 import com.voyra.crm.dto.LeadMemberAddRequest;
 import com.voyra.crm.dto.LeadMemberResponse;
 import com.voyra.crm.dto.LeadMemberUpdateRequest;
@@ -100,6 +101,14 @@ public class LeadController {
     public ResponseEntity<LeadDetailResponse> updateStatus(@PathVariable String id,
                                                             @Valid @RequestBody LeadStatusUpdateRequest request) {
         return ResponseEntity.ok(leadService.updateStatus(id, request));
+    }
+
+    @PatchMapping("/{id}/escalate")
+    @Operation(summary = "Flag or clear a lead's escalation", description = "In-app surfacing only - "
+            + "no notification is sent. reason is required when escalated is true.")
+    public ResponseEntity<LeadDetailResponse> setEscalated(@PathVariable String id,
+                                                            @Valid @RequestBody LeadEscalateRequest request) {
+        return ResponseEntity.ok(leadService.setEscalated(id, request.getEscalated(), request.getReason()));
     }
 
     @PatchMapping("/{id}/proposal-lock")
