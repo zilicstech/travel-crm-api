@@ -9,6 +9,9 @@ import com.voyra.crm.enums.LeadStatus;
 import com.voyra.crm.repository.BookingRepository;
 import com.voyra.crm.repository.LeadRepository;
 import com.voyra.crm.util.CsvWriter;
+import com.voyra.crm.util.PdfTableWriter;
+import com.voyra.crm.util.ReportTable;
+import com.voyra.crm.util.XlsxWriter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -108,6 +111,69 @@ public class ReportService {
 
     @Transactional(readOnly = true)
     public String exportLeadsCsv() {
+        ReportTable table = leadsTable();
+        return CsvWriter.write(table.header(), table.rows());
+    }
+
+    @Transactional(readOnly = true)
+    public byte[] exportLeadsXlsx() {
+        return XlsxWriter.write("Leads", leadsTable());
+    }
+
+    @Transactional(readOnly = true)
+    public byte[] exportLeadsPdf() {
+        return PdfTableWriter.write("Leads", leadsTable());
+    }
+
+    @Transactional(readOnly = true)
+    public String exportBookingsCsv() {
+        ReportTable table = bookingsTable();
+        return CsvWriter.write(table.header(), table.rows());
+    }
+
+    @Transactional(readOnly = true)
+    public byte[] exportBookingsXlsx() {
+        return XlsxWriter.write("Bookings", bookingsTable());
+    }
+
+    @Transactional(readOnly = true)
+    public byte[] exportBookingsPdf() {
+        return PdfTableWriter.write("Bookings", bookingsTable());
+    }
+
+    @Transactional(readOnly = true)
+    public String exportRevenueCsv(int months) {
+        ReportTable table = revenueTable(months);
+        return CsvWriter.write(table.header(), table.rows());
+    }
+
+    @Transactional(readOnly = true)
+    public byte[] exportRevenueXlsx(int months) {
+        return XlsxWriter.write("Revenue", revenueTable(months));
+    }
+
+    @Transactional(readOnly = true)
+    public byte[] exportRevenuePdf(int months) {
+        return PdfTableWriter.write("Revenue", revenueTable(months));
+    }
+
+    @Transactional(readOnly = true)
+    public String exportAgentsCsv() {
+        ReportTable table = agentsTable();
+        return CsvWriter.write(table.header(), table.rows());
+    }
+
+    @Transactional(readOnly = true)
+    public byte[] exportAgentsXlsx() {
+        return XlsxWriter.write("Agents", agentsTable());
+    }
+
+    @Transactional(readOnly = true)
+    public byte[] exportAgentsPdf() {
+        return PdfTableWriter.write("Agents", agentsTable());
+    }
+
+    private ReportTable leadsTable() {
         List<LeadResponse> leads = leadService.listLeads(null);
         List<String> header = List.of("id", "clientName", "destination", "status", "source", "priority",
                 "totalTravellers", "createdByName", "followUpDate", "createdAt");
@@ -117,11 +183,10 @@ public class ReportService {
                         str(l.getTotalTravellers()),
                         l.getCreatedByName(), str(l.getFollowUpDate()), str(l.getCreatedAt())))
                 .toList();
-        return CsvWriter.write(header, rows);
+        return new ReportTable(header, rows);
     }
 
-    @Transactional(readOnly = true)
-    public String exportBookingsCsv() {
+    private ReportTable bookingsTable() {
         List<BookingResponse> bookings = bookingService.listBookings(null, null);
         List<String> header = List.of("id", "type", "clientName", "destination", "agentName",
                 "netCost", "sellingPrice", "profit", "bookingStatus", "paymentStatus", "bookingDate");
@@ -130,20 +195,18 @@ public class ReportService {
                         b.getAgentName(), str(b.getNetCost()), str(b.getSellingPrice()), str(b.getProfit()),
                         b.getBookingStatus().name(), b.getPaymentStatus().name(), str(b.getBookingDate())))
                 .toList();
-        return CsvWriter.write(header, rows);
+        return new ReportTable(header, rows);
     }
 
-    @Transactional(readOnly = true)
-    public String exportRevenueCsv(int months) {
+    private ReportTable revenueTable(int months) {
         List<String> header = List.of("month", "revenue", "profit");
         List<List<String>> rows = getRevenueTrend(months).stream()
                 .map(p -> List.of(p.getMonth(), str(p.getRevenue()), str(p.getProfit())))
                 .toList();
-        return CsvWriter.write(header, rows);
+        return new ReportTable(header, rows);
     }
 
-    @Transactional(readOnly = true)
-    public String exportAgentsCsv() {
+    private ReportTable agentsTable() {
         List<AgentPerformanceResponse> agents = agentService.listAgents();
         List<String> header = List.of("id", "name", "department", "leadsAssigned", "bookingsCount",
                 "revenueGenerated", "conversionPercent", "commission");
@@ -152,7 +215,7 @@ public class ReportService {
                         str(a.getBookingsCount()), str(a.getRevenueGenerated()), str(a.getConversionPercent()),
                         str(a.getCommission())))
                 .toList();
-        return CsvWriter.write(header, rows);
+        return new ReportTable(header, rows);
     }
 
     private String str(Object value) {

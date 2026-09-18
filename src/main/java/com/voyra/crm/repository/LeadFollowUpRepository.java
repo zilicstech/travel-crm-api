@@ -33,4 +33,10 @@ public interface LeadFollowUpRepository extends JpaRepository<LeadFollowUp, Stri
 
     List<LeadFollowUp> findByAssignedAgentIdAndStatusAndDueDateLessThanOrderByDueDateAsc(
             String assignedAgentId, FollowUpStatus status, LocalDate dueDate);
+
+    /** Agency-wide calendar feed. */
+    List<LeadFollowUp> findByStatusAndDueDateBetweenOrderByDueDateAsc(FollowUpStatus status, LocalDate from, LocalDate to);
+
+    List<LeadFollowUp> findByAssignedAgentIdAndStatusAndDueDateBetweenOrderByDueDateAsc(
+            String assignedAgentId, FollowUpStatus status, LocalDate from, LocalDate to);
 }

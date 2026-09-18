@@ -303,7 +303,7 @@ public class BookingService {
         return new AuthorResolver.AuthorInfo(agent.getId(), agent.getName());
     }
 
-    private Booking findAccessibleBooking(String id) {
+    public Booking findAccessibleBooking(String id) {
         Booking booking = bookingRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Booking not found: " + id));
         CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();

@@ -36,4 +36,9 @@ public interface ClientInvoiceRepository extends JpaRepository<ClientInvoice, St
     @Modifying
     @Query("UPDATE ClientInvoice c SET c.clientName = :name WHERE c.clientId = :clientId")
     void updateClientNameForClient(@Param("clientId") String clientId, @Param("name") String name);
+
+    /** Agency-wide calendar feed. */
+    List<ClientInvoice> findByDueDateBetween(LocalDate from, LocalDate to);
+
+    List<ClientInvoice> findByAgentIdAndDueDateBetween(String agentId, LocalDate from, LocalDate to);
 }

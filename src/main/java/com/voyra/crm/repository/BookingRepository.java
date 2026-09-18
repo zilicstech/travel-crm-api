@@ -140,4 +140,13 @@ public interface BookingRepository extends JpaRepository<Booking, String> {
 
     List<Booking> findByAgentIdAndBookingStatusNotInAndCancellationDeadlineLessThan(
             String agentId, Collection<BookingStatus> excludedStatuses, java.time.LocalDate date);
+
+    /** Agency-wide calendar feed. */
+    List<Booking> findByJourneyDateBetween(java.time.LocalDate from, java.time.LocalDate to);
+
+    List<Booking> findByAgentIdAndJourneyDateBetween(String agentId, java.time.LocalDate from, java.time.LocalDate to);
+
+    List<Booking> findByReturnDateBetween(java.time.LocalDate from, java.time.LocalDate to);
+
+    List<Booking> findByAgentIdAndReturnDateBetween(String agentId, java.time.LocalDate from, java.time.LocalDate to);
 }

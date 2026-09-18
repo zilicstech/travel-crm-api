@@ -10,6 +10,7 @@ import com.voyra.crm.dto.BookingUpdateRequest;
 import com.voyra.crm.enums.BookingStatus;
 import com.voyra.crm.enums.BookingType;
 import com.voyra.crm.service.BookingService;
+import com.voyra.crm.service.FeedbackLinkService;
 import com.voyra.crm.util.PageRequestUtil;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -41,6 +42,7 @@ import java.util.List;
 public class BookingController {
 
     private final BookingService bookingService;
+    private final FeedbackLinkService feedbackLinkService;
 
     @PostMapping
     @Operation(summary = "Create a booking", description = "Profit is always server-computed from sellingPrice - netCost.")
@@ -102,5 +104,11 @@ public class BookingController {
     public ResponseEntity<BookingResponse> updateDeadlines(@PathVariable String id,
                                                             @Valid @RequestBody BookingDeadlineUpdateRequest request) {
         return ResponseEntity.ok(bookingService.updateDeadlines(id, request));
+    }
+
+    @PostMapping("/{id}/feedback-link")
+    @Operation(summary = "Generate (or reuse) the public shareable feedback link")
+    public ResponseEntity<com.voyra.crm.dto.FeedbackLinkResponse> generateFeedbackLink(@PathVariable String id) {
+        return ResponseEntity.ok(feedbackLinkService.generateLink(id));
     }
 }

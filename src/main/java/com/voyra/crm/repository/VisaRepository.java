@@ -9,6 +9,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.LocalDate;
 import java.util.List;
 
 @Repository
@@ -19,6 +20,11 @@ public interface VisaRepository extends JpaRepository<Visa, String> {
     Page<Visa> findByAgentId(String agentId, Pageable pageable);
 
     List<Visa> findByClientId(String clientId);
+
+    /** Agency-wide calendar feed. */
+    List<Visa> findByAppointmentDateBetween(LocalDate from, LocalDate to);
+
+    List<Visa> findByAgentIdAndAppointmentDateBetween(String agentId, LocalDate from, LocalDate to);
 
     @Modifying
     @Query("UPDATE Visa v SET v.agentName = :name WHERE v.agentId = :agentId")

@@ -75,10 +75,34 @@ public class ReportController {
         return csvResponse(reportService.exportLeadsCsv(), "leads.csv");
     }
 
+    @GetMapping("/export/leads.xlsx")
+    @Operation(summary = "Export leads as Excel")
+    public ResponseEntity<byte[]> exportLeadsXlsx() {
+        return xlsxResponse(reportService.exportLeadsXlsx(), "leads.xlsx");
+    }
+
+    @GetMapping("/export/leads.pdf")
+    @Operation(summary = "Export leads as PDF")
+    public ResponseEntity<byte[]> exportLeadsPdf() {
+        return pdfResponse(reportService.exportLeadsPdf(), "leads.pdf");
+    }
+
     @GetMapping("/export/bookings.csv")
     @Operation(summary = "Export bookings as CSV")
     public ResponseEntity<String> exportBookingsCsv() {
         return csvResponse(reportService.exportBookingsCsv(), "bookings.csv");
+    }
+
+    @GetMapping("/export/bookings.xlsx")
+    @Operation(summary = "Export bookings as Excel")
+    public ResponseEntity<byte[]> exportBookingsXlsx() {
+        return xlsxResponse(reportService.exportBookingsXlsx(), "bookings.xlsx");
+    }
+
+    @GetMapping("/export/bookings.pdf")
+    @Operation(summary = "Export bookings as PDF")
+    public ResponseEntity<byte[]> exportBookingsPdf() {
+        return pdfResponse(reportService.exportBookingsPdf(), "bookings.pdf");
     }
 
     @GetMapping("/export/revenue.csv")
@@ -87,10 +111,34 @@ public class ReportController {
         return csvResponse(reportService.exportRevenueCsv(months), "revenue.csv");
     }
 
+    @GetMapping("/export/revenue.xlsx")
+    @Operation(summary = "Export revenue trend as Excel")
+    public ResponseEntity<byte[]> exportRevenueXlsx(@RequestParam(value = "months", defaultValue = "6") int months) {
+        return xlsxResponse(reportService.exportRevenueXlsx(months), "revenue.xlsx");
+    }
+
+    @GetMapping("/export/revenue.pdf")
+    @Operation(summary = "Export revenue trend as PDF")
+    public ResponseEntity<byte[]> exportRevenuePdf(@RequestParam(value = "months", defaultValue = "6") int months) {
+        return pdfResponse(reportService.exportRevenuePdf(months), "revenue.pdf");
+    }
+
     @GetMapping("/export/agents.csv")
     @Operation(summary = "Export agent leaderboard as CSV")
     public ResponseEntity<String> exportAgentsCsv() {
         return csvResponse(reportService.exportAgentsCsv(), "agents.csv");
+    }
+
+    @GetMapping("/export/agents.xlsx")
+    @Operation(summary = "Export agent leaderboard as Excel")
+    public ResponseEntity<byte[]> exportAgentsXlsx() {
+        return xlsxResponse(reportService.exportAgentsXlsx(), "agents.xlsx");
+    }
+
+    @GetMapping("/export/agents.pdf")
+    @Operation(summary = "Export agent leaderboard as PDF")
+    public ResponseEntity<byte[]> exportAgentsPdf() {
+        return pdfResponse(reportService.exportAgentsPdf(), "agents.pdf");
     }
 
     private ResponseEntity<String> csvResponse(String csv, String filename) {
@@ -99,5 +147,21 @@ public class ReportController {
                 .header(HttpHeaders.CONTENT_DISPOSITION,
                         ContentDisposition.attachment().filename(filename, StandardCharsets.UTF_8).build().toString())
                 .body(csv);
+    }
+
+    private ResponseEntity<byte[]> xlsxResponse(byte[] xlsx, String filename) {
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        ContentDisposition.attachment().filename(filename, StandardCharsets.UTF_8).build().toString())
+                .body(xlsx);
+    }
+
+    private ResponseEntity<byte[]> pdfResponse(byte[] pdf, String filename) {
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_PDF)
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        ContentDisposition.attachment().filename(filename, StandardCharsets.UTF_8).build().toString())
+                .body(pdf);
     }
 }

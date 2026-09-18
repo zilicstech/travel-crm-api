@@ -16,7 +16,7 @@ echo "=== BACKEND_BLUEPRINT.md compliance audit ==="
 # §5.3 - every controller class or method carries @PreAuthorize (auth + public are exempt)
 UNGUARDED=0
 for f in $SRC/controller/*.java; do
-  case "$(basename "$f")" in AuthController.java|PublicProposalController.java) continue ;; esac
+  case "$(basename "$f")" in AuthController.java|PublicProposalController.java|PublicFeedbackController.java) continue ;; esac
   grep -q '@PreAuthorize' "$f" || { echo "    unguarded controller: $f"; UNGUARDED=$((UNGUARDED+1)); }
 done
 check "§5.3 all controllers guarded by @PreAuthorize" 0 "$UNGUARDED"
@@ -30,8 +30,10 @@ check "§5.3 all controllers guarded by @PreAuthorize" 0 "$UNGUARDED"
 # Extended for the audit trail: AuditLog (entity/AuditLog.java).
 # Extended for the vendor master: Vendor (entity/Vendor.java).
 # Extended for the communication log: CommunicationLog (entity/CommunicationLog.java).
+# Extended for M4: Feedback (entity/Feedback.java), FeedbackLink (entity/FeedbackLink.java),
+# ShiftHandover (entity/ShiftHandover.java).
 check "§7.3 no entities returned from controllers" 0 \
-  "$(grep -rlE 'ResponseEntity<(List<)?(Lead|LeadMember|LeadNote|LeadProposal|LeadTimeline|LeadService|LeadFollowUp|LeadVoucher|AgencySetting|Client|Member|MemberDocument|Booking|Visa|Agent|Tenant|ClientInvoice|SupplierInvoice|PlatformAdmin|SupplierCredential|AuditLog|Vendor|CommunicationLog)[>,]' $SRC/controller/ 2>/dev/null | wc -l | tr -d ' ')"
+  "$(grep -rlE 'ResponseEntity<(List<)?(Lead|LeadMember|LeadNote|LeadProposal|LeadTimeline|LeadService|LeadFollowUp|LeadVoucher|AgencySetting|Client|Member|MemberDocument|Booking|Visa|Agent|Tenant|ClientInvoice|SupplierInvoice|PlatformAdmin|SupplierCredential|AuditLog|Vendor|CommunicationLog|Feedback|FeedbackLink|ShiftHandover)[>,]' $SRC/controller/ 2>/dev/null | wc -l | tr -d ' ')"
 
 # §8.1 - controllers hold no repository access and no try/catch
 check "§8.1 no repository access in controllers" 0 \
