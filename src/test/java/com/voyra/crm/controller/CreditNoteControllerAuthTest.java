@@ -85,4 +85,22 @@ class CreditNoteControllerAuthTest {
                         .with(SecurityMockMvcRequestPostProcessors.user("owner1").roles("AGENCY_OWNER")))
                 .andExpect(status().isOk());
     }
+
+    @Test
+    void agentCannotReadACreditNotePdf() throws Exception {
+        mockMvc.perform(get("/api/accounts/credit-notes/CN1/pdf")
+                        .with(SecurityMockMvcRequestPostProcessors.user("agent1").roles("AGENT")))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void ownerCanReadACreditNotePdf() throws Exception {
+        when(creditNoteService.get("CN1")).thenReturn(com.voyra.crm.dto.CreditNoteResponse.builder().id("CN1").creditNoteNumber("CN/2026-27/0001").build());
+        when(creditNoteService.getPdf("CN1")).thenReturn("%PDF-1.5 stub".getBytes());
+
+        mockMvc.perform(get("/api/accounts/credit-notes/CN1/pdf")
+                        .with(SecurityMockMvcRequestPostProcessors.user("owner1").roles("AGENCY_OWNER")))
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content().contentType(MediaType.APPLICATION_PDF));
+    }
 }

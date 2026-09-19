@@ -138,4 +138,16 @@ class InvoiceDocumentControllerAuthTest {
                         .with(SecurityMockMvcRequestPostProcessors.user("agent1").roles("AGENT")))
                 .andExpect(status().isForbidden());
     }
+
+    @Test
+    void agentCanReadThePdfOfTheirOwnInvoice() throws Exception {
+        when(invoiceDocumentService.get("I1")).thenReturn(
+                com.voyra.crm.dto.InvoiceResponse.builder().id("I1").invoiceNumber("INV/2026-27/0001").build());
+        when(invoiceDocumentService.getPdf("I1")).thenReturn("%PDF-1.5 stub".getBytes());
+
+        mockMvc.perform(get("/api/accounts/invoices/I1/pdf")
+                        .with(SecurityMockMvcRequestPostProcessors.user("agent1").roles("AGENT")))
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content().contentType(MediaType.APPLICATION_PDF));
+    }
 }

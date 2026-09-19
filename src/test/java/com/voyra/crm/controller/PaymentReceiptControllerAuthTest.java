@@ -102,4 +102,15 @@ class PaymentReceiptControllerAuthTest {
                         .content(objectMapper.writeValueAsString(request())))
                 .andExpect(status().isOk());
     }
+
+    @Test
+    void agentCanReadTheVoucherPdfOfTheirOwnReceipt() throws Exception {
+        when(paymentReceiptService.get("R1")).thenReturn(com.voyra.crm.dto.PaymentReceiptResponse.builder().id("R1").receiptNumber("RCP/2026-27/0001").build());
+        when(paymentReceiptService.getPdf("R1")).thenReturn("%PDF-1.5 stub".getBytes());
+
+        mockMvc.perform(get("/api/accounts/receipts/R1/pdf")
+                        .with(SecurityMockMvcRequestPostProcessors.user("agent1").roles("AGENT")))
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content().contentType(MediaType.APPLICATION_PDF));
+    }
 }

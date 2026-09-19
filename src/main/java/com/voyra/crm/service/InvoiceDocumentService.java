@@ -35,6 +35,7 @@ import com.voyra.crm.security.SecurityContextUtil;
 import com.voyra.crm.util.AuditSnapshot;
 import com.voyra.crm.util.FinancialYear;
 import com.voyra.crm.util.InvoiceLifecyclePolicy;
+import com.voyra.crm.util.InvoicePdfRenderer;
 import com.voyra.crm.util.UniqueIdResolver;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -155,6 +156,13 @@ public class InvoiceDocumentService {
     @Transactional(readOnly = true)
     public InvoiceResponse get(String id) {
         return toResponse(findAccessibleInvoice(id));
+    }
+
+    @Transactional(readOnly = true)
+    public byte[] getPdf(String id) {
+        Invoice invoice = findAccessibleInvoice(id);
+        List<InvoiceLineItem> lines = invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc(id);
+        return InvoicePdfRenderer.write(invoice, lines);
     }
 
     @Transactional(readOnly = true)

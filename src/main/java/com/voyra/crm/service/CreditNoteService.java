@@ -27,6 +27,7 @@ import com.voyra.crm.repository.InvoiceRepository;
 import com.voyra.crm.repository.PaymentReceiptRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.security.SecurityContextUtil;
+import com.voyra.crm.util.CreditNotePdfRenderer;
 import com.voyra.crm.util.FinancialYear;
 import com.voyra.crm.util.InvoiceLifecyclePolicy;
 import com.voyra.crm.util.UniqueIdResolver;
@@ -281,6 +282,11 @@ public class CreditNoteService {
     @Transactional(readOnly = true)
     public CreditNoteResponse get(String id) {
         return toResponse(findAccessible(id));
+    }
+
+    @Transactional(readOnly = true)
+    public byte[] getPdf(String id) {
+        return CreditNotePdfRenderer.write(findAccessible(id));
     }
 
     @Transactional(readOnly = true)

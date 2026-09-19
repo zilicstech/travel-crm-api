@@ -18,6 +18,7 @@ import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.security.SecurityContextUtil;
 import com.voyra.crm.util.FinancialYear;
 import com.voyra.crm.util.InvoiceLifecyclePolicy;
+import com.voyra.crm.util.ReceiptVoucherRenderer;
 import com.voyra.crm.util.UniqueIdResolver;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -164,6 +165,15 @@ public class PaymentReceiptService {
     @Transactional(readOnly = true)
     public PaymentReceiptResponse get(String id) {
         return toResponse(findAccessible(id));
+    }
+
+    @Transactional(readOnly = true)
+    public byte[] getPdf(String id) {
+        PaymentReceipt receipt = findAccessible(id);
+        String invoiceNumber = receipt.getInvoiceId() != null
+                ? invoiceRepository.findById(receipt.getInvoiceId()).map(Invoice::getInvoiceNumber).orElse(null)
+                : null;
+        return ReceiptVoucherRenderer.write(receipt, invoiceNumber);
     }
 
     @Transactional(readOnly = true)

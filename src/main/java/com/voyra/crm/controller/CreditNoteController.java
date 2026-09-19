@@ -12,6 +12,9 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Pageable;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -21,6 +24,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.nio.charset.StandardCharsets;
 
 /**
  * Credit notes - Owner/Accountant only, unlike invoices and receipts an Agent never sees these.
@@ -74,5 +79,18 @@ public class CreditNoteController {
     @Operation(summary = "Record a refund payout", description = "Cash paid out against this credit note's refundable balance. Writes a REFUND-direction payment receipt.")
     public ResponseEntity<CreditNoteResponse> refund(@PathVariable String id, @Valid @RequestBody CreditNoteRefundRequest request) {
         return ResponseEntity.ok(creditNoteService.refund(id, request));
+    }
+
+    @GetMapping("/{id}/pdf")
+    @Operation(summary = "Render this credit note as a PDF")
+    public ResponseEntity<byte[]> pdf(@PathVariable String id) {
+        CreditNoteResponse note = creditNoteService.get(id);
+        byte[] pdf = creditNoteService.getPdf(id);
+        String filename = (note.getCreditNoteNumber() != null ? note.getCreditNoteNumber() : "DRAFT-" + id.substring(0, 8)).replace("/", "-") + ".pdf";
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_PDF)
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        ContentDisposition.attachment().filename(filename, StandardCharsets.UTF_8).build().toString())
+                .body(pdf);
     }
 }

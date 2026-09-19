@@ -18,6 +18,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Pageable;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -30,6 +33,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 
 /**
@@ -115,6 +119,19 @@ public class InvoiceDocumentController {
     @Operation(summary = "Convert an issued proforma into a tax invoice", description = "Creates a new INV-numbered row; the proforma's advance receipts carry over and the proforma itself moves to CANCELLED.")
     public ResponseEntity<InvoiceResponse> convertToTaxInvoice(@PathVariable String id) {
         return ResponseEntity.ok(invoiceDocumentService.convertToTaxInvoice(id));
+    }
+
+    @GetMapping("/{id}/pdf")
+    @Operation(summary = "Render this invoice as a PDF", description = "Rendered on demand from figures already frozen at issue - never re-reads a tax rate.")
+    public ResponseEntity<byte[]> pdf(@PathVariable String id) {
+        InvoiceResponse invoice = invoiceDocumentService.get(id);
+        byte[] pdf = invoiceDocumentService.getPdf(id);
+        String filename = (invoice.getInvoiceNumber() != null ? invoice.getInvoiceNumber() : "DRAFT-" + id.substring(0, 8)).replace("/", "-") + ".pdf";
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_PDF)
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        ContentDisposition.attachment().filename(filename, StandardCharsets.UTF_8).build().toString())
+                .body(pdf);
     }
 
     @PostMapping("/preview-tax")
