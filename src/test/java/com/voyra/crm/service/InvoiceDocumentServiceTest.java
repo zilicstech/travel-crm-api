@@ -70,6 +70,8 @@ class InvoiceDocumentServiceTest {
     private DocumentNumberService documentNumberService;
     @Mock
     private AuditService auditService;
+    @Mock
+    private CustomerLedgerService customerLedgerService;
 
     @InjectMocks
     private InvoiceDocumentService invoiceDocumentService;

@@ -48,6 +48,8 @@ class PaymentReceiptServiceTest {
     private DocumentNumberService documentNumberService;
     @Mock
     private AuditService auditService;
+    @Mock
+    private CustomerLedgerService customerLedgerService;
 
     @InjectMocks
     private PaymentReceiptService paymentReceiptService;

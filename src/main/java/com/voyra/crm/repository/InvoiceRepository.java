@@ -9,6 +9,8 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 
@@ -25,4 +27,12 @@ public interface InvoiceRepository extends JpaRepository<Invoice, String>, JpaSp
     /** Scoping helper: payment_receipt carries no agent_id column, so an Agent's receipt list is filtered by their invoice ids. */
     @Query("SELECT i.id FROM Invoice i WHERE i.agentId = :agentId")
     List<String> findIdsByAgentId(@Param("agentId") String agentId);
+
+    /** AR ageing input: every non-cancelled tax invoice still carrying a balance, whichever client. */
+    List<Invoice> findByDocumentTypeAndStatusInAndBalanceDueInrGreaterThan(
+            InvoiceDocumentType documentType, List<InvoiceLifecycle> statuses, BigDecimal zero);
+
+    /** GST/TCS register and the dashboard's billed/output-tax figures: real tax invoices only, dated within range. */
+    List<Invoice> findByDocumentTypeAndStatusNotAndInvoiceDateBetween(
+            InvoiceDocumentType documentType, InvoiceLifecycle excludedStatus, LocalDate from, LocalDate to);
 }

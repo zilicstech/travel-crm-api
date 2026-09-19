@@ -8,7 +8,10 @@ import com.voyra.crm.entity.PaymentReceipt;
 import com.voyra.crm.enums.AuditEntityType;
 import com.voyra.crm.enums.DocumentKind;
 import com.voyra.crm.enums.InvoiceLifecycle;
+import com.voyra.crm.enums.LedgerEntryType;
+import com.voyra.crm.enums.LedgerSourceType;
 import com.voyra.crm.enums.ReceiptDirection;
+import com.voyra.crm.models.LedgerPosting;
 import com.voyra.crm.repository.InvoiceRepository;
 import com.voyra.crm.repository.PaymentReceiptRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
@@ -48,6 +51,7 @@ public class PaymentReceiptService {
     private final InvoiceRepository invoiceRepository;
     private final DocumentNumberService documentNumberService;
     private final AuditService auditService;
+    private final CustomerLedgerService customerLedgerService;
 
     @Transactional
     public PaymentReceiptResponse record(PaymentReceiptRequest request) {
@@ -82,6 +86,7 @@ public class PaymentReceiptService {
                 .createdBy(actor)
                 .build();
         paymentReceiptRepository.save(receipt);
+        postForReceipt(receipt);
 
         if (!isProforma) {
             applySettlement(invoice);
@@ -137,6 +142,7 @@ public class PaymentReceiptService {
                 .createdBy(actor)
                 .build();
         paymentReceiptRepository.save(reversal);
+        postForReceipt(reversal);
 
         original.setReversedAt(now);
         original.setReversedBy(actor);
@@ -182,6 +188,30 @@ public class PaymentReceiptService {
     }
 
     // ---------------------------------------------------------------- internals
+
+    /**
+     * Posts one ledger row per receipt row - original and reversal alike - keyed by that
+     * receipt's own id, so the unique index never collides between them. A reversal's negative
+     * amount naturally becomes a debit here, undoing the original credit in the client's running
+     * balance without needing a distinct {@code LedgerEntryType}. Posted for every receipt,
+     * advance or not: real cash moving is a fact about the client relationship the moment it
+     * happens, independent of which invoice it currently sits against.
+     */
+    private void postForReceipt(PaymentReceipt receipt) {
+        boolean isCredit = receipt.getAmountInr().compareTo(BigDecimal.ZERO) >= 0;
+        BigDecimal amount = receipt.getAmount().abs();
+        BigDecimal amountInr = receipt.getAmountInr().abs();
+        String narration = receipt.getReversesReceiptId() != null
+                ? "Receipt " + receipt.getReceiptNumber() + " reverses " + receipt.getReversesReceiptId()
+                : "Receipt " + receipt.getReceiptNumber() + " recorded";
+
+        customerLedgerService.post(new LedgerPosting(
+                receipt.getClientId(), receipt.getReceivedOn(), LedgerEntryType.PAYMENT_RECEIVED,
+                LedgerSourceType.RECEIPT, receipt.getId(), receipt.getReceiptNumber(), narration,
+                receipt.getBookingId(), receipt.getCurrencyCode(), receipt.getFxRateToInr(),
+                isCredit ? BigDecimal.ZERO : amount, isCredit ? amount : BigDecimal.ZERO,
+                isCredit ? BigDecimal.ZERO : amountInr, isCredit ? amountInr : BigDecimal.ZERO));
+    }
 
     /**
      * Sums every RECEIPT-direction row currently attached to this invoice id, including ones

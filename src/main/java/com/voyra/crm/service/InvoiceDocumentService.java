@@ -19,7 +19,10 @@ import com.voyra.crm.enums.DocumentKind;
 import com.voyra.crm.enums.FxRateSource;
 import com.voyra.crm.enums.InvoiceDocumentType;
 import com.voyra.crm.enums.InvoiceLifecycle;
+import com.voyra.crm.enums.LedgerEntryType;
+import com.voyra.crm.enums.LedgerSourceType;
 import com.voyra.crm.enums.TaxTreatment;
+import com.voyra.crm.models.LedgerPosting;
 import com.voyra.crm.models.TaxComputationRequest;
 import com.voyra.crm.models.TaxComputationResult;
 import com.voyra.crm.repository.BookingRepository;
@@ -73,6 +76,7 @@ public class InvoiceDocumentService {
     private final TaxEngine taxEngine;
     private final DocumentNumberService documentNumberService;
     private final AuditService auditService;
+    private final CustomerLedgerService customerLedgerService;
 
     @Transactional
     public InvoiceResponse createDraft(InvoiceDraftRequest request) {
@@ -205,6 +209,7 @@ public class InvoiceDocumentService {
         invoice.setIssuedBy(currentUserId());
         invoice.setFxLockedAt(LocalDateTime.now());
         invoiceRepository.save(invoice);
+        postInvoiceRaised(invoice);
 
         auditService.recordCreate(AuditEntityType.INVOICE, invoice.getId(), invoice.getInvoiceNumber());
         log.info("Invoice issued: id={}, number={}", invoice.getId(), number);
@@ -307,6 +312,7 @@ public class InvoiceDocumentService {
         if (!advances.isEmpty()) {
             paymentReceiptRepository.saveAll(advances);
         }
+        postInvoiceRaised(taxInvoice);
 
         proforma.setStatus(InvoiceLifecycle.CANCELLED);
         proforma.setCancelledAt(now);
@@ -330,11 +336,15 @@ public class InvoiceDocumentService {
         }
 
         Map<String, String> before = AuditSnapshot.of(invoice, AUDITED);
+        boolean hadLedgerDebit = invoice.getDocumentType() == InvoiceDocumentType.TAX_INVOICE;
         invoice.setStatus(InvoiceLifecycle.CANCELLED);
         invoice.setCancelledAt(LocalDateTime.now());
         invoice.setCancelledBy(currentUserId());
         invoice.setCancelReason(reason);
         invoiceRepository.save(invoice);
+        if (hadLedgerDebit) {
+            postCancellationReversal(invoice);
+        }
 
         List<AuditChange> changes = AuditSnapshot.diff(before, AuditSnapshot.of(invoice, AUDITED));
         auditService.recordUpdate(AuditEntityType.INVOICE, invoice.getId(), invoice.getInvoiceNumber(), changes);
@@ -343,6 +353,33 @@ public class InvoiceDocumentService {
     }
 
     // ---------------------------------------------------------------- internals
+
+    /**
+     * Debits the client for the full grand total the moment a real tax invoice exists - whether
+     * from a direct issue or a proforma conversion. This is deliberately independent of any
+     * advance already posted against the proforma (see {@code PaymentReceiptService}): that
+     * credit was posted against the client, not this invoice, so debiting the full total here and
+     * letting the two net out in the statement is what keeps
+     * {@code SUM(debit_inr - credit_inr) == SUM(balance_due_inr)} true after a conversion.
+     */
+    private void postInvoiceRaised(Invoice invoice) {
+        customerLedgerService.post(new LedgerPosting(
+                invoice.getClientId(), invoice.getInvoiceDate(), LedgerEntryType.INVOICE_RAISED,
+                LedgerSourceType.INVOICE, invoice.getId(), invoice.getInvoiceNumber(),
+                "Tax invoice " + invoice.getInvoiceNumber() + " raised", invoice.getBookingId(),
+                invoice.getCurrencyCode(), invoice.getFxRateToInr(),
+                invoice.getGrandTotal(), BigDecimal.ZERO, invoice.getGrandTotalInr(), BigDecimal.ZERO));
+    }
+
+    /** Undoes the INVOICE_RAISED debit for a tax invoice cancelled before any receipt exists against it. */
+    private void postCancellationReversal(Invoice invoice) {
+        customerLedgerService.post(new LedgerPosting(
+                invoice.getClientId(), LocalDate.now(), LedgerEntryType.REVERSAL,
+                LedgerSourceType.INVOICE, invoice.getId(), invoice.getInvoiceNumber(),
+                "Tax invoice " + invoice.getInvoiceNumber() + " cancelled: " + invoice.getCancelReason(),
+                invoice.getBookingId(), invoice.getCurrencyCode(), invoice.getFxRateToInr(),
+                BigDecimal.ZERO, invoice.getGrandTotal(), BigDecimal.ZERO, invoice.getGrandTotalInr()));
+    }
 
     private void applyDraftFields(Invoice invoice, InvoiceDraftRequest request) {
         String currencyCode = request.getCurrencyCode() != null && !request.getCurrencyCode().isBlank()
