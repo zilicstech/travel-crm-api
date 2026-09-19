@@ -22,4 +22,7 @@ public interface PaymentReceiptRepository extends JpaRepository<PaymentReceipt, 
 
     /** Dashboard "advance held": advance receipts not yet re-pointed onto a converted tax invoice. */
     List<PaymentReceipt> findByDirectionAndIsAdvanceTrue(ReceiptDirection direction);
+
+    /** Sums to a credit note's cumulative refunded-out amount - see {@code CreditNoteService#applyRefundSettlement}. */
+    List<PaymentReceipt> findByCreditNoteIdOrderByReceivedOnAscCreatedAtAsc(String creditNoteId);
 }

@@ -35,9 +35,9 @@ check "§5.3 all controllers guarded by @PreAuthorize" 0 "$UNGUARDED"
 # Extended for the accounts module: TaxRateConfig (entity/TaxRateConfig.java), Invoice and
 # InvoiceLineItem (entity/Invoice.java, entity/InvoiceLineItem.java). Extended for receipts:
 # PaymentReceipt (entity/PaymentReceipt.java). Extended for the ledger: CustomerLedgerEntry
-# (entity/CustomerLedgerEntry.java).
+# (entity/CustomerLedgerEntry.java). Extended for credit notes: CreditNote (entity/CreditNote.java).
 check "§7.3 no entities returned from controllers" 0 \
-  "$(grep -rlE 'ResponseEntity<(List<)?(Lead|LeadMember|LeadNote|LeadProposal|LeadTimeline|LeadService|LeadFollowUp|LeadVoucher|AgencySetting|Client|Member|MemberDocument|Booking|Visa|Agent|Tenant|ClientInvoice|SupplierInvoice|PlatformAdmin|SupplierCredential|AuditLog|Vendor|CommunicationLog|Feedback|FeedbackLink|ShiftHandover|TaxRateConfig|InvoiceLineItem|Invoice|PaymentReceipt|CustomerLedgerEntry)[>,]' $SRC/controller/ 2>/dev/null | wc -l | tr -d ' ')"
+  "$(grep -rlE 'ResponseEntity<(List<)?(Lead|LeadMember|LeadNote|LeadProposal|LeadTimeline|LeadService|LeadFollowUp|LeadVoucher|AgencySetting|Client|Member|MemberDocument|Booking|Visa|Agent|Tenant|ClientInvoice|SupplierInvoice|PlatformAdmin|SupplierCredential|AuditLog|Vendor|CommunicationLog|Feedback|FeedbackLink|ShiftHandover|TaxRateConfig|InvoiceLineItem|Invoice|PaymentReceipt|CustomerLedgerEntry|CreditNote)[>,]' $SRC/controller/ 2>/dev/null | wc -l | tr -d ' ')"
 
 # §8.1 - controllers hold no repository access and no try/catch
 check "§8.1 no repository access in controllers" 0 \
