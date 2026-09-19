@@ -2,6 +2,8 @@ package com.voyra.crm.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.voyra.crm.config.SecurityConfig;
+import com.voyra.crm.dto.InvoiceCancelRequest;
+import com.voyra.crm.dto.InvoiceDraftRequest;
 import com.voyra.crm.dto.TaxPreviewRequest;
 import com.voyra.crm.enums.SupplyNature;
 import com.voyra.crm.enums.TaxTreatment;
@@ -9,6 +11,7 @@ import com.voyra.crm.models.TaxComputationResult;
 import com.voyra.crm.security.JwtAuthenticationFilter;
 import com.voyra.crm.security.JwtService;
 import com.voyra.crm.security.RestAuthenticationEntryPoint;
+import com.voyra.crm.service.InvoiceDocumentService;
 import com.voyra.crm.service.TaxEngine;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -24,6 +27,7 @@ import java.math.BigDecimal;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -40,6 +44,8 @@ class InvoiceDocumentControllerAuthTest {
 
     @MockBean
     private TaxEngine taxEngine;
+    @MockBean
+    private InvoiceDocumentService invoiceDocumentService;
 
     private TaxPreviewRequest request() {
         TaxPreviewRequest r = new TaxPreviewRequest();
@@ -86,5 +92,39 @@ class InvoiceDocumentControllerAuthTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request())))
                 .andExpect(status().isOk());
+    }
+
+    @Test
+    void agentCannotCreateADraft() throws Exception {
+        InvoiceDraftRequest draft = new InvoiceDraftRequest();
+        draft.setBookingId("B1");
+        draft.setSupplyNature(SupplyNature.DOMESTIC_PACKAGE);
+
+        mockMvc.perform(post("/api/accounts/invoices")
+                        .with(SecurityMockMvcRequestPostProcessors.user("agent1").roles("AGENT"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(draft)))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void agentCanListButNotIssueOrCancel() throws Exception {
+        when(invoiceDocumentService.list(any(), any(), any(), any(), any(), any())).thenReturn(java.util.List.of());
+
+        mockMvc.perform(get("/api/accounts/invoices")
+                        .with(SecurityMockMvcRequestPostProcessors.user("agent1").roles("AGENT")))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/api/accounts/invoices/I1/issue")
+                        .with(SecurityMockMvcRequestPostProcessors.user("agent1").roles("AGENT")))
+                .andExpect(status().isForbidden());
+
+        InvoiceCancelRequest cancelRequest = new InvoiceCancelRequest();
+        cancelRequest.setReason("test");
+        mockMvc.perform(post("/api/accounts/invoices/I1/cancel")
+                        .with(SecurityMockMvcRequestPostProcessors.user("agent1").roles("AGENT"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(cancelRequest)))
+                .andExpect(status().isForbidden());
     }
 }

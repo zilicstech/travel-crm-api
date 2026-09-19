@@ -51,9 +51,11 @@ public class BookingController {
     }
 
     @GetMapping
+    @PreAuthorize("hasAnyRole('AGENCY_OWNER', 'AGENT', 'ACCOUNTANT')")
     @Operation(summary = "List bookings",
-            description = "Agents see only their own bookings; Owners see the whole agency. Supply ?page= for a "
-                    + "paged envelope; omit it for the full list as a plain array.")
+            description = "Agents see only their own bookings; Owners and Accountants see the whole agency "
+                    + "(the accounts module bills against any booking). Supply ?page= for a paged envelope; "
+                    + "omit it for the full list as a plain array.")
     public ResponseEntity<Object> listBookings(
             @RequestParam(value = "type", required = false) BookingType type,
             @RequestParam(value = "status", required = false) BookingStatus status,
@@ -66,6 +68,7 @@ public class BookingController {
     }
 
     @GetMapping("/{id}")
+    @PreAuthorize("hasAnyRole('AGENCY_OWNER', 'AGENT', 'ACCOUNTANT')")
     @Operation(summary = "Booking detail")
     public ResponseEntity<BookingResponse> getBooking(@PathVariable String id) {
         return ResponseEntity.ok(bookingService.getBooking(id));
