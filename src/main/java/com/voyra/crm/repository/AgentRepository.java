@@ -1,6 +1,7 @@
 package com.voyra.crm.repository;
 
 import com.voyra.crm.entity.Agent;
+import com.voyra.crm.enums.UserType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -18,7 +19,13 @@ public interface AgentRepository extends JpaRepository<Agent, String> {
 
     Page<Agent> findByTenantId(String tenantId, Pageable pageable);
 
+    List<Agent> findByTenantIdAndUserRole(String tenantId, UserType userRole);
+
+    Page<Agent> findByTenantIdAndUserRole(String tenantId, UserType userRole, Pageable pageable);
+
     long countByTenantId(String tenantId);
+
+    long countByTenantIdAndUserRole(String tenantId, UserType userRole);
 
     Optional<Agent> findByIdAndTenantId(String id, String tenantId);
 

@@ -5,7 +5,7 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 
 public enum UserType {
 
-    SUPER_ADMIN, AGENCY_OWNER, AGENT;
+    SUPER_ADMIN, AGENCY_OWNER, AGENT, ACCOUNTANT;
 
     public String getAuthority() {
         return "ROLE_" + this.name();

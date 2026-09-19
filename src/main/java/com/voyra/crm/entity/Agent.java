@@ -3,6 +3,7 @@ package com.voyra.crm.entity;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.voyra.crm.enums.AgentDepartment;
 import com.voyra.crm.enums.ServiceType;
+import com.voyra.crm.enums.UserType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -51,6 +52,15 @@ public class Agent {
 
     @Column(name = "phone", length = 20)
     private String phone;
+
+    /**
+     * AGENT or ACCOUNTANT - the two staff personas this table now serves. Never
+     * SUPER_ADMIN/AGENCY_OWNER, which have their own login tables.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "user_role", nullable = false, length = 20)
+    @Builder.Default
+    private UserType userRole = UserType.AGENT;
 
     /**
      * Display-only, kept for existing rows. {@link #manageableServices} is what actually

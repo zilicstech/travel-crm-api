@@ -19,4 +19,13 @@ public record CustomUserPrincipal(
     public boolean isAgent() {
         return userType == UserType.AGENT;
     }
+
+    public boolean isAccountant() {
+        return userType == UserType.ACCOUNTANT;
+    }
+
+    /** Both personas stored in the agent table - resolvable via agentRepository. */
+    public boolean isStaffUser() {
+        return isAgent() || isAccountant();
+    }
 }

@@ -11,9 +11,10 @@ import org.springframework.stereotype.Service;
 
 /**
  * Resolves "who is acting right now" for author-stamped rows (lead notes, customer
- * interactions) that both AGENCY_OWNER and AGENT can write. The author id column is named
- * *_agent_id for historical reasons but holds either a real Agent id or the Owner's tenantId
- * (the Owner's own "user id") - both are plain opaque strings, never FK-constrained.
+ * interactions) that AGENCY_OWNER, AGENT and ACCOUNTANT can write. The author id column is
+ * named *_agent_id for historical reasons but holds either a real Agent/Accountant id or the
+ * Owner's tenantId (the Owner's own "user id") - both are plain opaque strings, never
+ * FK-constrained.
  */
 @Service
 @RequiredArgsConstructor
@@ -27,7 +28,7 @@ public class AuthorResolver {
 
     public AuthorInfo resolveCurrentAuthor() {
         CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
-        if (principal.isAgent()) {
+        if (principal.isStaffUser()) {
             Agent agent = agentRepository.findById(principal.userId())
                     .orElseThrow(() -> new IllegalStateException("Agent not found: " + principal.userId()));
             return new AuthorInfo(agent.getId(), agent.getName());

@@ -86,15 +86,16 @@ public class AuthService {
             return LoginResponse.failure(GENERIC_FAILURE);
         }
         Agent a = agent.get();
-        log.info("Agent login succeeded: agentId={}", a.getId());
+        UserType role = a.getUserRole() != null ? a.getUserRole() : UserType.AGENT;
+        log.info("Agent login succeeded: agentId={}, role={}", a.getId(), role);
         return LoginResponse.builder()
                 .success(true)
                 .message("Login successful")
                 .userId(a.getId())
                 .name(a.getName())
-                .role(UserType.AGENT.name())
+                .role(role.name())
                 .tenantId(a.getTenantId())
-                .token(jwtService.generateToken(a.getEmail(), UserType.AGENT, a.getId(), a.getTenantId()))
+                .token(jwtService.generateToken(a.getEmail(), role, a.getId(), a.getTenantId()))
                 .build();
     }
 }

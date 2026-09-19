@@ -131,6 +131,11 @@ public class DemoBusinessDataSeedRunner implements ApplicationRunner {
         TenantContext.setTenantId(tenantId);
         setOwnerSecurityContext(tenantId);
         try {
+            // Runs on every startup, even against an already-seeded tenant, so a demo
+            // accountant added after this runner first shipped still appears without a
+            // full reseed (agent/client rows are idempotent via findByEmailIgnoreCase).
+            ensureAccountant(tenantId, "Neha Kapoor", "neha.kapoor.demo@globalexplorer.com", "+91 90000 11111");
+
             if (clientRepository.count() >= 8) {
                 log.info("Demo business data already seeded for tenant {} - skipping", tenantId);
                 return;
@@ -202,6 +207,25 @@ public class DemoBusinessDataSeedRunner implements ApplicationRunner {
             agentRepository.save(agent);
             log.info("Seeded demo agent '{}' (agentId={}): email={}", name, agent.getId(), email);
             return agent;
+        });
+    }
+
+    private void ensureAccountant(String tenantId, String name, String email, String phone) {
+        agentRepository.findByEmailIgnoreCase(email).orElseGet(() -> {
+            Agent accountant = Agent.builder()
+                    .id(UniqueIdResolver.resolve(agentRepository::existsById))
+                    .tenantId(tenantId)
+                    .name(name)
+                    .email(email)
+                    .phone(phone)
+                    .userRole(UserType.ACCOUNTANT)
+                    .manageableServices(List.of())
+                    .password(passwordEncoder.encode(DEMO_PASSWORD))
+                    .isActive(true)
+                    .build();
+            agentRepository.save(accountant);
+            log.info("Seeded demo accountant '{}' (agentId={}): email={}", name, accountant.getId(), email);
+            return accountant;
         });
     }
 

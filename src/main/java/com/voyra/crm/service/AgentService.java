@@ -9,6 +9,8 @@ import com.voyra.crm.dto.CredentialsResponse;
 import com.voyra.crm.dto.PagedResponse;
 import com.voyra.crm.entity.Agent;
 import com.voyra.crm.enums.LeadStatus;
+import com.voyra.crm.enums.ServiceType;
+import com.voyra.crm.enums.UserType;
 import com.voyra.crm.models.AgentStats;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.BookingRepository;
@@ -59,6 +61,15 @@ public class AgentService {
         if (agentRepository.existsByEmailIgnoreCase(request.getEmail())) {
             throw new IllegalArgumentException("An agent with this email already exists");
         }
+        UserType role = request.getUserRole() != null ? request.getUserRole() : UserType.AGENT;
+        if (role != UserType.AGENT && role != UserType.ACCOUNTANT) {
+            throw new IllegalArgumentException("userRole must be AGENT or ACCOUNTANT");
+        }
+        List<ServiceType> manageableServices = request.getManageableServices() != null
+                ? request.getManageableServices() : List.of();
+        if (role == UserType.AGENT && manageableServices.isEmpty()) {
+            throw new IllegalArgumentException("At least one manageable service is required for an Agent");
+        }
 
         Agent agent = Agent.builder()
                 .id(generateUniqueAgentId())
@@ -66,7 +77,8 @@ public class AgentService {
                 .name(request.getName())
                 .email(request.getEmail())
                 .phone(request.getPhone())
-                .manageableServices(request.getManageableServices())
+                .userRole(role)
+                .manageableServices(role == UserType.AGENT ? manageableServices : List.of())
                 .password(passwordEncoder.encode(request.getPassword()))
                 .isActive(true)
                 .build();
@@ -74,7 +86,7 @@ public class AgentService {
         agentRepository.save(agent);
         AgentCache.put(agent.getId(), true);
 
-        log.info("Agent created: agentId={}, tenantId={}", agent.getId(), tenantId);
+        log.info("Agent created: agentId={}, tenantId={}, role={}", agent.getId(), tenantId, role);
         return AgentCreateResponse.builder()
                 .id(agent.getId())
                 .name(agent.getName())
@@ -84,10 +96,16 @@ public class AgentService {
                 .build();
     }
 
+    /** Default listing is AGENT-only, so accountants never appear in a lead/booking assignee picker or the leaderboard. */
     @Transactional(readOnly = true)
     public List<AgentPerformanceResponse> listAgents() {
+        return listAgents(UserType.AGENT);
+    }
+
+    @Transactional(readOnly = true)
+    public List<AgentPerformanceResponse> listAgents(UserType role) {
         String tenantId = ownerTenantId();
-        List<Agent> agents = agentRepository.findByTenantId(tenantId);
+        List<Agent> agents = agentRepository.findByTenantIdAndUserRole(tenantId, role);
         Map<String, AgentStats> stats = loadStats(agents.stream().map(Agent::getId).toList());
         return agents.stream()
                 .map(a -> toPerformanceResponse(a, stats.getOrDefault(a.getId(), AgentStats.empty())))
@@ -96,8 +114,13 @@ public class AgentService {
 
     @Transactional(readOnly = true)
     public PagedResponse<AgentPerformanceResponse> listAgents(Pageable pageable) {
+        return listAgents(UserType.AGENT, pageable);
+    }
+
+    @Transactional(readOnly = true)
+    public PagedResponse<AgentPerformanceResponse> listAgents(UserType role, Pageable pageable) {
         String tenantId = ownerTenantId();
-        Page<Agent> page = agentRepository.findByTenantId(tenantId, pageable);
+        Page<Agent> page = agentRepository.findByTenantIdAndUserRole(tenantId, role, pageable);
         Map<String, AgentStats> stats = loadStats(page.getContent().stream().map(Agent::getId).toList());
         return PagedResponse.from(page, a -> toPerformanceResponse(a, stats.getOrDefault(a.getId(), AgentStats.empty())));
     }
@@ -162,13 +185,16 @@ public class AgentService {
     @Transactional
     public void removeAgent(String id) {
         Agent agent = findOwnedAgent(id);
+        // Accountants never create leads, so this check is a no-op for them today. The
+        // accounts module adds its own precondition (unsettled invoices/receipts they
+        // issued) once that data exists.
         if (leadRepository.existsByCreatedByAndStatusNotIn(id, TERMINAL_STATUSES)) {
             throw new IllegalStateException(
                     "Agent has active leads they created - close them before removing this agent");
         }
         agentRepository.delete(agent);
         AgentCache.remove(id);
-        log.info("Agent removed: agentId={}", id);
+        log.info("Agent removed: agentId={}, role={}", id, agent.getUserRole());
     }
 
     @Transactional(readOnly = true)

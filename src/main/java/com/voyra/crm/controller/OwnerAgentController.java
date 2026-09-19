@@ -6,6 +6,7 @@ import com.voyra.crm.dto.AgentCreateResponse;
 import com.voyra.crm.dto.AgentPerformanceResponse;
 import com.voyra.crm.dto.AgentUpdateRequest;
 import com.voyra.crm.dto.CredentialsResponse;
+import com.voyra.crm.enums.UserType;
 import com.voyra.crm.service.AgentService;
 import com.voyra.crm.util.PageRequestUtil;
 import io.swagger.v3.oas.annotations.Operation;
@@ -46,13 +47,18 @@ public class OwnerAgentController {
     }
 
     @GetMapping
-    @Operation(summary = "List agents in this agency, with performance KPIs",
-            description = "Supply ?page= for a paged envelope; omit it for the full list as a plain array.")
+    @Operation(summary = "List agents (or accountants) in this agency, with performance KPIs",
+            description = "Supply ?page= for a paged envelope; omit it for the full list as a plain array. "
+                    + "?role= defaults to AGENT, so an assignee picker never lists accountants by accident.")
     public ResponseEntity<Object> listAgents(
             @RequestParam(value = "page", required = false) Integer page,
-            @RequestParam(value = "size", required = false) Integer size) {
+            @RequestParam(value = "size", required = false) Integer size,
+            @RequestParam(value = "role", required = false) UserType role) {
+        UserType effectiveRole = role != null ? role : UserType.AGENT;
         Pageable pageable = PageRequestUtil.resolve(page, size);
-        return ResponseEntity.ok(pageable == null ? agentService.listAgents() : agentService.listAgents(pageable));
+        return ResponseEntity.ok(pageable == null
+                ? agentService.listAgents(effectiveRole)
+                : agentService.listAgents(effectiveRole, pageable));
     }
 
     @GetMapping("/{id}")

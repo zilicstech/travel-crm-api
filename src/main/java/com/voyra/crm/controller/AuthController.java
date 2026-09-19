@@ -39,7 +39,7 @@ public class AuthController {
     }
 
     @PostMapping("/login/agent")
-    @Operation(summary = "Travel agent login", description = "AGENT login, scoped to the agent's own tenant.")
+    @Operation(summary = "Travel agent or accountant login", description = "AGENT or ACCOUNTANT login (both stored in the same table), scoped to the caller's own tenant.")
     public ResponseEntity<LoginResponse> loginAgent(@Valid @RequestBody LoginRequest request) {
         LoginResponse response = authService.loginAgent(request);
         return respond(response);

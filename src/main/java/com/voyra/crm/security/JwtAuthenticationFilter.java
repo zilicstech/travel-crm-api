@@ -85,7 +85,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             case SUPER_ADMIN -> PlatformAdminCache.isActive(principal.userId());
             // Owner IS the Tenant record - tenant liveness (already checked above) covers it.
             case AGENCY_OWNER -> true;
-            case AGENT -> AgentCache.isActive(principal.userId());
+            case AGENT, ACCOUNTANT -> AgentCache.isActive(principal.userId());
         };
     }
 
