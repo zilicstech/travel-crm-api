@@ -29,20 +29,24 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * Client invoices are shared between AGENCY_OWNER and AGENT, scope resolved per caller.
- * Supplier invoices are accounts-payable data and are Owner-only (method-level override).
+ * The pre-accounts-module invoice surface - {@code client_invoice} and {@code supplier_invoice},
+ * kept on their original contract (see architecture note on why a new {@code invoice} table was
+ * added instead of migrating this one). Reads are Owner/Accountant/Agent (agent scoped to their
+ * own bookings); writes are Owner/Accountant only - an Agent can no longer raise or settle a
+ * bill, matching the "Owner sees all, Accountant bills, Agent reads" product decision.
  */
 @Slf4j
 @RestController
 @RequestMapping("/api/invoices")
 @RequiredArgsConstructor
 @Tag(name = "Invoices", description = "Client (money to collect) and Supplier (money to pay) invoices")
-@PreAuthorize("hasAnyRole('AGENCY_OWNER', 'AGENT')")
+@PreAuthorize("hasAnyRole('AGENCY_OWNER', 'ACCOUNTANT', 'AGENT')")
 public class InvoiceController {
 
     private final InvoiceService invoiceService;
 
     @PostMapping("/client")
+    @PreAuthorize("hasAnyRole('AGENCY_OWNER', 'ACCOUNTANT')")
     @Operation(summary = "Generate a client invoice", description = "GST is always server-computed from gstRate (default 18%).")
     public ResponseEntity<ClientInvoiceResponse> createClientInvoice(@Valid @RequestBody ClientInvoiceCreateRequest request) {
         return ResponseEntity.ok(invoiceService.createClientInvoice(request));
@@ -50,7 +54,7 @@ public class InvoiceController {
 
     @GetMapping("/client")
     @Operation(summary = "List client invoices",
-            description = "Agents see only their own; Owners see the whole agency. Supply ?page= for a paged "
+            description = "Agents see only their own; Owners and Accountants see the whole agency. Supply ?page= for a paged "
                     + "envelope; omit it for the full list as a plain array.")
     public ResponseEntity<Object> listClientInvoices(
             @RequestParam(value = "page", required = false) Integer page,
@@ -62,6 +66,7 @@ public class InvoiceController {
     }
 
     @PatchMapping("/client/{id}/payment")
+    @PreAuthorize("hasAnyRole('AGENCY_OWNER', 'ACCOUNTANT')")
     @Operation(summary = "Record a payment against a client invoice", description = "Status (Paid/Partial/Pending) is always server-derived from amountPaid.")
     public ResponseEntity<ClientInvoiceResponse> recordPayment(@PathVariable String id,
                                                                 @Valid @RequestBody ClientInvoicePaymentRequest request) {
@@ -69,22 +74,22 @@ public class InvoiceController {
     }
 
     @PostMapping("/supplier")
-    @PreAuthorize("hasRole('AGENCY_OWNER')")
-    @Operation(summary = "Owner-only. Record a supplier invoice")
+    @PreAuthorize("hasAnyRole('AGENCY_OWNER', 'ACCOUNTANT')")
+    @Operation(summary = "Record a supplier invoice")
     public ResponseEntity<SupplierInvoiceResponse> createSupplierInvoice(@Valid @RequestBody SupplierInvoiceCreateRequest request) {
         return ResponseEntity.ok(invoiceService.createSupplierInvoice(request));
     }
 
     @GetMapping("/supplier")
-    @PreAuthorize("hasRole('AGENCY_OWNER')")
-    @Operation(summary = "Owner-only. List supplier invoices", description = "Agency-wide - supplier payables are accounts-payable data, not agent-scoped.")
+    @PreAuthorize("hasAnyRole('AGENCY_OWNER', 'ACCOUNTANT')")
+    @Operation(summary = "List supplier invoices", description = "Agency-wide - supplier payables are accounts-payable data, not agent-scoped.")
     public ResponseEntity<List<SupplierInvoiceResponse>> listSupplierInvoices() {
         return ResponseEntity.ok(invoiceService.listSupplierInvoices());
     }
 
     @PatchMapping("/supplier/{id}/status")
-    @PreAuthorize("hasRole('AGENCY_OWNER')")
-    @Operation(summary = "Owner-only. Update a supplier invoice's payment status")
+    @PreAuthorize("hasAnyRole('AGENCY_OWNER', 'ACCOUNTANT')")
+    @Operation(summary = "Update a supplier invoice's payment status")
     public ResponseEntity<SupplierInvoiceResponse> updateSupplierInvoiceStatus(
             @PathVariable String id, @Valid @RequestBody SupplierInvoiceStatusUpdateRequest request) {
         return ResponseEntity.ok(invoiceService.updateSupplierInvoiceStatus(id, request));

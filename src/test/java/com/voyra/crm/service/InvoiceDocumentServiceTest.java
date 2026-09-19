@@ -7,6 +7,7 @@ import com.voyra.crm.entity.Booking;
 import com.voyra.crm.entity.Client;
 import com.voyra.crm.entity.Invoice;
 import com.voyra.crm.entity.InvoiceLineItem;
+import com.voyra.crm.entity.PaymentReceipt;
 import com.voyra.crm.entity.Tenant;
 import com.voyra.crm.enums.BookingStatus;
 import com.voyra.crm.enums.BookingType;
@@ -14,7 +15,9 @@ import com.voyra.crm.enums.DocumentKind;
 import com.voyra.crm.enums.FxRateSource;
 import com.voyra.crm.enums.InvoiceDocumentType;
 import com.voyra.crm.enums.InvoiceLifecycle;
+import com.voyra.crm.enums.PaymentMode;
 import com.voyra.crm.enums.PaymentStatus;
+import com.voyra.crm.enums.ReceiptDirection;
 import com.voyra.crm.enums.SupplyNature;
 import com.voyra.crm.enums.TaxTreatment;
 import com.voyra.crm.enums.UserType;
@@ -22,6 +25,7 @@ import com.voyra.crm.models.TaxComputationResult;
 import com.voyra.crm.repository.BookingRepository;
 import com.voyra.crm.repository.InvoiceLineItemRepository;
 import com.voyra.crm.repository.InvoiceRepository;
+import com.voyra.crm.repository.PaymentReceiptRepository;
 import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import org.junit.jupiter.api.AfterEach;
@@ -52,6 +56,8 @@ class InvoiceDocumentServiceTest {
     private InvoiceRepository invoiceRepository;
     @Mock
     private InvoiceLineItemRepository invoiceLineItemRepository;
+    @Mock
+    private PaymentReceiptRepository paymentReceiptRepository;
     @Mock
     private BookingRepository bookingRepository;
     @Mock
@@ -237,9 +243,9 @@ class InvoiceDocumentServiceTest {
     }
 
     @Test
-    void cancellingRequiresAnIssuedInvoiceWithNoReceipts() {
-        Invoice issuedWithReceipts = Invoice.builder().id("I1").status(InvoiceLifecycle.ISSUED)
-                .amountReceived(new BigDecimal("500.00")).build();
+    void cancellingATaxInvoiceWithReceiptsPointsToACreditNote() {
+        Invoice issuedWithReceipts = Invoice.builder().id("I1").documentType(InvoiceDocumentType.TAX_INVOICE)
+                .status(InvoiceLifecycle.ISSUED).amountReceived(new BigDecimal("500.00")).build();
         when(invoiceRepository.findById("I1")).thenReturn(Optional.of(issuedWithReceipts));
 
         assertThatThrownBy(() -> invoiceDocumentService.cancel("I1", "test"))
@@ -248,14 +254,75 @@ class InvoiceDocumentServiceTest {
     }
 
     @Test
+    void cancellingAProformaWithAdvanceReceiptsPointsToAReversal() {
+        Invoice proformaWithAdvances = Invoice.builder().id("I1").documentType(InvoiceDocumentType.PROFORMA)
+                .status(InvoiceLifecycle.PROFORMA_ISSUED).amountReceived(new BigDecimal("500.00")).build();
+        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(proformaWithAdvances));
+
+        assertThatThrownBy(() -> invoiceDocumentService.cancel("I1", "test"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("reverse the receipts");
+    }
+
+    @Test
     void cancellingAnIssuedInvoiceWithNoReceiptsSucceeds() {
-        Invoice issued = Invoice.builder().id("I1").status(InvoiceLifecycle.ISSUED)
-                .amountReceived(BigDecimal.ZERO).build();
+        Invoice issued = Invoice.builder().id("I1").documentType(InvoiceDocumentType.TAX_INVOICE)
+                .status(InvoiceLifecycle.ISSUED).amountReceived(BigDecimal.ZERO).build();
         when(invoiceRepository.findById("I1")).thenReturn(Optional.of(issued));
 
         InvoiceResponse response = invoiceDocumentService.cancel("I1", "Raised in error");
 
         assertThat(response.getStatus()).isEqualTo(InvoiceLifecycle.CANCELLED);
         assertThat(response.getCancelReason()).isEqualTo("Raised in error");
+    }
+
+    @Test
+    void issuingAProformaAllocatesAPiNumberAndFlipsDocumentType() {
+        Invoice draft = Invoice.builder().id("I1").documentType(InvoiceDocumentType.TAX_INVOICE)
+                .status(InvoiceLifecycle.DRAFT).grandTotal(new BigDecimal("1000.00")).build();
+        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(draft));
+        when(invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc("I1"))
+                .thenReturn(List.of(InvoiceLineItem.builder().id("L1").invoiceId("I1").description("x").build()));
+        when(documentNumberService.next(DocumentKind.PROFORMA, LocalDate.now())).thenReturn("PI/2026-27/0001");
+
+        InvoiceResponse response = invoiceDocumentService.issueProforma("I1");
+
+        assertThat(response.getDocumentType()).isEqualTo(InvoiceDocumentType.PROFORMA);
+        assertThat(response.getStatus()).isEqualTo(InvoiceLifecycle.PROFORMA_ISSUED);
+        assertThat(response.getInvoiceNumber()).isEqualTo("PI/2026-27/0001");
+    }
+
+    @Test
+    void convertingAProformaCreatesANewIssuedTaxInvoiceAndCancelsTheProforma() {
+        Invoice proforma = Invoice.builder().id("P1").documentType(InvoiceDocumentType.PROFORMA)
+                .status(InvoiceLifecycle.PROFORMA_ISSUED).invoiceNumber("PI/2026-27/0001")
+                .clientId("K1").clientName("Arjun Mehta").agentId("A1")
+                .supplyNature(SupplyNature.DOMESTIC_PACKAGE).taxTreatment(TaxTreatment.INTRA_STATE)
+                .placeOfSupplyCode("27").currencyCode("INR").fxRateToInr(BigDecimal.ONE)
+                .grandTotal(new BigDecimal("1000.00")).grandTotalInr(new BigDecimal("1000.00")).build();
+        when(invoiceRepository.findById("P1")).thenReturn(Optional.of(proforma));
+        when(invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc("P1"))
+                .thenReturn(List.of(InvoiceLineItem.builder().id("L1").invoiceId("P1").description("x").build()));
+        when(invoiceRepository.existsById(any())).thenReturn(false);
+        when(invoiceLineItemRepository.existsById(any())).thenReturn(false);
+        when(documentNumberService.next(DocumentKind.TAX_INVOICE, LocalDate.now())).thenReturn("INV/2026-27/0001");
+        PaymentReceipt advance = PaymentReceipt.builder().id("R1").invoiceId("P1").direction(ReceiptDirection.RECEIPT)
+                .amount(new BigDecimal("400.00")).paymentMode(PaymentMode.UPI).isAdvance(true).build();
+        when(paymentReceiptRepository.findByInvoiceIdAndIsAdvanceTrue("P1")).thenReturn(List.of(advance));
+
+        InvoiceResponse response = invoiceDocumentService.convertToTaxInvoice("P1");
+
+        assertThat(response.getDocumentType()).isEqualTo(InvoiceDocumentType.TAX_INVOICE);
+        assertThat(response.getInvoiceNumber()).isEqualTo("INV/2026-27/0001");
+        assertThat(response.getStatus()).isEqualTo(InvoiceLifecycle.PARTIALLY_PAID);
+        assertThat(response.getAmountReceived()).isEqualByComparingTo("400.00");
+        assertThat(response.getBalanceDue()).isEqualByComparingTo("600.00");
+        assertThat(advance.getInvoiceId()).isNotEqualTo("P1");
+
+        org.mockito.ArgumentCaptor<Invoice> savedProforma = org.mockito.ArgumentCaptor.forClass(Invoice.class);
+        org.mockito.Mockito.verify(invoiceRepository, org.mockito.Mockito.times(2)).save(savedProforma.capture());
+        Invoice cancelledProforma = savedProforma.getAllValues().get(1);
+        assertThat(cancelledProforma.getStatus()).isEqualTo(InvoiceLifecycle.CANCELLED);
+        assertThat(cancelledProforma.getCancelReason()).isEqualTo("Converted to INV/2026-27/0001");
     }
 }

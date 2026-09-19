@@ -11,6 +11,7 @@ import com.voyra.crm.entity.Booking;
 import com.voyra.crm.entity.Client;
 import com.voyra.crm.entity.Invoice;
 import com.voyra.crm.entity.InvoiceLineItem;
+import com.voyra.crm.entity.PaymentReceipt;
 import com.voyra.crm.entity.Tenant;
 import com.voyra.crm.enums.AuditEntityType;
 import com.voyra.crm.enums.BookingStatus;
@@ -24,6 +25,7 @@ import com.voyra.crm.models.TaxComputationResult;
 import com.voyra.crm.repository.BookingRepository;
 import com.voyra.crm.repository.InvoiceLineItemRepository;
 import com.voyra.crm.repository.InvoiceRepository;
+import com.voyra.crm.repository.PaymentReceiptRepository;
 import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.security.SecurityContextUtil;
@@ -49,10 +51,11 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Draft CRUD, issue, and cancel for tax invoices. A draft's tax figures are recomputed via
- * {@link TaxEngine} on every save; once {@link InvoiceLifecycle#DRAFT} is left, nothing here
- * ever recomputes them again - see {@code util.InvoiceLifecyclePolicy}. Proforma issuance,
- * conversion, and every receipt-driven transition (PARTIALLY_PAID, PAID) land with Epic 4.
+ * Draft CRUD, issue, proforma issue/conversion, and cancel for tax invoices. A draft's tax
+ * figures are recomputed via {@link TaxEngine} on every save; once {@link InvoiceLifecycle#DRAFT}
+ * is left, nothing here ever recomputes them again - see {@code util.InvoiceLifecyclePolicy}.
+ * Every receipt-driven settlement transition (PARTIALLY_PAID, PAID) is applied by
+ * {@code PaymentReceiptService}, not here.
  */
 @Service
 @RequiredArgsConstructor
@@ -63,6 +66,7 @@ public class InvoiceDocumentService {
 
     private final InvoiceRepository invoiceRepository;
     private final InvoiceLineItemRepository invoiceLineItemRepository;
+    private final PaymentReceiptRepository paymentReceiptRepository;
     private final BookingRepository bookingRepository;
     private final ClientService clientService;
     private final TenantRepository tenantRepository;
@@ -208,11 +212,121 @@ public class InvoiceDocumentService {
     }
 
     @Transactional
+    public InvoiceResponse issueProforma(String id) {
+        Invoice invoice = findById(id);
+        InvoiceLifecyclePolicy.assertProformaIssuable(invoice.getStatus());
+
+        List<InvoiceLineItem> lines = invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc(id);
+        if (lines.isEmpty()) {
+            throw new IllegalStateException("At least one line is required to issue a proforma");
+        }
+
+        LocalDate today = LocalDate.now();
+        String number = documentNumberService.next(DocumentKind.PROFORMA, today);
+
+        invoice.setInvoiceNumber(number);
+        invoice.setFinancialYear(FinancialYear.of(today));
+        invoice.setDocumentType(InvoiceDocumentType.PROFORMA);
+        invoice.setStatus(InvoiceLifecycle.PROFORMA_ISSUED);
+        invoice.setInvoiceDate(today);
+        invoice.setIssuedAt(LocalDateTime.now());
+        invoice.setIssuedBy(currentUserId());
+        invoice.setFxLockedAt(LocalDateTime.now());
+        invoiceRepository.save(invoice);
+
+        auditService.recordCreate(AuditEntityType.INVOICE, invoice.getId(), invoice.getInvoiceNumber());
+        log.info("Proforma issued: id={}, number={}", invoice.getId(), number);
+        return toResponse(invoice, lines);
+    }
+
+    /**
+     * Creates a new TAX_INVOICE row rather than mutating the proforma in place, so both series
+     * stay immutable once issued. Advance receipts against the proforma re-point onto the new
+     * row in the same transaction, and the proforma itself moves to CANCELLED - never deleted,
+     * since its number must stay in the series. Tax figures are copied verbatim (same client,
+     * booking, currency and FX rate as the proforma), never recomputed.
+     */
+    @Transactional
+    public InvoiceResponse convertToTaxInvoice(String proformaId) {
+        Invoice proforma = findById(proformaId);
+        InvoiceLifecyclePolicy.assertConvertible(proforma.getStatus());
+
+        List<InvoiceLineItem> proformaLines = invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc(proformaId);
+        LocalDate today = LocalDate.now();
+        String number = documentNumberService.next(DocumentKind.TAX_INVOICE, today);
+        String newId = UniqueIdResolver.resolve(invoiceRepository::existsById);
+        LocalDateTime now = LocalDateTime.now();
+        String actor = currentUserId();
+
+        Invoice taxInvoice = proforma.toBuilder()
+                .id(newId)
+                .invoiceNumber(number)
+                .financialYear(FinancialYear.of(today))
+                .documentType(InvoiceDocumentType.TAX_INVOICE)
+                .status(InvoiceLifecycle.ISSUED)
+                .invoiceDate(today)
+                .issuedAt(now)
+                .issuedBy(actor)
+                .fxLockedAt(now)
+                .supersedesInvoiceId(proforma.getId())
+                .amountReceived(BigDecimal.ZERO)
+                .creditNoteTotal(BigDecimal.ZERO)
+                .cancelledAt(null)
+                .cancelledBy(null)
+                .cancelReason(null)
+                .createdAt(now)
+                .createdBy(actor)
+                .updatedAt(null)
+                .updatedBy(null)
+                .build();
+
+        List<InvoiceLineItem> newLines = new ArrayList<>();
+        for (InvoiceLineItem line : proformaLines) {
+            newLines.add(line.toBuilder()
+                    .id(UniqueIdResolver.resolve(invoiceLineItemRepository::existsById))
+                    .invoiceId(newId)
+                    .createdAt(now)
+                    .build());
+        }
+
+        List<PaymentReceipt> advances = paymentReceiptRepository.findByInvoiceIdAndIsAdvanceTrue(proforma.getId());
+        BigDecimal movedReceived = BigDecimal.ZERO;
+        for (PaymentReceipt advance : advances) {
+            advance.setInvoiceId(newId);
+            movedReceived = movedReceived.add(advance.getAmount());
+        }
+
+        BigDecimal balanceDue = taxInvoice.getGrandTotal().subtract(movedReceived);
+        taxInvoice.setAmountReceived(movedReceived);
+        taxInvoice.setBalanceDue(balanceDue);
+        taxInvoice.setBalanceDueInr(scaleToInr(balanceDue, taxInvoice.getFxRateToInr()));
+        taxInvoice.setStatus(InvoiceLifecyclePolicy.deriveFromBalance(taxInvoice.getGrandTotal(), balanceDue));
+
+        invoiceRepository.save(taxInvoice);
+        invoiceLineItemRepository.saveAll(newLines);
+        if (!advances.isEmpty()) {
+            paymentReceiptRepository.saveAll(advances);
+        }
+
+        proforma.setStatus(InvoiceLifecycle.CANCELLED);
+        proforma.setCancelledAt(now);
+        proforma.setCancelledBy(actor);
+        proforma.setCancelReason("Converted to " + number);
+        invoiceRepository.save(proforma);
+
+        auditService.recordCreate(AuditEntityType.INVOICE, taxInvoice.getId(), taxInvoice.getInvoiceNumber());
+        log.info("Proforma {} converted to tax invoice {}", proforma.getInvoiceNumber(), number);
+        return toResponse(taxInvoice, newLines);
+    }
+
+    @Transactional
     public InvoiceResponse cancel(String id, String reason) {
         Invoice invoice = findById(id);
         InvoiceLifecyclePolicy.assertCancellable(invoice.getStatus());
         if (invoice.getAmountReceived().compareTo(BigDecimal.ZERO) > 0) {
-            throw new IllegalStateException("This invoice has receipts against it - issue a credit note instead");
+            String hint = invoice.getDocumentType() == InvoiceDocumentType.TAX_INVOICE
+                    ? "issue a credit note instead" : "reverse the receipts first";
+            throw new IllegalStateException("This invoice has receipts against it - " + hint);
         }
 
         Map<String, String> before = AuditSnapshot.of(invoice, AUDITED);

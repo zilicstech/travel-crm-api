@@ -33,9 +33,8 @@ import org.springframework.web.bind.annotation.RestController;
 import java.time.LocalDate;
 
 /**
- * Tax invoices and proformas. Draft CRUD, issue, and cancel ship with this epic (Epic 3 -
- * numbering, currency lock). Proforma issuance/conversion and the PDF route land with Epic 4
- * and Epic 8 respectively.
+ * Tax invoices and proformas. Draft CRUD, issue, proforma issue/conversion, and cancel are all
+ * live as of this epic. The PDF route lands with Epic 8.
  */
 @Slf4j
 @RestController
@@ -99,9 +98,23 @@ public class InvoiceDocumentController {
 
     @PostMapping("/{id}/cancel")
     @PreAuthorize("hasAnyRole('AGENCY_OWNER', 'ACCOUNTANT')")
-    @Operation(summary = "Cancel an issued invoice with no receipts against it", description = "A settled invoice is corrected with a credit note instead - see Epic 6.")
+    @Operation(summary = "Cancel an issued invoice or proforma with no receipts against it", description = "A settled tax invoice is corrected with a credit note instead - see Epic 6.")
     public ResponseEntity<InvoiceResponse> cancel(@PathVariable String id, @Valid @RequestBody InvoiceCancelRequest request) {
         return ResponseEntity.ok(invoiceDocumentService.cancel(id, request.getReason()));
+    }
+
+    @PostMapping("/{id}/issue-proforma")
+    @PreAuthorize("hasAnyRole('AGENCY_OWNER', 'ACCOUNTANT')")
+    @Operation(summary = "Issue a draft as a proforma", description = "Allocates a PI number and locks the FX rate. Carries no GST liability; receipts against it are advances.")
+    public ResponseEntity<InvoiceResponse> issueProforma(@PathVariable String id) {
+        return ResponseEntity.ok(invoiceDocumentService.issueProforma(id));
+    }
+
+    @PostMapping("/{id}/convert-to-tax-invoice")
+    @PreAuthorize("hasAnyRole('AGENCY_OWNER', 'ACCOUNTANT')")
+    @Operation(summary = "Convert an issued proforma into a tax invoice", description = "Creates a new INV-numbered row; the proforma's advance receipts carry over and the proforma itself moves to CANCELLED.")
+    public ResponseEntity<InvoiceResponse> convertToTaxInvoice(@PathVariable String id) {
+        return ResponseEntity.ok(invoiceDocumentService.convertToTaxInvoice(id));
     }
 
     @PostMapping("/preview-tax")

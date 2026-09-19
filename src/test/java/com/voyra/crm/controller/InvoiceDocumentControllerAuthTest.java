@@ -127,4 +127,15 @@ class InvoiceDocumentControllerAuthTest {
                         .content(objectMapper.writeValueAsString(cancelRequest)))
                 .andExpect(status().isForbidden());
     }
+
+    @Test
+    void agentCannotIssueProformaOrConvertIt() throws Exception {
+        mockMvc.perform(post("/api/accounts/invoices/I1/issue-proforma")
+                        .with(SecurityMockMvcRequestPostProcessors.user("agent1").roles("AGENT")))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(post("/api/accounts/invoices/I1/convert-to-tax-invoice")
+                        .with(SecurityMockMvcRequestPostProcessors.user("agent1").roles("AGENT")))
+                .andExpect(status().isForbidden());
+    }
 }

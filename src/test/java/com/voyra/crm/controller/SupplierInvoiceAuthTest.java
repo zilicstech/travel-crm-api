@@ -27,7 +27,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/** Supplier invoices are accounts-payable data: owner-only, per the method-level @PreAuthorize override. */
+/** Supplier invoices are accounts-payable data: Owner/Accountant only, per the method-level @PreAuthorize override. */
 @WebMvcTest(InvoiceController.class)
 @ActiveProfiles("test")
 @Import({SecurityConfig.class, JwtAuthenticationFilter.class, JwtService.class, RestAuthenticationEntryPoint.class})
@@ -59,6 +59,12 @@ class SupplierInvoiceAuthTest {
 
         mockMvc.perform(post("/api/invoices/supplier")
                         .with(SecurityMockMvcRequestPostProcessors.user("owner1").roles("AGENCY_OWNER"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(createRequest())))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/api/invoices/supplier")
+                        .with(SecurityMockMvcRequestPostProcessors.user("accountant1").roles("ACCOUNTANT"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(createRequest())))
                 .andExpect(status().isOk());
