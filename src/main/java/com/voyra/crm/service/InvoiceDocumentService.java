@@ -463,7 +463,11 @@ public class InvoiceDocumentService {
                         .invoiceId(invoice.getId())
                         .sortOrder(sortOrder++)
                         .description(req.getDescription())
-                        .sacCode(req.getSacCode())
+                        // The line-item form has no SAC field of its own - fall back to the
+                        // resolved GST slab's SAC so GSTR-1's SAC-wise grouping (§3.2) is never
+                        // silently null. An explicit per-line SAC (a future finer-grained UI)
+                        // still wins when supplied.
+                        .sacCode(req.getSacCode() != null && !req.getSacCode().isBlank() ? req.getSacCode() : r.sacCode())
                         .serviceType(req.getServiceType())
                         .quantity(req.getQuantity())
                         .unitPrice(req.getUnitPrice())

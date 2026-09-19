@@ -13,10 +13,14 @@ import com.voyra.crm.enums.InvoiceLifecycle;
 import com.voyra.crm.enums.LedgerEntryType;
 import com.voyra.crm.enums.LedgerSourceType;
 import com.voyra.crm.models.LedgerPosting;
+import com.voyra.crm.repository.ClientRepository;
 import com.voyra.crm.repository.CustomerLedgerEntryRepository;
 import com.voyra.crm.repository.InvoiceRepository;
 import com.voyra.crm.security.SecurityContextUtil;
+import com.voyra.crm.util.PdfTableWriter;
+import com.voyra.crm.util.ReportTable;
 import com.voyra.crm.util.UniqueIdResolver;
+import com.voyra.crm.util.XlsxWriter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -52,6 +56,7 @@ public class CustomerLedgerService {
     private final CustomerLedgerEntryRepository ledgerRepository;
     private final InvoiceRepository invoiceRepository;
     private final ClientService clientService;
+    private final ClientRepository clientRepository;
 
     @Transactional
     public void post(LedgerPosting posting) {
@@ -116,6 +121,34 @@ public class CustomerLedgerService {
                 .build();
     }
 
+    /** FR6: "The statement exports to PDF and Excel" - same {@link ReportTable} feeding both writers, per the pattern {@code ReportService} already uses for every other export. */
+    @Transactional(readOnly = true)
+    public byte[] exportStatementXlsx(String clientId, LocalDate from, LocalDate to) {
+        return XlsxWriter.write("Statement of Account", statementTable(clientId, from, to));
+    }
+
+    @Transactional(readOnly = true)
+    public byte[] exportStatementPdf(String clientId, LocalDate from, LocalDate to) {
+        LedgerStatementResponse s = statement(clientId, from, to);
+        return PdfTableWriter.write("Statement of Account - " + s.getClientName(), statementTable(s));
+    }
+
+    private ReportTable statementTable(String clientId, LocalDate from, LocalDate to) {
+        return statementTable(statement(clientId, from, to));
+    }
+
+    private ReportTable statementTable(LedgerStatementResponse s) {
+        List<String> header = List.of("Date", "Type", "Narration", "Debit (INR)", "Credit (INR)", "Balance (INR)");
+        List<List<String>> rows = s.getEntries().stream()
+                .map(e -> List.of(
+                        e.getEntryDate().toString(), e.getEntryType().name(), e.getNarration(),
+                        e.getDebitAmountInr().compareTo(BigDecimal.ZERO) > 0 ? e.getDebitAmountInr().toString() : "",
+                        e.getCreditAmountInr().compareTo(BigDecimal.ZERO) > 0 ? e.getCreditAmountInr().toString() : "",
+                        e.getRunningBalanceInr().toString()))
+                .toList();
+        return new ReportTable(header, rows);
+    }
+
     @Transactional(readOnly = true)
     public ClientLedgerSummaryResponse summary(String clientId) {
         Client client = clientService.findAccessibleClient(clientId);
@@ -137,6 +170,18 @@ public class CustomerLedgerService {
                 .outstandingInr(running.max(BigDecimal.ZERO))
                 .advanceInr(running.min(BigDecimal.ZERO).negate())
                 .build();
+    }
+
+    /**
+     * The billed/received/outstanding/advance roll-up for every client in the tenant - the
+     * Accounts console's own Customers screen. Deliberately goes through {@link ClientRepository}
+     * directly rather than {@code ClientController}/{@code /api/clients}, which is Owner/Agent
+     * only: an Accountant has no CRM access (FR1), but must still see every client's financial
+     * position here.
+     */
+    @Transactional(readOnly = true)
+    public List<ClientLedgerSummaryResponse> summaryForAllClients() {
+        return clientRepository.findAll().stream().map(c -> summary(c.getId())).toList();
     }
 
     /** AR ageing across every client with an unpaid tax invoice, bucketed by days past the due date (or invoice date, if none was set). */

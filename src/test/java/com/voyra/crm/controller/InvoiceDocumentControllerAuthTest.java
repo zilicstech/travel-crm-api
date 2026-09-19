@@ -57,7 +57,7 @@ class InvoiceDocumentControllerAuthTest {
 
     private TaxComputationResult zeroResult() {
         return new TaxComputationResult(
-                TaxTreatment.INTRA_STATE, "27", new BigDecimal("1000"),
+                TaxTreatment.INTRA_STATE, "27", "9985", new BigDecimal("1000"),
                 BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
                 BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
                 BigDecimal.ZERO, null, BigDecimal.ZERO, BigDecimal.ZERO, new BigDecimal("1000"));

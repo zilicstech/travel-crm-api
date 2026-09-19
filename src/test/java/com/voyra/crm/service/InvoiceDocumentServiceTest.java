@@ -114,7 +114,7 @@ class InvoiceDocumentServiceTest {
     private TaxComputationResult gstResult(BigDecimal taxableAmount) {
         BigDecimal cgst = taxableAmount.multiply(new BigDecimal("0.025"));
         return new TaxComputationResult(
-                TaxTreatment.INTRA_STATE, "27", taxableAmount,
+                TaxTreatment.INTRA_STATE, "27", "9985", taxableAmount,
                 new BigDecimal("5.000"), new BigDecimal("2.500"), new BigDecimal("2.500"), BigDecimal.ZERO,
                 cgst, cgst, BigDecimal.ZERO, cgst.add(cgst),
                 BigDecimal.ZERO, null, BigDecimal.ZERO, BigDecimal.ZERO,

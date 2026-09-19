@@ -13,6 +13,9 @@ import java.math.BigDecimal;
 public record TaxComputationResult(
         TaxTreatment taxTreatment,
         String placeOfSupplyCode,
+        /** The resolved GST slab's own SAC code - the line builder's fallback when the caller
+         *  doesn't specify one. Null for EXPORT_OF_SERVICE/EXEMPT and for a TCS-only result. */
+        String sacCode,
         BigDecimal taxableValue,
         BigDecimal gstRatePercent,
         BigDecimal cgstRatePercent,

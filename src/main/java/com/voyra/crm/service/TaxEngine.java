@@ -94,7 +94,7 @@ public class TaxEngine {
         BigDecimal grandTotal = request.taxableAmount().add(gstTotal).add(tcsAmount);
 
         return new TaxComputationResult(
-                treatment, placeOfSupplyCode, taxableValue,
+                treatment, placeOfSupplyCode, gstConfig.getSacCode(), taxableValue,
                 rate, cgstRate, sgstRate, igstRate,
                 cgstAmount, sgstAmount, igstAmount, gstTotal,
                 tcsRate, tcsSection, tcsBase, tcsAmount,
@@ -141,7 +141,7 @@ public class TaxEngine {
 
     private TaxComputationResult zeroGst(TaxTreatment treatment, String placeOfSupplyCode, TaxComputationRequest request) {
         return new TaxComputationResult(
-                treatment, placeOfSupplyCode, request.taxableAmount(),
+                treatment, placeOfSupplyCode, null, request.taxableAmount(),
                 BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
                 BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
                 BigDecimal.ZERO, null, BigDecimal.ZERO, BigDecimal.ZERO,
