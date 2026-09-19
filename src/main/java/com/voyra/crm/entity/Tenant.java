@@ -65,6 +65,22 @@ public class Tenant {
     @Column(name = "logo_key", length = 500)
     private String logoKey;
 
+    @Column(name = "state_code", length = 2)
+    private String stateCode;
+
+    @Column(name = "base_currency_code", nullable = false, length = 3)
+    @Builder.Default
+    private String baseCurrencyCode = "INR";
+
+    @Column(name = "default_sac_code", length = 10)
+    private String defaultSacCode;
+
+    @Column(name = "invoice_terms", length = 2000)
+    private String invoiceTerms;
+
+    @Column(name = "legal_name", length = 200)
+    private String legalName;
+
     @Column(name = "created_date")
     private LocalDateTime createdDate;
 

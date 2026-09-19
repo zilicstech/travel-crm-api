@@ -70,4 +70,18 @@ public class ClientCreateRequest {
     @Schema(description = "Set when the agent created this client despite a duplicate-check warning - "
             + "the id of the existing client it might be the same as", example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String possibleDuplicateOf;
+
+    @Size(max = 20, message = "GSTIN must be 20 characters or fewer")
+    @Schema(description = "This client's own GSTIN, if registered", example = "27AABCU9603R1ZM")
+    private String gstin;
+
+    @Schema(description = "GST home state - used by the accounting module to decide CGST+SGST vs IGST", example = "27")
+    private String stateCode;
+
+    @Size(max = 500, message = "Billing address must be 500 characters or fewer")
+    @Schema(example = "42 MG Road, Bengaluru")
+    private String billingAddress;
+
+    @Schema(description = "Recipient is outside India - a precondition for export-of-service tax treatment, never sufficient alone")
+    private Boolean isOverseas;
 }

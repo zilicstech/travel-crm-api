@@ -43,7 +43,7 @@ import java.util.Map;
 @Slf4j
 public class ClientService {
 
-    private static final String[] AUDITED = { "identifier", "name", "type", "isActive" };
+    private static final String[] AUDITED = { "identifier", "name", "type", "isActive", "gstin", "stateCode", "billingAddress", "isOverseas" };
 
     private final ClientRepository clientRepository;
     private final MemberRepository memberRepository;
@@ -77,6 +77,10 @@ public class ClientService {
                 .createdAt(LocalDateTime.now())
                 .createdBy(currentUserId())
                 .possibleDuplicateOf(request.getPossibleDuplicateOf())
+                .gstin(request.getGstin())
+                .stateCode(request.getStateCode())
+                .billingAddress(request.getBillingAddress())
+                .isOverseas(Boolean.TRUE.equals(request.getIsOverseas()))
                 .build();
         clientRepository.save(client);
 
@@ -194,6 +198,18 @@ public class ClientService {
         if (renamed) {
             client.setName(request.getName());
         }
+        if (request.getGstin() != null) {
+            client.setGstin(request.getGstin());
+        }
+        if (request.getStateCode() != null) {
+            client.setStateCode(request.getStateCode());
+        }
+        if (request.getBillingAddress() != null) {
+            client.setBillingAddress(request.getBillingAddress());
+        }
+        if (request.getIsOverseas() != null) {
+            client.setIsOverseas(request.getIsOverseas());
+        }
 
         client.setModifiedAt(LocalDateTime.now());
         client.setModifiedBy(currentUserId());
@@ -263,6 +279,8 @@ public class ClientService {
                 .createdAt(client.getCreatedAt()).createdBy(client.getCreatedBy())
                 .modifiedAt(client.getModifiedAt()).modifiedBy(client.getModifiedBy())
                 .possibleDuplicateOf(client.getPossibleDuplicateOf())
+                .gstin(client.getGstin()).stateCode(client.getStateCode())
+                .billingAddress(client.getBillingAddress()).isOverseas(client.getIsOverseas())
                 .build();
     }
 
@@ -276,6 +294,8 @@ public class ClientService {
                 .createdAt(client.getCreatedAt()).createdBy(client.getCreatedBy())
                 .modifiedAt(client.getModifiedAt()).modifiedBy(client.getModifiedBy())
                 .possibleDuplicateOf(client.getPossibleDuplicateOf())
+                .gstin(client.getGstin()).stateCode(client.getStateCode())
+                .billingAddress(client.getBillingAddress()).isOverseas(client.getIsOverseas())
                 .build();
     }
 

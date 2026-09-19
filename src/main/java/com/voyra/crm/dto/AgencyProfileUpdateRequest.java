@@ -24,4 +24,19 @@ public class AgencyProfileUpdateRequest {
 
     @Schema(description = "Opaque storage key from FileStorageService")
     private String logoKey;
+
+    @Schema(example = "27")
+    private String stateCode;
+
+    @Schema(example = "INR")
+    private String baseCurrencyCode;
+
+    @Schema(example = "9985")
+    private String defaultSacCode;
+
+    @Schema(example = "Payment due within 7 days of invoice date.")
+    private String invoiceTerms;
+
+    @Schema(example = "Global Explorer Travels Pvt Ltd")
+    private String legalName;
 }

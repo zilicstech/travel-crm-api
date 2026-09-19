@@ -46,6 +46,21 @@ public class AgencyProfileService {
         if (request.getLogoKey() != null) {
             tenant.setLogoKey(request.getLogoKey());
         }
+        if (request.getStateCode() != null) {
+            tenant.setStateCode(request.getStateCode());
+        }
+        if (request.getBaseCurrencyCode() != null) {
+            tenant.setBaseCurrencyCode(request.getBaseCurrencyCode());
+        }
+        if (request.getDefaultSacCode() != null) {
+            tenant.setDefaultSacCode(request.getDefaultSacCode());
+        }
+        if (request.getInvoiceTerms() != null) {
+            tenant.setInvoiceTerms(request.getInvoiceTerms());
+        }
+        if (request.getLegalName() != null) {
+            tenant.setLegalName(request.getLegalName());
+        }
         tenantRepository.save(tenant);
         log.info("Agency profile updated: tenantId={}", tenant.getId());
         return toResponse(tenant);
@@ -62,6 +77,9 @@ public class AgencyProfileService {
                 .agencyName(t.getAgencyName()).ownerName(t.getOwnerName()).ownerEmail(t.getOwnerEmail())
                 .gstNumber(t.getGstNumber()).address(t.getAddress()).currency(t.getCurrency())
                 .defaultCommission(t.getDefaultCommission()).logoKey(t.getLogoKey())
+                .stateCode(t.getStateCode()).baseCurrencyCode(t.getBaseCurrencyCode())
+                .defaultSacCode(t.getDefaultSacCode()).invoiceTerms(t.getInvoiceTerms())
+                .legalName(t.getLegalName())
                 .build();
     }
 }

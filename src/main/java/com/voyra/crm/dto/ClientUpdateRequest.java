@@ -21,4 +21,18 @@ public class ClientUpdateRequest {
 
     @Schema(example = "B2B")
     private ClientType type;
+
+    @Size(max = 20, message = "GSTIN must be 20 characters or fewer")
+    @Schema(example = "27AABCU9603R1ZM")
+    private String gstin;
+
+    @Schema(example = "27")
+    private String stateCode;
+
+    @Size(max = 500, message = "Billing address must be 500 characters or fewer")
+    @Schema(example = "42 MG Road, Bengaluru")
+    private String billingAddress;
+
+    @Schema(description = "Recipient is outside India")
+    private Boolean isOverseas;
 }

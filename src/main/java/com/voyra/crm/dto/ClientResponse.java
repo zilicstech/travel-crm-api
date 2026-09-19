@@ -48,4 +48,16 @@ public class ClientResponse {
 
     @Schema(description = "Set when this client was created despite a duplicate-check warning", example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String possibleDuplicateOf;
+
+    @Schema(example = "27AABCU9603R1ZM")
+    private String gstin;
+
+    @Schema(example = "27")
+    private String stateCode;
+
+    @Schema(example = "42 MG Road, Bengaluru")
+    private String billingAddress;
+
+    @Schema(description = "Recipient is outside India")
+    private Boolean isOverseas;
 }

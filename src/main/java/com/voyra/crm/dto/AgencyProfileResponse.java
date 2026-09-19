@@ -40,4 +40,19 @@ public class AgencyProfileResponse {
 
     @Schema(description = "Opaque storage key from FileStorageService, never a filesystem path")
     private String logoKey;
+
+    @Schema(description = "GST home state code - decides CGST+SGST vs IGST on invoices", example = "27")
+    private String stateCode;
+
+    @Schema(description = "Machine currency code the accounting module reads; currency above stays a display label", example = "INR")
+    private String baseCurrencyCode;
+
+    @Schema(description = "SAC code pre-filled on a new invoice line", example = "9985")
+    private String defaultSacCode;
+
+    @Schema(description = "Printed on every invoice as standard terms", example = "Payment due within 7 days of invoice date.")
+    private String invoiceTerms;
+
+    @Schema(description = "Registered legal name, printed on tax invoices instead of the trading name", example = "Global Explorer Travels Pvt Ltd")
+    private String legalName;
 }

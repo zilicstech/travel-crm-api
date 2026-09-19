@@ -72,6 +72,23 @@ public class Client {
     @Column(name = "possible_duplicate_of", length = 36)
     private String possibleDuplicateOf;
 
+    @Column(name = "gstin", length = 20)
+    private String gstin;
+
+    /** GST home state, used by TaxEngine to decide CGST+SGST vs IGST when this client is the recipient. */
+    @Column(name = "state_code", length = 2)
+    private String stateCode;
+
+    @Column(name = "billing_address", length = 500)
+    private String billingAddress;
+
+    /** Export-of-service eligibility is EXPORT_OF_SERVICE only when this is true, is_overseas
+     *  AND the invoice currency is non-INR AND the accountant explicitly requests it - see
+     *  TaxEngine.determineTreatment. Destination alone never triggers export. */
+    @Column(name = "is_overseas", nullable = false)
+    @Builder.Default
+    private Boolean isOverseas = false;
+
     @PrePersist
     protected void onCreate() {
         if (createdAt == null) {
