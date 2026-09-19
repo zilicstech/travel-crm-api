@@ -52,6 +52,7 @@ public class PaymentReceiptService {
     private final DocumentNumberService documentNumberService;
     private final AuditService auditService;
     private final CustomerLedgerService customerLedgerService;
+    private final BookingAccountingSync bookingAccountingSync;
 
     @Transactional
     public PaymentReceiptResponse record(PaymentReceiptRequest request) {
@@ -91,6 +92,7 @@ public class PaymentReceiptService {
         if (!isProforma) {
             applySettlement(invoice);
         }
+        bookingAccountingSync.syncPayment(invoice.getBookingId());
 
         auditService.recordCreate(AuditEntityType.PAYMENT_RECEIPT, receipt.getId(), receipt.getReceiptNumber());
         log.info("Receipt recorded: id={}, invoiceId={}, amount={}", receipt.getId(), invoice.getId(), receipt.getAmount());
@@ -152,6 +154,7 @@ public class PaymentReceiptService {
         if (!isProforma) {
             applySettlement(invoice);
         }
+        bookingAccountingSync.syncPayment(invoice.getBookingId());
 
         auditService.recordCreate(AuditEntityType.PAYMENT_RECEIPT, reversal.getId(), reversal.getReceiptNumber());
         log.info("Receipt reversed: original={}, reversal={}", original.getId(), reversal.getId());

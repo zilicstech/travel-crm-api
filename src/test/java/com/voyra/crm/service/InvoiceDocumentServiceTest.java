@@ -72,6 +72,8 @@ class InvoiceDocumentServiceTest {
     private AuditService auditService;
     @Mock
     private CustomerLedgerService customerLedgerService;
+    @Mock
+    private BookingAccountingSync bookingAccountingSync;
 
     @InjectMocks
     private InvoiceDocumentService invoiceDocumentService;

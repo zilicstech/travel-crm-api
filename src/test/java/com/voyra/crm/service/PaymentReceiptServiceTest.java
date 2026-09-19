@@ -50,6 +50,8 @@ class PaymentReceiptServiceTest {
     private AuditService auditService;
     @Mock
     private CustomerLedgerService customerLedgerService;
+    @Mock
+    private BookingAccountingSync bookingAccountingSync;
 
     @InjectMocks
     private PaymentReceiptService paymentReceiptService;

@@ -32,4 +32,7 @@ public class AccountsDashboardSummaryResponse {
 
     @Schema(description = "GST raised this month on issued tax invoices - collected on the agency's behalf, not its revenue", example = "9201.60")
     private BigDecimal outputTaxThisMonthInr;
+
+    @Schema(description = "GST-exclusive economic revenue this month: issued invoices' taxable value net of issued credit notes' taxable value, TCS excluded. Distinct from the sales-pipeline SUM(booking.sellingPrice) figure used elsewhere - the two differ by cancelled bookings plus credit notes.", example = "128601.60")
+    private BigDecimal netRevenueThisMonthInr;
 }

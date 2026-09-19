@@ -35,4 +35,8 @@ public interface InvoiceRepository extends JpaRepository<Invoice, String>, JpaSp
     /** GST/TCS register and the dashboard's billed/output-tax figures: real tax invoices only, dated within range. */
     List<Invoice> findByDocumentTypeAndStatusNotAndInvoiceDateBetween(
             InvoiceDocumentType documentType, InvoiceLifecycle excludedStatus, LocalDate from, LocalDate to);
+
+    /** BookingAccountingSync input: the live (non-cancelled) tax invoice(s) for a booking - at most one, per the partial unique index. */
+    List<Invoice> findByBookingIdAndDocumentTypeAndStatusNot(
+            String bookingId, InvoiceDocumentType documentType, InvoiceLifecycle excludedStatus);
 }

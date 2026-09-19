@@ -53,17 +53,18 @@ public interface BookingRepository extends JpaRepository<Booking, String> {
 
     long countByBookingStatus(BookingStatus bookingStatus);
 
+    /** Cancelled bookings never sold anything - excluded from every revenue-shaped aggregate below. */
     @Query("""
             SELECT COALESCE(SUM(b.sellingPrice), 0) AS totalRevenue, COALESCE(SUM(b.profit), 0) AS totalProfit,
                    COALESCE(SUM(b.netCost), 0) AS totalNetCost
-            FROM Booking b WHERE b.agentId = :agentId
+            FROM Booking b WHERE b.agentId = :agentId AND b.bookingStatus <> :#{T(com.voyra.crm.enums.BookingStatus).CANCELLED}
             """)
     AgentRevenueProjection sumRevenueByAgentId(@Param("agentId") String agentId);
 
     @Query("""
             SELECT COALESCE(SUM(b.sellingPrice), 0) AS totalRevenue, COALESCE(SUM(b.profit), 0) AS totalProfit,
                    COALESCE(SUM(b.netCost), 0) AS totalNetCost
-            FROM Booking b
+            FROM Booking b WHERE b.bookingStatus <> :#{T(com.voyra.crm.enums.BookingStatus).CANCELLED}
             """)
     AgentRevenueProjection sumRevenueForAgency();
 
@@ -81,7 +82,7 @@ public interface BookingRepository extends JpaRepository<Booking, String> {
                    COALESCE(SUM(b.sellingPrice), 0) AS totalRevenue,
                    COALESCE(SUM(b.profit), 0) AS totalProfit
             FROM Booking b
-            WHERE b.agentId IN :agentIds
+            WHERE b.agentId IN :agentIds AND b.bookingStatus <> :#{T(com.voyra.crm.enums.BookingStatus).CANCELLED}
             GROUP BY b.agentId
             """)
     List<AgentBookingStatsProjection> aggregateBookingStatsByAgent(@Param("agentIds") Collection<String> agentIds);
@@ -101,7 +102,7 @@ public interface BookingRepository extends JpaRepository<Booking, String> {
                    COALESCE(SUM(b.sellingPrice), 0) AS revenue,
                    COALESCE(SUM(b.profit), 0) AS profit
             FROM Booking b
-            WHERE b.bookingDate >= :from
+            WHERE b.bookingDate >= :from AND b.bookingStatus <> :#{T(com.voyra.crm.enums.BookingStatus).CANCELLED}
             GROUP BY YEAR(b.bookingDate), MONTH(b.bookingDate)
             """)
     List<MonthlyRevenueProjection> aggregateMonthlyRevenueSince(@Param("from") java.time.LocalDate from);

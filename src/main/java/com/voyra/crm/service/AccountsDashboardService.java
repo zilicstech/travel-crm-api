@@ -6,9 +6,11 @@ import com.voyra.crm.dto.TcsSummaryRowResponse;
 import com.voyra.crm.entity.Invoice;
 import com.voyra.crm.entity.InvoiceLineItem;
 import com.voyra.crm.entity.PaymentReceipt;
+import com.voyra.crm.enums.CreditNoteStatus;
 import com.voyra.crm.enums.InvoiceDocumentType;
 import com.voyra.crm.enums.InvoiceLifecycle;
 import com.voyra.crm.enums.ReceiptDirection;
+import com.voyra.crm.repository.CreditNoteRepository;
 import com.voyra.crm.repository.InvoiceLineItemRepository;
 import com.voyra.crm.repository.InvoiceRepository;
 import com.voyra.crm.repository.PaymentReceiptRepository;
@@ -40,6 +42,7 @@ public class AccountsDashboardService {
     private final InvoiceRepository invoiceRepository;
     private final InvoiceLineItemRepository invoiceLineItemRepository;
     private final PaymentReceiptRepository paymentReceiptRepository;
+    private final CreditNoteRepository creditNoteRepository;
 
     @Transactional(readOnly = true)
     public AccountsDashboardSummaryResponse summary() {
@@ -51,6 +54,7 @@ public class AccountsDashboardService {
                 InvoiceDocumentType.TAX_INVOICE, InvoiceLifecycle.CANCELLED, monthStart, monthEnd);
         BigDecimal billedThisMonth = sum(thisMonth, Invoice::getGrandTotalInr);
         BigDecimal outputTaxThisMonth = sum(thisMonth, Invoice::getGstTotalInr);
+        BigDecimal netRevenueThisMonth = trueRevenue(monthStart, monthEnd);
 
         List<PaymentReceipt> collectedThisMonth = paymentReceiptRepository.findByDirectionAndReceivedOnBetween(
                 ReceiptDirection.RECEIPT, monthStart, monthEnd);
@@ -79,7 +83,28 @@ public class AccountsDashboardService {
                 .overdueInr(overdue)
                 .advanceHeldInr(advanceHeld)
                 .outputTaxThisMonthInr(outputTaxThisMonth)
+                .netRevenueThisMonthInr(netRevenueThisMonth)
                 .build();
+    }
+
+    /**
+     * GST-exclusive economic revenue for a period: issued, non-cancelled tax invoices' taxable
+     * value, net of the same period's issued credit notes' taxable value (converted at each
+     * document's own locked rate) - TCS excluded, since it is collected on the government's
+     * behalf, not the agency's income. Distinct from the sales-pipeline metric
+     * {@code SUM(booking.sellingPrice)} used elsewhere (agent leaderboard, revenue trend chart):
+     * that figure tracks what was sold, this one tracks what was actually billed and not since
+     * reversed - the two are expected to differ by exactly the value of cancelled bookings (never
+     * billed) plus any credit notes (billed, then reversed).
+     */
+    @Transactional(readOnly = true)
+    public BigDecimal trueRevenue(LocalDate from, LocalDate to) {
+        BigDecimal billedTaxable = sum(taxInvoicesInRange(from, to), Invoice::getTaxableValueInr);
+        BigDecimal creditedTaxable = creditNoteRepository.findByStatusAndNoteDateBetween(CreditNoteStatus.ISSUED, from, to)
+                .stream()
+                .map(cn -> scale(cn.getTaxableValue().multiply(cn.getFxRateToInr())))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        return billedTaxable.subtract(creditedTaxable);
     }
 
     /** Groups by (SAC code, GST rate) over issued, non-cancelled tax invoices in range - the input a CA needs for GSTR-1, not a filing itself. */

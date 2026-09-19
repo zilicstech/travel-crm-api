@@ -77,6 +77,7 @@ public class InvoiceDocumentService {
     private final DocumentNumberService documentNumberService;
     private final AuditService auditService;
     private final CustomerLedgerService customerLedgerService;
+    private final BookingAccountingSync bookingAccountingSync;
 
     @Transactional
     public InvoiceResponse createDraft(InvoiceDraftRequest request) {
@@ -210,6 +211,7 @@ public class InvoiceDocumentService {
         invoice.setFxLockedAt(LocalDateTime.now());
         invoiceRepository.save(invoice);
         postInvoiceRaised(invoice);
+        bookingAccountingSync.syncPayment(invoice.getBookingId());
 
         auditService.recordCreate(AuditEntityType.INVOICE, invoice.getId(), invoice.getInvoiceNumber());
         log.info("Invoice issued: id={}, number={}", invoice.getId(), number);
@@ -313,6 +315,7 @@ public class InvoiceDocumentService {
             paymentReceiptRepository.saveAll(advances);
         }
         postInvoiceRaised(taxInvoice);
+        bookingAccountingSync.syncPayment(taxInvoice.getBookingId());
 
         proforma.setStatus(InvoiceLifecycle.CANCELLED);
         proforma.setCancelledAt(now);
@@ -345,6 +348,7 @@ public class InvoiceDocumentService {
         if (hadLedgerDebit) {
             postCancellationReversal(invoice);
         }
+        bookingAccountingSync.syncPayment(invoice.getBookingId());
 
         List<AuditChange> changes = AuditSnapshot.diff(before, AuditSnapshot.of(invoice, AUDITED));
         auditService.recordUpdate(AuditEntityType.INVOICE, invoice.getId(), invoice.getInvoiceNumber(), changes);

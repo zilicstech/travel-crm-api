@@ -15,10 +15,13 @@ import com.voyra.crm.entity.Client;
 import com.voyra.crm.enums.AuditEntityType;
 import com.voyra.crm.enums.BookingStatus;
 import com.voyra.crm.enums.BookingType;
+import com.voyra.crm.enums.CreditNoteStatus;
+import com.voyra.crm.enums.PaymentStatusSource;
 import com.voyra.crm.enums.RefundState;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.BookingRepository;
 import com.voyra.crm.repository.ClientRepository;
+import com.voyra.crm.repository.CreditNoteRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.security.SecurityContextUtil;
 import com.voyra.crm.util.AuditSnapshot;
@@ -53,6 +56,7 @@ public class BookingService {
     private final BookingRepository bookingRepository;
     private final ClientRepository clientRepository;
     private final AgentRepository agentRepository;
+    private final CreditNoteRepository creditNoteRepository;
     private final AuditService auditService;
 
     @Transactional
@@ -227,6 +231,9 @@ public class BookingService {
         if (booking.getBookingStatus() != BookingStatus.CANCELLED) {
             throw new IllegalStateException("Only a cancelled booking can carry a refund state");
         }
+        if (creditNoteRepository.existsByBookingIdAndStatusNot(id, CreditNoteStatus.CANCELLED)) {
+            throw new IllegalStateException("A credit note exists for this booking - refund state is derived from it");
+        }
         Map<String, String> before = AuditSnapshot.of(booking, AUDITED);
         booking.setRefundState(request.getRefundState());
         if (request.getRefundAmount() != null) {
@@ -263,6 +270,9 @@ public class BookingService {
     @Transactional
     public BookingResponse updatePaymentStatus(String id, BookingPaymentStatusUpdateRequest request) {
         Booking booking = findAccessibleBooking(id);
+        if (booking.getPaymentStatusSource() == PaymentStatusSource.DERIVED) {
+            throw new IllegalStateException("Payment status is derived from invoices - record a receipt instead");
+        }
         Map<String, String> before = AuditSnapshot.of(booking, AUDITED);
         booking.setPaymentStatus(request.getPaymentStatus());
         List<AuditChange> changes = AuditSnapshot.diff(before, AuditSnapshot.of(booking, AUDITED));
@@ -329,6 +339,9 @@ public class BookingService {
                 .ticketingDeadline(b.getTicketingDeadline()).cancellationDeadline(b.getCancellationDeadline())
                 .deadlineNote(b.getDeadlineNote())
                 .createdDate(b.getCreatedDate())
+                .primaryInvoiceId(b.getPrimaryInvoiceId())
+                .invoicedTotalInr(b.getInvoicedTotalInr()).receivedTotalInr(b.getReceivedTotalInr())
+                .refundedTotalInr(b.getRefundedTotalInr()).paymentStatusSource(b.getPaymentStatusSource())
                 .build();
     }
 

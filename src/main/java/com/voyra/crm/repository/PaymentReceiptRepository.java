@@ -25,4 +25,7 @@ public interface PaymentReceiptRepository extends JpaRepository<PaymentReceipt, 
 
     /** Sums to a credit note's cumulative refunded-out amount - see {@code CreditNoteService#applyRefundSettlement}. */
     List<PaymentReceipt> findByCreditNoteIdOrderByReceivedOnAscCreatedAtAsc(String creditNoteId);
+
+    /** BookingAccountingSync input: bookingId is stable across a proforma -> tax-invoice conversion, unlike invoiceId. */
+    List<PaymentReceipt> findByBookingIdAndDirection(String bookingId, ReceiptDirection direction);
 }

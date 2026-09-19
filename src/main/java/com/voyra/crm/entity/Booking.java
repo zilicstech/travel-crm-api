@@ -3,6 +3,7 @@ package com.voyra.crm.entity;
 import com.voyra.crm.enums.BookingStatus;
 import com.voyra.crm.enums.BookingType;
 import com.voyra.crm.enums.PaymentStatus;
+import com.voyra.crm.enums.PaymentStatusSource;
 import com.voyra.crm.enums.RefundState;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -145,6 +146,27 @@ public class Booking {
 
     @Column(name = "updated_by", length = 36)
     private String updatedBy;
+
+    @Column(name = "primary_invoice_id", length = 36)
+    private String primaryInvoiceId;
+
+    @Column(name = "invoiced_total_inr", nullable = false, precision = 19, scale = 2)
+    @Builder.Default
+    private BigDecimal invoicedTotalInr = BigDecimal.ZERO;
+
+    @Column(name = "received_total_inr", nullable = false, precision = 19, scale = 2)
+    @Builder.Default
+    private BigDecimal receivedTotalInr = BigDecimal.ZERO;
+
+    @Column(name = "refunded_total_inr", nullable = false, precision = 19, scale = 2)
+    @Builder.Default
+    private BigDecimal refundedTotalInr = BigDecimal.ZERO;
+
+    /** MANUAL until a tax invoice is issued against this booking, then DERIVED forever - see {@code BookingAccountingSync}. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "payment_status_source", nullable = false, length = 20)
+    @Builder.Default
+    private PaymentStatusSource paymentStatusSource = PaymentStatusSource.MANUAL;
 
     @PrePersist
     protected void onCreate() {

@@ -51,11 +51,15 @@ class CreditNoteServiceTest {
     @Mock
     private PaymentReceiptRepository paymentReceiptRepository;
     @Mock
+    private com.voyra.crm.repository.BookingRepository bookingRepository;
+    @Mock
     private DocumentNumberService documentNumberService;
     @Mock
     private AuditService auditService;
     @Mock
     private CustomerLedgerService customerLedgerService;
+    @Mock
+    private BookingAccountingSync bookingAccountingSync;
 
     @InjectMocks
     private CreditNoteService creditNoteService;
@@ -105,6 +109,34 @@ class CreditNoteServiceTest {
         assertThatThrownBy(() -> creditNoteService.create(request(BigDecimal.ZERO)))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("Only an issued invoice can be credited");
+    }
+
+    @Test
+    void bookingCancelledReasonIsRejectedWhenTheBookingIsNotActuallyCancelled() {
+        Invoice invoice = issuedInvoice();
+        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(invoice));
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(
+                com.voyra.crm.entity.Booking.builder().id("B1").bookingStatus(com.voyra.crm.enums.BookingStatus.CONFIRMED).build()));
+
+        assertThatThrownBy(() -> creditNoteService.create(request(BigDecimal.ZERO)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("requires the booking to actually be cancelled");
+    }
+
+    @Test
+    void billingErrorReasonWorksOnALiveBooking() {
+        Invoice invoice = issuedInvoice();
+        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(invoice));
+        when(creditNoteRepository.existsById(any())).thenReturn(false);
+        when(creditNoteRepository.findByInvoiceIdAndStatus("I1", CreditNoteStatus.ISSUED)).thenReturn(List.of());
+
+        CreditNoteRequest request = request(BigDecimal.ZERO);
+        request.setReason(CreditNoteReason.BILLING_ERROR);
+
+        CreditNoteResponse response = creditNoteService.create(request);
+
+        assertThat(response.getStatus()).isEqualTo(CreditNoteStatus.DRAFT);
+        org.mockito.Mockito.verifyNoInteractions(bookingRepository);
     }
 
     @Test

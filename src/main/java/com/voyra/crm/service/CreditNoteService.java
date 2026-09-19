@@ -6,10 +6,13 @@ import com.voyra.crm.dto.CreditNoteRequest;
 import com.voyra.crm.dto.CreditNoteResponse;
 import com.voyra.crm.dto.PagedResponse;
 import com.voyra.crm.dto.PaymentReceiptResponse;
+import com.voyra.crm.entity.Booking;
 import com.voyra.crm.entity.CreditNote;
 import com.voyra.crm.entity.Invoice;
 import com.voyra.crm.entity.PaymentReceipt;
 import com.voyra.crm.enums.AuditEntityType;
+import com.voyra.crm.enums.BookingStatus;
+import com.voyra.crm.enums.CreditNoteReason;
 import com.voyra.crm.enums.CreditNoteStatus;
 import com.voyra.crm.enums.DocumentKind;
 import com.voyra.crm.enums.InvoiceDocumentType;
@@ -18,6 +21,7 @@ import com.voyra.crm.enums.LedgerEntryType;
 import com.voyra.crm.enums.LedgerSourceType;
 import com.voyra.crm.enums.ReceiptDirection;
 import com.voyra.crm.models.LedgerPosting;
+import com.voyra.crm.repository.BookingRepository;
 import com.voyra.crm.repository.CreditNoteRepository;
 import com.voyra.crm.repository.InvoiceRepository;
 import com.voyra.crm.repository.PaymentReceiptRepository;
@@ -67,9 +71,11 @@ public class CreditNoteService {
     private final CreditNoteRepository creditNoteRepository;
     private final InvoiceRepository invoiceRepository;
     private final PaymentReceiptRepository paymentReceiptRepository;
+    private final BookingRepository bookingRepository;
     private final DocumentNumberService documentNumberService;
     private final AuditService auditService;
     private final CustomerLedgerService customerLedgerService;
+    private final BookingAccountingSync bookingAccountingSync;
 
     @Transactional
     public CreditNoteResponse create(CreditNoteRequest request) {
@@ -82,6 +88,12 @@ public class CreditNoteService {
                 && invoice.getStatus() != InvoiceLifecycle.PARTIALLY_PAID
                 && invoice.getStatus() != InvoiceLifecycle.PAID) {
             throw new IllegalStateException("Only an issued invoice can be credited");
+        }
+        if (request.getReason() == CreditNoteReason.BOOKING_CANCELLED && invoice.getBookingId() != null) {
+            Booking booking = bookingRepository.findById(invoice.getBookingId()).orElse(null);
+            if (booking != null && booking.getBookingStatus() != BookingStatus.CANCELLED) {
+                throw new IllegalStateException("Reason BOOKING_CANCELLED requires the booking to actually be cancelled first");
+            }
         }
 
         BigDecimal cancellationFee = request.getCancellationFee() != null ? request.getCancellationFee() : BigDecimal.ZERO;
@@ -158,6 +170,7 @@ public class CreditNoteService {
                 "Credit note " + note.getCreditNoteNumber() + " against " + invoice.getInvoiceNumber(),
                 note.getBookingId(), note.getCurrencyCode(), note.getFxRateToInr(),
                 BigDecimal.ZERO, note.getTotalAmount(), BigDecimal.ZERO, note.getTotalAmountInr()));
+        bookingAccountingSync.syncRefund(note.getBookingId());
 
         auditService.recordCreate(AuditEntityType.CREDIT_NOTE, note.getId(), note.getCreditNoteNumber());
         log.info("Credit note issued: id={}, number={}, invoiceId={}", note.getId(), number, invoice.getId());
@@ -257,6 +270,8 @@ public class CreditNoteService {
 
         note.setRefundedAmount(alreadyRefunded.add(request.getAmount()));
         creditNoteRepository.save(note);
+        bookingAccountingSync.syncRefund(note.getBookingId());
+        bookingAccountingSync.syncPayment(note.getBookingId());
 
         auditService.recordCreate(AuditEntityType.PAYMENT_RECEIPT, receipt.getId(), receipt.getReceiptNumber());
         log.info("Refund recorded: creditNoteId={}, receiptId={}, amount={}", note.getId(), receipt.getId(), request.getAmount());

@@ -3,12 +3,15 @@ package com.voyra.crm.service;
 import com.voyra.crm.dto.AccountsDashboardSummaryResponse;
 import com.voyra.crm.dto.GstSummaryRowResponse;
 import com.voyra.crm.dto.TcsSummaryRowResponse;
+import com.voyra.crm.entity.CreditNote;
 import com.voyra.crm.entity.Invoice;
 import com.voyra.crm.entity.InvoiceLineItem;
 import com.voyra.crm.entity.PaymentReceipt;
+import com.voyra.crm.enums.CreditNoteStatus;
 import com.voyra.crm.enums.InvoiceDocumentType;
 import com.voyra.crm.enums.InvoiceLifecycle;
 import com.voyra.crm.enums.ReceiptDirection;
+import com.voyra.crm.repository.CreditNoteRepository;
 import com.voyra.crm.repository.InvoiceLineItemRepository;
 import com.voyra.crm.repository.InvoiceRepository;
 import com.voyra.crm.repository.PaymentReceiptRepository;
@@ -36,6 +39,8 @@ class AccountsDashboardServiceTest {
     private InvoiceLineItemRepository invoiceLineItemRepository;
     @Mock
     private PaymentReceiptRepository paymentReceiptRepository;
+    @Mock
+    private CreditNoteRepository creditNoteRepository;
 
     @InjectMocks
     private AccountsDashboardService accountsDashboardService;

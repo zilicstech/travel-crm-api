@@ -3,6 +3,7 @@ package com.voyra.crm.dto;
 import com.voyra.crm.enums.BookingStatus;
 import com.voyra.crm.enums.BookingType;
 import com.voyra.crm.enums.PaymentStatus;
+import com.voyra.crm.enums.PaymentStatusSource;
 import com.voyra.crm.enums.RefundState;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.AllArgsConstructor;
@@ -113,4 +114,19 @@ public class BookingResponse {
 
     @Schema(example = "2026-08-13T09:15:22")
     private LocalDateTime createdDate;
+
+    @Schema(description = "The live tax invoice against this booking, if any", example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
+    private String primaryInvoiceId;
+
+    @Schema(description = "Sum of the live (non-cancelled) tax invoice's grandTotalInr for this booking", example = "280900.00")
+    private BigDecimal invoicedTotalInr;
+
+    @Schema(description = "Sum of RECEIPT-direction receipts against this booking, in INR", example = "50000.00")
+    private BigDecimal receivedTotalInr;
+
+    @Schema(description = "Sum of REFUND-direction receipts against this booking, in INR", example = "0.00")
+    private BigDecimal refundedTotalInr;
+
+    @Schema(description = "MANUAL until a tax invoice is issued against this booking, then DERIVED forever", example = "MANUAL")
+    private PaymentStatusSource paymentStatusSource;
 }
