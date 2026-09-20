@@ -20,6 +20,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -43,6 +44,13 @@ public class BookingController {
 
     private final BookingService bookingService;
     private final FeedbackLinkService feedbackLinkService;
+
+    @DeleteMapping("/{id}")
+    @Operation(summary = "Delete a booking", description = "Refused once any accounting or feedback record references it - cancel it instead.")
+    public ResponseEntity<Void> deleteBooking(@PathVariable String id) {
+        bookingService.deleteBooking(id);
+        return ResponseEntity.noContent().build();
+    }
 
     @PostMapping
     @Operation(summary = "Create a booking", description = "Profit is always server-computed from sellingPrice - netCost.")

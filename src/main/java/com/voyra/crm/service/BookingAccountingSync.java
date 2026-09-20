@@ -63,7 +63,7 @@ public class BookingAccountingSync {
             return;
         }
 
-        List<Invoice> liveInvoices = invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNot(
+        List<Invoice> liveInvoices = invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc(
                 bookingId, InvoiceDocumentType.TAX_INVOICE, InvoiceLifecycle.CANCELLED);
         BigDecimal invoicedTotalInr = sumInr(liveInvoices, Invoice::getGrandTotalInr);
         BigDecimal receivedTotalInr = sumReceiptsInr(bookingId, ReceiptDirection.RECEIPT);

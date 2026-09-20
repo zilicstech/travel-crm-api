@@ -84,7 +84,7 @@ public class CommunicationLogService {
         log.info("Communication log entry removed: clientId={}, id={}", clientId, id);
     }
 
-    /** Not {@code @Transactional} - see {@link LeadVoucherService#attachFile} for the same §8.6 reasoning. */
+    /** Not {@code @Transactional} - see {@link BookingDocumentService#attachFile} for the same §8.6 reasoning. */
     public CommunicationLogResponse attachFile(String clientId, String id, MultipartFile file) {
         clientService.findAccessibleClient(clientId);
         CommunicationLog entry = communicationLogRepository.findByIdAndClientId(id, clientId)

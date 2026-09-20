@@ -2,10 +2,8 @@ package com.voyra.crm.repository;
 
 import com.voyra.crm.entity.Booking;
 import com.voyra.crm.enums.BookingStatus;
-import com.voyra.crm.enums.BookingType;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -15,37 +13,21 @@ import java.util.Collection;
 import java.util.List;
 
 @Repository
-public interface BookingRepository extends JpaRepository<Booking, String> {
+public interface BookingRepository extends JpaRepository<Booking, String>, JpaSpecificationExecutor<Booking> {
 
+    /** Owner-dashboard "my recent bookings" widget - deliberately the agent's own bookings only,
+     *  unrelated to the wider service-access scoping in BookingService.listBookings. */
     List<Booking> findByAgentId(String agentId);
 
     List<Booking> findByClientId(String clientId);
 
-    List<Booking> findByType(BookingType type);
+    /** Every booking logged on one service, oldest first - a round trip is two rows here. */
+    List<Booking> findByServiceIdOrderByCreatedDateAsc(String serviceId);
 
-    List<Booking> findByBookingStatus(BookingStatus bookingStatus);
+    List<Booking> findByLeadId(String leadId);
 
-    List<Booking> findByAgentIdAndType(String agentId, BookingType type);
-
-    List<Booking> findByAgentIdAndBookingStatus(String agentId, BookingStatus bookingStatus);
-
-    List<Booking> findByTypeAndBookingStatus(BookingType type, BookingStatus bookingStatus);
-
-    List<Booking> findByAgentIdAndTypeAndBookingStatus(String agentId, BookingType type, BookingStatus bookingStatus);
-
-    Page<Booking> findByAgentId(String agentId, Pageable pageable);
-
-    Page<Booking> findByType(BookingType type, Pageable pageable);
-
-    Page<Booking> findByBookingStatus(BookingStatus bookingStatus, Pageable pageable);
-
-    Page<Booking> findByAgentIdAndType(String agentId, BookingType type, Pageable pageable);
-
-    Page<Booking> findByAgentIdAndBookingStatus(String agentId, BookingStatus bookingStatus, Pageable pageable);
-
-    Page<Booking> findByTypeAndBookingStatus(BookingType type, BookingStatus bookingStatus, Pageable pageable);
-
-    Page<Booking> findByAgentIdAndTypeAndBookingStatus(String agentId, BookingType type, BookingStatus bookingStatus, Pageable pageable);
+    /** Drives the auto-BOOKED/back-to-CONFIRMED transition: zero means nothing live remains. */
+    long countByServiceIdAndBookingStatusNot(String serviceId, BookingStatus excludedStatus);
 
     long countByAgentId(String agentId);
 
@@ -127,6 +109,17 @@ public interface BookingRepository extends JpaRepository<Booking, String> {
     @Modifying
     @Query("UPDATE Booking b SET b.supplier = :newName WHERE b.supplier = :oldName")
     void updateSupplierName(@Param("oldName") String oldName, @Param("newName") String newName);
+
+    /** Keeps the denormalized service_agent_id/service_agent_name snapshots live-synced
+     *  whenever a service is accepted, assigned, or reassigned - these two fields are what
+     *  let agent-scoped booking visibility avoid a lead_service join per row. */
+    @Modifying
+    @Query("UPDATE Booking b SET b.serviceAgentId = :agentId, b.serviceAgentName = :agentName WHERE b.serviceId = :serviceId")
+    void resyncServiceAgent(@Param("serviceId") String serviceId, @Param("agentId") String agentId, @Param("agentName") String agentName);
+
+    @Modifying
+    @Query("UPDATE Booking b SET b.serviceLabel = :label WHERE b.serviceId = :serviceId")
+    void resyncServiceLabel(@Param("serviceId") String serviceId, @Param("label") String label);
 
     /** Owner-wide escalation feed - bookings whose ticketing time limit has passed. */
     List<Booking> findByBookingStatusNotInAndTicketingDeadlineLessThan(

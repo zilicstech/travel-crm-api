@@ -13,4 +13,6 @@ public interface FeedbackRepository extends JpaRepository<Feedback, String> {
     List<Feedback> findByClientIdOrderBySubmittedAtDesc(String clientId);
 
     Optional<Feedback> findByBookingId(String bookingId);
+
+    boolean existsByBookingId(String bookingId);
 }

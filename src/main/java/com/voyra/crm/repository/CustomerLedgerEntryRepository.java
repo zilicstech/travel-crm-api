@@ -15,4 +15,6 @@ public interface CustomerLedgerEntryRepository extends JpaRepository<CustomerLed
     List<CustomerLedgerEntry> findByClientIdAndEntryDateLessThanOrderByEntryDateAscCreatedAtAsc(String clientId, LocalDate before);
 
     List<CustomerLedgerEntry> findByClientIdAndEntryDateBetweenOrderByEntryDateAscCreatedAtAsc(String clientId, LocalDate from, LocalDate to);
+
+    boolean existsByBookingId(String bookingId);
 }

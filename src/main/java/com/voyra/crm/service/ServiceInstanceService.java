@@ -60,7 +60,7 @@ import java.util.stream.Collectors;
 public class ServiceInstanceService {
 
     private static final Set<ServiceStatus> CLAIMABLE_BLOCKING_STATUSES =
-            Set.of(ServiceStatus.CONFIRMED, ServiceStatus.CANCELLED);
+            Set.of(ServiceStatus.CONFIRMED, ServiceStatus.BOOKED, ServiceStatus.CANCELLED);
 
     /** flightSectors and visaChecklists are deliberately excluded - nested JSON collections, not
      *  scalar fields AuditSnapshot's stringify formats meaningfully. */
@@ -252,6 +252,10 @@ public class ServiceInstanceService {
         }
         if (service.getAssignedAgentId() == null) {
             throw new IllegalStateException("Assign this service before changing its status");
+        }
+        if (request.getStatus() == ServiceStatus.BOOKED) {
+            throw new IllegalArgumentException(
+                    "Booked is set automatically when the first booking is logged - it cannot be chosen by hand");
         }
         Map<String, String> before = AuditSnapshot.of(service, AUDITED);
 
@@ -446,7 +450,9 @@ public class ServiceInstanceService {
     }
 
     /** Owner, or an agent whose manageableServices covers this type, or the agent already on the job. */
-    private void assertEditAccess(LeadService service) {
+    /** Package-private - also called from BookingService so logging a booking on a service
+     *  goes through the exact same gate as every other mutation to that service. */
+    void assertEditAccess(LeadService service) {
         CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
         if (!principal.isAgent()) {
             return;

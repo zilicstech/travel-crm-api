@@ -120,8 +120,11 @@ public class LeadDetailResponse {
     @Schema(description = "This lead's follow-up promises")
     private List<FollowUpResponse> followUps;
 
-    @Schema(description = "This lead's PNRs and supplier references")
+    @Schema(description = "Deprecated - superseded by bookings, kept empty for one release so an older cached frontend bundle does not break")
     private List<VoucherResponse> vouchers;
+
+    @Schema(description = "This lead's bookings, across every service - several per service are legal (e.g. two flight bookings for a round trip)")
+    private List<BookingResponse> bookings;
 
     @Schema(description = "This lead's client invoices, whole-trip and per-service")
     private List<ClientInvoiceResponse> invoices;

@@ -136,10 +136,10 @@ class InvoiceDocumentServiceTest {
     }
 
     @Test
-    void createDraftRejectsASecondInvoiceOnTheSameBooking() {
+    void createDraftRejectsASecondDraftOnTheSameBooking() {
         when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking()));
-        when(invoiceRepository.existsByBookingIdAndDocumentTypeAndStatusNot(
-                "B1", InvoiceDocumentType.TAX_INVOICE, InvoiceLifecycle.CANCELLED)).thenReturn(true);
+        when(invoiceRepository.existsByBookingIdAndDocumentTypeAndStatus(
+                "B1", InvoiceDocumentType.TAX_INVOICE, InvoiceLifecycle.DRAFT)).thenReturn(true);
 
         InvoiceDraftRequest request = new InvoiceDraftRequest();
         request.setBookingId("B1");
@@ -147,13 +147,13 @@ class InvoiceDocumentServiceTest {
 
         assertThatThrownBy(() -> invoiceDocumentService.createDraft(request))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("already has an invoice");
+                .hasMessageContaining("Finish or cancel the existing draft");
     }
 
     @Test
     void nonInrCurrencyRequiresAPositiveFxRate() {
         when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking()));
-        when(invoiceRepository.existsByBookingIdAndDocumentTypeAndStatusNot(any(), any(), any())).thenReturn(false);
+        when(invoiceRepository.existsByBookingIdAndDocumentTypeAndStatus(any(), any(), any())).thenReturn(false);
         when(clientService.findAccessibleClient("K1")).thenReturn(client());
 
         InvoiceDraftRequest request = new InvoiceDraftRequest();
@@ -169,7 +169,7 @@ class InvoiceDocumentServiceTest {
     @Test
     void createDraftComputesTotalsFromEachLineAndLocksNothingYet() {
         when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking()));
-        when(invoiceRepository.existsByBookingIdAndDocumentTypeAndStatusNot(any(), any(), any())).thenReturn(false);
+        when(invoiceRepository.existsByBookingIdAndDocumentTypeAndStatus(any(), any(), any())).thenReturn(false);
         when(clientService.findAccessibleClient("K1")).thenReturn(client());
         when(invoiceRepository.existsById(any())).thenReturn(false);
         when(invoiceLineItemRepository.existsById(any())).thenReturn(false);

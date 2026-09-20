@@ -90,9 +90,12 @@ public class InvoiceDocumentService {
         if (booking.getBookingStatus() == BookingStatus.CANCELLED) {
             throw new IllegalStateException("Cannot invoice a cancelled booking");
         }
-        if (invoiceRepository.existsByBookingIdAndDocumentTypeAndStatusNot(
-                booking.getId(), InvoiceDocumentType.TAX_INVOICE, InvoiceLifecycle.CANCELLED)) {
-            throw new IllegalStateException("This booking already has an invoice");
+        // Several tax invoices are legal against one booking now (advance + balance) - the
+        // invariant that actually needs enforcing is "never two editable drafts competing for
+        // the same booking", matching the DB's idx_invoice_booking_draft partial unique index.
+        if (invoiceRepository.existsByBookingIdAndDocumentTypeAndStatus(
+                booking.getId(), InvoiceDocumentType.TAX_INVOICE, InvoiceLifecycle.DRAFT)) {
+            throw new IllegalStateException("Finish or cancel the existing draft before starting another");
         }
 
         Client client = clientService.findAccessibleClient(booking.getClientId());

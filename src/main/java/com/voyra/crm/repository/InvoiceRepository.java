@@ -17,10 +17,15 @@ import java.util.Optional;
 @Repository
 public interface InvoiceRepository extends JpaRepository<Invoice, String>, JpaSpecificationExecutor<Invoice> {
 
-    /** One live (non-cancelled) tax-invoice-track row per booking, mirroring the DB partial unique index - checked here first for a clean 409 instead of surfacing a raw constraint violation. */
-    boolean existsByBookingIdAndDocumentTypeAndStatusNot(String bookingId, InvoiceDocumentType documentType, InvoiceLifecycle status);
+    /** At most one DRAFT tax invoice per booking, mirroring idx_invoice_booking_draft - checked
+     *  here first for a clean 409 instead of surfacing a raw constraint violation. Several
+     *  issued invoices against one booking are legal (advance + balance); only a second
+     *  concurrent draft is not. */
+    boolean existsByBookingIdAndDocumentTypeAndStatus(String bookingId, InvoiceDocumentType documentType, InvoiceLifecycle status);
 
     List<Invoice> findByBookingId(String bookingId);
+
+    boolean existsByBookingId(String bookingId);
 
     Optional<Invoice> findByInvoiceNumber(String invoiceNumber);
 
@@ -36,7 +41,11 @@ public interface InvoiceRepository extends JpaRepository<Invoice, String>, JpaSp
     List<Invoice> findByDocumentTypeAndStatusNotAndInvoiceDateBetween(
             InvoiceDocumentType documentType, InvoiceLifecycle excludedStatus, LocalDate from, LocalDate to);
 
-    /** BookingAccountingSync input: the live (non-cancelled) tax invoice(s) for a booking - at most one, per the partial unique index. */
-    List<Invoice> findByBookingIdAndDocumentTypeAndStatusNot(
+    /** BookingAccountingSync input: every live (non-cancelled) tax invoice for a booking - several
+     *  are now legal (advance + balance). Ordered by createdAt, not invoiceDate - invoiceDate is
+     *  null until ISSUED (V19's own comment), which a DRAFT row in this set can still be. Oldest
+     *  first, so {@code primaryInvoiceId} deterministically picks the earliest (the advance)
+     *  rather than depending on undefined row order. */
+    List<Invoice> findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc(
             String bookingId, InvoiceDocumentType documentType, InvoiceLifecycle excludedStatus);
 }

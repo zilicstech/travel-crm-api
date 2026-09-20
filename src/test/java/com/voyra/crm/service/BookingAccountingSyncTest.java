@@ -55,7 +55,7 @@ class BookingAccountingSyncTest {
         Booking booking = manualBooking();
         booking.setPaymentStatus(PaymentStatus.PAID); // simulate a prior manual value
         when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
-        when(invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNot(any(), any(), any())).thenReturn(List.of());
+        when(invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc(any(), any(), any())).thenReturn(List.of());
         when(paymentReceiptRepository.findByBookingIdAndDirection(any(), any())).thenReturn(List.of());
 
         bookingAccountingSync.syncPayment("B1");
@@ -69,7 +69,7 @@ class BookingAccountingSyncTest {
         Booking booking = manualBooking();
         Invoice invoice = Invoice.builder().id("I1").grandTotalInr(new BigDecimal("1000.00")).build();
         when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
-        when(invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNot(
+        when(invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc(
                 "B1", InvoiceDocumentType.TAX_INVOICE, InvoiceLifecycle.CANCELLED)).thenReturn(List.of(invoice));
         when(paymentReceiptRepository.findByBookingIdAndDirection("B1", ReceiptDirection.RECEIPT)).thenReturn(List.of());
         when(paymentReceiptRepository.findByBookingIdAndDirection("B1", ReceiptDirection.REFUND)).thenReturn(List.of());
@@ -88,7 +88,7 @@ class BookingAccountingSyncTest {
         Invoice invoice = Invoice.builder().id("I1").grandTotalInr(new BigDecimal("1000.00")).build();
         PaymentReceipt receipt = PaymentReceipt.builder().amountInr(new BigDecimal("400.00")).build();
         when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
-        when(invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNot(any(), any(), any())).thenReturn(List.of(invoice));
+        when(invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc(any(), any(), any())).thenReturn(List.of(invoice));
         when(paymentReceiptRepository.findByBookingIdAndDirection("B1", ReceiptDirection.RECEIPT)).thenReturn(List.of(receipt));
         when(paymentReceiptRepository.findByBookingIdAndDirection("B1", ReceiptDirection.REFUND)).thenReturn(List.of());
 
@@ -103,7 +103,7 @@ class BookingAccountingSyncTest {
         Invoice invoice = Invoice.builder().id("I1").grandTotalInr(new BigDecimal("1000.00")).build();
         PaymentReceipt receipt = PaymentReceipt.builder().amountInr(new BigDecimal("1000.00")).build();
         when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
-        when(invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNot(any(), any(), any())).thenReturn(List.of(invoice));
+        when(invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc(any(), any(), any())).thenReturn(List.of(invoice));
         when(paymentReceiptRepository.findByBookingIdAndDirection("B1", ReceiptDirection.RECEIPT)).thenReturn(List.of(receipt));
         when(paymentReceiptRepository.findByBookingIdAndDirection("B1", ReceiptDirection.REFUND)).thenReturn(List.of());
 
@@ -119,7 +119,7 @@ class BookingAccountingSyncTest {
         PaymentReceipt receipt = PaymentReceipt.builder().amountInr(new BigDecimal("1000.00")).build();
         PaymentReceipt refund = PaymentReceipt.builder().amountInr(new BigDecimal("300.00")).build();
         when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
-        when(invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNot(any(), any(), any())).thenReturn(List.of(invoice));
+        when(invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc(any(), any(), any())).thenReturn(List.of(invoice));
         when(paymentReceiptRepository.findByBookingIdAndDirection("B1", ReceiptDirection.RECEIPT)).thenReturn(List.of(receipt));
         when(paymentReceiptRepository.findByBookingIdAndDirection("B1", ReceiptDirection.REFUND)).thenReturn(List.of(refund));
 
@@ -134,7 +134,7 @@ class BookingAccountingSyncTest {
         booking.setPaymentStatusSource(PaymentStatusSource.DERIVED);
         booking.setPaymentStatus(PaymentStatus.PAID);
         when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
-        when(invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNot(any(), any(), any())).thenReturn(List.of());
+        when(invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc(any(), any(), any())).thenReturn(List.of());
         when(paymentReceiptRepository.findByBookingIdAndDirection(any(), any())).thenReturn(List.of());
 
         bookingAccountingSync.syncPayment("B1");

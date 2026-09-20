@@ -10,9 +10,15 @@ import com.voyra.crm.enums.PaymentStatusSource;
 import com.voyra.crm.enums.RefundState;
 import com.voyra.crm.enums.UserType;
 import com.voyra.crm.repository.AgentRepository;
+import com.voyra.crm.repository.BookingDocumentRepository;
 import com.voyra.crm.repository.BookingRepository;
 import com.voyra.crm.repository.ClientRepository;
 import com.voyra.crm.repository.CreditNoteRepository;
+import com.voyra.crm.repository.CustomerLedgerEntryRepository;
+import com.voyra.crm.repository.FeedbackRepository;
+import com.voyra.crm.repository.InvoiceRepository;
+import com.voyra.crm.repository.LeadServiceRepository;
+import com.voyra.crm.repository.PaymentReceiptRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -40,13 +46,33 @@ class BookingServiceTest {
     @Mock
     private BookingRepository bookingRepository;
     @Mock
+    private BookingDocumentRepository bookingDocumentRepository;
+    @Mock
     private ClientRepository clientRepository;
     @Mock
     private AgentRepository agentRepository;
     @Mock
+    private LeadServiceRepository leadServiceRepository;
+    @Mock
     private CreditNoteRepository creditNoteRepository;
     @Mock
+    private InvoiceRepository invoiceRepository;
+    @Mock
+    private PaymentReceiptRepository paymentReceiptRepository;
+    @Mock
+    private CustomerLedgerEntryRepository customerLedgerEntryRepository;
+    @Mock
+    private FeedbackRepository feedbackRepository;
+    @Mock
+    private FileStorageService fileStorageService;
+    @Mock
     private AuditService auditService;
+    @Mock
+    private LeadTimelineService leadTimelineService;
+    @Mock
+    private ServiceInstanceService serviceInstanceService;
+    @Mock
+    private ServiceBookingStatusSync serviceBookingStatusSync;
 
     @InjectMocks
     private BookingService bookingService;

@@ -10,9 +10,9 @@ import java.util.List;
 /**
  * Whether an agent who is not a lead's own assignedTo may still reach it, because they are
  * personally assigned to - or manage the type of - at least one service on it. Shared by every
- * lead-scoped service (LeadService, LeadVoucherService, InvoiceService, ...) so a Visa agent
- * quoting, invoicing or vouchering their own service on someone else's lead is never blocked by
- * a lead-ownership check that has nothing to do with which service they actually handle.
+ * lead-scoped service (LeadService, InvoiceService, ...) so a Visa agent quoting or invoicing
+ * their own service on someone else's lead is never blocked by a lead-ownership check that has
+ * nothing to do with which service they actually handle.
  */
 public final class LeadAccessChecker {
 

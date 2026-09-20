@@ -93,7 +93,7 @@ public class LeadService {
     private final AuthorResolver authorResolver;
     private final ServiceInstanceService serviceInstanceService;
     private final LeadFollowUpService leadFollowUpService;
-    private final LeadVoucherService leadVoucherService;
+    private final BookingService bookingService;
     private final InvoiceService invoiceService;
     private final AuditService auditService;
 
@@ -809,7 +809,8 @@ public class LeadService {
                 .manifestComplete(isManifestComplete(lead, manifest))
                 .services(serviceInstanceService.listForLead(lead.getId()))
                 .followUps(leadFollowUpService.listForLead(lead.getId()))
-                .vouchers(leadVoucherService.listForLead(lead.getId()))
+                .vouchers(List.of())
+                .bookings(bookingService.listForLead(lead.getId()))
                 .invoices(invoiceService.listForLead(lead.getId()))
                 .proposalItems(itemResponses)
                 .totalNetCost(totalNet)

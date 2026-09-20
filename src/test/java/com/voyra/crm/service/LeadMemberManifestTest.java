@@ -79,7 +79,7 @@ class LeadMemberManifestTest {
     @Mock
     private LeadFollowUpService leadFollowUpService;
     @Mock
-    private LeadVoucherService leadVoucherService;
+    private BookingService bookingService;
     @Mock
     private InvoiceService invoiceService;
     @Mock

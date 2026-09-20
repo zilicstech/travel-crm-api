@@ -28,4 +28,6 @@ public interface PaymentReceiptRepository extends JpaRepository<PaymentReceipt, 
 
     /** BookingAccountingSync input: bookingId is stable across a proforma -> tax-invoice conversion, unlike invoiceId. */
     List<PaymentReceipt> findByBookingIdAndDirection(String bookingId, ReceiptDirection direction);
+
+    boolean existsByBookingId(String bookingId);
 }
