@@ -40,7 +40,10 @@ public class VendorService {
 
     private static final String[] AUDITED = {
             "name", "serviceTypes", "contactPerson", "phone", "email",
-            "address", "gstNumber", "notes", "defaultRateNote", "isActive", "sortOrder"
+            "address", "gstNumber", "notes", "defaultRateNote", "isActive", "sortOrder",
+            "stateCode", "panNumber", "isPrepaid", "paymentTermsDays", "creditLimitInr",
+            "lowBalanceThresholdInr", "tdsSection", "tdsRatePercent",
+            "bankAccountName", "bankAccountNumber", "bankIfsc"
     };
 
     private final VendorRepository vendorRepository;
@@ -68,13 +71,24 @@ public class VendorService {
                 .defaultRateNote(request.getDefaultRateNote())
                 .isActive(true)
                 .sortOrder(nextSortOrder())
+                .stateCode(request.getStateCode())
+                .panNumber(request.getPanNumber())
+                .isPrepaid(request.getIsPrepaid() != null ? request.getIsPrepaid() : false)
+                .paymentTermsDays(request.getPaymentTermsDays())
+                .creditLimitInr(request.getCreditLimitInr())
+                .lowBalanceThresholdInr(request.getLowBalanceThresholdInr())
+                .tdsSection(request.getTdsSection())
+                .tdsRatePercent(request.getTdsRatePercent())
+                .bankAccountName(request.getBankAccountName())
+                .bankAccountNumber(request.getBankAccountNumber())
+                .bankIfsc(request.getBankIfsc())
                 .createdBy(SecurityContextUtil.getCurrentUserOrThrow().userId())
                 .createdAt(LocalDateTime.now())
                 .build();
         vendorRepository.save(vendor);
         auditService.recordCreate(AuditEntityType.VENDOR, vendor.getId(), vendor.getName());
         log.info("Vendor created: vendorId={}, name={}", vendor.getId(), vendor.getName());
-        return toResponse(vendor);
+        return toResponse(vendor, true);
     }
 
     @Transactional(readOnly = true)
@@ -91,12 +105,13 @@ public class VendorService {
                     ? vendorRepository.findByIsActiveTrueOrderBySortOrderAscNameAsc()
                     : vendorRepository.findAllByOrderBySortOrderAscNameAsc();
         }
-        return vendors.stream().map(this::toResponse).toList();
+        boolean includeFinancials = includeFinancials();
+        return vendors.stream().map(v -> toResponse(v, includeFinancials)).toList();
     }
 
     @Transactional(readOnly = true)
     public VendorResponse get(String id) {
-        return toResponse(findVendor(id));
+        return toResponse(findVendor(id), includeFinancials());
     }
 
     @Transactional
@@ -121,6 +136,17 @@ public class VendorService {
         if (request.getNotes() != null) vendor.setNotes(request.getNotes());
         if (request.getDefaultRateNote() != null) vendor.setDefaultRateNote(request.getDefaultRateNote());
         if (request.getSortOrder() != null) vendor.setSortOrder(request.getSortOrder());
+        if (request.getStateCode() != null) vendor.setStateCode(request.getStateCode());
+        if (request.getPanNumber() != null) vendor.setPanNumber(request.getPanNumber());
+        if (request.getIsPrepaid() != null) vendor.setIsPrepaid(request.getIsPrepaid());
+        if (request.getPaymentTermsDays() != null) vendor.setPaymentTermsDays(request.getPaymentTermsDays());
+        if (request.getCreditLimitInr() != null) vendor.setCreditLimitInr(request.getCreditLimitInr());
+        if (request.getLowBalanceThresholdInr() != null) vendor.setLowBalanceThresholdInr(request.getLowBalanceThresholdInr());
+        if (request.getTdsSection() != null) vendor.setTdsSection(request.getTdsSection());
+        if (request.getTdsRatePercent() != null) vendor.setTdsRatePercent(request.getTdsRatePercent());
+        if (request.getBankAccountName() != null) vendor.setBankAccountName(request.getBankAccountName());
+        if (request.getBankAccountNumber() != null) vendor.setBankAccountNumber(request.getBankAccountNumber());
+        if (request.getBankIfsc() != null) vendor.setBankIfsc(request.getBankIfsc());
 
         List<AuditChange> changes = AuditSnapshot.diff(before, AuditSnapshot.of(vendor, AUDITED));
         touch(vendor);
@@ -137,7 +163,7 @@ public class VendorService {
 
         auditService.recordUpdate(AuditEntityType.VENDOR, vendor.getId(), vendor.getName(), changes);
         log.info("Vendor updated: vendorId={}, renamed={}, changedFields={}", id, renamed, changes.size());
-        return toResponse(vendor);
+        return toResponse(vendor, true);
     }
 
     @Transactional
@@ -150,7 +176,7 @@ public class VendorService {
         auditService.recordUpdate(AuditEntityType.VENDOR, vendor.getId(), vendor.getName(),
                 AuditSnapshot.diff(before, AuditSnapshot.of(vendor, AUDITED)));
         log.info("Vendor status updated: vendorId={}, active={}", id, active);
-        return toResponse(vendor);
+        return toResponse(vendor, true);
     }
 
     /** Deactivates. There is no hard delete - see the class javadoc. */
@@ -199,13 +225,31 @@ public class VendorService {
         vendor.setUpdatedBy(SecurityContextUtil.getCurrentUserOrThrow().userId());
     }
 
-    private VendorResponse toResponse(Vendor v) {
-        return VendorResponse.builder()
+    /** Owner and Accountant see the AP profile (bank/TDS/PAN/credit limit); an Agent does not. */
+    private boolean includeFinancials() {
+        var principal = SecurityContextUtil.getCurrentUserOrThrow();
+        return principal.isAgencyOwner() || principal.isAccountant() || principal.isSuperAdmin();
+    }
+
+    private VendorResponse toResponse(Vendor v, boolean includeFinancials) {
+        VendorResponse.VendorResponseBuilder builder = VendorResponse.builder()
                 .id(v.getId()).name(v.getName()).serviceTypes(v.getServiceTypes())
                 .contactPerson(v.getContactPerson()).phone(v.getPhone()).email(v.getEmail())
                 .address(v.getAddress()).gstNumber(v.getGstNumber()).notes(v.getNotes())
                 .defaultRateNote(v.getDefaultRateNote()).isActive(v.getIsActive())
                 .sortOrder(v.getSortOrder()).createdAt(v.getCreatedAt()).updatedAt(v.getUpdatedAt())
-                .build();
+                .stateCode(v.getStateCode()).isPrepaid(v.getIsPrepaid())
+                .paymentTermsDays(v.getPaymentTermsDays());
+        if (includeFinancials) {
+            builder.panNumber(v.getPanNumber())
+                    .creditLimitInr(v.getCreditLimitInr())
+                    .lowBalanceThresholdInr(v.getLowBalanceThresholdInr())
+                    .tdsSection(v.getTdsSection())
+                    .tdsRatePercent(v.getTdsRatePercent())
+                    .bankAccountName(v.getBankAccountName())
+                    .bankAccountNumber(v.getBankAccountNumber())
+                    .bankIfsc(v.getBankIfsc());
+        }
+        return builder.build();
     }
 }

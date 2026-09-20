@@ -44,6 +44,7 @@ public class VendorController {
     }
 
     @GetMapping
+    @PreAuthorize("hasAnyRole('AGENCY_OWNER', 'AGENT', 'ACCOUNTANT')")
     @Operation(summary = "List vendors", description = "activeOnly defaults to true.")
     public ResponseEntity<List<VendorResponse>> list(
             @RequestParam(value = "serviceType", required = false) ServiceType serviceType,
@@ -52,6 +53,7 @@ public class VendorController {
     }
 
     @GetMapping("/{id}")
+    @PreAuthorize("hasAnyRole('AGENCY_OWNER', 'AGENT', 'ACCOUNTANT')")
     @Operation(summary = "Get one vendor")
     public ResponseEntity<VendorResponse> get(@PathVariable String id) {
         return ResponseEntity.ok(vendorService.get(id));

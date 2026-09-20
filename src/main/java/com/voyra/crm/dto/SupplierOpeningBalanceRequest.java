@@ -1,0 +1,25 @@
+package com.voyra.crm.dto;
+
+import io.swagger.v3.oas.annotations.media.Schema;
+import jakarta.validation.constraints.NotNull;
+import lombok.Data;
+
+import java.math.BigDecimal;
+import java.time.LocalDate;
+
+@Data
+@Schema(description = "Onboards a vendor with a pre-existing balance. Positive amount = we owe the vendor; "
+        + "negative = the vendor holds a deposit of ours. Posts exactly one OPENING_BALANCE ledger row.")
+public class SupplierOpeningBalanceRequest {
+
+    @NotNull(message = "amount is required")
+    @Schema(example = "15000.00")
+    private BigDecimal amount;
+
+    @NotNull(message = "asOfDate is required")
+    @Schema(example = "2026-04-01")
+    private LocalDate asOfDate;
+
+    @Schema(example = "Balance carried over from the previous booking system")
+    private String note;
+}

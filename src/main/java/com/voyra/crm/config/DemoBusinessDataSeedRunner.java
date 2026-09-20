@@ -14,8 +14,6 @@ import com.voyra.crm.dto.MemberCreateRequest;
 import com.voyra.crm.dto.LeadDetailResponse;
 import com.voyra.crm.dto.LeadStatusUpdateRequest;
 import com.voyra.crm.dto.ProposalItemCreateRequest;
-import com.voyra.crm.dto.SupplierInvoiceCreateRequest;
-import com.voyra.crm.dto.SupplierInvoiceStatusUpdateRequest;
 import com.voyra.crm.dto.VisaChecklistUpdateRequest;
 import com.voyra.crm.dto.VisaCreateRequest;
 import com.voyra.crm.entity.Agent;
@@ -695,29 +693,8 @@ public class DemoBusinessDataSeedRunner implements ApplicationRunner {
             }
         }
 
-        record SupplierSeed(String supplierName, BookingType category, BigDecimal amount, long dueDays,
-                InvoiceStatus targetStatus) {
-        }
-        List<SupplierSeed> supplierSeeds = List.of(
-                new SupplierSeed("Emirates Airlines", BookingType.FLIGHT, new BigDecimal("35000"), -3, InvoiceStatus.PENDING),
-                new SupplierSeed("Taj Hotels", BookingType.HOTEL, new BigDecimal("58000"), 10, InvoiceStatus.PAID),
-                new SupplierSeed("Kuoni Travel", BookingType.PACKAGE, new BigDecimal("145000"), 7, InvoiceStatus.PAID),
-                new SupplierSeed("VFS Global", BookingType.VISA, new BigDecimal("7500"), 12, InvoiceStatus.PENDING)
-        );
-        for (SupplierSeed s : supplierSeeds) {
-            SupplierInvoiceCreateRequest req = new SupplierInvoiceCreateRequest();
-            req.setSupplierName(s.supplierName());
-            req.setCategory(s.category());
-            req.setAmount(s.amount());
-            req.setDueDate(LocalDate.now().plusDays(s.dueDays()));
-            var created = invoiceService.createSupplierInvoice(req);
-
-            if (s.targetStatus() != InvoiceStatus.PENDING) {
-                SupplierInvoiceStatusUpdateRequest statusReq = new SupplierInvoiceStatusUpdateRequest();
-                statusReq.setStatus(s.targetStatus());
-                invoiceService.updateSupplierInvoiceStatus(created.getId(), statusReq);
-            }
-        }
+        // Supplier-invoice seeding moved to the accounts-payable rebuild (SupplierInvoiceService) -
+        // the legacy flat supplier_invoice.amount/status contract this used no longer exists.
     }
 
     // ----------------------------------------------------------------- visas

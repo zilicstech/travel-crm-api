@@ -7,6 +7,7 @@ import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 /** Patch semantics: a null field is left unchanged. */
@@ -49,4 +50,38 @@ public class VendorUpdateRequest {
 
     @Schema(example = "2")
     private Integer sortOrder;
+
+    @Schema(example = "07")
+    private String stateCode;
+
+    @Pattern(regexp = "^[A-Z]{5}[0-9]{4}[A-Z]$", message = "Enter a valid 10-character PAN")
+    @Schema(example = "AAACT2727Q")
+    private String panNumber;
+
+    @Schema(example = "false")
+    private Boolean isPrepaid;
+
+    @Schema(example = "15")
+    private Integer paymentTermsDays;
+
+    @Schema(example = "500000.00")
+    private BigDecimal creditLimitInr;
+
+    @Schema(example = "150000.00")
+    private BigDecimal lowBalanceThresholdInr;
+
+    @Schema(example = "194C")
+    private String tdsSection;
+
+    @Schema(example = "2.000")
+    private BigDecimal tdsRatePercent;
+
+    @Schema(example = "Tripjack Travels Pvt Ltd")
+    private String bankAccountName;
+
+    @Schema(example = "000123456789")
+    private String bankAccountNumber;
+
+    @Schema(example = "HDFC0000123")
+    private String bankIfsc;
 }

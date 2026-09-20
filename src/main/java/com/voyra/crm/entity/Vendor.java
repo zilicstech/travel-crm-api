@@ -16,6 +16,7 @@ import lombok.Setter;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -91,6 +92,44 @@ public class Vendor {
 
     @Column(name = "updated_by", length = 36)
     private String updatedBy;
+
+    // --- Accounts-payable profile (V25) -------------------------------------------------
+
+    /** Decides CGST+SGST vs IGST on a recorded supplier bill - see SupplierInvoiceService. */
+    @Column(name = "state_code", length = 2)
+    private String stateCode;
+
+    @Column(name = "pan_number", length = 10)
+    private String panNumber;
+
+    @Column(name = "is_prepaid", nullable = false)
+    @Builder.Default
+    private Boolean isPrepaid = false;
+
+    /** NULL means due on receipt. */
+    @Column(name = "payment_terms_days")
+    private Integer paymentTermsDays;
+
+    @Column(name = "credit_limit_inr")
+    private BigDecimal creditLimitInr;
+
+    @Column(name = "low_balance_threshold_inr")
+    private BigDecimal lowBalanceThresholdInr;
+
+    @Column(name = "tds_section", length = 20)
+    private String tdsSection;
+
+    @Column(name = "tds_rate_percent")
+    private BigDecimal tdsRatePercent;
+
+    @Column(name = "bank_account_name", length = 150)
+    private String bankAccountName;
+
+    @Column(name = "bank_account_number", length = 34)
+    private String bankAccountNumber;
+
+    @Column(name = "bank_ifsc", length = 11)
+    private String bankIfsc;
 
     @PrePersist
     protected void onCreate() {

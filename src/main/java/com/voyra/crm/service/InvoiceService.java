@@ -6,14 +6,10 @@ import com.voyra.crm.dto.ClientInvoicePaymentRequest;
 import com.voyra.crm.dto.ClientInvoiceResponse;
 import com.voyra.crm.dto.InvoiceSummaryResponse;
 import com.voyra.crm.dto.PagedResponse;
-import com.voyra.crm.dto.SupplierInvoiceCreateRequest;
-import com.voyra.crm.dto.SupplierInvoiceResponse;
-import com.voyra.crm.dto.SupplierInvoiceStatusUpdateRequest;
 import com.voyra.crm.entity.Agent;
 import com.voyra.crm.entity.ClientInvoice;
 import com.voyra.crm.entity.Client;
 import com.voyra.crm.entity.Lead;
-import com.voyra.crm.entity.SupplierInvoice;
 import com.voyra.crm.enums.AuditEntityType;
 import com.voyra.crm.enums.InvoiceStatus;
 import com.voyra.crm.enums.LeadTimelineEventType;
@@ -52,13 +48,10 @@ public class InvoiceService {
     private static final String[] CLIENT_INVOICE_AUDITED = {
             "description", "amount", "gst", "totalWithGst", "amountPaid", "status", "dueDate", "paymentMode"
     };
-    private static final String[] SUPPLIER_INVOICE_AUDITED = {
-            "supplierName", "category", "amount", "status", "dueDate", "bookingRef"
-    };
 
     private final ClientInvoiceRepository clientInvoiceRepository;
-    private final SupplierInvoiceRepository supplierInvoiceRepository;
     private final ClientRepository clientRepository;
+    private final SupplierLedgerService supplierLedgerService;
     private final AgentRepository agentRepository;
     private final LeadRepository leadRepository;
     private final LeadServiceRepository leadServiceRepository;
@@ -170,43 +163,6 @@ public class InvoiceService {
         return toClientResponse(invoice);
     }
 
-    @Transactional
-    public SupplierInvoiceResponse createSupplierInvoice(SupplierInvoiceCreateRequest request) {
-        SupplierInvoice invoice = SupplierInvoice.builder()
-                .id(generateUniqueId(supplierInvoiceRepository::existsById))
-                .supplierName(request.getSupplierName())
-                .category(request.getCategory())
-                .amount(request.getAmount())
-                .status(InvoiceStatus.PENDING)
-                .dueDate(request.getDueDate())
-                .bookingRef(request.getBookingRef())
-                .createdBy(SecurityContextUtil.getCurrentUserOrThrow().userId())
-                .build();
-        supplierInvoiceRepository.save(invoice);
-        auditService.recordCreate(AuditEntityType.SUPPLIER_INVOICE, invoice.getId(), invoice.getSupplierName());
-        log.info("Supplier invoice created: invoiceId={}", invoice.getId());
-        return toSupplierResponse(invoice);
-    }
-
-    @Transactional(readOnly = true)
-    public List<SupplierInvoiceResponse> listSupplierInvoices() {
-        return supplierInvoiceRepository.findAll().stream().map(this::toSupplierResponse).toList();
-    }
-
-    @Transactional
-    public SupplierInvoiceResponse updateSupplierInvoiceStatus(String id, SupplierInvoiceStatusUpdateRequest request) {
-        SupplierInvoice invoice = supplierInvoiceRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("Supplier invoice not found: " + id));
-        Map<String, String> before = AuditSnapshot.of(invoice, SUPPLIER_INVOICE_AUDITED);
-        invoice.setStatus(request.getStatus());
-        List<AuditChange> changes = AuditSnapshot.diff(before, AuditSnapshot.of(invoice, SUPPLIER_INVOICE_AUDITED));
-        invoice.setUpdatedAt(LocalDateTime.now());
-        invoice.setUpdatedBy(SecurityContextUtil.getCurrentUserOrThrow().userId());
-        supplierInvoiceRepository.save(invoice);
-        auditService.recordUpdate(AuditEntityType.SUPPLIER_INVOICE, invoice.getId(), invoice.getSupplierName(), changes);
-        return toSupplierResponse(invoice);
-    }
-
     private void touch(ClientInvoice invoice) {
         invoice.setUpdatedAt(LocalDateTime.now());
         invoice.setUpdatedBy(SecurityContextUtil.getCurrentUserOrThrow().userId());
@@ -221,28 +177,23 @@ public class InvoiceService {
      * invoices, and zero supplier figures - payables are not agent-scoped data. Mixing the
      * two scopes in one response would report agency-wide payables against an agent's own
      * receivables.
+     *
+     * <p>Supplier figures come from {@link SupplierLedgerService}, the real subsidiary payables
+     * ledger, rather than the pre-rebuild {@code supplier_invoice} table this method used to read
+     * directly (that table no longer carries a flat {@code amount}/{@code status}).
      */
     @Transactional(readOnly = true)
     public InvoiceSummaryResponse getSummary() {
         List<ClientInvoice> clientInvoices = scopedClientInvoices();
-        // Supplier invoices are accounts-payable data: Owner-only, matching the three
-        // supplier endpoints. An Agent's summary reports on their own client invoices only.
         boolean isOwner = !SecurityContextUtil.getCurrentUserOrThrow().isAgent();
-        List<SupplierInvoice> supplierInvoices = isOwner ? supplierInvoiceRepository.findAll() : List.of();
 
         BigDecimal totalCollected = sum(clientInvoices, ClientInvoice::getAmountPaid);
         BigDecimal totalPendingToCollect = clientInvoices.stream()
                 .map(i -> i.getTotalWithGst().subtract(i.getAmountPaid()))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal totalGst = sum(clientInvoices, ClientInvoice::getGst);
-        BigDecimal totalPaidToSuppliers = supplierInvoices.stream()
-                .filter(i -> i.getStatus() == InvoiceStatus.PAID)
-                .map(SupplierInvoice::getAmount)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal totalPendingToPay = supplierInvoices.stream()
-                .filter(i -> i.getStatus() != InvoiceStatus.PAID)
-                .map(SupplierInvoice::getAmount)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal totalPaidToSuppliers = isOwner ? supplierLedgerService.totalPaidAllVendors() : BigDecimal.ZERO;
+        BigDecimal totalPendingToPay = isOwner ? supplierLedgerService.totalPayableAllVendors() : BigDecimal.ZERO;
 
         return InvoiceSummaryResponse.builder()
                 .totalCollected(totalCollected)
@@ -281,10 +232,6 @@ public class InvoiceService {
         return dueDate != null && dueDate.isBefore(LocalDate.now()) && pendingAmount.compareTo(BigDecimal.ZERO) > 0;
     }
 
-    private boolean isOverdue(LocalDate dueDate, InvoiceStatus status) {
-        return dueDate != null && dueDate.isBefore(LocalDate.now()) && status != InvoiceStatus.PAID;
-    }
-
     private ClientInvoiceResponse toClientResponse(ClientInvoice i) {
         BigDecimal pending = i.getTotalWithGst().subtract(i.getAmountPaid());
         return ClientInvoiceResponse.builder()
@@ -295,14 +242,6 @@ public class InvoiceService {
                 .amountPaid(i.getAmountPaid()).pending(pending).status(i.getStatus())
                 .invoiceDate(i.getInvoiceDate()).dueDate(i.getDueDate()).paymentMode(i.getPaymentMode())
                 .overdue(isOverdue(i.getDueDate(), pending))
-                .build();
-    }
-
-    private SupplierInvoiceResponse toSupplierResponse(SupplierInvoice i) {
-        return SupplierInvoiceResponse.builder()
-                .id(i.getId()).supplierName(i.getSupplierName()).category(i.getCategory()).amount(i.getAmount())
-                .status(i.getStatus()).dueDate(i.getDueDate()).bookingRef(i.getBookingRef())
-                .overdue(isOverdue(i.getDueDate(), i.getStatus()))
                 .build();
     }
 

@@ -7,6 +7,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -58,4 +59,40 @@ public class VendorResponse {
 
     @Schema(example = "2026-03-02T14:20:00")
     private LocalDateTime updatedAt;
+
+    // --- Accounts-payable profile. Bank/TDS/PAN/credit-limit fields are omitted (null) when
+    // returned to an AGENT - see VendorService#toResponse. ---
+
+    @Schema(example = "07")
+    private String stateCode;
+
+    @Schema(example = "AAACT2727Q")
+    private String panNumber;
+
+    @Schema(example = "false")
+    private Boolean isPrepaid;
+
+    @Schema(example = "15")
+    private Integer paymentTermsDays;
+
+    @Schema(example = "500000.00")
+    private BigDecimal creditLimitInr;
+
+    @Schema(example = "150000.00")
+    private BigDecimal lowBalanceThresholdInr;
+
+    @Schema(example = "194C")
+    private String tdsSection;
+
+    @Schema(example = "2.000")
+    private BigDecimal tdsRatePercent;
+
+    @Schema(example = "Tripjack Travels Pvt Ltd")
+    private String bankAccountName;
+
+    @Schema(example = "000123456789")
+    private String bankAccountNumber;
+
+    @Schema(example = "HDFC0000123")
+    private String bankIfsc;
 }

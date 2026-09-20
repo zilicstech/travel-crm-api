@@ -4,9 +4,6 @@ import com.voyra.crm.dto.ClientInvoiceCreateRequest;
 import com.voyra.crm.dto.ClientInvoicePaymentRequest;
 import com.voyra.crm.dto.ClientInvoiceResponse;
 import com.voyra.crm.dto.InvoiceSummaryResponse;
-import com.voyra.crm.dto.SupplierInvoiceCreateRequest;
-import com.voyra.crm.dto.SupplierInvoiceResponse;
-import com.voyra.crm.dto.SupplierInvoiceStatusUpdateRequest;
 import com.voyra.crm.service.InvoiceService;
 import com.voyra.crm.util.PageRequestUtil;
 import io.swagger.v3.oas.annotations.Operation;
@@ -26,14 +23,13 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.List;
-
 /**
- * The pre-accounts-module invoice surface - {@code client_invoice} and {@code supplier_invoice},
- * kept on their original contract (see architecture note on why a new {@code invoice} table was
- * added instead of migrating this one). Reads are Owner/Accountant/Agent (agent scoped to their
- * own bookings); writes are Owner/Accountant only - an Agent can no longer raise or settle a
- * bill, matching the "Owner sees all, Accountant bills, Agent reads" product decision.
+ * The pre-accounts-module client invoice surface - {@code client_invoice}, kept on its original
+ * contract (see architecture note on why a new {@code invoice} table was added instead of
+ * migrating this one). Reads are Owner/Accountant/Agent (agent scoped to their own bookings);
+ * writes are Owner/Accountant only. The supplier-invoice endpoints that used to live here moved
+ * to {@code SupplierInvoiceController} (/api/accounts/payables/invoices) as part of the
+ * accounts-payable rebuild - see ARCHITECTURE-SPINE AD-1.
  */
 @Slf4j
 @RestController
@@ -71,28 +67,6 @@ public class InvoiceController {
     public ResponseEntity<ClientInvoiceResponse> recordPayment(@PathVariable String id,
                                                                 @Valid @RequestBody ClientInvoicePaymentRequest request) {
         return ResponseEntity.ok(invoiceService.recordPayment(id, request));
-    }
-
-    @PostMapping("/supplier")
-    @PreAuthorize("hasAnyRole('AGENCY_OWNER', 'ACCOUNTANT')")
-    @Operation(summary = "Record a supplier invoice")
-    public ResponseEntity<SupplierInvoiceResponse> createSupplierInvoice(@Valid @RequestBody SupplierInvoiceCreateRequest request) {
-        return ResponseEntity.ok(invoiceService.createSupplierInvoice(request));
-    }
-
-    @GetMapping("/supplier")
-    @PreAuthorize("hasAnyRole('AGENCY_OWNER', 'ACCOUNTANT')")
-    @Operation(summary = "List supplier invoices", description = "Agency-wide - supplier payables are accounts-payable data, not agent-scoped.")
-    public ResponseEntity<List<SupplierInvoiceResponse>> listSupplierInvoices() {
-        return ResponseEntity.ok(invoiceService.listSupplierInvoices());
-    }
-
-    @PatchMapping("/supplier/{id}/status")
-    @PreAuthorize("hasAnyRole('AGENCY_OWNER', 'ACCOUNTANT')")
-    @Operation(summary = "Update a supplier invoice's payment status")
-    public ResponseEntity<SupplierInvoiceResponse> updateSupplierInvoiceStatus(
-            @PathVariable String id, @Valid @RequestBody SupplierInvoiceStatusUpdateRequest request) {
-        return ResponseEntity.ok(invoiceService.updateSupplierInvoiceStatus(id, request));
     }
 
     @GetMapping("/summary")

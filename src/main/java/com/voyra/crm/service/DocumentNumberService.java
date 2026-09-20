@@ -86,6 +86,7 @@ public class DocumentNumberService {
             case PROFORMA -> "PI";
             case RECEIPT -> "RCP";
             case CREDIT_NOTE -> "CN";
+            case PAYMENT_VOUCHER -> "PV";
         };
     }
 }
