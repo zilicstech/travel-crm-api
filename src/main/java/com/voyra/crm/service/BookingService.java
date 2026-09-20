@@ -66,7 +66,7 @@ public class BookingService {
     private static final String[] AUDITED = {
             "pnr", "ticketNo", "airline", "supplier", "journeyDate", "returnDate", "tripType", "notes",
             "flightNumber", "flightFrom", "flightTo", "flightCabin",
-            "hotelConfirmationNo", "hotelName", "hotelCity", "hotelCheckIn", "hotelCheckOut",
+            "hotelConfirmationNo", "hotelName", "hotelCity", "hotelCountryCode", "hotelCheckIn", "hotelCheckOut",
             "hotelRoomType", "hotelBoardBasis", "hotelRooms",
             "visaApplicationNo", "visaCountry", "visaAppliedDate", "visaAppointmentDate", "visaIssuedDate",
             "transferVoucherNo", "transferVehicleType", "transferPickup", "transferDropoff",
@@ -135,6 +135,7 @@ public class BookingService {
                 .hotelConfirmationNo(request.getHotelConfirmationNo())
                 .hotelName(request.getHotelName())
                 .hotelCity(request.getHotelCity())
+                .hotelCountryCode(request.getHotelCountryCode())
                 .hotelCheckIn(request.getHotelCheckIn())
                 .hotelCheckOut(request.getHotelCheckOut())
                 .hotelRoomType(request.getHotelRoomType())
@@ -254,6 +255,7 @@ public class BookingService {
         if (request.getHotelConfirmationNo() != null) booking.setHotelConfirmationNo(request.getHotelConfirmationNo());
         if (request.getHotelName() != null) booking.setHotelName(request.getHotelName());
         if (request.getHotelCity() != null) booking.setHotelCity(request.getHotelCity());
+        if (request.getHotelCountryCode() != null) booking.setHotelCountryCode(request.getHotelCountryCode());
         if (request.getHotelCheckIn() != null) booking.setHotelCheckIn(request.getHotelCheckIn());
         if (request.getHotelCheckOut() != null) booking.setHotelCheckOut(request.getHotelCheckOut());
         if (request.getHotelRoomType() != null) booking.setHotelRoomType(request.getHotelRoomType());
@@ -494,6 +496,7 @@ public class BookingService {
                 .flightNumber(b.getFlightNumber()).flightFrom(b.getFlightFrom()).flightTo(b.getFlightTo())
                 .flightCabin(b.getFlightCabin())
                 .hotelConfirmationNo(b.getHotelConfirmationNo()).hotelName(b.getHotelName()).hotelCity(b.getHotelCity())
+                .hotelCountryCode(b.getHotelCountryCode())
                 .hotelCheckIn(b.getHotelCheckIn()).hotelCheckOut(b.getHotelCheckOut())
                 .hotelRoomType(b.getHotelRoomType()).hotelBoardBasis(b.getHotelBoardBasis()).hotelRooms(b.getHotelRooms())
                 .visaApplicationNo(b.getVisaApplicationNo()).visaCountry(b.getVisaCountry())

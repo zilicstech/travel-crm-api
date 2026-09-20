@@ -1,14 +1,26 @@
 package com.voyra.crm.util;
 
+import com.voyra.crm.cache.AirportCache;
+
 import java.util.HashMap;
 import java.util.Map;
 
 /**
  * Tripjack's flight search takes a 3-letter airport/city IATA code, not the free-text city
- * name the search form accepts ("Bangalore", not "BLR"). This is a fixed lookup of public,
- * factual IATA codes - not part of Tripjack's API contract - so it is safe to hardcode
- * rather than call out to a geocoding service for a value that never changes. A 3-letter
- * all-caps input is assumed to already be a code and passes through unresolved.
+ * name older callers, or a pre-picker lead, may still hold ("Bangalore", not "BLR"). Resolution
+ * is a four-step ladder:
+ *
+ * <ol>
+ *   <li>a 3-letter all-caps input is assumed to already be a code and passes through unresolved;
+ *   <li>the legacy alias map below - kept verbatim, do not delete - covers names that read
+ *       naturally but disagree with OurAirports' own spelling (its municipality for BLR is
+ *       "Bengaluru", not "Bangalore"; "Cochin", "Trivandrum", "Maldives" and "Switzerland" are
+ *       the same story). Deleting this map silently breaks every one of those, plus the
+ *       existing {@code TripjackFlightSearchProviderTest} fixture, which searches "Bangalore";
+ *   <li>{@link AirportCache#findByPlaceName} covers the other ~4,000 cities/airports the picker
+ *       now offers, which this class never used to know about;
+ *   <li>anything left throws, same message as before.
+ * </ol>
  */
 public final class AirportCodeResolver {
 
@@ -27,12 +39,35 @@ public final class AirportCodeResolver {
         }
         // "Bangkok, Thailand" -> "BANGKOK" - only the city name before a comma is looked up.
         String key = trimmed.split(",")[0].trim().toUpperCase();
-        String code = CITY_TO_CODE.get(key);
-        if (code == null) {
-            throw new IllegalArgumentException(
-                    "Unknown city \"" + trimmed + "\" - use its 3-letter airport code instead (e.g. BLR for Bangalore)");
+        String legacy = CITY_TO_CODE.get(key);
+        if (legacy != null) {
+            return legacy;
         }
-        return code;
+        AirportCache.Airport match = AirportCache.findByPlaceName(key);
+        if (match != null) {
+            return match.iata();
+        }
+        throw new IllegalArgumentException(
+                "Unknown city \"" + trimmed + "\" - use its 3-letter airport code instead (e.g. BLR for Bangalore)");
+    }
+
+    /** True when {@link #resolve} would return a value for this input without throwing. */
+    public static boolean isValid(String code) {
+        if (code == null || code.isBlank()) {
+            return false;
+        }
+        try {
+            resolve(code);
+            return true;
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
+    }
+
+    /** The dataset's display name for a resolved 3-letter code, or null if unknown. */
+    public static String nameOf(String iataCode) {
+        AirportCache.Airport a = AirportCache.byCode(iataCode);
+        return a != null ? a.city() + " (" + a.iata() + ")" : null;
     }
 
     private static Map<String, String> buildMap() {

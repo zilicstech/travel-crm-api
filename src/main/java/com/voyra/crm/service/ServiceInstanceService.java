@@ -67,7 +67,7 @@ public class ServiceInstanceService {
     private static final String[] AUDITED = {
             "status", "assignedAgentId", "dueDate", "preferences",
             "flightTripType", "flightCabin",
-            "hotelCity", "hotelCheckIn", "hotelCheckOut", "hotelNights", "hotelRooms",
+            "hotelCity", "hotelCountryCode", "hotelCheckIn", "hotelCheckOut", "hotelNights", "hotelRooms",
             "visaSourceCity", "visaSourceCountry", "visaCountry", "visaIntendedTravelDate", "visaAppointmentDate",
             "transferVehicleType", "transferPickup", "transferDropoff", "transferDate", "transferTime", "transferPassengers"
     };
@@ -112,6 +112,7 @@ public class ServiceInstanceService {
                     .flightCabin(draft.getFlightCabin())
                     .flightSectors(draft.getFlightSectors() != null ? draft.getFlightSectors() : List.of())
                     .hotelCity(draft.getHotelCity())
+                    .hotelCountryCode(draft.getHotelCountryCode())
                     .hotelCheckIn(draft.getHotelCheckIn())
                     .hotelCheckOut(draft.getHotelCheckOut())
                     .hotelNights(draft.getHotelNights())
@@ -203,6 +204,7 @@ public class ServiceInstanceService {
             service.setFlightSectors(draft.getFlightSectors());
         }
         service.setHotelCity(draft.getHotelCity());
+        service.setHotelCountryCode(draft.getHotelCountryCode());
         service.setHotelCheckIn(draft.getHotelCheckIn());
         service.setHotelCheckOut(draft.getHotelCheckOut());
         service.setHotelNights(draft.getHotelNights());
@@ -518,7 +520,8 @@ public class ServiceInstanceService {
                 .netTotal(s.getNetTotal()).sellingTotal(s.getSellingTotal())
                 .flightTripType(s.getFlightTripType()).flightCabin(s.getFlightCabin())
                 .flightSectors(s.getFlightSectors())
-                .hotelCity(s.getHotelCity()).hotelCheckIn(s.getHotelCheckIn()).hotelCheckOut(s.getHotelCheckOut())
+                .hotelCity(s.getHotelCity()).hotelCountryCode(s.getHotelCountryCode())
+                .hotelCheckIn(s.getHotelCheckIn()).hotelCheckOut(s.getHotelCheckOut())
                 .hotelNights(s.getHotelNights()).hotelRooms(s.getHotelRooms())
                 .visaSourceCity(s.getVisaSourceCity()).visaSourceCountry(s.getVisaSourceCountry())
                 .visaCountry(s.getVisaCountry()).visaIntendedTravelDate(s.getVisaIntendedTravelDate())

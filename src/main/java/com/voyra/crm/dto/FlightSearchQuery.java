@@ -14,11 +14,11 @@ import java.time.LocalDate;
 public class FlightSearchQuery {
 
     @NotBlank(message = "Origin is required")
-    @Schema(example = "Bangalore")
+    @Schema(description = "IATA airport code, picked via the airport picker", example = "BLR")
     private String origin;
 
     @NotBlank(message = "Destination is required")
-    @Schema(example = "Phuket")
+    @Schema(description = "IATA airport code, picked via the airport picker", example = "HKT")
     private String destination;
 
     @NotNull(message = "Departure date is required")

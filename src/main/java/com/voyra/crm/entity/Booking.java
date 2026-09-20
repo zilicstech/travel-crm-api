@@ -127,6 +127,9 @@ public class Booking {
     @Column(name = "hotel_city", length = 150)
     private String hotelCity;
 
+    @Column(name = "hotel_country_code", length = 2)
+    private String hotelCountryCode;
+
     @Column(name = "hotel_check_in")
     private LocalDate hotelCheckIn;
 

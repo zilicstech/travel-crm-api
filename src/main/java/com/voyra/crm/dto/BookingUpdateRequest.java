@@ -71,6 +71,10 @@ public class BookingUpdateRequest {
     @Schema(example = "Dubai")
     private String hotelCity;
 
+    @Size(max = 2)
+    @Schema(description = "ISO alpha-2 country code, picked alongside hotelCity", example = "AE")
+    private String hotelCountryCode;
+
     @Schema(example = "2026-09-15")
     private LocalDate hotelCheckIn;
 

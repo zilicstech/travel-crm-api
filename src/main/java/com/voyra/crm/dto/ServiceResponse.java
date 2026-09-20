@@ -88,6 +88,9 @@ public class ServiceResponse {
     @Schema(example = "Bangkok")
     private String hotelCity;
 
+    @Schema(description = "ISO alpha-2 country code, picked alongside hotelCity", example = "TH")
+    private String hotelCountryCode;
+
     @Schema(example = "2026-10-01")
     private LocalDate hotelCheckIn;
 
