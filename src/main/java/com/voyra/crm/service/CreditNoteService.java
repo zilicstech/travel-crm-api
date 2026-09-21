@@ -155,7 +155,11 @@ public class CreditNoteService {
         note.setStatus(CreditNoteStatus.ISSUED);
         note.setIssuedAt(LocalDateTime.now());
         note.setIssuedBy(actor);
-        note.setRefundableAmount(note.getTotalAmount());
+        // Capped at cash actually receipted on the invoice, not the note's own face value -
+        // a credit note issued against a partially (or un-)paid invoice cannot be refunded
+        // for more than the agency ever actually collected from the client.
+        BigDecimal cashReceipted = cashReceiptedOnInvoice(invoice.getId());
+        note.setRefundableAmount(note.getTotalAmount().min(cashReceipted).max(BigDecimal.ZERO));
         creditNoteRepository.save(note);
 
         invoice.setCreditNoteTotal(invoice.getCreditNoteTotal().add(note.getTotalAmount()));
@@ -346,6 +350,16 @@ public class CreditNoteService {
 
     private BigDecimal sumRefunded(String creditNoteId) {
         return paymentReceiptRepository.findByCreditNoteIdOrderByReceivedOnAscCreatedAtAsc(creditNoteId).stream()
+                .map(PaymentReceipt::getAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    /** Net cash actually receipted against this invoice - RECEIPT-direction rows only (a
+     *  reversal nets itself out, being the same direction with a negated amount), never the
+     *  invoice's billed/grand total, which can include amounts never collected. */
+    private BigDecimal cashReceiptedOnInvoice(String invoiceId) {
+        return paymentReceiptRepository.findByInvoiceIdOrderByReceivedOnAscCreatedAtAsc(invoiceId).stream()
+                .filter(r -> r.getDirection() == ReceiptDirection.RECEIPT)
                 .map(PaymentReceipt::getAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
     }

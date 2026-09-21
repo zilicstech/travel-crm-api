@@ -193,6 +193,8 @@ class CreditNoteServiceTest {
         when(invoiceRepository.findById("I1")).thenReturn(Optional.of(invoice));
         when(creditNoteRepository.findByInvoiceIdAndStatus("I1", CreditNoteStatus.ISSUED)).thenReturn(List.of());
         when(documentNumberService.next(DocumentKind.CREDIT_NOTE, LocalDate.now())).thenReturn("CN/2026-27/0001");
+        when(paymentReceiptRepository.findByInvoiceIdOrderByReceivedOnAscCreatedAtAsc("I1")).thenReturn(List.of(
+                PaymentReceipt.builder().direction(ReceiptDirection.RECEIPT).amount(new BigDecimal("1180.00")).build()));
 
         CreditNoteResponse response = creditNoteService.issue("CN1");
 
@@ -202,6 +204,30 @@ class CreditNoteServiceTest {
         assertThat(invoice.getCreditNoteTotal()).isEqualByComparingTo("1180.00");
         assertThat(invoice.getBalanceDue()).isEqualByComparingTo("0.00");
         assertThat(invoice.getStatus()).isEqualTo(InvoiceLifecycle.PAID);
+    }
+
+    /** Reproduces the audit finding (F-016): a ₹9,975 invoice with only ₹5,000 ever actually
+     *  receipted must not become refundable for its full ₹9,975 face value once credited. */
+    @Test
+    void issuingCapsRefundableAmountAtCashActuallyReceiptedOnTheInvoice() {
+        Invoice invoice = issuedInvoice();
+        invoice.setGrandTotal(new BigDecimal("9975.00"));
+        invoice.setAmountReceived(new BigDecimal("5000.00"));
+        CreditNote draft = CreditNote.builder().id("CN1").invoiceId("I1").clientId("K1")
+                .status(CreditNoteStatus.DRAFT).currencyCode("INR").fxRateToInr(BigDecimal.ONE)
+                .totalAmount(new BigDecimal("9975.00")).totalAmountInr(new BigDecimal("9975.00"))
+                .refundedAmount(BigDecimal.ZERO).build();
+        when(creditNoteRepository.findById("CN1")).thenReturn(Optional.of(draft));
+        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(invoice));
+        when(creditNoteRepository.findByInvoiceIdAndStatus("I1", CreditNoteStatus.ISSUED)).thenReturn(List.of());
+        when(documentNumberService.next(DocumentKind.CREDIT_NOTE, LocalDate.now())).thenReturn("CN/2026-27/0002");
+        // One advance receipt before conversion - exactly the audit's repro.
+        when(paymentReceiptRepository.findByInvoiceIdOrderByReceivedOnAscCreatedAtAsc("I1")).thenReturn(List.of(
+                PaymentReceipt.builder().direction(ReceiptDirection.RECEIPT).amount(new BigDecimal("5000.00")).build()));
+
+        CreditNoteResponse response = creditNoteService.issue("CN1");
+
+        assertThat(response.getRefundableAmount()).isEqualByComparingTo("5000.00");
     }
 
     @Test
