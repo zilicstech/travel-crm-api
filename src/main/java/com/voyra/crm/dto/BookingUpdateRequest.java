@@ -1,12 +1,14 @@
 package com.voyra.crm.dto;
 
 import io.swagger.v3.oas.annotations.media.Schema;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.List;
 
 /** Patch semantics - every field optional, only non-null fields are applied. lead/service
  *  linkage and type are never patched - the booking link never changes after creation. */
@@ -139,4 +141,11 @@ public class BookingUpdateRequest {
     @DecimalMin(value = "0.00", message = "Selling price cannot be negative")
     @Schema(description = "Price charged to the customer", example = "52000.00")
     private BigDecimal sellingPrice;
+
+    @Schema(description = "Whether this FLIGHT booking's itinerary leaves India - decides AIR_INTERNATIONAL vs AIR_DOMESTIC on any invoice drafted against it. Ignored for non-FLIGHT bookings.")
+    private Boolean internationalTrip;
+
+    @Valid
+    @Schema(description = "The whole traveller list - a save with this present replaces every existing passenger (and their sectors) with this set. Omit to leave passengers untouched.")
+    private List<BookingPassengerRequest> passengers;
 }

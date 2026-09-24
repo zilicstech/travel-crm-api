@@ -11,7 +11,9 @@ import com.voyra.crm.enums.BookingType;
 import com.voyra.crm.enums.UserType;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.BookingDocumentRepository;
+import com.voyra.crm.repository.BookingPassengerRepository;
 import com.voyra.crm.repository.BookingRepository;
+import com.voyra.crm.repository.BookingSectorRepository;
 import com.voyra.crm.repository.ClientRepository;
 import com.voyra.crm.repository.CreditNoteRepository;
 import com.voyra.crm.repository.CustomerLedgerEntryRepository;
@@ -43,6 +45,10 @@ class BookingProfitTest {
 
     @Mock
     private BookingRepository bookingRepository;
+    @Mock
+    private BookingPassengerRepository bookingPassengerRepository;
+    @Mock
+    private BookingSectorRepository bookingSectorRepository;
     @Mock
     private BookingDocumentRepository bookingDocumentRepository;
     @Mock

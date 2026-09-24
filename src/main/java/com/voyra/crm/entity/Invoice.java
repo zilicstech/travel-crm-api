@@ -3,6 +3,7 @@ package com.voyra.crm.entity;
 import com.voyra.crm.enums.FxRateSource;
 import com.voyra.crm.enums.InvoiceDocumentType;
 import com.voyra.crm.enums.InvoiceLifecycle;
+import com.voyra.crm.enums.InvoiceServiceCategory;
 import com.voyra.crm.enums.SupplyNature;
 import com.voyra.crm.enums.TaxTreatment;
 import jakarta.persistence.Column;
@@ -56,6 +57,15 @@ public class Invoice {
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 20)
     private InvoiceLifecycle status;
+
+    /**
+     * Drives the number series, the printed title and the print template - see
+     * {@code ACCOUNTING_REDESIGN_SPEC.md} §5.1. Nullable: invoices from before this column
+     * existed have none and are never retroactively renumbered under a new series.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "service_category", length = 20)
+    private InvoiceServiceCategory serviceCategory;
 
     @Column(name = "client_id", nullable = false, length = 36)
     private String clientId;

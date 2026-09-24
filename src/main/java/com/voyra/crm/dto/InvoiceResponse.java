@@ -3,6 +3,7 @@ package com.voyra.crm.dto;
 import com.voyra.crm.enums.FxRateSource;
 import com.voyra.crm.enums.InvoiceDocumentType;
 import com.voyra.crm.enums.InvoiceLifecycle;
+import com.voyra.crm.enums.InvoiceServiceCategory;
 import com.voyra.crm.enums.SupplyNature;
 import com.voyra.crm.enums.TaxTreatment;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -34,6 +35,9 @@ public class InvoiceResponse {
 
     @Schema(example = "TAX_INVOICE")
     private InvoiceDocumentType documentType;
+
+    @Schema(description = "Drives the number series, printed title and print template")
+    private InvoiceServiceCategory serviceCategory;
 
     @Schema(example = "ISSUED")
     private InvoiceLifecycle status;

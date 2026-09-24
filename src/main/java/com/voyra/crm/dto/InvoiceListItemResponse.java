@@ -2,6 +2,7 @@ package com.voyra.crm.dto;
 
 import com.voyra.crm.enums.InvoiceDocumentType;
 import com.voyra.crm.enums.InvoiceLifecycle;
+import com.voyra.crm.enums.InvoiceServiceCategory;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -30,6 +31,8 @@ public class InvoiceListItemResponse {
 
     @Schema(example = "TAX_INVOICE")
     private InvoiceDocumentType documentType;
+    @Schema(description = "Drives the number series, printed title and print template")
+    private InvoiceServiceCategory serviceCategory;
 
     @Schema(example = "ISSUED")
     private InvoiceLifecycle status;

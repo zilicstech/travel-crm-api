@@ -8,6 +8,8 @@ import com.voyra.crm.dto.InvoiceListItemResponse;
 import com.voyra.crm.dto.InvoiceResponse;
 import com.voyra.crm.dto.PagedResponse;
 import com.voyra.crm.entity.Booking;
+import com.voyra.crm.entity.BookingPassenger;
+import com.voyra.crm.entity.BookingSector;
 import com.voyra.crm.entity.Client;
 import com.voyra.crm.entity.Invoice;
 import com.voyra.crm.entity.InvoiceLineItem;
@@ -19,13 +21,16 @@ import com.voyra.crm.enums.DocumentKind;
 import com.voyra.crm.enums.FxRateSource;
 import com.voyra.crm.enums.InvoiceDocumentType;
 import com.voyra.crm.enums.InvoiceLifecycle;
+import com.voyra.crm.enums.InvoiceServiceCategory;
 import com.voyra.crm.enums.LedgerEntryType;
 import com.voyra.crm.enums.LedgerSourceType;
 import com.voyra.crm.enums.TaxTreatment;
 import com.voyra.crm.models.LedgerPosting;
 import com.voyra.crm.models.TaxComputationRequest;
 import com.voyra.crm.models.TaxComputationResult;
+import com.voyra.crm.repository.BookingPassengerRepository;
 import com.voyra.crm.repository.BookingRepository;
+import com.voyra.crm.repository.BookingSectorRepository;
 import com.voyra.crm.repository.InvoiceLineItemRepository;
 import com.voyra.crm.repository.InvoiceRepository;
 import com.voyra.crm.repository.PaymentReceiptRepository;
@@ -33,6 +38,7 @@ import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.security.SecurityContextUtil;
 import com.voyra.crm.util.AuditSnapshot;
+import com.voyra.crm.util.BookingInvoiceLineBuilder;
 import com.voyra.crm.util.FinancialYear;
 import com.voyra.crm.util.InvoiceLifecyclePolicy;
 import com.voyra.crm.util.InvoicePdfRenderer;
@@ -72,6 +78,8 @@ public class InvoiceDocumentService {
     private final InvoiceLineItemRepository invoiceLineItemRepository;
     private final PaymentReceiptRepository paymentReceiptRepository;
     private final BookingRepository bookingRepository;
+    private final BookingPassengerRepository bookingPassengerRepository;
+    private final BookingSectorRepository bookingSectorRepository;
     private final ClientService clientService;
     private final TenantRepository tenantRepository;
     private final TaxEngine taxEngine;
@@ -100,11 +108,14 @@ public class InvoiceDocumentService {
 
         Client client = clientService.findAccessibleClient(booking.getClientId());
         Tenant agency = currentAgency();
+        InvoiceServiceCategory category = InvoiceServiceCategory.forBooking(
+                booking.getType(), Boolean.TRUE.equals(booking.getInternationalTrip()));
 
         Invoice invoice = Invoice.builder()
                 .id(UniqueIdResolver.resolve(invoiceRepository::existsById))
                 .documentType(InvoiceDocumentType.TAX_INVOICE)
                 .status(InvoiceLifecycle.DRAFT)
+                .serviceCategory(category)
                 .clientId(client.getId())
                 .clientName(client.getName())
                 .clientGstin(client.getGstin())
@@ -121,7 +132,8 @@ public class InvoiceDocumentService {
                 .build();
 
         applyDraftFields(invoice, request);
-        List<InvoiceLineItem> lines = recomputeLinesAndTotals(invoice, request.getLines());
+        List<InvoiceLineItemRequest> lineInputs = resolveLines(booking, category, request.getLines());
+        List<InvoiceLineItem> lines = recomputeLinesAndTotals(invoice, lineInputs);
         invoiceRepository.save(invoice);
         invoiceLineItemRepository.saveAll(lines);
 
@@ -133,18 +145,49 @@ public class InvoiceDocumentService {
     public InvoiceResponse updateDraft(String id, InvoiceDraftRequest request) {
         Invoice invoice = findById(id);
         InvoiceLifecyclePolicy.assertEditable(invoice.getStatus());
+        Booking booking = bookingRepository.findById(invoice.getBookingId())
+                .orElseThrow(() -> new IllegalStateException("Booking not found: " + invoice.getBookingId()));
+        InvoiceServiceCategory category = invoice.getServiceCategory() != null ? invoice.getServiceCategory()
+                : InvoiceServiceCategory.forBooking(booking.getType(), Boolean.TRUE.equals(booking.getInternationalTrip()));
+        invoice.setServiceCategory(category);
 
         applyDraftFields(invoice, request);
         invoice.setUpdatedAt(LocalDateTime.now());
         invoice.setUpdatedBy(currentUserId());
 
-        List<InvoiceLineItem> lines = recomputeLinesAndTotals(invoice, request.getLines());
+        List<InvoiceLineItemRequest> lineInputs = resolveLines(booking, category, request.getLines());
+        List<InvoiceLineItem> lines = recomputeLinesAndTotals(invoice, lineInputs);
         invoiceRepository.save(invoice);
         invoiceLineItemRepository.deleteByInvoiceId(id);
         invoiceLineItemRepository.saveAll(lines);
 
         log.info("Invoice draft updated: id={}", id);
         return toResponse(invoice, lines);
+    }
+
+    /** Falls back to the pre-redesign generic series for an invoice with no category - only
+     *  ever a pre-existing draft/proforma created before this column existed. */
+    private DocumentKind invoiceDocumentKind(InvoiceServiceCategory category) {
+        return category != null ? DocumentKind.forInvoiceCategory(category) : DocumentKind.TAX_INVOICE;
+    }
+
+    /**
+     * The heart of ACCOUNTING_REDESIGN_SPEC.md §5.1: an explicit, non-empty {@code lines} list
+     * from the caller still wins (existing tests and any transitional manual entry keep
+     * working), but the normal path is the booking's own captured passengers - no line is ever
+     * hand-typed once a booking has them. See {@code BookingInvoiceLineBuilder}.
+     */
+    private List<InvoiceLineItemRequest> resolveLines(Booking booking, InvoiceServiceCategory category,
+                                                        List<InvoiceLineItemRequest> requestedLines) {
+        if (requestedLines != null && !requestedLines.isEmpty()) {
+            return requestedLines;
+        }
+        List<BookingPassenger> passengers = bookingPassengerRepository.findByBookingIdOrderBySortOrderAsc(booking.getId());
+        Map<String, List<BookingSector>> sectorsByPassenger = passengers.isEmpty() ? Map.of()
+                : bookingSectorRepository.findByBookingPassengerIdInOrderBySortOrderAsc(
+                        passengers.stream().map(BookingPassenger::getId).toList())
+                    .stream().collect(java.util.stream.Collectors.groupingBy(BookingSector::getBookingPassengerId));
+        return BookingInvoiceLineBuilder.build(booking, category, passengers, sectorsByPassenger);
     }
 
     @Transactional
@@ -211,7 +254,7 @@ public class InvoiceDocumentService {
         }
 
         LocalDate today = LocalDate.now();
-        String number = documentNumberService.next(DocumentKind.TAX_INVOICE, today);
+        String number = documentNumberService.next(invoiceDocumentKind(invoice.getServiceCategory()), today);
 
         invoice.setInvoiceNumber(number);
         invoice.setFinancialYear(FinancialYear.of(today));
@@ -271,7 +314,7 @@ public class InvoiceDocumentService {
 
         List<InvoiceLineItem> proformaLines = invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc(proformaId);
         LocalDate today = LocalDate.now();
-        String number = documentNumberService.next(DocumentKind.TAX_INVOICE, today);
+        String number = documentNumberService.next(invoiceDocumentKind(proforma.getServiceCategory()), today);
         String newId = UniqueIdResolver.resolve(invoiceRepository::existsById);
         LocalDateTime now = LocalDateTime.now();
         String actor = currentUserId();
@@ -576,7 +619,7 @@ public class InvoiceDocumentService {
     private InvoiceResponse toResponse(Invoice i, List<InvoiceLineItem> lines) {
         return InvoiceResponse.builder()
                 .id(i.getId()).invoiceNumber(i.getInvoiceNumber()).financialYear(i.getFinancialYear())
-                .documentType(i.getDocumentType()).status(i.getStatus())
+                .documentType(i.getDocumentType()).status(i.getStatus()).serviceCategory(i.getServiceCategory())
                 .clientId(i.getClientId()).clientName(i.getClientName()).clientGstin(i.getClientGstin())
                 .clientStateCode(i.getClientStateCode()).billingAddress(i.getBillingAddress())
                 .agencyLegalName(i.getAgencyLegalName()).agencyGstin(i.getAgencyGstin())
@@ -619,7 +662,7 @@ public class InvoiceDocumentService {
     private static InvoiceListItemResponse toListItem(Invoice i) {
         return InvoiceListItemResponse.builder()
                 .id(i.getId()).invoiceNumber(i.getInvoiceNumber()).financialYear(i.getFinancialYear())
-                .documentType(i.getDocumentType()).status(i.getStatus())
+                .documentType(i.getDocumentType()).status(i.getStatus()).serviceCategory(i.getServiceCategory())
                 .clientId(i.getClientId()).clientName(i.getClientName())
                 .bookingId(i.getBookingId()).agentId(i.getAgentId())
                 .currencyCode(i.getCurrencyCode()).grandTotal(i.getGrandTotal()).grandTotalInr(i.getGrandTotalInr())

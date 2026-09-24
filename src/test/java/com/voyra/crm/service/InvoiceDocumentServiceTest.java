@@ -4,6 +4,7 @@ import com.voyra.crm.dto.InvoiceDraftRequest;
 import com.voyra.crm.dto.InvoiceLineItemRequest;
 import com.voyra.crm.dto.InvoiceResponse;
 import com.voyra.crm.entity.Booking;
+import com.voyra.crm.entity.BookingPassenger;
 import com.voyra.crm.entity.Client;
 import com.voyra.crm.entity.Invoice;
 import com.voyra.crm.entity.InvoiceLineItem;
@@ -15,6 +16,7 @@ import com.voyra.crm.enums.DocumentKind;
 import com.voyra.crm.enums.FxRateSource;
 import com.voyra.crm.enums.InvoiceDocumentType;
 import com.voyra.crm.enums.InvoiceLifecycle;
+import com.voyra.crm.enums.InvoiceServiceCategory;
 import com.voyra.crm.enums.PaymentMode;
 import com.voyra.crm.enums.PaymentStatus;
 import com.voyra.crm.enums.ReceiptDirection;
@@ -22,7 +24,9 @@ import com.voyra.crm.enums.SupplyNature;
 import com.voyra.crm.enums.TaxTreatment;
 import com.voyra.crm.enums.UserType;
 import com.voyra.crm.models.TaxComputationResult;
+import com.voyra.crm.repository.BookingPassengerRepository;
 import com.voyra.crm.repository.BookingRepository;
+import com.voyra.crm.repository.BookingSectorRepository;
 import com.voyra.crm.repository.InvoiceLineItemRepository;
 import com.voyra.crm.repository.InvoiceRepository;
 import com.voyra.crm.repository.PaymentReceiptRepository;
@@ -60,6 +64,10 @@ class InvoiceDocumentServiceTest {
     private PaymentReceiptRepository paymentReceiptRepository;
     @Mock
     private BookingRepository bookingRepository;
+    @Mock
+    private BookingPassengerRepository bookingPassengerRepository;
+    @Mock
+    private BookingSectorRepository bookingSectorRepository;
     @Mock
     private ClientService clientService;
     @Mock
@@ -188,6 +196,36 @@ class InvoiceDocumentServiceTest {
         assertThat(response.getGrandTotalInr()).isEqualByComparingTo("52500.00");
         assertThat(response.getFxRateToInr()).isEqualByComparingTo("1");
         assertThat(response.getFxRateSource()).isEqualTo(FxRateSource.INR_IDENTITY);
+    }
+
+    @Test
+    void createDraftWithNoLinesDerivesThemFromBookingPassengers() {
+        Booking flightBooking = Booking.builder().id("B1").clientId("K1").clientName("Arjun Mehta")
+                .agentId("A1").agentName("Liam").type(BookingType.FLIGHT).internationalTrip(true)
+                .destination("Addis Ababa").bookingStatus(BookingStatus.CONFIRMED)
+                .paymentStatus(PaymentStatus.PENDING).pnr("LVBJAY").build();
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(flightBooking));
+        when(invoiceRepository.existsByBookingIdAndDocumentTypeAndStatus(any(), any(), any())).thenReturn(false);
+        when(clientService.findAccessibleClient("K1")).thenReturn(client());
+        when(invoiceRepository.existsById(any())).thenReturn(false);
+        when(invoiceLineItemRepository.existsById(any())).thenReturn(false);
+        when(taxEngine.compute(any())).thenReturn(gstResult(new BigDecimal("138996.00")));
+        BookingPassenger passenger = BookingPassenger.builder().id("BP1").bookingId("B1")
+                .passengerName("ABHISHEK KUMAR SINGH").fareAmount(new BigDecimal("138996.00")).build();
+        when(bookingPassengerRepository.findByBookingIdOrderBySortOrderAsc("B1")).thenReturn(List.of(passenger));
+        when(bookingSectorRepository.findByBookingPassengerIdInOrderBySortOrderAsc(List.of("BP1"))).thenReturn(List.of());
+
+        InvoiceDraftRequest request = new InvoiceDraftRequest();
+        request.setBookingId("B1");
+        request.setSupplyNature(SupplyNature.DOMESTIC_PACKAGE);
+        // No lines set - must be derived from the booking's captured passenger.
+
+        InvoiceResponse response = invoiceDocumentService.createDraft(request);
+
+        assertThat(response.getServiceCategory()).isEqualTo(InvoiceServiceCategory.AIR_INTERNATIONAL);
+        assertThat(response.getLines()).hasSize(1);
+        assertThat(response.getLines().get(0).getUnitPrice()).isEqualByComparingTo("138996.00");
+        assertThat(response.getLines().get(0).getDescription()).contains("ABHISHEK KUMAR SINGH").contains("Pnr: LVBJAY");
     }
 
     @Test

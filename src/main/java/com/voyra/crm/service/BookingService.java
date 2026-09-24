@@ -4,15 +4,21 @@ import com.voyra.crm.dto.AuditChange;
 import com.voyra.crm.dto.BookingCreateRequest;
 import com.voyra.crm.dto.BookingDeadlineUpdateRequest;
 import com.voyra.crm.dto.BookingDocumentResponse;
+import com.voyra.crm.dto.BookingPassengerRequest;
+import com.voyra.crm.dto.BookingPassengerResponse;
 import com.voyra.crm.dto.BookingPaymentStatusUpdateRequest;
 import com.voyra.crm.dto.BookingRefundUpdateRequest;
 import com.voyra.crm.dto.BookingResponse;
+import com.voyra.crm.dto.BookingSectorRequest;
+import com.voyra.crm.dto.BookingSectorResponse;
 import com.voyra.crm.dto.BookingStatusUpdateRequest;
 import com.voyra.crm.dto.BookingUpdateRequest;
 import com.voyra.crm.dto.PagedResponse;
 import com.voyra.crm.entity.Agent;
 import com.voyra.crm.entity.Booking;
 import com.voyra.crm.entity.BookingDocument;
+import com.voyra.crm.entity.BookingPassenger;
+import com.voyra.crm.entity.BookingSector;
 import com.voyra.crm.entity.Client;
 import com.voyra.crm.entity.LeadService;
 import com.voyra.crm.enums.AuditEntityType;
@@ -25,7 +31,9 @@ import com.voyra.crm.enums.RefundState;
 import com.voyra.crm.enums.ServiceType;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.BookingDocumentRepository;
+import com.voyra.crm.repository.BookingPassengerRepository;
 import com.voyra.crm.repository.BookingRepository;
+import com.voyra.crm.repository.BookingSectorRepository;
 import com.voyra.crm.repository.ClientRepository;
 import com.voyra.crm.repository.CreditNoteRepository;
 import com.voyra.crm.repository.CustomerLedgerEntryRepository;
@@ -78,6 +86,8 @@ public class BookingService {
 
     private final BookingRepository bookingRepository;
     private final BookingDocumentRepository bookingDocumentRepository;
+    private final BookingPassengerRepository bookingPassengerRepository;
+    private final BookingSectorRepository bookingSectorRepository;
     private final ClientRepository clientRepository;
     private final AgentRepository agentRepository;
     private final LeadServiceRepository leadServiceRepository;
@@ -127,6 +137,7 @@ public class BookingService {
                 .journeyDate(request.getJourneyDate())
                 .returnDate(request.getReturnDate())
                 .tripType(request.getTripType())
+                .internationalTrip(Boolean.TRUE.equals(request.getInternationalTrip()))
                 .notes(request.getNotes())
                 .flightNumber(request.getFlightNumber())
                 .flightFrom(request.getFlightFrom())
@@ -175,6 +186,9 @@ public class BookingService {
 
         Booking booking = builder.build();
         bookingRepository.save(booking);
+        if (request.getPassengers() != null) {
+            replacePassengers(booking.getId(), request.getPassengers());
+        }
         auditService.recordCreate(AuditEntityType.BOOKING, booking.getId(), labelFor(booking));
 
         if (service != null) {
@@ -274,12 +288,16 @@ public class BookingService {
         if (request.getTransferTime() != null) booking.setTransferTime(request.getTransferTime());
         if (request.getNetCost() != null) booking.setNetCost(request.getNetCost());
         if (request.getSellingPrice() != null) booking.setSellingPrice(request.getSellingPrice());
+        if (request.getInternationalTrip() != null) booking.setInternationalTrip(request.getInternationalTrip());
         // Profit is never client-trusted - always recomputed server-side from the current values.
         booking.setProfit(computeProfit(booking.getSellingPrice(), booking.getNetCost()));
 
         List<AuditChange> changes = AuditSnapshot.diff(before, AuditSnapshot.of(booking, AUDITED));
         touch(booking);
         bookingRepository.save(booking);
+        if (request.getPassengers() != null) {
+            replacePassengers(booking.getId(), request.getPassengers());
+        }
         // Same transaction as the save - a rollback loses the booking edit and its audit row together.
         auditService.recordUpdate(AuditEntityType.BOOKING, booking.getId(), labelFor(booking), changes);
         log.info("Booking updated: bookingId={}, changedFields={}", id, changes.size());
@@ -402,6 +420,7 @@ public class BookingService {
         documents.stream().map(BookingDocument::getFileKey).filter(java.util.Objects::nonNull)
                 .forEach(fileStorageService::delete);
 
+        deletePassengers(id);
         bookingRepository.delete(booking);
         auditService.recordUpdate(AuditEntityType.BOOKING, id, labelFor(booking), List.of());
 
@@ -519,7 +538,85 @@ public class BookingService {
                 .invoicedTotalInr(b.getInvoicedTotalInr()).receivedTotalInr(b.getReceivedTotalInr())
                 .refundedTotalInr(b.getRefundedTotalInr()).paymentStatusSource(b.getPaymentStatusSource())
                 .documents(documents)
+                .internationalTrip(b.getInternationalTrip())
+                .passengers(toPassengerResponses(b.getId()))
                 .build();
+    }
+
+    private List<BookingPassengerResponse> toPassengerResponses(String bookingId) {
+        List<BookingPassenger> passengers = bookingPassengerRepository.findByBookingIdOrderBySortOrderAsc(bookingId);
+        if (passengers.isEmpty()) {
+            return List.of();
+        }
+        List<String> passengerIds = passengers.stream().map(BookingPassenger::getId).toList();
+        Map<String, List<BookingSector>> sectorsByPassenger = bookingSectorRepository
+                .findByBookingPassengerIdInOrderBySortOrderAsc(passengerIds).stream()
+                .collect(java.util.stream.Collectors.groupingBy(BookingSector::getBookingPassengerId,
+                        java.util.LinkedHashMap::new, java.util.stream.Collectors.toList()));
+        return passengers.stream().map(p -> BookingPassengerResponse.builder()
+                .id(p.getId()).leadMemberId(p.getLeadMemberId()).passengerName(p.getPassengerName())
+                .paxType(p.getPaxType()).fareAmount(p.getFareAmount())
+                .sectors(sectorsByPassenger.getOrDefault(p.getId(), List.of()).stream()
+                        .map(s -> BookingSectorResponse.builder()
+                                .id(s.getId()).sectorFrom(s.getSectorFrom()).sectorTo(s.getSectorTo())
+                                .flightNumber(s.getFlightNumber()).travelDate(s.getTravelDate())
+                                .cabinClass(s.getCabinClass())
+                                .build())
+                        .toList())
+                .build())
+                .toList();
+    }
+
+    /** Replaces the whole passenger (and sector) list for a booking - same save-the-whole-set
+     *  semantics as an invoice's lines. Existing sectors are deleted by passenger id since a
+     *  passenger's own id is regenerated on every replace, not reused. */
+    private void replacePassengers(String bookingId, List<BookingPassengerRequest> requests) {
+        deletePassengers(bookingId);
+        LocalDateTime now = LocalDateTime.now();
+        String actor = SecurityContextUtil.getCurrentUserOrThrow().userId();
+        int sortOrder = 0;
+        for (BookingPassengerRequest req : requests) {
+            BookingPassenger passenger = BookingPassenger.builder()
+                    .id(UniqueIdResolver.resolve(bookingPassengerRepository::existsById))
+                    .bookingId(bookingId)
+                    .leadMemberId(req.getLeadMemberId())
+                    .passengerName(req.getPassengerName())
+                    .paxType(req.getPaxType())
+                    .fareAmount(req.getFareAmount())
+                    .sortOrder(sortOrder++)
+                    .createdAt(now)
+                    .createdBy(actor)
+                    .build();
+            bookingPassengerRepository.save(passenger);
+
+            if (req.getSectors() != null) {
+                int sectorOrder = 0;
+                List<BookingSector> sectors = new ArrayList<>();
+                for (BookingSectorRequest sReq : req.getSectors()) {
+                    sectors.add(BookingSector.builder()
+                            .id(UniqueIdResolver.resolve(bookingSectorRepository::existsById))
+                            .bookingPassengerId(passenger.getId())
+                            .sortOrder(sectorOrder++)
+                            .sectorFrom(sReq.getSectorFrom())
+                            .sectorTo(sReq.getSectorTo())
+                            .flightNumber(sReq.getFlightNumber())
+                            .travelDate(sReq.getTravelDate())
+                            .cabinClass(sReq.getCabinClass())
+                            .createdAt(now)
+                            .build());
+                }
+                bookingSectorRepository.saveAll(sectors);
+            }
+        }
+    }
+
+    private void deletePassengers(String bookingId) {
+        List<String> passengerIds = bookingPassengerRepository.findByBookingIdOrderBySortOrderAsc(bookingId)
+                .stream().map(BookingPassenger::getId).toList();
+        if (!passengerIds.isEmpty()) {
+            bookingSectorRepository.deleteByBookingPassengerIdIn(passengerIds);
+        }
+        bookingPassengerRepository.deleteByBookingId(bookingId);
     }
 
     private BookingDocumentResponse toDocumentResponse(BookingDocument d) {

@@ -3,12 +3,14 @@ package com.voyra.crm.dto;
 import com.voyra.crm.enums.BookingType;
 import com.voyra.crm.enums.PaymentStatus;
 import io.swagger.v3.oas.annotations.media.Schema;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.List;
 
 @Data
 @Schema(description = "Request body for creating a Booking. Set serviceId to log it on a lead's "
@@ -144,4 +146,11 @@ public class BookingCreateRequest {
 
     @Schema(defaultValue = "PENDING", example = "PENDING")
     private PaymentStatus paymentStatus;
+
+    @Schema(description = "Whether this FLIGHT booking's itinerary leaves India - decides AIR_INTERNATIONAL vs AIR_DOMESTIC on any invoice drafted against it. Ignored for non-FLIGHT bookings.", defaultValue = "false")
+    private Boolean internationalTrip;
+
+    @Valid
+    @Schema(description = "Travellers on this booking, each with the fare attributed to them and their itinerary legs - what a customer invoice against this booking prints. Optional at creation; a booking with none falls back to a single line for the whole booking when invoiced.")
+    private List<BookingPassengerRequest> passengers;
 }

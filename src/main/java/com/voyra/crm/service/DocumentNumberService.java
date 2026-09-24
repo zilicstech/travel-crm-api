@@ -87,6 +87,14 @@ public class DocumentNumberService {
             case RECEIPT -> "RCP";
             case CREDIT_NOTE -> "CN";
             case PAYMENT_VOUCHER -> "PV";
+            case AIR_INTERNATIONAL_INVOICE -> "ITI";
+            case AIR_DOMESTIC_INVOICE -> "DTI";
+            case HOTEL_INVOICE -> "HTL";
+            case RAIL_INVOICE -> "RLI";
+            case TRANSPORT_INVOICE -> "TRN";
+            case VISA_INVOICE -> "VSA";
+            case PACKAGE_INVOICE -> "PKG";
+            case MISCELLANEOUS_INVOICE -> "MSC";
         };
     }
 }

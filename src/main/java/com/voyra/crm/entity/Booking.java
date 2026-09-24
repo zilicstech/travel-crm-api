@@ -106,6 +106,16 @@ public class Booking {
     @Column(name = "trip_type", length = 20)
     private String tripType;
 
+    /**
+     * Whether this FLIGHT booking's itinerary leaves India - the only signal
+     * {@code InvoiceServiceCategory.forBooking} needs to split AIR_INTERNATIONAL from
+     * AIR_DOMESTIC. Set by whoever books it; there is no airport-code lookup anywhere in this
+     * codebase. Meaningless for non-FLIGHT bookings.
+     */
+    @Column(name = "is_international", nullable = false)
+    @Builder.Default
+    private Boolean internationalTrip = false;
+
     @Column(name = "flight_number", length = 20)
     private String flightNumber;
 

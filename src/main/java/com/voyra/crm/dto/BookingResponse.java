@@ -227,4 +227,10 @@ public class BookingResponse {
 
     @Schema(description = "Voucher documents attached to this booking - e-ticket, hotel voucher, insurance")
     private List<BookingDocumentResponse> documents;
+
+    @Schema(description = "Whether this FLIGHT booking's itinerary leaves India")
+    private Boolean internationalTrip;
+
+    @Schema(description = "Travellers on this booking, each with the fare attributed to them and their itinerary legs")
+    private List<BookingPassengerResponse> passengers;
 }
