@@ -35,7 +35,7 @@ public class DocumentNumberSequence {
     private String id;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "document_kind", nullable = false, length = 20)
+    @Column(name = "document_kind", nullable = false, length = 40)
     private DocumentKind documentKind;
 
     @Column(name = "financial_year", nullable = false, length = 9)
