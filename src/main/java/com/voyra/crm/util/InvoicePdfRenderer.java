@@ -230,7 +230,9 @@ public final class InvoicePdfRenderer {
         }
         // Matches the source system's own dual-currency block (spec §2.5/§3): INR total
         // always shown, the invoice's own currency shown alongside it when that isn't INR.
-        totalRow(table, "Total Amount in ₹", money(invoice.getGrandTotalInr()), labelFont);
+        // "INR" not "₹" - OpenPDF's base Helvetica (WinAnsiEncoding) has no glyph for U+20B9
+        // and silently drops it, leaving "Total Amount in" with nothing after it.
+        totalRow(table, "Total Amount in INR", money(invoice.getGrandTotalInr()), labelFont);
         if (!"INR".equals(invoice.getCurrencyCode())) {
             totalRow(table, "Total Amount in " + invoice.getCurrencyCode(), money(invoice.getGrandTotal()), labelFont);
         }
