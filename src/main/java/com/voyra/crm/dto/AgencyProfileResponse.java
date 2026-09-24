@@ -55,4 +55,16 @@ public class AgencyProfileResponse {
 
     @Schema(description = "Registered legal name, printed on tax invoices instead of the trading name", example = "Global Explorer Travels Pvt Ltd")
     private String legalName;
+
+    @Schema(description = "Printed on every customer invoice's bank block", example = "Global Explorer Travels Pvt Ltd")
+    private String bankAccountName;
+
+    @Schema(example = "005505015417")
+    private String bankAccountNumber;
+
+    @Schema(example = "ICIC0000055")
+    private String bankIfscCode;
+
+    @Schema(example = "MG Road branch, Bengaluru")
+    private String bankBranch;
 }

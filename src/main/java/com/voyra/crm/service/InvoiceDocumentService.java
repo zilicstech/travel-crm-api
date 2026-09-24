@@ -132,6 +132,13 @@ public class InvoiceDocumentService {
                 .build();
 
         applyDraftFields(invoice, request);
+        // ACCOUNTING_REDESIGN_SPEC.md gap 7 - a new draft that didn't specify its own terms
+        // gets the agency's standing default, so a non-accounts operator never has to know
+        // there's a terms field to fill in at all.
+        if ((invoice.getTerms() == null || invoice.getTerms().isBlank())
+                && agency.getInvoiceTerms() != null && !agency.getInvoiceTerms().isBlank()) {
+            invoice.setTerms(agency.getInvoiceTerms());
+        }
         List<InvoiceLineItemRequest> lineInputs = resolveLines(booking, category, request.getLines());
         List<InvoiceLineItem> lines = recomputeLinesAndTotals(invoice, lineInputs);
         invoiceRepository.save(invoice);
@@ -208,7 +215,13 @@ public class InvoiceDocumentService {
     public byte[] getPdf(String id) {
         Invoice invoice = findAccessibleInvoice(id);
         List<InvoiceLineItem> lines = invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc(id);
-        return InvoicePdfRenderer.write(invoice, lines);
+        // Bank details and the booking's own reference (PNR, confirmation no, ...) are read
+        // fresh at print time, never frozen on the invoice - they're presentational only and
+        // never feed a money figure, unlike everything InvoicePdfRenderer otherwise reads.
+        Tenant agency = currentAgency();
+        Booking booking = invoice.getBookingId() != null
+                ? bookingRepository.findById(invoice.getBookingId()).orElse(null) : null;
+        return InvoicePdfRenderer.write(invoice, lines, agency, booking);
     }
 
     @Transactional(readOnly = true)

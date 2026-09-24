@@ -61,6 +61,18 @@ public class AgencyProfileService {
         if (request.getLegalName() != null) {
             tenant.setLegalName(request.getLegalName());
         }
+        if (request.getBankAccountName() != null) {
+            tenant.setBankAccountName(request.getBankAccountName());
+        }
+        if (request.getBankAccountNumber() != null) {
+            tenant.setBankAccountNumber(request.getBankAccountNumber());
+        }
+        if (request.getBankIfscCode() != null) {
+            tenant.setBankIfscCode(request.getBankIfscCode());
+        }
+        if (request.getBankBranch() != null) {
+            tenant.setBankBranch(request.getBankBranch());
+        }
         tenantRepository.save(tenant);
         log.info("Agency profile updated: tenantId={}", tenant.getId());
         return toResponse(tenant);
@@ -80,6 +92,8 @@ public class AgencyProfileService {
                 .stateCode(t.getStateCode()).baseCurrencyCode(t.getBaseCurrencyCode())
                 .defaultSacCode(t.getDefaultSacCode()).invoiceTerms(t.getInvoiceTerms())
                 .legalName(t.getLegalName())
+                .bankAccountName(t.getBankAccountName()).bankAccountNumber(t.getBankAccountNumber())
+                .bankIfscCode(t.getBankIfscCode()).bankBranch(t.getBankBranch())
                 .build();
     }
 }

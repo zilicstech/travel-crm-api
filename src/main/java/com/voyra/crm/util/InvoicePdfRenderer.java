@@ -10,8 +10,11 @@ import com.lowagie.text.Phrase;
 import com.lowagie.text.pdf.PdfPCell;
 import com.lowagie.text.pdf.PdfPTable;
 import com.lowagie.text.pdf.PdfWriter;
+import com.voyra.crm.entity.Booking;
 import com.voyra.crm.entity.Invoice;
 import com.voyra.crm.entity.InvoiceLineItem;
+import com.voyra.crm.entity.Tenant;
+import com.voyra.crm.enums.InvoiceServiceCategory;
 
 import java.io.ByteArrayOutputStream;
 import java.math.BigDecimal;
@@ -31,7 +34,19 @@ public final class InvoicePdfRenderer {
     private InvoicePdfRenderer() {
     }
 
+    /** @deprecated kept only for any caller that hasn't been updated to pass agency/booking. */
     public static byte[] write(Invoice invoice, List<InvoiceLineItem> lines) {
+        return write(invoice, lines, null, null);
+    }
+
+    /**
+     * {@code agency} supplies the bank block (Tenant.bank* - never frozen on the invoice, read
+     * fresh every print, same as the logo). {@code booking}, when supplied, supplies the one
+     * category-specific reference line under the title (PNR, hotel confirmation number, ...) -
+     * see ACCOUNTING_REDESIGN_SPEC.md §3. Both are nullable so a pre-redesign invoice with no
+     * {@code serviceCategory}, or one whose booking has since been deleted, still prints.
+     */
+    public static byte[] write(Invoice invoice, List<InvoiceLineItem> lines, Tenant agency, Booking booking) {
         Document document = new Document(PageSize.A4, 32, 32, 36, 36);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         try {
@@ -39,13 +54,16 @@ public final class InvoicePdfRenderer {
             document.open();
 
             Font titleFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 16);
+            Font subtitleFont = FontFactory.getFont(FontFactory.HELVETICA_BOLDOBLIQUE, 10);
             Font labelFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 9);
             Font bodyFont = FontFactory.getFont(FontFactory.HELVETICA, 9);
             Font smallFont = FontFactory.getFont(FontFactory.HELVETICA, 8);
 
-            String docTitle = invoice.getDocumentType() == com.voyra.crm.enums.InvoiceDocumentType.PROFORMA
-                    ? "PROFORMA INVOICE" : "TAX INVOICE";
-            document.add(new Paragraph(docTitle, titleFont));
+            document.add(new Paragraph(docTitle(invoice), titleFont));
+            String reference = keyReference(invoice.getServiceCategory(), booking);
+            if (reference != null) {
+                document.add(new Paragraph(reference, subtitleFont));
+            }
             document.add(new Paragraph(" "));
 
             PdfPTable header = new PdfPTable(2);
@@ -63,6 +81,16 @@ public final class InvoicePdfRenderer {
             document.add(new Paragraph(" "));
 
             document.add(totalsTable(invoice, labelFont, bodyFont));
+            document.add(new Paragraph(" "));
+            document.add(new Paragraph(
+                    AmountInWords.forAmount(invoice.getGrandTotal(), invoice.getCurrencyCode()) + " Only",
+                    FontFactory.getFont(FontFactory.HELVETICA_BOLD, 9)));
+
+            PdfPTable bank = bankBlock(agency, labelFont, bodyFont);
+            if (bank != null) {
+                document.add(new Paragraph(" "));
+                document.add(bank);
+            }
 
             if (invoice.getNotes() != null && !invoice.getNotes().isBlank()) {
                 document.add(new Paragraph(" "));
@@ -77,6 +105,58 @@ public final class InvoicePdfRenderer {
             }
         }
         return out.toByteArray();
+    }
+
+    private static String docTitle(Invoice invoice) {
+        if (invoice.getDocumentType() == com.voyra.crm.enums.InvoiceDocumentType.PROFORMA) {
+            return "PAYMENT REQUEST";
+        }
+        return invoice.getServiceCategory() != null
+                ? invoice.getServiceCategory().documentTitle().toUpperCase()
+                : "TAX INVOICE";
+    }
+
+    /** The one identifying reference the category's own document is built around - see
+     *  ACCOUNTING_REDESIGN_SPEC.md §3 ("Airline PNR (LVBJAY)"). */
+    private static String keyReference(InvoiceServiceCategory category, Booking booking) {
+        if (category == null || booking == null) {
+            return null;
+        }
+        return switch (category) {
+            case AIR_INTERNATIONAL, AIR_DOMESTIC, RAIL ->
+                    booking.getPnr() != null ? "PNR: " + booking.getPnr() : null;
+            case HOTEL ->
+                    booking.getHotelConfirmationNo() != null ? "Confirmation No: " + booking.getHotelConfirmationNo() : null;
+            case VISA ->
+                    booking.getVisaApplicationNo() != null ? "Application No: " + booking.getVisaApplicationNo() : null;
+            case TRANSPORT ->
+                    booking.getTransferVoucherNo() != null ? "Voucher No: " + booking.getTransferVoucherNo() : null;
+            case PACKAGE, MISCELLANEOUS -> null;
+        };
+    }
+
+    private static PdfPTable bankBlock(Tenant agency, Font labelFont, Font bodyFont) {
+        if (agency == null || isBlank(agency.getBankAccountNumber())) {
+            return null;
+        }
+        PdfPTable table = new PdfPTable(1);
+        table.setWidthPercentage(100);
+        addPlain(table, "Bank Details", labelFont);
+        if (!isBlank(agency.getBankAccountName())) {
+            addPlain(table, agency.getBankAccountName(), bodyFont);
+        }
+        addPlain(table, "Account Number: " + agency.getBankAccountNumber(), bodyFont);
+        if (!isBlank(agency.getBankIfscCode())) {
+            addPlain(table, "IFSC: " + agency.getBankIfscCode(), bodyFont);
+        }
+        if (!isBlank(agency.getBankBranch())) {
+            addPlain(table, "Branch: " + agency.getBankBranch(), bodyFont);
+        }
+        return table;
+    }
+
+    private static boolean isBlank(String s) {
+        return s == null || s.isBlank();
     }
 
     private static PdfPTable supplierBlock(Invoice invoice, Font labelFont, Font bodyFont) {
@@ -148,9 +228,11 @@ public final class InvoicePdfRenderer {
         if (invoice.getRoundOff().compareTo(BigDecimal.ZERO) != 0) {
             totalRow(table, "Round Off", money(invoice.getRoundOff()), bodyFont);
         }
-        totalRow(table, "Grand Total", money(invoice.getGrandTotal()) + " " + invoice.getCurrencyCode(), labelFont);
+        // Matches the source system's own dual-currency block (spec §2.5/§3): INR total
+        // always shown, the invoice's own currency shown alongside it when that isn't INR.
+        totalRow(table, "Total Amount in ₹", money(invoice.getGrandTotalInr()), labelFont);
         if (!"INR".equals(invoice.getCurrencyCode())) {
-            totalRow(table, "Grand Total (INR)", money(invoice.getGrandTotalInr()), bodyFont);
+            totalRow(table, "Total Amount in " + invoice.getCurrencyCode(), money(invoice.getGrandTotal()), labelFont);
         }
         return table;
     }

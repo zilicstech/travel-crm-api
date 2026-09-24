@@ -81,6 +81,18 @@ public class Tenant {
     @Column(name = "legal_name", length = 200)
     private String legalName;
 
+    @Column(name = "bank_account_name", length = 200)
+    private String bankAccountName;
+
+    @Column(name = "bank_account_number", length = 40)
+    private String bankAccountNumber;
+
+    @Column(name = "bank_ifsc_code", length = 20)
+    private String bankIfscCode;
+
+    @Column(name = "bank_branch", length = 200)
+    private String bankBranch;
+
     @Column(name = "created_date")
     private LocalDateTime createdDate;
 
