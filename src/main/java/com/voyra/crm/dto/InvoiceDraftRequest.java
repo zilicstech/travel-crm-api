@@ -1,5 +1,6 @@
 package com.voyra.crm.dto;
 
+import com.voyra.crm.enums.InvoiceServiceCategory;
 import com.voyra.crm.enums.SupplyNature;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.Valid;
@@ -18,6 +19,11 @@ public class InvoiceDraftRequest {
 
     @Schema(description = "Required when creating; ignored when replacing an existing draft", example = "8f2a1c3d-...")
     private String bookingId;
+
+    @Schema(description = "Overrides the category InvoiceServiceCategory.forBooking would derive from the "
+            + "booking's own type - the only way to reach RAIL or MISCELLANEOUS, which have no BookingType "
+            + "counterpart. Only read on create; a draft's category never changes on update.", example = "MISCELLANEOUS")
+    private InvoiceServiceCategory serviceCategory;
 
     @Schema(example = "INR", defaultValue = "INR")
     private String currencyCode;

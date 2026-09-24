@@ -108,8 +108,11 @@ public class InvoiceDocumentService {
 
         Client client = clientService.findAccessibleClient(booking.getClientId());
         Tenant agency = currentAgency();
-        InvoiceServiceCategory category = InvoiceServiceCategory.forBooking(
-                booking.getType(), Boolean.TRUE.equals(booking.getInternationalTrip()));
+        // An explicit request wins outright - the only way to reach RAIL or MISCELLANEOUS,
+        // which have no BookingType to derive from (spec gap 8).
+        InvoiceServiceCategory category = request.getServiceCategory() != null
+                ? request.getServiceCategory()
+                : InvoiceServiceCategory.forBooking(booking.getType(), Boolean.TRUE.equals(booking.getInternationalTrip()));
 
         Invoice invoice = Invoice.builder()
                 .id(UniqueIdResolver.resolve(invoiceRepository::existsById))

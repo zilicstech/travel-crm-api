@@ -229,6 +229,28 @@ class InvoiceDocumentServiceTest {
     }
 
     @Test
+    void anExplicitServiceCategoryOverridesWhatTheBookingWouldDerive() {
+        // MISCELLANEOUS and RAIL have no BookingType counterpart - the request's own
+        // serviceCategory is the only way to reach them (ACCOUNTING_REDESIGN_SPEC.md gap 8).
+        Booking packageBooking = booking(); // type PACKAGE -> would derive InvoiceServiceCategory.PACKAGE
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(packageBooking));
+        when(invoiceRepository.existsByBookingIdAndDocumentTypeAndStatus(any(), any(), any())).thenReturn(false);
+        when(clientService.findAccessibleClient("K1")).thenReturn(client());
+        when(invoiceRepository.existsById(any())).thenReturn(false);
+        when(invoiceLineItemRepository.existsById(any())).thenReturn(false);
+        when(taxEngine.compute(any())).thenReturn(gstResult(BigDecimal.ZERO));
+
+        InvoiceDraftRequest request = new InvoiceDraftRequest();
+        request.setBookingId("B1");
+        request.setSupplyNature(SupplyNature.OTHER);
+        request.setServiceCategory(com.voyra.crm.enums.InvoiceServiceCategory.MISCELLANEOUS);
+
+        InvoiceResponse response = invoiceDocumentService.createDraft(request);
+
+        assertThat(response.getServiceCategory()).isEqualTo(com.voyra.crm.enums.InvoiceServiceCategory.MISCELLANEOUS);
+    }
+
+    @Test
     void issuingAUsdInvoiceStoresGrandTotalInrAtTheRateStampedAtIssue() {
         Invoice draft = Invoice.builder()
                 .id("I1").documentType(InvoiceDocumentType.TAX_INVOICE).status(InvoiceLifecycle.DRAFT)
