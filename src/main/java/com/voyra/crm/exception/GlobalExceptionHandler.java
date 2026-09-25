@@ -11,6 +11,7 @@ import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.validation.FieldError;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -77,6 +78,17 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
                 ApiErrorResponse.of("The request body is malformed or contains an invalid value for one of its fields",
                         "Invalid request body", null, HttpStatus.BAD_REQUEST.value(), path));
+    }
+
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<ApiErrorResponse> handleMethodNotSupported(HttpRequestMethodNotSupportedException ex,
+                                                                        HttpServletRequest request) {
+        String path = getPath(request);
+        log.warn("Unsupported HTTP method - path: {}, method: {}", path, ex.getMethod());
+
+        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED).body(
+                ApiErrorResponse.of("This HTTP method is not supported for this endpoint", "Method not allowed",
+                        null, HttpStatus.METHOD_NOT_ALLOWED.value(), path));
     }
 
     @ExceptionHandler(NoResourceFoundException.class)
