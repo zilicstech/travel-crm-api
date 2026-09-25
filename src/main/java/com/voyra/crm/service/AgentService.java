@@ -7,6 +7,7 @@ import com.voyra.crm.dto.AgentPerformanceResponse;
 import com.voyra.crm.dto.AgentUpdateRequest;
 import com.voyra.crm.dto.CredentialsResponse;
 import com.voyra.crm.dto.PagedResponse;
+import com.voyra.crm.dto.TeammateResponse;
 import com.voyra.crm.entity.Agent;
 import com.voyra.crm.enums.LeadStatus;
 import com.voyra.crm.enums.ServiceType;
@@ -137,6 +138,25 @@ public class AgentService {
     public AgentPerformanceResponse getCurrentAgent() {
         String agentId = SecurityContextUtil.getCurrentUserOrThrow().userId();
         return getAgent(agentId);
+    }
+
+    /**
+     * Minimal roster for teammate-addressing pickers (shift handover's "Addressed to").
+     * Unlike {@link #listAgents()}, which is owner-only, this is safe for any signed-in
+     * agent to call — it carries only id/name/department, none of the performance/
+     * commission fields the full roster does.
+     */
+    @Transactional(readOnly = true)
+    public List<TeammateResponse> listTeammates() {
+        String tenantId = ownerTenantId();
+        return agentRepository.findByTenantIdAndUserRole(tenantId, UserType.AGENT).stream()
+                .filter(a -> Boolean.TRUE.equals(a.getIsActive()))
+                .map(a -> TeammateResponse.builder()
+                        .id(a.getId())
+                        .name(a.getName())
+                        .department(a.getDepartment() != null ? a.getDepartment().name() : null)
+                        .build())
+                .toList();
     }
 
     @Transactional

@@ -6,6 +6,7 @@ import com.voyra.crm.dto.AgentCreateResponse;
 import com.voyra.crm.dto.AgentPerformanceResponse;
 import com.voyra.crm.dto.AgentUpdateRequest;
 import com.voyra.crm.dto.CredentialsResponse;
+import com.voyra.crm.dto.TeammateResponse;
 import com.voyra.crm.enums.UserType;
 import com.voyra.crm.service.AgentService;
 import com.voyra.crm.util.PageRequestUtil;
@@ -72,6 +73,16 @@ public class OwnerAgentController {
     @Operation(summary = "The signed-in agent's own profile", description = "Self-service equivalent of GET /{id}, scoped to the caller's own record so an AGENT can resolve their own manageableServices without owner-only list access.")
     public ResponseEntity<AgentPerformanceResponse> getCurrentAgent() {
         return ResponseEntity.ok(agentService.getCurrentAgent());
+    }
+
+    @GetMapping("/teammates")
+    @PreAuthorize("hasAnyRole('AGENT', 'AGENCY_OWNER', 'ACCOUNTANT')")
+    @Operation(summary = "Minimal active-agent roster for teammate-addressing pickers",
+            description = "Id/name/department only - no performance or commission fields - so any signed-in "
+                    + "agent may call it, unlike the full owner-only GET /api/agents listing. Used by shift handover's "
+                    + "\"Addressed to\" picker.")
+    public ResponseEntity<List<TeammateResponse>> listTeammates() {
+        return ResponseEntity.ok(agentService.listTeammates());
     }
 
     @PutMapping("/{id}")
