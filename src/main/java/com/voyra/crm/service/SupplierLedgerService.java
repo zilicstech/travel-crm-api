@@ -234,7 +234,11 @@ public class SupplierLedgerService {
 
         post(new SupplierLedgerPosting(
                 vendor.getId(), request.getAsOfDate(), SupplierLedgerEntryType.OPENING_BALANCE, SupplierLedgerSourceType.OPENING_BALANCE,
-                "OB-" + vendor.getId() + "-" + request.getAsOfDate(), null, note, null,
+                // sourceId is the (source_type, source_id, entry_type) idempotency key and is
+                // only 36 chars wide - it must be the bare vendor id, not a longer composite
+                // string, or every opening balance overflows the column (F-001, mirrors the
+                // identical bug in CustomerLedgerService). documentNumber carries the label instead.
+                vendor.getId(), "OB-" + request.getAsOfDate(), note, null,
                 "INR", BigDecimal.ONE,
                 isCredit ? BigDecimal.ZERO : magnitude, isCredit ? magnitude : BigDecimal.ZERO,
                 isCredit ? BigDecimal.ZERO : magnitude, isCredit ? magnitude : BigDecimal.ZERO));

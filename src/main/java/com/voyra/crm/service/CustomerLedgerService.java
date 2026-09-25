@@ -230,7 +230,11 @@ public class CustomerLedgerService {
 
         post(new LedgerPosting(
                 client.getId(), request.getAsOfDate(), LedgerEntryType.OPENING_BALANCE, LedgerSourceType.OPENING_BALANCE,
-                "OB-" + client.getId() + "-" + request.getAsOfDate(), null, note, null,
+                // sourceId is the (source_type, source_id, entry_type) idempotency key and is
+                // only 36 chars wide - it must be the bare client id, not a longer composite
+                // string, or every opening balance overflows the column (F-001). documentNumber
+                // (a much roomier, purely cosmetic column) carries the human-readable label instead.
+                client.getId(), "OB-" + request.getAsOfDate(), note, null,
                 "INR", BigDecimal.ONE,
                 isDebit ? magnitude : BigDecimal.ZERO, isDebit ? BigDecimal.ZERO : magnitude,
                 isDebit ? magnitude : BigDecimal.ZERO, isDebit ? BigDecimal.ZERO : magnitude));
