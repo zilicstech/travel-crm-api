@@ -10,9 +10,11 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.validation.FieldError;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -64,6 +66,28 @@ public class GlobalExceptionHandler {
                 HttpStatus.BAD_REQUEST.value(), path);
         response.setDetails(Map.of("errors", fieldErrors));
         return ResponseEntity.badRequest().body(response);
+    }
+
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ApiErrorResponse> handleMessageNotReadable(HttpMessageNotReadableException ex,
+                                                                        HttpServletRequest request) {
+        String path = getPath(request);
+        log.warn("Malformed request body - path: {}", path, ex);
+
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
+                ApiErrorResponse.of("The request body is malformed or contains an invalid value for one of its fields",
+                        "Invalid request body", null, HttpStatus.BAD_REQUEST.value(), path));
+    }
+
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ApiErrorResponse> handleNoResourceFound(NoResourceFoundException ex,
+                                                                     HttpServletRequest request) {
+        String path = getPath(request);
+        log.warn("No handler for path: {}", path);
+
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(
+                ApiErrorResponse.of("The requested resource was not found", "Not found", null,
+                        HttpStatus.NOT_FOUND.value(), path));
     }
 
     @ExceptionHandler(DataIntegrityViolationException.class)
