@@ -24,6 +24,13 @@ public class AuthController {
 
     private final AuthService authService;
 
+    @PostMapping("/login")
+    @Operation(summary = "Login", description = "Single sign-in for every principal type - the role is resolved from the credentials, not chosen by the caller. Returns the same generic failure whatever the reason.")
+    public ResponseEntity<LoginResponse> login(@Valid @RequestBody LoginRequest request) {
+        LoginResponse response = authService.login(request);
+        return respond(response);
+    }
+
     @PostMapping("/login/platform-admin")
     @Operation(summary = "Platform admin login", description = "SUPER_ADMIN login, cross-tenant platform access.")
     public ResponseEntity<LoginResponse> loginPlatformAdmin(@Valid @RequestBody LoginRequest request) {

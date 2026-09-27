@@ -115,7 +115,7 @@ Explicitly verified against `BACKEND_BLUEPRINT.md` while designing the above:
 
 Straight application of blueprint §4–5:
 - `UserType`: `SUPER_ADMIN, AGENCY_OWNER, AGENT`.
-- Three login endpoints under `/api/auth/**` (only permit-all surface): `/login/platform-admin`, `/login/owner`, `/login/agent`.
+- Three login endpoints under `/api/auth/**` (only permit-all surface): `/login/platform-admin`, `/login/owner`, `/login/agent`. Plus `/login`, which resolves the principal from the credentials alone by trying those three in order — the one the UI uses, so the sign-in screen has no role to pick (blueprint §4.8).
 - JWT claims: `sub`, `userId`, `role`, `tenantId` (omitted for `SUPER_ADMIN`), no `scopeId` needed for this domain.
 - Password encoder: blueprint's `AesPasswordEncoder` (reversible), since the Owner must retrieve an Agent's generated password. `decode()` reachable only from an `AGENCY_OWNER`-guarded, same-tenant-checked endpoint (`GET /api/agents/{id}/credentials`), logged on every retrieval.
 - Every controller method carries `@PreAuthorize`, no exceptions outside `/api/auth/**`, per blueprint §5.3.
