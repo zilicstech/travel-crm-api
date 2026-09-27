@@ -5,15 +5,17 @@ import com.voyra.crm.dto.GstSummaryRowResponse;
 import com.voyra.crm.dto.TcsSummaryRowResponse;
 import com.voyra.crm.entity.CreditNote;
 import com.voyra.crm.entity.Invoice;
-import com.voyra.crm.entity.InvoiceLineItem;
+import com.voyra.crm.entity.InvoiceTax;
 import com.voyra.crm.entity.PaymentReceipt;
 import com.voyra.crm.enums.CreditNoteStatus;
 import com.voyra.crm.enums.InvoiceDocumentType;
 import com.voyra.crm.enums.InvoiceLifecycle;
 import com.voyra.crm.enums.ReceiptDirection;
+import com.voyra.crm.enums.TaxKind;
+import com.voyra.crm.enums.TaxLineMode;
 import com.voyra.crm.repository.CreditNoteRepository;
-import com.voyra.crm.repository.InvoiceLineItemRepository;
 import com.voyra.crm.repository.InvoiceRepository;
+import com.voyra.crm.repository.InvoiceTaxRepository;
 import com.voyra.crm.repository.PaymentReceiptRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -36,7 +38,7 @@ class AccountsDashboardServiceTest {
     @Mock
     private InvoiceRepository invoiceRepository;
     @Mock
-    private InvoiceLineItemRepository invoiceLineItemRepository;
+    private InvoiceTaxRepository invoiceTaxRepository;
     @Mock
     private PaymentReceiptRepository paymentReceiptRepository;
     @Mock
@@ -75,20 +77,22 @@ class AccountsDashboardServiceTest {
     }
 
     @Test
-    void gstSummaryGroupsBySacCodeAndRate() {
-        Invoice inv = invoice(new BigDecimal("1050.00"), new BigDecimal("50.00"), BigDecimal.ZERO, null);
+    void gstSummaryGroupsByRate() {
+        Invoice inv = invoice(new BigDecimal("1050.00"), new BigDecimal("50.00"), BigDecimal.ZERO, null)
+                .toBuilder().taxableValue(new BigDecimal("1000.00")).build();
         when(invoiceRepository.findByDocumentTypeAndStatusNotAndInvoiceDateBetween(any(), any(), any(), any()))
                 .thenReturn(List.of(inv));
-        InvoiceLineItem line = InvoiceLineItem.builder().id("L1").invoiceId("I1").sacCode("9985")
-                .gstRatePercent(new BigDecimal("5.000")).taxableValue(new BigDecimal("1000.00"))
+        InvoiceTax tax = InvoiceTax.builder().id("TX1").invoiceId("I1").label("GST 5%")
+                .taxKind(TaxKind.GST).mode(TaxLineMode.PERCENT).ratePercent(new BigDecimal("5.000"))
                 .cgstAmount(new BigDecimal("25.00")).sgstAmount(new BigDecimal("25.00")).igstAmount(BigDecimal.ZERO)
+                .amount(new BigDecimal("50.00")).visibleToCustomer(true)
                 .build();
-        when(invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc("I1")).thenReturn(List.of(line));
+        when(invoiceTaxRepository.findByInvoiceIdOrderBySortOrderAsc("I1")).thenReturn(List.of(tax));
 
         List<GstSummaryRowResponse> rows = accountsDashboardService.gstSummary(LocalDate.now().minusMonths(1), LocalDate.now());
 
         assertThat(rows).hasSize(1);
-        assertThat(rows.get(0).getSacCode()).isEqualTo("9985");
+        assertThat(rows.get(0).getGstRatePercent()).isEqualByComparingTo("5");
         assertThat(rows.get(0).getTaxableValueInr()).isEqualByComparingTo("1000.00");
         assertThat(rows.get(0).getGstTotalInr()).isEqualByComparingTo("50.00");
     }

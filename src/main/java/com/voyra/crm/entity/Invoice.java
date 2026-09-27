@@ -103,15 +103,17 @@ public class Invoice {
     @Column(name = "agent_id", nullable = false, length = 36)
     private String agentId;
 
-    @Column(name = "place_of_supply_code", nullable = false, length = 2)
+    /** Null when no GST-kind tax has been added - tax is opt-in now, see {@link InvoiceTax}. */
+    @Column(name = "place_of_supply_code", length = 2)
     private String placeOfSupplyCode;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "supply_nature", nullable = false, length = 30)
+    @Column(name = "supply_nature", length = 30)
     private SupplyNature supplyNature;
 
+    /** Null when no GST-kind tax has been added. */
     @Enumerated(EnumType.STRING)
-    @Column(name = "tax_treatment", nullable = false, length = 20)
+    @Column(name = "tax_treatment", length = 20)
     private TaxTreatment taxTreatment;
 
     /** Accountant's own override input - re-supplied to TaxEngine on every draft recompute. Distinct from the resolved {@link #placeOfSupplyCode} above. */
@@ -179,6 +181,15 @@ public class Invoice {
     @Column(name = "tcs_amount", nullable = false, precision = 19, scale = 2)
     @Builder.Default
     private BigDecimal tcsAmount = BigDecimal.ZERO;
+
+    /** Sum of every invoice_tax row that is neither GST-kind nor TCS-kind - a custom or ad-hoc tax. */
+    @Column(name = "other_tax_total", nullable = false, precision = 19, scale = 2)
+    @Builder.Default
+    private BigDecimal otherTaxTotal = BigDecimal.ZERO;
+
+    @Column(name = "other_tax_total_inr", nullable = false, precision = 19, scale = 2)
+    @Builder.Default
+    private BigDecimal otherTaxTotalInr = BigDecimal.ZERO;
 
     @Column(name = "round_off", nullable = false, precision = 19, scale = 2)
     @Builder.Default

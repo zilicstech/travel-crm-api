@@ -6,6 +6,8 @@ import com.voyra.crm.dto.InvoiceLineItemRequest;
 import com.voyra.crm.dto.InvoiceLineItemResponse;
 import com.voyra.crm.dto.InvoiceListItemResponse;
 import com.voyra.crm.dto.InvoiceResponse;
+import com.voyra.crm.dto.InvoiceTaxRequest;
+import com.voyra.crm.dto.InvoiceTaxResponse;
 import com.voyra.crm.dto.PagedResponse;
 import com.voyra.crm.entity.Booking;
 import com.voyra.crm.entity.BookingPassenger;
@@ -13,7 +15,9 @@ import com.voyra.crm.entity.BookingSector;
 import com.voyra.crm.entity.Client;
 import com.voyra.crm.entity.Invoice;
 import com.voyra.crm.entity.InvoiceLineItem;
+import com.voyra.crm.entity.InvoiceTax;
 import com.voyra.crm.entity.PaymentReceipt;
+import com.voyra.crm.entity.TaxRateConfig;
 import com.voyra.crm.entity.Tenant;
 import com.voyra.crm.enums.AuditEntityType;
 import com.voyra.crm.enums.BookingStatus;
@@ -24,16 +28,18 @@ import com.voyra.crm.enums.InvoiceLifecycle;
 import com.voyra.crm.enums.InvoiceServiceCategory;
 import com.voyra.crm.enums.LedgerEntryType;
 import com.voyra.crm.enums.LedgerSourceType;
+import com.voyra.crm.enums.TaxKind;
+import com.voyra.crm.enums.TaxLineMode;
 import com.voyra.crm.enums.TaxTreatment;
 import com.voyra.crm.models.LedgerPosting;
-import com.voyra.crm.models.TaxComputationRequest;
-import com.voyra.crm.models.TaxComputationResult;
 import com.voyra.crm.repository.BookingPassengerRepository;
 import com.voyra.crm.repository.BookingRepository;
 import com.voyra.crm.repository.BookingSectorRepository;
 import com.voyra.crm.repository.InvoiceLineItemRepository;
 import com.voyra.crm.repository.InvoiceRepository;
+import com.voyra.crm.repository.InvoiceTaxRepository;
 import com.voyra.crm.repository.PaymentReceiptRepository;
+import com.voyra.crm.repository.TaxRateConfigRepository;
 import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.security.SecurityContextUtil;
@@ -73,15 +79,19 @@ import java.util.Map;
 public class InvoiceDocumentService {
 
     private static final String[] AUDITED = { "status", "cancelReason" };
+    private static final BigDecimal TWO = BigDecimal.valueOf(2);
+    private static final BigDecimal HUNDRED = BigDecimal.valueOf(100);
 
     private final InvoiceRepository invoiceRepository;
     private final InvoiceLineItemRepository invoiceLineItemRepository;
+    private final InvoiceTaxRepository invoiceTaxRepository;
     private final PaymentReceiptRepository paymentReceiptRepository;
     private final BookingRepository bookingRepository;
     private final BookingPassengerRepository bookingPassengerRepository;
     private final BookingSectorRepository bookingSectorRepository;
     private final ClientService clientService;
     private final TenantRepository tenantRepository;
+    private final TaxRateConfigRepository taxRateConfigRepository;
     private final TaxEngine taxEngine;
     private final DocumentNumberService documentNumberService;
     private final AuditService auditService;
@@ -143,12 +153,14 @@ public class InvoiceDocumentService {
             invoice.setTerms(agency.getInvoiceTerms());
         }
         List<InvoiceLineItemRequest> lineInputs = resolveLines(booking, category, request.getLines());
-        List<InvoiceLineItem> lines = recomputeLinesAndTotals(invoice, lineInputs);
+        List<InvoiceLineItem> lines = recomputeLines(invoice, lineInputs);
+        List<InvoiceTax> taxes = recomputeTaxes(invoice, request.getTaxes());
         invoiceRepository.save(invoice);
         invoiceLineItemRepository.saveAll(lines);
+        invoiceTaxRepository.saveAll(taxes);
 
         log.info("Invoice draft created: id={}, bookingId={}", invoice.getId(), booking.getId());
-        return toResponse(invoice, lines);
+        return toResponse(invoice, lines, taxes);
     }
 
     @Transactional
@@ -166,13 +178,16 @@ public class InvoiceDocumentService {
         invoice.setUpdatedBy(currentUserId());
 
         List<InvoiceLineItemRequest> lineInputs = resolveLines(booking, category, request.getLines());
-        List<InvoiceLineItem> lines = recomputeLinesAndTotals(invoice, lineInputs);
+        List<InvoiceLineItem> lines = recomputeLines(invoice, lineInputs);
+        List<InvoiceTax> taxes = recomputeTaxes(invoice, request.getTaxes());
         invoiceRepository.save(invoice);
         invoiceLineItemRepository.deleteByInvoiceId(id);
         invoiceLineItemRepository.saveAll(lines);
+        invoiceTaxRepository.deleteByInvoiceId(id);
+        invoiceTaxRepository.saveAll(taxes);
 
         log.info("Invoice draft updated: id={}", id);
-        return toResponse(invoice, lines);
+        return toResponse(invoice, lines, taxes);
     }
 
     /** Falls back to the pre-redesign generic series for an invoice with no category - only
@@ -205,6 +220,7 @@ public class InvoiceDocumentService {
         Invoice invoice = findById(id);
         InvoiceLifecyclePolicy.assertDeletable(invoice.getStatus());
         invoiceLineItemRepository.deleteByInvoiceId(id);
+        invoiceTaxRepository.deleteByInvoiceId(id);
         invoiceRepository.delete(invoice);
         log.info("Draft invoice deleted: id={}", id);
     }
@@ -218,13 +234,14 @@ public class InvoiceDocumentService {
     public byte[] getPdf(String id) {
         Invoice invoice = findAccessibleInvoice(id);
         List<InvoiceLineItem> lines = invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc(id);
+        List<InvoiceTax> taxes = invoiceTaxRepository.findByInvoiceIdOrderBySortOrderAsc(id);
         // Bank details and the booking's own reference (PNR, confirmation no, ...) are read
         // fresh at print time, never frozen on the invoice - they're presentational only and
         // never feed a money figure, unlike everything InvoicePdfRenderer otherwise reads.
         Tenant agency = currentAgency();
         Booking booking = invoice.getBookingId() != null
                 ? bookingRepository.findById(invoice.getBookingId()).orElse(null) : null;
-        return InvoicePdfRenderer.write(invoice, lines, agency, booking);
+        return InvoicePdfRenderer.write(invoice, lines, taxes, agency, booking);
     }
 
     @Transactional(readOnly = true)
@@ -329,6 +346,7 @@ public class InvoiceDocumentService {
         InvoiceLifecyclePolicy.assertConvertible(proforma.getStatus());
 
         List<InvoiceLineItem> proformaLines = invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc(proformaId);
+        List<InvoiceTax> proformaTaxes = invoiceTaxRepository.findByInvoiceIdOrderBySortOrderAsc(proformaId);
         LocalDate today = LocalDate.now();
         String number = documentNumberService.next(invoiceDocumentKind(proforma.getServiceCategory()), today);
         String newId = UniqueIdResolver.resolve(invoiceRepository::existsById);
@@ -366,6 +384,15 @@ public class InvoiceDocumentService {
                     .build());
         }
 
+        List<InvoiceTax> newTaxes = new ArrayList<>();
+        for (InvoiceTax tax : proformaTaxes) {
+            newTaxes.add(tax.toBuilder()
+                    .id(UniqueIdResolver.resolve(invoiceTaxRepository::existsById))
+                    .invoiceId(newId)
+                    .createdAt(now)
+                    .build());
+        }
+
         List<PaymentReceipt> advances = paymentReceiptRepository.findByInvoiceIdAndIsAdvanceTrue(proforma.getId());
         BigDecimal movedReceived = BigDecimal.ZERO;
         for (PaymentReceipt advance : advances) {
@@ -381,6 +408,7 @@ public class InvoiceDocumentService {
 
         invoiceRepository.save(taxInvoice);
         invoiceLineItemRepository.saveAll(newLines);
+        invoiceTaxRepository.saveAll(newTaxes);
         if (!advances.isEmpty()) {
             paymentReceiptRepository.saveAll(advances);
         }
@@ -395,7 +423,7 @@ public class InvoiceDocumentService {
 
         auditService.recordCreate(AuditEntityType.INVOICE, taxInvoice.getId(), taxInvoice.getInvoiceNumber());
         log.info("Proforma {} converted to tax invoice {}", proforma.getInvoiceNumber(), number);
-        return toResponse(taxInvoice, newLines);
+        return toResponse(taxInvoice, newLines, newTaxes);
     }
 
     @Transactional
@@ -480,128 +508,166 @@ public class InvoiceDocumentService {
     }
 
     /**
-     * TaxEngine is called once per line (never once on an aggregate) so that summing every
-     * line's own amounts is always exactly the header total - no separate rounding path to
-     * reconcile. TCS has no threshold tiering active yet (see TaxEngine), so summing each
-     * line's own TCS is mathematically identical to computing it once on the aggregate base.
+     * Lines carry no tax any more - see {@link #recomputeTaxes}. A line is purely the booking's
+     * own billable amount (quantity x unit price, less any discount); {@code taxableValue}
+     * mirrors that net figure so a pre-redesign report reading the column still sees a sane
+     * number, and every GST-rate column stays zero.
      */
-    private List<InvoiceLineItem> recomputeLinesAndTotals(Invoice invoice, List<InvoiceLineItemRequest> lineRequests) {
+    private List<InvoiceLineItem> recomputeLines(Invoice invoice, List<InvoiceLineItemRequest> lineRequests) {
         List<InvoiceLineItem> lines = new ArrayList<>();
         BigDecimal subtotal = BigDecimal.ZERO;
         BigDecimal discountTotal = BigDecimal.ZERO;
-        BigDecimal taxableValue = BigDecimal.ZERO;
-        BigDecimal cgst = BigDecimal.ZERO;
-        BigDecimal sgst = BigDecimal.ZERO;
-        BigDecimal igst = BigDecimal.ZERO;
-        BigDecimal tcsBase = BigDecimal.ZERO;
-        BigDecimal tcsAmount = BigDecimal.ZERO;
-        BigDecimal grandTotal = BigDecimal.ZERO;
-        TaxTreatment treatment = null;
-        String placeOfSupply = null;
-        BigDecimal tcsRate = BigDecimal.ZERO;
-        String tcsSection = null;
 
-        if (lineRequests == null || lineRequests.isEmpty()) {
-            // No lines yet: still resolve treatment/place-of-supply so the NOT NULL header
-            // columns are meaningful, using a zero amount purely for that resolution.
-            TaxComputationResult r = taxEngine.compute(new TaxComputationRequest(
-                    invoice.getClientId(), BigDecimal.ZERO, invoice.getSupplyNature(),
-                    invoice.getPlaceOfSupplyOverride(), invoice.getExportOfServiceRequested(), invoice.getCurrencyCode()));
-            treatment = r.taxTreatment();
-            placeOfSupply = r.placeOfSupplyCode();
-        } else {
+        if (lineRequests != null) {
             int sortOrder = 0;
             for (InvoiceLineItemRequest req : lineRequests) {
                 BigDecimal discount = req.getDiscountAmount() != null ? req.getDiscountAmount() : BigDecimal.ZERO;
                 BigDecimal lineSubtotal = req.getQuantity().multiply(req.getUnitPrice()).setScale(2, RoundingMode.HALF_UP);
-                BigDecimal taxableInput = lineSubtotal.subtract(discount);
-
-                TaxComputationResult r = taxEngine.compute(new TaxComputationRequest(
-                        invoice.getClientId(), taxableInput, invoice.getSupplyNature(),
-                        invoice.getPlaceOfSupplyOverride(), invoice.getExportOfServiceRequested(), invoice.getCurrencyCode()));
+                BigDecimal net = lineSubtotal.subtract(discount);
 
                 InvoiceLineItem line = InvoiceLineItem.builder()
                         .id(UniqueIdResolver.resolve(invoiceLineItemRepository::existsById))
                         .invoiceId(invoice.getId())
                         .sortOrder(sortOrder++)
                         .description(req.getDescription())
-                        // The line-item form has no SAC field of its own - fall back to the
-                        // resolved GST slab's SAC so GSTR-1's SAC-wise grouping (§3.2) is never
-                        // silently null. An explicit per-line SAC (a future finer-grained UI)
-                        // still wins when supplied.
-                        .sacCode(req.getSacCode() != null && !req.getSacCode().isBlank() ? req.getSacCode() : r.sacCode())
+                        .sacCode(req.getSacCode())
                         .serviceType(req.getServiceType())
                         .quantity(req.getQuantity())
                         .unitPrice(req.getUnitPrice())
                         .lineSubtotal(lineSubtotal)
                         .discountAmount(discount)
-                        .taxablePercent(derivedTaxablePercent(taxableInput, r.taxableValue()))
-                        .taxableValue(r.taxableValue())
-                        .gstRatePercent(r.gstRatePercent())
-                        .cgstRatePercent(r.cgstRatePercent())
-                        .sgstRatePercent(r.sgstRatePercent())
-                        .igstRatePercent(r.igstRatePercent())
-                        .cgstAmount(r.cgstAmount())
-                        .sgstAmount(r.sgstAmount())
-                        .igstAmount(r.igstAmount())
-                        .lineTotal(taxableInput.add(r.gstTotal()))
+                        .taxablePercent(new BigDecimal("100.000"))
+                        .taxableValue(net)
+                        .lineTotal(net)
                         .createdAt(LocalDateTime.now())
                         .build();
                 lines.add(line);
 
                 subtotal = subtotal.add(lineSubtotal);
                 discountTotal = discountTotal.add(discount);
-                taxableValue = taxableValue.add(r.taxableValue());
-                cgst = cgst.add(r.cgstAmount());
-                sgst = sgst.add(r.sgstAmount());
-                igst = igst.add(r.igstAmount());
-                tcsBase = tcsBase.add(r.tcsBaseAmount());
-                tcsAmount = tcsAmount.add(r.tcsAmount());
-                grandTotal = grandTotal.add(r.grandTotal());
-                treatment = r.taxTreatment();
-                placeOfSupply = r.placeOfSupplyCode();
-                tcsRate = r.tcsRatePercent();
-                tcsSection = r.tcsSection();
+            }
+        }
+
+        BigDecimal taxableValue = subtotal.subtract(discountTotal);
+        invoice.setSubtotal(subtotal);
+        invoice.setDiscountTotal(discountTotal);
+        invoice.setTaxableValue(taxableValue);
+        return lines;
+    }
+
+    /**
+     * Tax is opt-in per invoice: zero requested rows means zero tax, full stop - nothing here
+     * ever falls back to a configured default. Each row's amount is derived either from the
+     * chosen {@code tax_rate_config}'s own rate or from whatever the accountant typed for a
+     * custom tax; a GST-kind row additionally gets the CGST+SGST vs IGST split from {@link
+     * TaxEngine#resolveTreatment}. {@code visibleToCustomer} never changes {@code amount} - it
+     * only tells {@code InvoicePdfRenderer} whether to print this row or fold it into the fare.
+     */
+    private List<InvoiceTax> recomputeTaxes(Invoice invoice, List<InvoiceTaxRequest> taxRequests) {
+        List<InvoiceTax> taxes = new ArrayList<>();
+        BigDecimal taxableBase = invoice.getTaxableValue();
+        BigDecimal cgst = BigDecimal.ZERO;
+        BigDecimal sgst = BigDecimal.ZERO;
+        BigDecimal igst = BigDecimal.ZERO;
+        BigDecimal tcsAmount = BigDecimal.ZERO;
+        BigDecimal tcsRate = BigDecimal.ZERO;
+        String tcsSection = null;
+        BigDecimal otherTaxTotal = BigDecimal.ZERO;
+        TaxTreatment treatment = null;
+        String placeOfSupply = null;
+
+        if (taxRequests != null) {
+            int sortOrder = 0;
+            for (InvoiceTaxRequest req : taxRequests) {
+                TaxRateConfig config = req.getTaxRateConfigId() != null && !req.getTaxRateConfigId().isBlank()
+                        ? taxRateConfigRepository.findById(req.getTaxRateConfigId())
+                            .orElseThrow(() -> new IllegalArgumentException("Tax rate config not found: " + req.getTaxRateConfigId()))
+                        : null;
+                TaxKind kind = config != null ? config.getTaxKind() : null;
+
+                BigDecimal amount = req.getMode() == TaxLineMode.FLAT
+                        ? (req.getFlatAmount() != null ? req.getFlatAmount() : BigDecimal.ZERO)
+                        : pct(taxableBase, req.getRatePercent() != null ? req.getRatePercent() : BigDecimal.ZERO);
+
+                BigDecimal rowCgst = BigDecimal.ZERO;
+                BigDecimal rowSgst = BigDecimal.ZERO;
+                BigDecimal rowIgst = BigDecimal.ZERO;
+                if (kind == TaxKind.GST) {
+                    treatment = taxEngine.resolveTreatment(invoice.getClientId(), invoice.getPlaceOfSupplyOverride(),
+                            Boolean.TRUE.equals(invoice.getExportOfServiceRequested()), invoice.getCurrencyCode());
+                    placeOfSupply = taxEngine.resolvePlaceOfSupplyCode(invoice.getClientId(), invoice.getPlaceOfSupplyOverride());
+                    if (treatment == TaxTreatment.INTRA_STATE) {
+                        rowCgst = amount.divide(TWO, 2, RoundingMode.HALF_UP);
+                        rowSgst = amount.subtract(rowCgst);
+                    } else {
+                        rowIgst = amount;
+                    }
+                    cgst = cgst.add(rowCgst);
+                    sgst = sgst.add(rowSgst);
+                    igst = igst.add(rowIgst);
+                } else if (kind == TaxKind.TCS) {
+                    tcsAmount = tcsAmount.add(amount);
+                    tcsRate = req.getRatePercent() != null ? req.getRatePercent() : tcsRate;
+                    tcsSection = config.getTcsSection();
+                } else {
+                    otherTaxTotal = otherTaxTotal.add(amount);
+                }
+
+                InvoiceTax tax = InvoiceTax.builder()
+                        .id(UniqueIdResolver.resolve(invoiceTaxRepository::existsById))
+                        .invoiceId(invoice.getId())
+                        .sortOrder(sortOrder++)
+                        .label(req.getLabel())
+                        .taxRateConfigId(config != null ? config.getId() : null)
+                        .taxKind(kind)
+                        .mode(req.getMode())
+                        .ratePercent(req.getRatePercent())
+                        .flatAmount(req.getFlatAmount())
+                        .cgstAmount(rowCgst)
+                        .sgstAmount(rowSgst)
+                        .igstAmount(rowIgst)
+                        .amount(amount)
+                        .visibleToCustomer(req.getVisibleToCustomer() == null || req.getVisibleToCustomer())
+                        .createdAt(LocalDateTime.now())
+                        .build();
+                taxes.add(tax);
             }
         }
 
         BigDecimal gstTotal = cgst.add(sgst).add(igst);
+        BigDecimal grandTotal = taxableBase.add(gstTotal).add(tcsAmount).add(otherTaxTotal);
         BigDecimal fx = invoice.getFxRateToInr();
 
         invoice.setPlaceOfSupplyCode(placeOfSupply);
         invoice.setTaxTreatment(treatment);
-        invoice.setSubtotal(subtotal);
-        invoice.setDiscountTotal(discountTotal);
-        invoice.setTaxableValue(taxableValue);
         invoice.setCgstAmount(cgst);
         invoice.setSgstAmount(sgst);
         invoice.setIgstAmount(igst);
         invoice.setGstTotal(gstTotal);
         invoice.setTcsRatePercent(tcsRate);
         invoice.setTcsSection(tcsSection);
-        invoice.setTcsBaseAmount(tcsBase);
+        invoice.setTcsBaseAmount(tcsAmount.compareTo(BigDecimal.ZERO) > 0 ? taxableBase : BigDecimal.ZERO);
         invoice.setTcsAmount(tcsAmount);
+        invoice.setOtherTaxTotal(otherTaxTotal);
+        invoice.setOtherTaxTotalInr(scaleToInr(otherTaxTotal, fx));
         invoice.setRoundOff(BigDecimal.ZERO);
         invoice.setGrandTotal(grandTotal);
-        invoice.setTaxableValueInr(scaleToInr(taxableValue, fx));
+        invoice.setTaxableValueInr(scaleToInr(taxableBase, fx));
         invoice.setGstTotalInr(scaleToInr(gstTotal, fx));
         invoice.setTcsAmountInr(scaleToInr(tcsAmount, fx));
         invoice.setGrandTotalInr(scaleToInr(grandTotal, fx));
         invoice.setBalanceDue(grandTotal.subtract(invoice.getAmountReceived()).subtract(invoice.getCreditNoteTotal()));
         invoice.setBalanceDueInr(scaleToInr(invoice.getBalanceDue(), fx));
 
-        return lines;
+        return taxes;
+    }
+
+    private static BigDecimal pct(BigDecimal base, BigDecimal ratePercent) {
+        return base.multiply(ratePercent).divide(HUNDRED, 2, RoundingMode.HALF_UP);
     }
 
     private static BigDecimal scaleToInr(BigDecimal amount, BigDecimal fxRateToInr) {
         return amount.multiply(fxRateToInr).setScale(2, RoundingMode.HALF_UP);
-    }
-
-    private static BigDecimal derivedTaxablePercent(BigDecimal input, BigDecimal taxableValue) {
-        if (input.compareTo(BigDecimal.ZERO) == 0) {
-            return new BigDecimal("100.000");
-        }
-        return taxableValue.multiply(BigDecimal.valueOf(100)).divide(input, 3, RoundingMode.HALF_UP);
     }
 
     private Invoice findById(String id) {
@@ -632,7 +698,11 @@ public class InvoiceDocumentService {
         return toResponse(invoice, invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc(invoice.getId()));
     }
 
-    private InvoiceResponse toResponse(Invoice i, List<InvoiceLineItem> lines) {
+    private InvoiceResponse toResponse(Invoice invoice, List<InvoiceLineItem> lines) {
+        return toResponse(invoice, lines, invoiceTaxRepository.findByInvoiceIdOrderBySortOrderAsc(invoice.getId()));
+    }
+
+    private InvoiceResponse toResponse(Invoice i, List<InvoiceLineItem> lines, List<InvoiceTax> taxes) {
         return InvoiceResponse.builder()
                 .id(i.getId()).invoiceNumber(i.getInvoiceNumber()).financialYear(i.getFinancialYear())
                 .documentType(i.getDocumentType()).status(i.getStatus()).serviceCategory(i.getServiceCategory())
@@ -649,7 +719,8 @@ public class InvoiceDocumentService {
                 .subtotal(i.getSubtotal()).discountTotal(i.getDiscountTotal()).taxableValue(i.getTaxableValue())
                 .cgstAmount(i.getCgstAmount()).sgstAmount(i.getSgstAmount()).igstAmount(i.getIgstAmount())
                 .gstTotal(i.getGstTotal()).tcsRatePercent(i.getTcsRatePercent()).tcsSection(i.getTcsSection())
-                .tcsBaseAmount(i.getTcsBaseAmount()).tcsAmount(i.getTcsAmount()).roundOff(i.getRoundOff())
+                .tcsBaseAmount(i.getTcsBaseAmount()).tcsAmount(i.getTcsAmount())
+                .otherTaxTotal(i.getOtherTaxTotal()).otherTaxTotalInr(i.getOtherTaxTotalInr()).roundOff(i.getRoundOff())
                 .grandTotal(i.getGrandTotal()).taxableValueInr(i.getTaxableValueInr()).gstTotalInr(i.getGstTotalInr())
                 .tcsAmountInr(i.getTcsAmountInr()).grandTotalInr(i.getGrandTotalInr())
                 .amountReceived(i.getAmountReceived()).creditNoteTotal(i.getCreditNoteTotal())
@@ -659,6 +730,16 @@ public class InvoiceDocumentService {
                 .cancelledAt(i.getCancelledAt()).cancelledBy(i.getCancelledBy()).cancelReason(i.getCancelReason())
                 .supersedesInvoiceId(i.getSupersedesInvoiceId()).notes(i.getNotes()).terms(i.getTerms())
                 .lines(lines.stream().map(InvoiceDocumentService::toLineResponse).toList())
+                .taxes(taxes.stream().map(InvoiceDocumentService::toTaxResponse).toList())
+                .build();
+    }
+
+    private static InvoiceTaxResponse toTaxResponse(InvoiceTax t) {
+        return InvoiceTaxResponse.builder()
+                .id(t.getId()).label(t.getLabel()).taxRateConfigId(t.getTaxRateConfigId()).taxKind(t.getTaxKind())
+                .mode(t.getMode()).ratePercent(t.getRatePercent()).flatAmount(t.getFlatAmount())
+                .cgstAmount(t.getCgstAmount()).sgstAmount(t.getSgstAmount()).igstAmount(t.getIgstAmount())
+                .amount(t.getAmount()).visibleToCustomer(t.getVisibleToCustomer())
                 .build();
     }
 

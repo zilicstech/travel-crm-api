@@ -4,15 +4,16 @@ import com.voyra.crm.dto.AccountsDashboardSummaryResponse;
 import com.voyra.crm.dto.GstSummaryRowResponse;
 import com.voyra.crm.dto.TcsSummaryRowResponse;
 import com.voyra.crm.entity.Invoice;
-import com.voyra.crm.entity.InvoiceLineItem;
+import com.voyra.crm.entity.InvoiceTax;
 import com.voyra.crm.entity.PaymentReceipt;
 import com.voyra.crm.enums.CreditNoteStatus;
 import com.voyra.crm.enums.InvoiceDocumentType;
 import com.voyra.crm.enums.InvoiceLifecycle;
 import com.voyra.crm.enums.ReceiptDirection;
+import com.voyra.crm.enums.TaxKind;
 import com.voyra.crm.repository.CreditNoteRepository;
-import com.voyra.crm.repository.InvoiceLineItemRepository;
 import com.voyra.crm.repository.InvoiceRepository;
+import com.voyra.crm.repository.InvoiceTaxRepository;
 import com.voyra.crm.repository.PaymentReceiptRepository;
 import com.voyra.crm.util.ReportTable;
 import com.voyra.crm.util.XlsxWriter;
@@ -40,7 +41,7 @@ import java.util.function.Function;
 public class AccountsDashboardService {
 
     private final InvoiceRepository invoiceRepository;
-    private final InvoiceLineItemRepository invoiceLineItemRepository;
+    private final InvoiceTaxRepository invoiceTaxRepository;
     private final PaymentReceiptRepository paymentReceiptRepository;
     private final CreditNoteRepository creditNoteRepository;
 
@@ -107,33 +108,41 @@ public class AccountsDashboardService {
         return billedTaxable.subtract(creditedTaxable);
     }
 
-    /** Groups by (SAC code, GST rate) over issued, non-cancelled tax invoices in range - the input a CA needs for GSTR-1, not a filing itself. */
+    /**
+     * Groups by GST rate over issued, non-cancelled tax invoices in range - the input a CA
+     * needs for GSTR-1, not a filing itself. Tax is opt-in per invoice now (see {@link
+     * InvoiceTax}), so this reads the invoice's own chosen GST-kind rows rather than the old
+     * per-line GST columns, which are no longer populated. No SAC breakdown any more - a tax
+     * row carries a rate, not a service code; grouping is by rate alone.
+     */
     @Transactional(readOnly = true)
     public List<GstSummaryRowResponse> gstSummary(LocalDate from, LocalDate to) {
         Map<String, BigDecimal[]> byGroup = new LinkedHashMap<>();
-        Map<String, String[]> keyParts = new LinkedHashMap<>();
+        Map<String, String> rateByKey = new LinkedHashMap<>();
 
         for (Invoice invoice : taxInvoicesInRange(from, to)) {
             BigDecimal fx = invoice.getFxRateToInr();
-            for (InvoiceLineItem line : invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc(invoice.getId())) {
-                String sac = line.getSacCode() != null ? line.getSacCode() : "-";
-                String rate = line.getGstRatePercent().stripTrailingZeros().toPlainString();
-                String key = sac + "|" + rate;
-                BigDecimal[] agg = byGroup.computeIfAbsent(key, k -> zeros(4));
-                agg[0] = agg[0].add(scale(line.getTaxableValue().multiply(fx)));
-                agg[1] = agg[1].add(scale(line.getCgstAmount().multiply(fx)));
-                agg[2] = agg[2].add(scale(line.getSgstAmount().multiply(fx)));
-                agg[3] = agg[3].add(scale(line.getIgstAmount().multiply(fx)));
-                keyParts.putIfAbsent(key, new String[]{sac, rate});
+            for (InvoiceTax tax : invoiceTaxRepository.findByInvoiceIdOrderBySortOrderAsc(invoice.getId())) {
+                if (tax.getTaxKind() != TaxKind.GST) {
+                    continue;
+                }
+                String rate = (tax.getRatePercent() != null ? tax.getRatePercent() : BigDecimal.ZERO)
+                        .stripTrailingZeros().toPlainString();
+                BigDecimal[] agg = byGroup.computeIfAbsent(rate, k -> zeros(4));
+                BigDecimal taxableInr = scale(invoice.getTaxableValue().multiply(fx));
+                agg[0] = agg[0].add(taxableInr);
+                agg[1] = agg[1].add(scale(tax.getCgstAmount().multiply(fx)));
+                agg[2] = agg[2].add(scale(tax.getSgstAmount().multiply(fx)));
+                agg[3] = agg[3].add(scale(tax.getIgstAmount().multiply(fx)));
+                rateByKey.putIfAbsent(rate, rate);
             }
         }
 
         return byGroup.entrySet().stream()
                 .map(e -> {
                     BigDecimal[] a = e.getValue();
-                    String[] kp = keyParts.get(e.getKey());
                     return GstSummaryRowResponse.builder()
-                            .sacCode(kp[0]).gstRatePercent(new BigDecimal(kp[1]))
+                            .sacCode("-").gstRatePercent(new BigDecimal(rateByKey.get(e.getKey())))
                             .taxableValueInr(a[0]).cgstAmountInr(a[1]).sgstAmountInr(a[2]).igstAmountInr(a[3])
                             .gstTotalInr(a[1].add(a[2]).add(a[3]))
                             .build();

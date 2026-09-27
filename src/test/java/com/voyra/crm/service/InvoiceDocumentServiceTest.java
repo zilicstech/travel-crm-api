@@ -23,7 +23,6 @@ import com.voyra.crm.enums.ReceiptDirection;
 import com.voyra.crm.enums.SupplyNature;
 import com.voyra.crm.enums.TaxTreatment;
 import com.voyra.crm.enums.UserType;
-import com.voyra.crm.models.TaxComputationResult;
 import com.voyra.crm.repository.BookingPassengerRepository;
 import com.voyra.crm.repository.BookingRepository;
 import com.voyra.crm.repository.BookingSectorRepository;
@@ -51,6 +50,8 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -60,6 +61,8 @@ class InvoiceDocumentServiceTest {
     private InvoiceRepository invoiceRepository;
     @Mock
     private InvoiceLineItemRepository invoiceLineItemRepository;
+    @Mock
+    private com.voyra.crm.repository.InvoiceTaxRepository invoiceTaxRepository;
     @Mock
     private PaymentReceiptRepository paymentReceiptRepository;
     @Mock
@@ -72,6 +75,8 @@ class InvoiceDocumentServiceTest {
     private ClientService clientService;
     @Mock
     private TenantRepository tenantRepository;
+    @Mock
+    private com.voyra.crm.repository.TaxRateConfigRepository taxRateConfigRepository;
     @Mock
     private TaxEngine taxEngine;
     @Mock
@@ -119,14 +124,58 @@ class InvoiceDocumentServiceTest {
         return line;
     }
 
-    private TaxComputationResult gstResult(BigDecimal taxableAmount) {
-        BigDecimal cgst = taxableAmount.multiply(new BigDecimal("0.025"));
-        return new TaxComputationResult(
-                TaxTreatment.INTRA_STATE, "27", "9985", taxableAmount,
-                new BigDecimal("5.000"), new BigDecimal("2.500"), new BigDecimal("2.500"), BigDecimal.ZERO,
-                cgst, cgst, BigDecimal.ZERO, cgst.add(cgst),
-                BigDecimal.ZERO, null, BigDecimal.ZERO, BigDecimal.ZERO,
-                taxableAmount.add(cgst).add(cgst));
+    @Test
+    void addingNoTaxLeavesTheGrandTotalAtTheLineTotalAlone() {
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking()));
+        when(invoiceRepository.existsByBookingIdAndDocumentTypeAndStatus(any(), any(), any())).thenReturn(false);
+        when(clientService.findAccessibleClient("K1")).thenReturn(client());
+        when(invoiceRepository.existsById(any())).thenReturn(false);
+        when(invoiceLineItemRepository.existsById(any())).thenReturn(false);
+
+        InvoiceDraftRequest request = new InvoiceDraftRequest();
+        request.setBookingId("B1");
+        request.setLines(List.of(lineRequest()));
+        // taxes left null entirely - the most common case now, not just an empty list.
+
+        InvoiceResponse response = invoiceDocumentService.createDraft(request);
+
+        assertThat(response.getTaxes()).isEmpty();
+        assertThat(response.getGrandTotal()).isEqualByComparingTo("50000.00");
+        assertThat(response.getPlaceOfSupplyCode()).isNull();
+        assertThat(response.getTaxTreatment()).isNull();
+    }
+
+    @Test
+    void addingAGstTaxSplitsIntraStateIntoCgstAndSgst() {
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking()));
+        when(invoiceRepository.existsByBookingIdAndDocumentTypeAndStatus(any(), any(), any())).thenReturn(false);
+        when(clientService.findAccessibleClient("K1")).thenReturn(client());
+        when(invoiceRepository.existsById(any())).thenReturn(false);
+        when(invoiceLineItemRepository.existsById(any())).thenReturn(false);
+        when(invoiceTaxRepository.existsById(any())).thenReturn(false);
+        when(taxRateConfigRepository.findById("TC1")).thenReturn(Optional.of(
+                com.voyra.crm.entity.TaxRateConfig.builder().id("TC1").taxKind(com.voyra.crm.enums.TaxKind.GST)
+                        .label("GST 5%").supplyNature(SupplyNature.DOMESTIC_PACKAGE).ratePercent(new BigDecimal("5.000")).build()));
+        when(taxEngine.resolveTreatment(eq("K1"), any(), anyBoolean(), any())).thenReturn(TaxTreatment.INTRA_STATE);
+        when(taxEngine.resolvePlaceOfSupplyCode(eq("K1"), any())).thenReturn("27");
+
+        InvoiceDraftRequest request = new InvoiceDraftRequest();
+        request.setBookingId("B1");
+        request.setLines(List.of(lineRequest()));
+        com.voyra.crm.dto.InvoiceTaxRequest tax = new com.voyra.crm.dto.InvoiceTaxRequest();
+        tax.setLabel("GST 5%");
+        tax.setTaxRateConfigId("TC1");
+        tax.setMode(com.voyra.crm.enums.TaxLineMode.PERCENT);
+        tax.setRatePercent(new BigDecimal("5.000"));
+        request.setTaxes(List.of(tax));
+
+        InvoiceResponse response = invoiceDocumentService.createDraft(request);
+
+        assertThat(response.getTaxes()).hasSize(1);
+        assertThat(response.getCgstAmount()).isEqualByComparingTo("1250.00");
+        assertThat(response.getSgstAmount()).isEqualByComparingTo("1250.00");
+        assertThat(response.getGstTotal()).isEqualByComparingTo("2500.00");
+        assertThat(response.getGrandTotal()).isEqualByComparingTo("52500.00");
     }
 
     @Test
@@ -181,19 +230,19 @@ class InvoiceDocumentServiceTest {
         when(clientService.findAccessibleClient("K1")).thenReturn(client());
         when(invoiceRepository.existsById(any())).thenReturn(false);
         when(invoiceLineItemRepository.existsById(any())).thenReturn(false);
-        when(taxEngine.compute(any())).thenReturn(gstResult(new BigDecimal("50000.00")));
 
         InvoiceDraftRequest request = new InvoiceDraftRequest();
         request.setBookingId("B1");
         request.setSupplyNature(SupplyNature.DOMESTIC_PACKAGE);
         request.setLines(List.of(lineRequest()));
+        // No taxes requested - tax is opt-in now, so the grand total is the line total alone.
 
         InvoiceResponse response = invoiceDocumentService.createDraft(request);
 
         assertThat(response.getStatus()).isEqualTo(InvoiceLifecycle.DRAFT);
         assertThat(response.getInvoiceNumber()).isNull();
-        assertThat(response.getGrandTotal()).isEqualByComparingTo("52500.00");
-        assertThat(response.getGrandTotalInr()).isEqualByComparingTo("52500.00");
+        assertThat(response.getGrandTotal()).isEqualByComparingTo("50000.00");
+        assertThat(response.getGrandTotalInr()).isEqualByComparingTo("50000.00");
         assertThat(response.getFxRateToInr()).isEqualByComparingTo("1");
         assertThat(response.getFxRateSource()).isEqualTo(FxRateSource.INR_IDENTITY);
     }
@@ -209,7 +258,6 @@ class InvoiceDocumentServiceTest {
         when(clientService.findAccessibleClient("K1")).thenReturn(client());
         when(invoiceRepository.existsById(any())).thenReturn(false);
         when(invoiceLineItemRepository.existsById(any())).thenReturn(false);
-        when(taxEngine.compute(any())).thenReturn(gstResult(new BigDecimal("138996.00")));
         BookingPassenger passenger = BookingPassenger.builder().id("BP1").bookingId("B1")
                 .passengerName("ABHISHEK KUMAR SINGH").fareAmount(new BigDecimal("138996.00")).build();
         when(bookingPassengerRepository.findByBookingIdOrderBySortOrderAsc("B1")).thenReturn(List.of(passenger));
@@ -238,7 +286,6 @@ class InvoiceDocumentServiceTest {
         when(clientService.findAccessibleClient("K1")).thenReturn(client());
         when(invoiceRepository.existsById(any())).thenReturn(false);
         when(invoiceLineItemRepository.existsById(any())).thenReturn(false);
-        when(taxEngine.compute(any())).thenReturn(gstResult(BigDecimal.ZERO));
 
         InvoiceDraftRequest request = new InvoiceDraftRequest();
         request.setBookingId("B1");

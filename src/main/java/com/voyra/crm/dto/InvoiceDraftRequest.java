@@ -4,7 +4,6 @@ import com.voyra.crm.enums.InvoiceServiceCategory;
 import com.voyra.crm.enums.SupplyNature;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.Valid;
-import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
 import java.math.BigDecimal;
@@ -31,8 +30,8 @@ public class InvoiceDraftRequest {
     @Schema(description = "Required when currencyCode is not INR - the rate this invoice locks at issue", example = "83.120000")
     private BigDecimal fxRateToInr;
 
-    @NotNull(message = "supplyNature is required")
-    @Schema(example = "DOMESTIC_PACKAGE")
+    @Schema(description = "Informational only now - tax is opt-in per invoice via `taxes` below, "
+            + "never forced by supplyNature. Kept to pre-select a sensible default in the tax dropdown.", example = "DOMESTIC_PACKAGE")
     private SupplyNature supplyNature;
 
     @Schema(description = "Overrides the client's own state for place-of-supply", example = "27")
@@ -53,4 +52,9 @@ public class InvoiceDraftRequest {
     @Valid
     @Schema(description = "The whole line list - a save replaces every existing line with this set")
     private List<InvoiceLineItemRequest> lines;
+
+    @Valid
+    @Schema(description = "Zero or more taxes to charge on this invoice - a save replaces the "
+            + "whole set. Omit or send an empty list for no tax at all.")
+    private List<InvoiceTaxRequest> taxes;
 }

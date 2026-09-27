@@ -102,6 +102,32 @@ public class TaxEngine {
     }
 
     /**
+     * Resolves only the intra/inter-state treatment for a GST-kind {@code invoice_tax} row -
+     * used by {@code InvoiceDocumentService} to decide the CGST+SGST vs IGST split for a tax
+     * whose rate the accountant already chose from the dropdown (or typed as custom). Does not
+     * depend on supplyNature, which the per-invoice tax model no longer looks up by.
+     */
+    @Transactional(readOnly = true)
+    public TaxTreatment resolveTreatment(String clientId, String placeOfSupplyCodeOverride,
+                                          boolean exportOfServiceRequested, String currencyCode) {
+        Client client = clientService.findAccessibleClient(clientId);
+        Tenant agency = currentAgency();
+        TaxComputationRequest request = new TaxComputationRequest(
+                clientId, BigDecimal.ZERO, null, placeOfSupplyCodeOverride, exportOfServiceRequested, currencyCode);
+        return determineTreatment(request, client, agency);
+    }
+
+    /** Resolves the place-of-supply code alone, for the invoice header's plain-language "GST state". */
+    @Transactional(readOnly = true)
+    public String resolvePlaceOfSupplyCode(String clientId, String placeOfSupplyCodeOverride) {
+        Client client = clientService.findAccessibleClient(clientId);
+        Tenant agency = currentAgency();
+        TaxComputationRequest request = new TaxComputationRequest(
+                clientId, BigDecimal.ZERO, null, placeOfSupplyCodeOverride, false, "INR");
+        return resolvePlaceOfSupply(request, client, agency);
+    }
+
+    /**
      * EXPORT_OF_SERVICE only when the accountant explicitly requests it AND the client is
      * marked overseas AND the invoice currency is non-INR. Deliberately narrow: for a tour
      * operator with an India-established recipient, the place of supply is in India

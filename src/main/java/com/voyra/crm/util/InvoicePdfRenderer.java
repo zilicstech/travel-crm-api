@@ -13,6 +13,7 @@ import com.lowagie.text.pdf.PdfWriter;
 import com.voyra.crm.entity.Booking;
 import com.voyra.crm.entity.Invoice;
 import com.voyra.crm.entity.InvoiceLineItem;
+import com.voyra.crm.entity.InvoiceTax;
 import com.voyra.crm.entity.Tenant;
 import com.voyra.crm.enums.InvoiceServiceCategory;
 
@@ -34,9 +35,9 @@ public final class InvoicePdfRenderer {
     private InvoicePdfRenderer() {
     }
 
-    /** @deprecated kept only for any caller that hasn't been updated to pass agency/booking. */
+    /** @deprecated kept only for any caller that hasn't been updated to pass taxes/agency/booking. */
     public static byte[] write(Invoice invoice, List<InvoiceLineItem> lines) {
-        return write(invoice, lines, null, null);
+        return write(invoice, lines, List.of(), null, null);
     }
 
     /**
@@ -45,8 +46,12 @@ public final class InvoicePdfRenderer {
      * category-specific reference line under the title (PNR, hotel confirmation number, ...) -
      * see ACCOUNTING_REDESIGN_SPEC.md §3. Both are nullable so a pre-redesign invoice with no
      * {@code serviceCategory}, or one whose booking has since been deleted, still prints.
+     * {@code taxes} whose {@code visibleToCustomer} is false are never printed as their own
+     * line - their amount is folded into the printed fare instead, so the grand total the
+     * customer sees always matches {@link Invoice#getGrandTotal()} even though the breakup
+     * doesn't show every tax that was actually charged.
      */
-    public static byte[] write(Invoice invoice, List<InvoiceLineItem> lines, Tenant agency, Booking booking) {
+    public static byte[] write(Invoice invoice, List<InvoiceLineItem> lines, List<InvoiceTax> taxes, Tenant agency, Booking booking) {
         Document document = new Document(PageSize.A4, 32, 32, 36, 36);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         try {
@@ -80,7 +85,7 @@ public final class InvoicePdfRenderer {
             document.add(lineItemsTable(lines, labelFont, smallFont));
             document.add(new Paragraph(" "));
 
-            document.add(totalsTable(invoice, labelFont, bodyFont));
+            document.add(totalsTable(invoice, taxes, labelFont, bodyFont));
             document.add(new Paragraph(" "));
             document.add(new Paragraph(
                     AmountInWords.forAmount(invoice.getGrandTotal(), invoice.getCurrencyCode()) + " Only",
@@ -188,8 +193,12 @@ public final class InvoicePdfRenderer {
         if (invoice.getBillingAddress() != null && !invoice.getBillingAddress().isBlank()) {
             addPlain(table, invoice.getBillingAddress(), bodyFont);
         }
-        addPlain(table, "GSTIN: " + valueOr(invoice.getClientGstin()) + "   Place of Supply: " + valueOr(invoice.getPlaceOfSupplyCode())
-                + "   Treatment: " + invoice.getTaxTreatment(), bodyFont);
+        // GST fields print only when a GST-kind tax was actually charged - most invoices
+        // now carry none, and a blank line here would read as a mistake rather than a choice.
+        if (invoice.getPlaceOfSupplyCode() != null) {
+            addPlain(table, "GSTIN: " + valueOr(invoice.getClientGstin()) + "   Place of Supply: " + valueOr(invoice.getPlaceOfSupplyCode())
+                    + "   Treatment: " + str(invoice.getTaxTreatment()), bodyFont);
+        }
         return table;
     }
 
@@ -210,20 +219,28 @@ public final class InvoicePdfRenderer {
         return table;
     }
 
-    private static PdfPTable totalsTable(Invoice invoice, Font labelFont, Font bodyFont) {
+    /**
+     * A hidden tax is never a line of its own here - its amount is folded straight into the
+     * printed "Amount" so the two totals (what's itemised, what's charged) never diverge. When
+     * every tax on the invoice is hidden, no tax breakup prints at all - just one fare figure,
+     * matching the client's own reimbursement-style invoice (ACCOUNTING_REDESIGN_SPEC.md §3).
+     */
+    private static PdfPTable totalsTable(Invoice invoice, List<InvoiceTax> taxes, Font labelFont, Font bodyFont) {
         PdfPTable table = new PdfPTable(new float[]{3f, 1.5f});
         table.setWidthPercentage(50);
         table.setHorizontalAlignment(Element.ALIGN_RIGHT);
 
-        totalRow(table, "Taxable Value", money(invoice.getTaxableValue()), bodyFont);
-        if (invoice.getIgstAmount().compareTo(BigDecimal.ZERO) > 0) {
-            totalRow(table, "IGST", money(invoice.getIgstAmount()), bodyFont);
-        } else {
-            totalRow(table, "CGST", money(invoice.getCgstAmount()), bodyFont);
-            totalRow(table, "SGST", money(invoice.getSgstAmount()), bodyFont);
-        }
-        if (invoice.getTcsAmount().compareTo(BigDecimal.ZERO) > 0) {
-            totalRow(table, "TCS (" + valueOr(invoice.getTcsSection()) + ")", money(invoice.getTcsAmount()), bodyFont);
+        BigDecimal hiddenTotal = taxes.stream()
+                .filter(t -> !Boolean.TRUE.equals(t.getVisibleToCustomer()))
+                .map(InvoiceTax::getAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal displayedFare = invoice.getTaxableValue().add(hiddenTotal);
+
+        totalRow(table, "Amount", money(displayedFare), bodyFont);
+        for (InvoiceTax tax : taxes) {
+            if (Boolean.TRUE.equals(tax.getVisibleToCustomer()) && tax.getAmount().compareTo(BigDecimal.ZERO) != 0) {
+                totalRow(table, tax.getLabel(), money(tax.getAmount()), bodyFont);
+            }
         }
         if (invoice.getRoundOff().compareTo(BigDecimal.ZERO) != 0) {
             totalRow(table, "Round Off", money(invoice.getRoundOff()), bodyFont);

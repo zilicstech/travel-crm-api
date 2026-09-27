@@ -139,6 +139,12 @@ public class InvoiceResponse {
     private BigDecimal tcsAmount;
 
     @Schema(example = "0.00")
+    private BigDecimal otherTaxTotal;
+
+    @Schema(example = "0.00")
+    private BigDecimal otherTaxTotalInr;
+
+    @Schema(example = "0.00")
     private BigDecimal roundOff;
 
     @Schema(example = "88200.00")
@@ -200,4 +206,7 @@ public class InvoiceResponse {
 
     @Schema(description = "Every line, sort order ascending")
     private List<InvoiceLineItemResponse> lines;
+
+    @Schema(description = "Every chosen tax, sort order ascending - empty when the invoice carries no tax")
+    private List<InvoiceTaxResponse> taxes;
 }
