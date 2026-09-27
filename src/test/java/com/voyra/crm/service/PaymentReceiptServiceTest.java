@@ -1,7 +1,9 @@
 package com.voyra.crm.service;
 
+import com.voyra.crm.dto.PaymentReceiptApplyAdvanceRequest;
 import com.voyra.crm.dto.PaymentReceiptRequest;
 import com.voyra.crm.dto.PaymentReceiptResponse;
+import com.voyra.crm.entity.Client;
 import com.voyra.crm.entity.Invoice;
 import com.voyra.crm.entity.PaymentReceipt;
 import com.voyra.crm.enums.DocumentKind;
@@ -44,6 +46,8 @@ class PaymentReceiptServiceTest {
     private PaymentReceiptRepository paymentReceiptRepository;
     @Mock
     private InvoiceRepository invoiceRepository;
+    @Mock
+    private ClientService clientService;
     @Mock
     private DocumentNumberService documentNumberService;
     @Mock
@@ -210,5 +214,107 @@ class PaymentReceiptServiceTest {
         org.mockito.Mockito.verify(auditService).recordCreate(
                 org.mockito.ArgumentMatchers.eq(com.voyra.crm.enums.AuditEntityType.PAYMENT_RECEIPT),
                 idCaptor.capture(), org.mockito.ArgumentMatchers.eq("RCP/2026-27/0001"));
+    }
+
+    @Test
+    void recordingWithNoInvoiceIdRequiresAClientId() {
+        PaymentReceiptRequest deposit = new PaymentReceiptRequest();
+        deposit.setAmount(new BigDecimal("500000.00"));
+        deposit.setPaymentMode(PaymentMode.BANK_TRANSFER);
+        deposit.setReceivedOn(LocalDate.of(2026, 9, 19));
+
+        assertThatThrownBy(() -> paymentReceiptService.record(deposit))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("clientId");
+    }
+
+    @Test
+    void aDepositWithNoInvoiceIsRecordedAsAnAdvanceOnTheClient() {
+        when(clientService.findAccessibleClient("K1")).thenReturn(Client.builder().id("K1").name("Rakesh Verma").build());
+        when(paymentReceiptRepository.existsById(any())).thenReturn(false);
+        when(documentNumberService.next(DocumentKind.RECEIPT, LocalDate.of(2026, 9, 19))).thenReturn("RCP/2026-27/0001");
+
+        PaymentReceiptRequest deposit = new PaymentReceiptRequest();
+        deposit.setClientId("K1");
+        deposit.setAmount(new BigDecimal("500000.00"));
+        deposit.setPaymentMode(PaymentMode.BANK_TRANSFER);
+        deposit.setReceivedOn(LocalDate.of(2026, 9, 19));
+
+        PaymentReceiptResponse response = paymentReceiptService.record(deposit);
+
+        assertThat(response.getInvoiceId()).isNull();
+        assertThat(response.getClientId()).isEqualTo("K1");
+        assertThat(response.getIsAdvance()).isTrue();
+        assertThat(response.getAmountInr()).isEqualByComparingTo("500000.00");
+        org.mockito.Mockito.verify(invoiceRepository, org.mockito.Mockito.never()).findById(any());
+    }
+
+    @Test
+    void applyingMoreThanTheWalletHoldsIsRejected() {
+        Invoice invoice = issuedInvoice(new BigDecimal("1000.00"));
+        PaymentReceipt deposit = PaymentReceipt.builder().id("D1").clientId("K1").invoiceId(null)
+                .isAdvance(true).amountInr(new BigDecimal("300.00")).build();
+        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(invoice));
+        when(paymentReceiptRepository.findById("D1")).thenReturn(Optional.of(deposit));
+        when(paymentReceiptRepository.findByClientIdAndInvoiceIdIsNullAndIsAdvanceTrueOrderByReceivedOnAsc("K1"))
+                .thenReturn(List.of(deposit));
+        when(paymentReceiptRepository.findByClientIdAndAppliedFromAdvanceTrueOrderByReceivedOnAsc("K1"))
+                .thenReturn(List.of());
+
+        PaymentReceiptApplyAdvanceRequest request = new PaymentReceiptApplyAdvanceRequest();
+        request.setAdvanceReceiptId("D1");
+        request.setAmount(new BigDecimal("400.00"));
+
+        assertThatThrownBy(() -> paymentReceiptService.applyAdvance("I1", request))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("300.00");
+    }
+
+    @Test
+    void applyingTheWalletSettlesTheInvoiceWithNoLedgerPost() {
+        Invoice invoice = issuedInvoice(new BigDecimal("1000.00"));
+        PaymentReceipt deposit = PaymentReceipt.builder().id("D1").clientId("K1").invoiceId(null)
+                .isAdvance(true).amountInr(new BigDecimal("1000.00")).build();
+        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(invoice));
+        when(paymentReceiptRepository.findById("D1")).thenReturn(Optional.of(deposit));
+        when(paymentReceiptRepository.findByClientIdAndInvoiceIdIsNullAndIsAdvanceTrueOrderByReceivedOnAsc("K1"))
+                .thenReturn(List.of(deposit));
+        when(paymentReceiptRepository.findByClientIdAndAppliedFromAdvanceTrueOrderByReceivedOnAsc("K1"))
+                .thenReturn(List.of());
+        when(paymentReceiptRepository.existsById(any())).thenReturn(false);
+        when(paymentReceiptRepository.findByInvoiceIdOrderByReceivedOnAscCreatedAtAsc("I1"))
+                .thenReturn(List.of(PaymentReceipt.builder().id("R1").invoiceId("I1")
+                        .direction(ReceiptDirection.RECEIPT).amount(new BigDecimal("400.00")).build()));
+
+        PaymentReceiptApplyAdvanceRequest request = new PaymentReceiptApplyAdvanceRequest();
+        request.setAdvanceReceiptId("D1");
+        request.setAmount(new BigDecimal("400.00"));
+
+        PaymentReceiptResponse response = paymentReceiptService.applyAdvance("I1", request);
+
+        assertThat(response.getAppliedFromAdvance()).isTrue();
+        assertThat(response.getAmount()).isEqualByComparingTo("400.00");
+        assertThat(invoice.getAmountReceived()).isEqualByComparingTo("400.00");
+        org.mockito.Mockito.verify(customerLedgerService, org.mockito.Mockito.never()).post(any());
+    }
+
+    @Test
+    void issuingAnInvoiceAutoAppliesWhateverTheClientsWalletHolds() {
+        Invoice invoice = issuedInvoice(new BigDecimal("1000.00"));
+        when(paymentReceiptRepository.findByClientIdAndInvoiceIdIsNullAndIsAdvanceTrueOrderByReceivedOnAsc("K1"))
+                .thenReturn(List.of(PaymentReceipt.builder().id("D1").clientId("K1")
+                        .isAdvance(true).amountInr(new BigDecimal("5000.00")).build()));
+        when(paymentReceiptRepository.findByClientIdAndAppliedFromAdvanceTrueOrderByReceivedOnAsc("K1"))
+                .thenReturn(List.of());
+        when(paymentReceiptRepository.existsById(any())).thenReturn(false);
+        when(paymentReceiptRepository.findByInvoiceIdOrderByReceivedOnAscCreatedAtAsc("I1"))
+                .thenReturn(List.of(PaymentReceipt.builder().id("R1").invoiceId("I1")
+                        .direction(ReceiptDirection.RECEIPT).amount(new BigDecimal("1000.00")).build()));
+
+        paymentReceiptService.applyAvailableWallet(invoice);
+
+        // 5000 held, only 1000 owed - draws exactly the balance, not the whole wallet.
+        assertThat(invoice.getAmountReceived()).isEqualByComparingTo("1000.00");
+        assertThat(invoice.getStatus()).isEqualTo(InvoiceLifecycle.PAID);
     }
 }

@@ -97,6 +97,7 @@ public class InvoiceDocumentService {
     private final AuditService auditService;
     private final CustomerLedgerService customerLedgerService;
     private final BookingAccountingSync bookingAccountingSync;
+    private final PaymentReceiptService paymentReceiptService;
 
     @Transactional
     public InvoiceResponse createDraft(InvoiceDraftRequest request) {
@@ -298,6 +299,9 @@ public class InvoiceDocumentService {
         invoice.setFxLockedAt(LocalDateTime.now());
         invoiceRepository.save(invoice);
         postInvoiceRaised(invoice);
+        // A returning customer's standing deposit draws down automatically the moment a real
+        // invoice exists against them - see PaymentReceiptService#applyAvailableWallet.
+        paymentReceiptService.applyAvailableWallet(invoice);
         bookingAccountingSync.syncPayment(invoice.getBookingId());
 
         auditService.recordCreate(AuditEntityType.INVOICE, invoice.getId(), invoice.getInvoiceNumber());

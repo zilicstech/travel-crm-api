@@ -1,5 +1,6 @@
 package com.voyra.crm.controller;
 
+import com.voyra.crm.dto.PaymentReceiptApplyAdvanceRequest;
 import com.voyra.crm.dto.PaymentReceiptRequest;
 import com.voyra.crm.dto.PaymentReceiptResponse;
 import com.voyra.crm.dto.PaymentReceiptReverseRequest;
@@ -42,9 +43,17 @@ public class PaymentReceiptController {
 
     @PostMapping
     @PreAuthorize("hasAnyRole('AGENCY_OWNER', 'ACCOUNTANT')")
-    @Operation(summary = "Record a receipt", description = "Currency and FX rate are always the invoice's own - a payment in another currency is rejected.")
+    @Operation(summary = "Record a receipt", description = "Currency and FX rate are always the invoice's own - a payment in another currency is rejected. Omit invoiceId and supply clientId instead to record a deposit on account (the customer wallet).")
     public ResponseEntity<PaymentReceiptResponse> record(@Valid @RequestBody PaymentReceiptRequest request) {
         return ResponseEntity.ok(paymentReceiptService.record(request));
+    }
+
+    @PostMapping("/invoices/{invoiceId}/apply-advance")
+    @PreAuthorize("hasAnyRole('AGENCY_OWNER', 'ACCOUNTANT')")
+    @Operation(summary = "Apply part or all of the client's wallet balance to an invoice", description = "Moves only the invoice's balance - posts no ledger row, the deposit already posted its own credit.")
+    public ResponseEntity<PaymentReceiptResponse> applyAdvance(@PathVariable String invoiceId,
+                                                                 @Valid @RequestBody PaymentReceiptApplyAdvanceRequest request) {
+        return ResponseEntity.ok(paymentReceiptService.applyAdvance(invoiceId, request));
     }
 
     @GetMapping

@@ -93,6 +93,13 @@ public class PaymentReceipt {
     @Builder.Default
     private Boolean isAdvance = false;
 
+    /** True when this row settled an invoice by drawing on an existing advance rather than new
+     *  money - posts no ledger row, since the advance already posted its own credit when it
+     *  was recorded. Mirrors {@code SupplierPayment#appliedFromAdvance}. */
+    @Column(name = "applied_from_advance", nullable = false)
+    @Builder.Default
+    private Boolean appliedFromAdvance = false;
+
     @Column(name = "reverses_receipt_id", length = 36)
     private String reversesReceiptId;
 

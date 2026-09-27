@@ -64,8 +64,11 @@ public class PaymentReceiptResponse {
     @Schema(example = "2026-09-19")
     private LocalDate receivedOn;
 
-    @Schema(description = "True when recorded against a proforma", example = "false")
+    @Schema(description = "True when recorded against a proforma, or when this is a deposit on account with no invoice", example = "false")
     private Boolean isAdvance;
+
+    @Schema(description = "True when this row settled an invoice by drawing on an existing deposit rather than new money", example = "false")
+    private Boolean appliedFromAdvance;
 
     @Schema(description = "Set on the reversing row only, pointing at the receipt it reverses")
     private String reversesReceiptId;

@@ -3,7 +3,6 @@ package com.voyra.crm.dto;
 import com.voyra.crm.enums.PaymentMode;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.DecimalMin;
-import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
@@ -11,12 +10,17 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 
 @Data
-@Schema(description = "Records a payment against an issued invoice, a partially paid invoice, or an issued proforma (advance). Currency and FX rate are always the invoice's own - there is no field to enter them independently, since a payment in another currency is rejected, never converted.")
+@Schema(description = "Records a payment against an issued invoice, a partially paid invoice, or an "
+        + "issued proforma (advance) - or, with invoiceId omitted and clientId supplied instead, a "
+        + "deposit on account with no invoice at all (the customer wallet). Currency and FX rate for "
+        + "an invoice-attached receipt are always the invoice's own; a deposit is always INR.")
 public class PaymentReceiptRequest {
 
-    @NotBlank(message = "invoiceId is required")
-    @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
+    @Schema(description = "Omit for a deposit on account - clientId is then required instead", example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String invoiceId;
+
+    @Schema(description = "Required when invoiceId is omitted - the client this deposit belongs to", example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
+    private String clientId;
 
     @NotNull(message = "amount is required")
     @DecimalMin(value = "0.01", message = "amount must be positive")

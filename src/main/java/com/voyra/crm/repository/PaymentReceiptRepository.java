@@ -30,4 +30,10 @@ public interface PaymentReceiptRepository extends JpaRepository<PaymentReceipt, 
     List<PaymentReceipt> findByBookingIdAndDirection(String bookingId, ReceiptDirection direction);
 
     boolean existsByBookingId(String bookingId);
+
+    /** The customer wallet: deposits on account for one client, with no invoice attached. */
+    List<PaymentReceipt> findByClientIdAndInvoiceIdIsNullAndIsAdvanceTrueOrderByReceivedOnAsc(String clientId);
+
+    /** What has already been drawn down from that client's wallet. */
+    List<PaymentReceipt> findByClientIdAndAppliedFromAdvanceTrueOrderByReceivedOnAsc(String clientId);
 }
