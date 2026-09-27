@@ -581,7 +581,7 @@ public class BookingService {
                         java.util.LinkedHashMap::new, java.util.stream.Collectors.toList()));
         return passengers.stream().map(p -> BookingPassengerResponse.builder()
                 .id(p.getId()).leadMemberId(p.getLeadMemberId()).passengerName(p.getPassengerName())
-                .paxType(p.getPaxType()).fareAmount(p.getFareAmount())
+                .paxType(p.getPaxType()).fareAmount(p.getFareAmount()).taxAmount(p.getTaxAmount())
                 .sectors(sectorsByPassenger.getOrDefault(p.getId(), List.of()).stream()
                         .map(s -> BookingSectorResponse.builder()
                                 .id(s.getId()).sectorFrom(s.getSectorFrom()).sectorTo(s.getSectorTo())
@@ -609,6 +609,7 @@ public class BookingService {
                     .passengerName(req.getPassengerName())
                     .paxType(req.getPaxType())
                     .fareAmount(req.getFareAmount())
+                    .taxAmount(req.getTaxAmount() != null ? req.getTaxAmount() : java.math.BigDecimal.ZERO)
                     .sortOrder(sortOrder++)
                     .createdAt(now)
                     .createdBy(actor)

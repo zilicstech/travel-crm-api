@@ -58,6 +58,14 @@ public class BookingPassenger {
     @Builder.Default
     private BigDecimal fareAmount = BigDecimal.ZERO;
 
+    /** The airline/supplier's own tax component (YQ/YR and similar), shown as a separate
+     *  "Taxes" column on the printed invoice next to Fare - never fed into TaxEngine, which
+     *  computes our own GST independently at the invoice level. Zero for a booking captured
+     *  before this existed, so {@link #fareAmount} keeps meaning the whole amount for it. */
+    @Column(name = "tax_amount", nullable = false, precision = 19, scale = 2)
+    @Builder.Default
+    private BigDecimal taxAmount = BigDecimal.ZERO;
+
     @Column(name = "sort_order", nullable = false)
     @Builder.Default
     private Integer sortOrder = 0;

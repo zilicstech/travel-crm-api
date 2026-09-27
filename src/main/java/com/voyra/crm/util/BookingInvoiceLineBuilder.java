@@ -54,7 +54,11 @@ public final class BookingInvoiceLineBuilder {
         line.setDescription(narrationFor(booking, category, passenger, sectors));
         line.setServiceType(booking.getServiceType());
         line.setQuantity(java.math.BigDecimal.ONE);
-        line.setUnitPrice(passenger.getFareAmount());
+        java.math.BigDecimal fare = passenger.getFareAmount();
+        java.math.BigDecimal tax = passenger.getTaxAmount() != null ? passenger.getTaxAmount() : java.math.BigDecimal.ZERO;
+        line.setUnitPrice(fare.add(tax));
+        line.setFareAmount(fare);
+        line.setTaxAmount(tax);
         return line;
     }
 
@@ -64,6 +68,8 @@ public final class BookingInvoiceLineBuilder {
         line.setServiceType(booking.getServiceType());
         line.setQuantity(java.math.BigDecimal.ONE);
         line.setUnitPrice(booking.getSellingPrice());
+        // No per-passenger split for a whole-booking fallback line - Fare/Taxes columns are
+        // simply omitted on this one when printed (see InvoicePdfRenderer).
         return line;
     }
 

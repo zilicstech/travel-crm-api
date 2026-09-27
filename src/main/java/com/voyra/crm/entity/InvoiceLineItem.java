@@ -108,6 +108,14 @@ public class InvoiceLineItem {
     @Builder.Default
     private BigDecimal lineTotal = BigDecimal.ZERO;
 
+    /** Display-only split of {@link #unitPrice} - the printed invoice's Fare/Taxes columns
+     *  when present. Never read by TaxEngine or any total calculation. */
+    @Column(name = "fare_amount", precision = 19, scale = 2)
+    private BigDecimal fareAmount;
+
+    @Column(name = "tax_amount", precision = 19, scale = 2)
+    private BigDecimal taxAmount;
+
     @Column(name = "tax_rate_config_id", length = 36)
     private String taxRateConfigId;
 

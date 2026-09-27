@@ -27,8 +27,11 @@ public class BookingPassengerRequest {
     private PaxType paxType;
 
     @NotNull(message = "Fare amount is required")
-    @Schema(description = "This passenger's total fare - what their invoice line prints", example = "138996.00")
+    @Schema(description = "This passenger's base fare - added to taxAmount for their invoice line's total", example = "138996.00")
     private BigDecimal fareAmount;
+
+    @Schema(description = "The airline/supplier's own tax component (YQ/YR and similar) - printed as a separate Taxes column next to Fare. Omit or 0 to keep fareAmount as the whole amount.", example = "0.00")
+    private BigDecimal taxAmount;
 
     @Valid
     @Schema(description = "Itinerary legs, in travel order - only for a sector-wise service category (air, rail)")

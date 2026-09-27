@@ -544,6 +544,8 @@ public class InvoiceDocumentService {
                         .taxablePercent(new BigDecimal("100.000"))
                         .taxableValue(net)
                         .lineTotal(net)
+                        .fareAmount(req.getFareAmount())
+                        .taxAmount(req.getTaxAmount())
                         .createdAt(LocalDateTime.now())
                         .build();
                 lines.add(line);
@@ -758,6 +760,7 @@ public class InvoiceDocumentService {
                 .cgstRatePercent(l.getCgstRatePercent()).sgstRatePercent(l.getSgstRatePercent())
                 .igstRatePercent(l.getIgstRatePercent()).cgstAmount(l.getCgstAmount())
                 .sgstAmount(l.getSgstAmount()).igstAmount(l.getIgstAmount()).lineTotal(l.getLineTotal())
+                .fareAmount(l.getFareAmount()).taxAmount(l.getTaxAmount())
                 .build();
     }
 

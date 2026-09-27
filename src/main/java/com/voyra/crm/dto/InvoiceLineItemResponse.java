@@ -72,4 +72,10 @@ public class InvoiceLineItemResponse {
 
     @Schema(example = "88200.00")
     private BigDecimal lineTotal;
+
+    @Schema(description = "Display-only split of unitPrice - the base fare, when captured separately from the supplier's own tax component", example = "138996.00")
+    private BigDecimal fareAmount;
+
+    @Schema(description = "Display-only - the supplier's own tax component (YQ/YR and similar), printed as a separate column next to Fare when present", example = "0.00")
+    private BigDecimal taxAmount;
 }

@@ -202,18 +202,34 @@ public final class InvoicePdfRenderer {
         return table;
     }
 
+    /**
+     * A booking captured with a passenger fare/tax split (see BookingPassenger.taxAmount)
+     * prints Fare and Taxes as their own columns instead of one blended amount - "Fare plus
+     * taxes," the middle ground between a single figure and the legacy system's full
+     * Basic/YQ/YR/K3/OC breakdown. Every line on one invoice is built the same way (either all
+     * passenger lines or one whole-booking fallback - see BookingInvoiceLineBuilder), so
+     * checking the first line decides the column set for the whole table.
+     */
     private static PdfPTable lineItemsTable(List<InvoiceLineItem> lines, Font headerFont, Font cellFont) {
-        PdfPTable table = new PdfPTable(new float[]{3f, 1.2f, 1f, 1.2f, 1.2f, 1.5f});
+        boolean fareSplit = !lines.isEmpty() && lines.get(0).getFareAmount() != null;
+        PdfPTable table = fareSplit
+                ? new PdfPTable(new float[]{3.4f, 1f, 1f, 1.3f, 1.3f, 1.3f})
+                : new PdfPTable(new float[]{3.4f, 1f, 1f, 1.6f});
         table.setWidthPercentage(100);
-        for (String h : List.of("Description", "SAC", "Qty", "Unit Price", "Taxable Value", "Line Total")) {
+        List<String> headers = fareSplit
+                ? List.of("Description", "SAC", "Qty", "Fare", "Taxes", "Amount")
+                : List.of("Description", "SAC", "Qty", "Amount");
+        for (String h : headers) {
             table.addCell(headerCell(h, headerFont));
         }
         for (InvoiceLineItem line : lines) {
             table.addCell(new PdfPCell(new Phrase(line.getDescription(), cellFont)));
             table.addCell(new PdfPCell(new Phrase(valueOr(line.getSacCode()), cellFont)));
             rightCell(table, line.getQuantity().stripTrailingZeros().toPlainString(), cellFont);
-            rightCell(table, money(line.getUnitPrice()), cellFont);
-            rightCell(table, money(line.getTaxableValue()), cellFont);
+            if (fareSplit) {
+                rightCell(table, money(line.getFareAmount()), cellFont);
+                rightCell(table, money(line.getTaxAmount()), cellFont);
+            }
             rightCell(table, money(line.getLineTotal()), cellFont);
         }
         return table;

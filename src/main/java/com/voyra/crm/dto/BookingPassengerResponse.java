@@ -25,8 +25,11 @@ public class BookingPassengerResponse {
     @Schema(example = "ADULT")
     private PaxType paxType;
 
-    @Schema(description = "This passenger's total fare - what their invoice line prints", example = "138996.00")
+    @Schema(description = "This passenger's base fare - added to taxAmount for their invoice line's total", example = "138996.00")
     private BigDecimal fareAmount;
+
+    @Schema(description = "The airline/supplier's own tax component (YQ/YR and similar) - printed as a separate Taxes column next to Fare", example = "0.00")
+    private BigDecimal taxAmount;
 
     @Schema(description = "Itinerary legs, in travel order")
     private List<BookingSectorResponse> sectors;

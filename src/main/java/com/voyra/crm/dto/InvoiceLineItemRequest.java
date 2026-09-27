@@ -35,4 +35,10 @@ public class InvoiceLineItemRequest {
 
     @Schema(description = "Flat discount on this line, before tax", example = "0.00")
     private BigDecimal discountAmount;
+
+    @Schema(description = "Display-only split of unitPrice into a base fare and the supplier's own tax component (YQ/YR and similar) - printed as separate Fare/Taxes columns when present. Never fed into TaxEngine.", example = "138996.00")
+    private BigDecimal fareAmount;
+
+    @Schema(description = "Display-only - the other half of unitPrice's Fare/Taxes split", example = "0.00")
+    private BigDecimal taxAmount;
 }

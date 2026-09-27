@@ -110,4 +110,15 @@ class InvoicePdfRendererTest {
 
         assertThat(interStatePdf).isNotEqualTo(intraStatePdf);
     }
+
+    @Test
+    void aPassengerFareTaxSplitRendersDifferentlyFromABlendedAmount() {
+        byte[] blendedPdf = InvoicePdfRenderer.write(sampleInvoice(), sampleLines());
+
+        List<InvoiceLineItem> splitLines = List.of(sampleLines().get(0).toBuilder()
+                .fareAmount(new BigDecimal("95000.00")).taxAmount(new BigDecimal("5000.00")).build());
+        byte[] splitPdf = InvoicePdfRenderer.write(sampleInvoice(), splitLines);
+
+        assertThat(splitPdf).isNotEqualTo(blendedPdf);
+    }
 }
