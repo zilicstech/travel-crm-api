@@ -1,5 +1,6 @@
 package com.voyra.crm.dto;
 
+import com.voyra.crm.enums.MarkupMode;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
@@ -21,4 +22,10 @@ public class ProposalItemUpdateRequest {
 
     @Schema(description = "Price shown to the customer", example = "22000.00")
     private BigDecimal sellingPrice;
+
+    @Schema(description = "What the agent intended when setting sellingPrice", example = "PERCENT")
+    private MarkupMode markupMode;
+
+    @Schema(description = "The markup value under markupMode - a percent or a flat rupee amount", example = "5.00")
+    private BigDecimal markupValue;
 }

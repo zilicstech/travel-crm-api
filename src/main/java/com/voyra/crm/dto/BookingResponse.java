@@ -2,6 +2,7 @@ package com.voyra.crm.dto;
 
 import com.voyra.crm.enums.BookingStatus;
 import com.voyra.crm.enums.BookingType;
+import com.voyra.crm.enums.MarkupMode;
 import com.voyra.crm.enums.PaymentStatus;
 import com.voyra.crm.enums.PaymentStatusSource;
 import com.voyra.crm.enums.RefundState;
@@ -170,6 +171,12 @@ public class BookingResponse {
 
     @Schema(description = "Always sellingPrice minus netCost, recomputed server-side", example = "10000.00")
     private BigDecimal profit;
+
+    @Schema(description = "Carried over from the winning proposal line, when this booking was logged from one", example = "PERCENT")
+    private MarkupMode markupMode;
+
+    @Schema(description = "The markup value under markupMode", example = "5.00")
+    private BigDecimal markupValue;
 
     @Schema(example = "CONFIRMED")
     private BookingStatus bookingStatus;

@@ -1,6 +1,7 @@
 package com.voyra.crm.dto;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.voyra.crm.enums.MarkupMode;
 import com.voyra.crm.enums.ProposalItemType;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.AllArgsConstructor;
@@ -44,6 +45,12 @@ public class ProposalItemResponse {
 
     @Schema(description = "Server-computed margin % for this line item", example = "18.2")
     private BigDecimal marginPercent;
+
+    @Schema(description = "What the agent intended when setting sellingPrice - null for a line typed straight in", example = "PERCENT")
+    private MarkupMode markupMode;
+
+    @Schema(description = "The markup value under markupMode", example = "5.00")
+    private BigDecimal markupValue;
 
     @Schema(description = "Null means a plain add-on that always counts. A shared value means "
             + "this line is one of several mutually-exclusive alternatives - exactly one line "

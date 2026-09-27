@@ -1,5 +1,6 @@
 package com.voyra.crm.entity;
 
+import com.voyra.crm.enums.MarkupMode;
 import com.voyra.crm.enums.ProposalItemType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -64,6 +65,16 @@ public class LeadProposal {
     @Column(name = "selling_price", nullable = false, precision = 19, scale = 2)
     @Builder.Default
     private BigDecimal sellingPrice = BigDecimal.ZERO;
+
+    /** What the agent intended when they set {@link #sellingPrice} - null for a line typed
+     *  straight into selling price with no markup calculator involved. Never re-derived from
+     *  netCost/sellingPrice after the fact; editing either later can silently drift from it. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "markup_mode", length = 10)
+    private MarkupMode markupMode;
+
+    @Column(name = "markup_value", precision = 19, scale = 4)
+    private BigDecimal markupValue;
 
     @Column(name = "created_at")
     private LocalDateTime createdAt;

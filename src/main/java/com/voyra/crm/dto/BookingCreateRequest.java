@@ -1,6 +1,7 @@
 package com.voyra.crm.dto;
 
 import com.voyra.crm.enums.BookingType;
+import com.voyra.crm.enums.MarkupMode;
 import com.voyra.crm.enums.PaymentStatus;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.Valid;
@@ -148,6 +149,12 @@ public class BookingCreateRequest {
     @NotNull(message = "Selling price is required")
     @Schema(description = "Price charged to the customer", example = "52000.00")
     private BigDecimal sellingPrice;
+
+    @Schema(description = "Carried over from the winning proposal line, when this booking was logged from one", example = "PERCENT")
+    private MarkupMode markupMode;
+
+    @Schema(description = "The markup value under markupMode", example = "5.00")
+    private BigDecimal markupValue;
 
     @Schema(defaultValue = "PENDING", example = "PENDING")
     private PaymentStatus paymentStatus;

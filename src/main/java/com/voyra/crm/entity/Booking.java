@@ -2,6 +2,7 @@ package com.voyra.crm.entity;
 
 import com.voyra.crm.enums.BookingStatus;
 import com.voyra.crm.enums.BookingType;
+import com.voyra.crm.enums.MarkupMode;
 import com.voyra.crm.enums.PaymentStatus;
 import com.voyra.crm.enums.PaymentStatusSource;
 import com.voyra.crm.enums.RefundState;
@@ -209,6 +210,15 @@ public class Booking {
     @Column(name = "profit", nullable = false, precision = 19, scale = 2)
     @Builder.Default
     private BigDecimal profit = BigDecimal.ZERO;
+
+    /** Carried over from the winning proposal line, when this booking was logged from one -
+     *  null for a booking typed straight in with no markup calculator involved. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "markup_mode", length = 10)
+    private MarkupMode markupMode;
+
+    @Column(name = "markup_value", precision = 19, scale = 4)
+    private BigDecimal markupValue;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "booking_status", nullable = false, length = 20)

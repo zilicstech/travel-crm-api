@@ -421,6 +421,8 @@ public class LeadService {
                 .supplier(request.getSupplier())
                 .netCost(netCost)
                 .sellingPrice(sellingPrice)
+                .markupMode(request.getMarkupMode())
+                .markupValue(request.getMarkupValue())
                 .optionGroup(request.getOptionGroup())
                 .createdAt(LocalDateTime.now())
                 .createdBy(currentUserId())
@@ -465,6 +467,8 @@ public class LeadService {
                     .supplier(line.getSupplier())
                     .netCost(line.getNetCost() != null ? line.getNetCost() : BigDecimal.ZERO)
                     .sellingPrice(line.getSellingPrice() != null ? line.getSellingPrice() : BigDecimal.ZERO)
+                    .markupMode(line.getMarkupMode())
+                    .markupValue(line.getMarkupValue())
                     .optionGroup(optionGroup)
                     .createdAt(LocalDateTime.now())
                     .createdBy(currentUserId())
@@ -539,6 +543,12 @@ public class LeadService {
         }
         if (request.getSellingPrice() != null) {
             item.setSellingPrice(request.getSellingPrice());
+        }
+        if (request.getMarkupMode() != null) {
+            item.setMarkupMode(request.getMarkupMode());
+        }
+        if (request.getMarkupValue() != null) {
+            item.setMarkupValue(request.getMarkupValue());
         }
         leadProposalRepository.save(item);
         recomputeQuotedTotals(lead);
@@ -864,6 +874,7 @@ public class LeadService {
                 .type(item.getType()).description(item.getDescription())
                 .supplier(item.getSupplier()).netCost(item.getNetCost()).sellingPrice(item.getSellingPrice())
                 .marginPercent(MarginCalculator.marginPercent(item.getNetCost(), item.getSellingPrice()))
+                .markupMode(item.getMarkupMode()).markupValue(item.getMarkupValue())
                 .optionGroup(item.getOptionGroup()).selected(item.isSelected())
                 .selectedBy(item.getSelectedBy()).selectedAt(item.getSelectedAt())
                 .build();
