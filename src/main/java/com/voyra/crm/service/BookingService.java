@@ -39,6 +39,7 @@ import com.voyra.crm.repository.CreditNoteRepository;
 import com.voyra.crm.repository.CustomerLedgerEntryRepository;
 import com.voyra.crm.repository.FeedbackRepository;
 import com.voyra.crm.repository.InvoiceRepository;
+import com.voyra.crm.repository.LeadRepository;
 import com.voyra.crm.repository.LeadServiceRepository;
 import com.voyra.crm.repository.PaymentReceiptRepository;
 import com.voyra.crm.repository.spec.BookingSpecifications;
@@ -91,6 +92,7 @@ public class BookingService {
     private final ClientRepository clientRepository;
     private final AgentRepository agentRepository;
     private final LeadServiceRepository leadServiceRepository;
+    private final LeadRepository leadRepository;
     private final CreditNoteRepository creditNoteRepository;
     private final InvoiceRepository invoiceRepository;
     private final PaymentReceiptRepository paymentReceiptRepository;
@@ -121,6 +123,16 @@ public class BookingService {
                 throw new IllegalArgumentException(
                         "type must be " + expected + " for a booking on a " + service.getType() + " service");
             }
+        }
+        // A standalone booking (no serviceId) can still name the lead it came from - the
+        // only path this could previously never reach, which is what left an invoice's
+        // lead traceability broken for every booking made from the Bookings tab rather than
+        // a lead's own Service tab.
+        String standaloneLeadId = null;
+        if (service == null && request.getLeadId() != null && !request.getLeadId().isBlank()) {
+            standaloneLeadId = leadRepository.findById(request.getLeadId())
+                    .orElseThrow(() -> new IllegalArgumentException("Lead not found: " + request.getLeadId()))
+                    .getId();
         }
 
         Booking.BookingBuilder builder = Booking.builder()
@@ -186,6 +198,8 @@ public class BookingService {
                     .serviceLabel(service.getLabel())
                     .serviceAgentId(service.getAssignedAgentId())
                     .serviceAgentName(service.getAssignedAgentName());
+        } else if (standaloneLeadId != null) {
+            builder.leadId(standaloneLeadId);
         }
 
         Booking booking = builder.build();

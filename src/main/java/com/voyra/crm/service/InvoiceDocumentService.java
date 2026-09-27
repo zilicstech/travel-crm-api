@@ -140,6 +140,7 @@ public class InvoiceDocumentService {
                 .agencyStateCode(agency.getStateCode())
                 .agencyAddress(agency.getAddress())
                 .bookingId(booking.getId())
+                .leadId(booking.getLeadId())
                 .agentId(booking.getAgentId())
                 .createdAt(LocalDateTime.now())
                 .createdBy(currentUserId())

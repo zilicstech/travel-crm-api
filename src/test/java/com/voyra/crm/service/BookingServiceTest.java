@@ -60,6 +60,8 @@ class BookingServiceTest {
     @Mock
     private LeadServiceRepository leadServiceRepository;
     @Mock
+    private com.voyra.crm.repository.LeadRepository leadRepository;
+    @Mock
     private CreditNoteRepository creditNoteRepository;
     @Mock
     private InvoiceRepository invoiceRepository;

@@ -58,6 +58,8 @@ class BookingProfitTest {
     @Mock
     private LeadServiceRepository leadServiceRepository;
     @Mock
+    private com.voyra.crm.repository.LeadRepository leadRepository;
+    @Mock
     private CreditNoteRepository creditNoteRepository;
     @Mock
     private InvoiceRepository invoiceRepository;
@@ -112,6 +114,27 @@ class BookingProfitTest {
 
         assertThat(response.getProfit()).isEqualByComparingTo("10000");
         org.mockito.Mockito.verifyNoInteractions(supplierInvoiceService);
+    }
+
+    @Test
+    void aStandaloneBookingCanStillNameTheLeadItCameFrom() {
+        when(agentRepository.findById("A1")).thenReturn(Optional.of(Agent.builder().id("A1").name("Liam").build()));
+        when(clientRepository.findById("K1")).thenReturn(Optional.of(Client.builder().id("K1").name("Jane").build()));
+        when(bookingRepository.existsById(anyString())).thenReturn(false);
+        when(leadRepository.findById("L1")).thenReturn(Optional.of(com.voyra.crm.entity.Lead.builder().id("L1").build()));
+
+        BookingCreateRequest request = new BookingCreateRequest();
+        request.setClientId("K1");
+        request.setLeadId("L1");
+        // No serviceId - this is the standalone Bookings-tab path, not a lead's service tab.
+        request.setType(BookingType.FLIGHT);
+        request.setDestination("Dubai");
+        request.setNetCost(new BigDecimal("42000"));
+        request.setSellingPrice(new BigDecimal("52000"));
+
+        BookingResponse response = bookingService.createBooking(request);
+
+        assertThat(response.getLeadId()).isEqualTo("L1");
     }
 
     @Test
