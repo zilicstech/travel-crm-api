@@ -77,6 +77,8 @@ class BookingProfitTest {
     private ServiceInstanceService serviceInstanceService;
     @Mock
     private ServiceBookingStatusSync serviceBookingStatusSync;
+    @Mock
+    private SupplierInvoiceService supplierInvoiceService;
 
     @InjectMocks
     private BookingService bookingService;
@@ -109,6 +111,48 @@ class BookingProfitTest {
         BookingResponse response = bookingService.createBooking(request);
 
         assertThat(response.getProfit()).isEqualByComparingTo("10000");
+        org.mockito.Mockito.verifyNoInteractions(supplierInvoiceService);
+    }
+
+    @Test
+    void bookingWithNoVendorNeverAutoDraftsASupplierBill() {
+        when(agentRepository.findById("A1")).thenReturn(Optional.of(Agent.builder().id("A1").name("Liam").build()));
+        when(clientRepository.findById("K1")).thenReturn(Optional.of(Client.builder().id("K1").name("Jane").build()));
+        when(bookingRepository.existsById(anyString())).thenReturn(false);
+
+        BookingCreateRequest request = new BookingCreateRequest();
+        request.setClientId("K1");
+        request.setType(BookingType.FLIGHT);
+        request.setDestination("Dubai");
+        request.setNetCost(new BigDecimal("42000"));
+        request.setSellingPrice(new BigDecimal("52000"));
+        // supplier typed free-text, no vendorId picked from the vendor master.
+        request.setSupplier("Some Travel Agency");
+
+        bookingService.createBooking(request);
+
+        org.mockito.Mockito.verifyNoInteractions(supplierInvoiceService);
+    }
+
+    @Test
+    void bookingWithAVendorAndPositiveCostAutoDraftsTheSupplierBill() {
+        when(agentRepository.findById("A1")).thenReturn(Optional.of(Agent.builder().id("A1").name("Liam").build()));
+        when(clientRepository.findById("K1")).thenReturn(Optional.of(Client.builder().id("K1").name("Jane").build()));
+        when(bookingRepository.existsById(anyString())).thenReturn(false);
+
+        BookingCreateRequest request = new BookingCreateRequest();
+        request.setClientId("K1");
+        request.setType(BookingType.FLIGHT);
+        request.setDestination("Dubai");
+        request.setNetCost(new BigDecimal("42000"));
+        request.setSellingPrice(new BigDecimal("52000"));
+        request.setVendorId("V1");
+
+        bookingService.createBooking(request);
+
+        org.mockito.ArgumentCaptor<Booking> bookingCaptor = org.mockito.ArgumentCaptor.forClass(Booking.class);
+        org.mockito.Mockito.verify(supplierInvoiceService).createAutoDraft(bookingCaptor.capture(), org.mockito.ArgumentMatchers.eq("V1"));
+        assertThat(bookingCaptor.getValue().getNetCost()).isEqualByComparingTo("42000");
     }
 
     @Test

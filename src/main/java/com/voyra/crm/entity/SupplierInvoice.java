@@ -218,6 +218,13 @@ public class SupplierInvoice {
     @Column(name = "notes", length = 1000)
     private String notes;
 
+    /** True when this DRAFT was created automatically from a booking (see
+     *  {@code SupplierInvoiceService#createAutoDraft}), not typed by an accountant - drives
+     *  the Payables "Awaiting confirmation" filter. Never true once approved. */
+    @Column(name = "auto_drafted", nullable = false)
+    @Builder.Default
+    private Boolean autoDrafted = false;
+
     @Column(name = "file_key", length = 500)
     private String fileKey;
 

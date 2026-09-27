@@ -75,6 +75,9 @@ public class BookingResponse {
     @Schema(example = "Cleartrip")
     private String supplier;
 
+    @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
+    private String vendorId;
+
     @Schema(example = "2026-09-15")
     private LocalDate journeyDate;
 

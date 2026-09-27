@@ -101,6 +101,7 @@ public class BookingService {
     private final LeadTimelineService leadTimelineService;
     private final ServiceInstanceService serviceInstanceService;
     private final ServiceBookingStatusSync serviceBookingStatusSync;
+    private final SupplierInvoiceService supplierInvoiceService;
 
     @Transactional
     public BookingResponse createBooking(BookingCreateRequest request) {
@@ -134,6 +135,7 @@ public class BookingService {
                 .ticketNo(request.getTicketNo())
                 .airline(request.getAirline())
                 .supplier(request.getSupplier())
+                .vendorId(request.getVendorId())
                 .journeyDate(request.getJourneyDate())
                 .returnDate(request.getReturnDate())
                 .tripType(request.getTripType())
@@ -188,6 +190,13 @@ public class BookingService {
         bookingRepository.save(booking);
         if (request.getPassengers() != null) {
             replacePassengers(booking.getId(), request.getPassengers());
+        }
+        // A booking placed with a real Vendor (not just a free-text supplier name) drafts its
+        // own supplier bill - the accountant confirms it against the paper invoice later
+        // (Accounts ▸ Suppliers ▸ Awaiting confirmation) rather than starting one from scratch.
+        if (request.getVendorId() != null && !request.getVendorId().isBlank()
+                && request.getNetCost().compareTo(BigDecimal.ZERO) > 0) {
+            supplierInvoiceService.createAutoDraft(booking, request.getVendorId());
         }
         auditService.recordCreate(AuditEntityType.BOOKING, booking.getId(), labelFor(booking));
 
@@ -510,7 +519,7 @@ public class BookingService {
                 .serviceLabel(b.getServiceLabel()).serviceAgentId(b.getServiceAgentId()).serviceAgentName(b.getServiceAgentName())
                 .type(b.getType())
                 .destination(b.getDestination()).pnr(b.getPnr()).ticketNo(b.getTicketNo())
-                .airline(b.getAirline()).supplier(b.getSupplier()).journeyDate(b.getJourneyDate())
+                .airline(b.getAirline()).supplier(b.getSupplier()).vendorId(b.getVendorId()).journeyDate(b.getJourneyDate())
                 .returnDate(b.getReturnDate()).tripType(b.getTripType()).notes(b.getNotes())
                 .flightNumber(b.getFlightNumber()).flightFrom(b.getFlightFrom()).flightTo(b.getFlightTo())
                 .flightCabin(b.getFlightCabin())

@@ -66,4 +66,7 @@ public class SupplierInvoiceListItemResponse {
 
     @Schema(example = "false")
     private Boolean overdue;
+
+    @Schema(description = "True when this DRAFT was created automatically from the booking, not typed by an accountant", example = "false")
+    private Boolean autoDrafted;
 }

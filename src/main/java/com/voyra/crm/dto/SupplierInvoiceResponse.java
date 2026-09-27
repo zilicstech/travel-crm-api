@@ -167,6 +167,9 @@ public class SupplierInvoiceResponse {
     @Schema(example = "Advance booking, GST invoice to follow")
     private String notes;
 
+    @Schema(description = "True when this DRAFT was created automatically from the booking, not typed by an accountant", example = "false")
+    private Boolean autoDrafted;
+
     @Schema(example = "true")
     private Boolean hasFile;
 

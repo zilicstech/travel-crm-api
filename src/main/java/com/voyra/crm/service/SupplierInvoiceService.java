@@ -102,6 +102,67 @@ public class SupplierInvoiceService {
         return toResponse(invoice, lines);
     }
 
+    /**
+     * Called from {@code BookingService#createBooking} the moment a booking is placed with a
+     * real Vendor and a positive net cost - drafts the matching bill at that cost so the
+     * accountant confirms it against the supplier's real invoice (Accounts ▸ Suppliers ▸
+     * Awaiting confirmation) instead of starting one from scratch. A DRAFT posts nothing to
+     * the ledger - only {@link #approve} does - so nothing here understates or overstates the
+     * vendor's balance until a human has looked at it. GST is left at zero: the agent's net
+     * cost is an estimate, not what the supplier will actually bill tax on.
+     */
+    @Transactional
+    public SupplierInvoiceResponse createAutoDraft(Booking booking, String vendorId) {
+        Vendor vendor = findVendor(vendorId);
+
+        SupplierInvoice invoice = SupplierInvoice.builder()
+                .id(UniqueIdResolver.resolve(supplierInvoiceRepository::existsById))
+                .vendorId(vendor.getId())
+                .vendorName(vendor.getName())
+                .status(SupplierInvoiceStatus.DRAFT)
+                .kind(com.voyra.crm.enums.SupplierInvoiceKind.PURCHASE)
+                .category(booking.getType())
+                .supplierGstin(vendor.getGstNumber())
+                .supplierStateCode(vendor.getStateCode())
+                .invoiceDate(LocalDate.now())
+                .receivedOn(LocalDate.now())
+                .bookingId(booking.getId())
+                .leadId(booking.getLeadId())
+                .serviceType(booking.getServiceType())
+                .referenceNote(booking.getPnr())
+                .currencyCode("INR")
+                .fxRateToInr(BigDecimal.ONE)
+                .fxRateSource("INR_IDENTITY")
+                .itcEligibility(com.voyra.crm.enums.ItcEligibility.ELIGIBLE)
+                .isReverseCharge(false)
+                .tdsRatePercent(BigDecimal.ZERO)
+                .autoDrafted(true)
+                .notes("Drafted automatically from booking " + booking.getId()
+                        + " at the agent's net cost - confirm against the supplier's real invoice before approving.")
+                .createdDate(LocalDateTime.now())
+                .createdBy(currentUserId())
+                .build();
+
+        SupplierInvoiceLineItemRequest line = new SupplierInvoiceLineItemRequest();
+        line.setDescription((booking.getDestination() != null ? booking.getDestination() : "Booking") + " - " + booking.getId());
+        line.setServiceType(booking.getServiceType());
+        line.setQuantity(BigDecimal.ONE);
+        line.setUnitPrice(booking.getNetCost());
+        line.setGstRatePercent(BigDecimal.ZERO);
+        line.setCgstAmount(BigDecimal.ZERO);
+        line.setSgstAmount(BigDecimal.ZERO);
+        line.setIgstAmount(BigDecimal.ZERO);
+
+        List<SupplierInvoiceLineItem> lines = applyLines(invoice, List.of(line));
+        supplierInvoiceRepository.save(invoice);
+        lineItemRepository.saveAll(lines);
+
+        auditService.recordCreate(AuditEntityType.SUPPLIER_INVOICE, invoice.getId(), labelFor(invoice));
+        log.info("Supplier bill auto-drafted from booking: id={}, bookingId={}, vendorId={}",
+                invoice.getId(), booking.getId(), vendor.getId());
+        return toResponse(invoice, lines);
+    }
+
     @Transactional
     public SupplierInvoiceResponse updateDraft(String id, SupplierInvoiceDraftRequest request) {
         SupplierInvoice invoice = findById(id);
@@ -423,6 +484,7 @@ public class SupplierInvoiceService {
                 .currencyCode(i.getCurrencyCode()).grandTotal(i.getGrandTotal()).grandTotalInr(i.getGrandTotalInr())
                 .balanceDue(i.getBalanceDue()).balanceDueInr(i.getBalanceDueInr())
                 .invoiceDate(i.getInvoiceDate()).dueDate(i.getDueDate()).overdue(overdue)
+                .autoDrafted(i.getAutoDrafted())
                 .build();
     }
 
@@ -451,7 +513,7 @@ public class SupplierInvoiceService {
                 .balanceDue(i.getBalanceDue()).balanceDueInr(i.getBalanceDueInr())
                 .approvedAt(i.getApprovedAt()).approvedBy(i.getApprovedBy())
                 .cancelledAt(i.getCancelledAt()).cancelledBy(i.getCancelledBy()).cancelReason(i.getCancelReason())
-                .notes(i.getNotes()).hasFile(i.getFileKey() != null).createdDate(i.getCreatedDate())
+                .notes(i.getNotes()).autoDrafted(i.getAutoDrafted()).hasFile(i.getFileKey() != null).createdDate(i.getCreatedDate())
                 .lines(lines.stream().map(SupplierInvoiceService::toLineResponse).toList())
                 .build();
     }

@@ -52,6 +52,11 @@ public class BookingCreateRequest {
     @Schema(description = "Supplier/vendor this was booked through", example = "Cleartrip")
     private String supplier;
 
+    @Schema(description = "The Vendor this was booked with, when picked from the vendor master rather "
+            + "than typed - if set together with a positive netCost, a DRAFT supplier bill is drafted "
+            + "automatically for the accountant to confirm.", example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
+    private String vendorId;
+
     @Schema(description = "Outbound travel date", example = "2026-09-15")
     private LocalDate journeyDate;
 
