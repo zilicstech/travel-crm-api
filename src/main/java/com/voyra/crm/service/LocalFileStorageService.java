@@ -4,6 +4,7 @@ import com.voyra.crm.util.IdGenerator;
 import com.voyra.crm.util.TenantSchemaUtil;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.UrlResource;
 import org.springframework.stereotype.Service;
@@ -21,6 +22,7 @@ import java.nio.file.Paths;
  * - callers only ever handle this key, never a filesystem path.
  */
 @Service
+@ConditionalOnProperty(name = "app.storage.provider", havingValue = "local", matchIfMissing = true)
 @Slf4j
 public class LocalFileStorageService implements FileStorageService {
 

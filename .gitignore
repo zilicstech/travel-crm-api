@@ -1,5 +1,6 @@
 target/
 .env
+secrets/
 *.iml
 .idea/
 .vscode/

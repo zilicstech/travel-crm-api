@@ -110,6 +110,13 @@
             <version>1.19.0</version>
         </dependency>
 
+        <!-- GCS file storage (app.storage.provider=gcs) -->
+        <dependency>
+            <groupId>com.google.cloud</groupId>
+            <artifactId>google-cloud-storage</artifactId>
+            <version>2.40.1</version>
+        </dependency>
+
         <!-- Boilerplate -->
         <dependency>
             <groupId>org.projectlombok</groupId>
