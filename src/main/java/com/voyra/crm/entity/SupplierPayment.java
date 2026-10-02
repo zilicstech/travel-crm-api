@@ -87,6 +87,14 @@ public class SupplierPayment {
     @Builder.Default
     private BigDecimal tdsWithheld = BigDecimal.ZERO;
 
+    /** Null for an INR bill or an advance - set only when a foreign bill is settled at a rate different from its own (Rule 3.4.1). */
+    @Column(name = "settlement_fx_rate", precision = 18, scale = 6)
+    private BigDecimal settlementFxRate;
+
+    /** fx_rate_to_inr (bill rate) vs settlement_fx_rate, times the foreign amount - the exact figure posted to 5700/4700. Null when there is nothing to vary. */
+    @Column(name = "fx_variance_inr", precision = 19, scale = 2)
+    private BigDecimal fxVarianceInr;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "payment_mode", nullable = false, length = 20)
     private PaymentMode paymentMode;
@@ -96,6 +104,10 @@ public class SupplierPayment {
 
     @Column(name = "bank_account_label", length = 150)
     private String bankAccountLabel;
+
+    /** Set only once a bank_transaction confirms this payment against a real statement line (Rule 4.1.3) - never required. */
+    @Column(name = "bank_account_id", length = 36)
+    private String bankAccountId;
 
     @Column(name = "paid_on", nullable = false)
     private LocalDate paidOn;

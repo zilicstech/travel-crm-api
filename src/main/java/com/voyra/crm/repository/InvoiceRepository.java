@@ -29,6 +29,9 @@ public interface InvoiceRepository extends JpaRepository<Invoice, String>, JpaSp
 
     Optional<Invoice> findByInvoiceNumber(String invoiceNumber);
 
+    /** Bank-reconciliation tier-1 amount narrowing (Rule 4.3) - open invoices whose outstanding balance equals the bank line's amount exactly. */
+    List<Invoice> findByStatusInAndBalanceDueInr(List<InvoiceLifecycle> statuses, BigDecimal balanceDueInr);
+
     /** Scoping helper: payment_receipt carries no agent_id column, so an Agent's receipt list is filtered by their invoice ids. */
     @Query("SELECT i.id FROM Invoice i WHERE i.agentId = :agentId")
     List<String> findIdsByAgentId(@Param("agentId") String agentId);
@@ -52,4 +55,18 @@ public interface InvoiceRepository extends JpaRepository<Invoice, String>, JpaSp
     /** Revenue recognition job input (ACCOUNTING_EXPANSION_ARCHITECTURE.md Rule 2.3/2.4) - every
      *  live, invoiced sale against a booking whose departure has arrived. */
     List<Invoice> findByBookingIdInAndStatusIn(List<String> bookingIds, List<InvoiceLifecycle> statuses);
+
+    /**
+     * TCS threshold accumulation input ({@code TaxEngine#compute}): this client's overseas-package
+     * consideration already booked this financial year, excluding DRAFT (never issued, so not yet
+     * a real sale) and CANCELLED. A still-DRAFT invoice is naturally excluded without needing an
+     * explicit "exclude this id" parameter - it only joins the accumulation once it is actually
+     * issued, by which point a later invoice's preview correctly sees it.
+     */
+    @Query("SELECT COALESCE(SUM(i.taxableValueInr), 0) FROM Invoice i "
+            + "WHERE i.clientId = :clientId AND i.supplyNature = :supplyNature AND i.financialYear = :financialYear "
+            + "AND i.status NOT IN (com.voyra.crm.enums.InvoiceLifecycle.DRAFT, com.voyra.crm.enums.InvoiceLifecycle.CANCELLED)")
+    BigDecimal sumConsiderationForClientInFy(@Param("clientId") String clientId,
+                                              @Param("supplyNature") com.voyra.crm.enums.SupplyNature supplyNature,
+                                              @Param("financialYear") String financialYear);
 }

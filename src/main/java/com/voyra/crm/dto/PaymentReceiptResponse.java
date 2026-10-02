@@ -61,6 +61,21 @@ public class PaymentReceiptResponse {
     @Schema(example = "HDFC Current A/c 001")
     private String bankAccountLabel;
 
+    @Schema(example = "Razorpay")
+    private String gatewayProvider;
+
+    @Schema(example = "pay_P8qN2xK3Jd")
+    private String gatewayTxnRef;
+
+    @Schema(example = "840.00")
+    private BigDecimal gatewayFee;
+
+    @Schema(example = "840.00")
+    private BigDecimal gatewayFeeInr;
+
+    @Schema(description = "amountInr minus gatewayFeeInr - what actually hit the bank", example = "41160.00")
+    private BigDecimal netDepositInr;
+
     @Schema(example = "2026-09-19")
     private LocalDate receivedOn;
 

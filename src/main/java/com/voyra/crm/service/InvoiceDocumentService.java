@@ -326,32 +326,19 @@ public class InvoiceDocumentService {
         return toResponse(invoice, lines);
     }
 
+    /**
+     * Retired per ACCOUNTING_REDESIGN_SPEC.md §5.2: "proforma" is not a word a non-accounts
+     * operator understands, and the legacy software this module reproduces has no such state at
+     * all. {@code InvoiceDocumentType.PROFORMA}/{@code InvoiceLifecycle.PROFORMA_ISSUED} stay in
+     * their enums so an already-issued historical proforma keeps reading and printing correctly
+     * - this method only blocks creating a NEW one. If an advance-request document is wanted
+     * again later, the spec's own recommendation is a separate document called a Payment Request
+     * or Estimate, never a state of an invoice.
+     */
     @Transactional
     public InvoiceResponse issueProforma(String id) {
-        Invoice invoice = findById(id);
-        InvoiceLifecyclePolicy.assertProformaIssuable(invoice.getStatus());
-
-        List<InvoiceLineItem> lines = invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc(id);
-        if (lines.isEmpty()) {
-            throw new IllegalStateException("At least one line is required to issue a proforma");
-        }
-
-        LocalDate today = LocalDate.now();
-        String number = documentNumberService.next(DocumentKind.PROFORMA, today);
-
-        invoice.setInvoiceNumber(number);
-        invoice.setFinancialYear(FinancialYear.of(today));
-        invoice.setDocumentType(InvoiceDocumentType.PROFORMA);
-        invoice.setStatus(InvoiceLifecycle.PROFORMA_ISSUED);
-        invoice.setInvoiceDate(today);
-        invoice.setIssuedAt(LocalDateTime.now());
-        invoice.setIssuedBy(currentUserId());
-        invoice.setFxLockedAt(LocalDateTime.now());
-        invoiceRepository.save(invoice);
-
-        auditService.recordCreate(AuditEntityType.INVOICE, invoice.getId(), invoice.getInvoiceNumber());
-        log.info("Proforma issued: id={}, number={}", invoice.getId(), number);
-        return toResponse(invoice, lines);
+        throw new IllegalStateException(
+                "Proforma has been retired - finalise the invoice directly instead of issuing a proforma first");
     }
 
     /**

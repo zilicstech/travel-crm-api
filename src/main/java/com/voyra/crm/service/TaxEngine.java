@@ -8,15 +8,18 @@ import com.voyra.crm.enums.TaxKind;
 import com.voyra.crm.enums.TaxTreatment;
 import com.voyra.crm.models.TaxComputationRequest;
 import com.voyra.crm.models.TaxComputationResult;
+import com.voyra.crm.repository.InvoiceRepository;
 import com.voyra.crm.repository.TaxRateConfigRepository;
 import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.security.SecurityContextUtil;
+import com.voyra.crm.util.FinancialYear;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDate;
 
 /**
  * Computes GST and TCS for one taxable amount. Reads {@code tax_rate_config} and the current
@@ -35,6 +38,7 @@ public class TaxEngine {
     private final ClientService clientService;
     private final TenantRepository tenantRepository;
     private final TaxRateConfigRepository taxRateConfigRepository;
+    private final InvoiceRepository invoiceRepository;
 
     @Transactional(readOnly = true)
     public TaxComputationResult compute(TaxComputationRequest request) {
@@ -82,10 +86,8 @@ public class TaxEngine {
                     .orElse(null);
             if (tcsConfig != null) {
                 tcsRate = tcsConfig.getRatePercent();
-                // Per-client, per-financial-year threshold accumulation needs invoice history,
-                // which does not exist until Epic 3 - applied flat here, threshold enforcement
-                // lands with InvoiceRepository.sumOverseasConsiderationForClientInFy.
-                tcsBase = request.taxableAmount();
+                tcsBase = taxableAboveThreshold(request.clientId(), request.supplyNature(),
+                        request.taxableAmount(), tcsConfig.getThresholdAmount());
                 tcsAmount = pct(tcsBase, tcsRate);
                 tcsSection = tcsConfig.getTcsSection();
             }
@@ -172,6 +174,34 @@ public class TaxEngine {
                 BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
                 BigDecimal.ZERO, null, BigDecimal.ZERO, BigDecimal.ZERO,
                 request.taxableAmount());
+    }
+
+    /**
+     * TCS threshold, config-driven rather than hardcoded (the actual figure changes by Finance
+     * Act year to year - the Agency Owner adjusts {@code TaxRateConfig.thresholdAmount} under
+     * Tax Settings, never a code change). Only the portion of THIS invoice's consideration that
+     * pushes the client's cumulative overseas-package sales this financial year past the
+     * threshold is taxable; a null/zero threshold taxes the whole amount, matching the old flat
+     * behaviour. Worked example: threshold 700000, rate 5%, client already at 600000 this FY,
+     * this invoice is 300000 -> cumulative 900000 crosses the threshold by 200000, so TCS applies
+     * to 200000, not the full 300000.
+     */
+    private BigDecimal taxableAboveThreshold(String clientId, SupplyNature supplyNature,
+                                              BigDecimal taxableAmount, BigDecimal thresholdAmount) {
+        BigDecimal threshold = thresholdAmount != null ? thresholdAmount : BigDecimal.ZERO;
+        if (threshold.compareTo(BigDecimal.ZERO) <= 0) {
+            return taxableAmount;
+        }
+        String financialYear = FinancialYear.of(LocalDate.now());
+        BigDecimal priorConsideration = invoiceRepository.sumConsiderationForClientInFy(clientId, supplyNature, financialYear);
+        BigDecimal cumulative = priorConsideration.add(taxableAmount);
+        if (cumulative.compareTo(threshold) <= 0) {
+            return BigDecimal.ZERO;
+        }
+        if (priorConsideration.compareTo(threshold) >= 0) {
+            return taxableAmount;
+        }
+        return cumulative.subtract(threshold);
     }
 
     private Tenant currentAgency() {

@@ -9,6 +9,7 @@ import com.voyra.crm.enums.TaxTreatment;
 import com.voyra.crm.enums.UserType;
 import com.voyra.crm.models.TaxComputationRequest;
 import com.voyra.crm.models.TaxComputationResult;
+import com.voyra.crm.repository.InvoiceRepository;
 import com.voyra.crm.repository.TaxRateConfigRepository;
 import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
@@ -29,6 +30,8 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
 /**
@@ -44,6 +47,8 @@ class TaxEngineTest {
     private TenantRepository tenantRepository;
     @Mock
     private TaxRateConfigRepository taxRateConfigRepository;
+    @Mock
+    private InvoiceRepository invoiceRepository;
 
     @InjectMocks
     private TaxEngine taxEngine;
@@ -177,6 +182,11 @@ class TaxEngineTest {
                         .thresholdAmount(new BigDecimal("700000.00")).tcsSection("206C(1G)")
                         .effectiveFrom(LocalDate.now()).isDefault(true).isActive(true)
                         .build()));
+        // Prior consideration already sits exactly at the threshold, so this invoice's full
+        // 100000 is taxable - preserves this test's original intent (TCS on the whole amount)
+        // now that taxableAboveThreshold exists.
+        when(invoiceRepository.sumConsiderationForClientInFy(eq("K7"), eq(SupplyNature.OVERSEAS_PACKAGE), any()))
+                .thenReturn(new BigDecimal("700000.00"));
 
         TaxComputationResult result = taxEngine.compute(new TaxComputationRequest(
                 "K7", new BigDecimal("100000.00"), SupplyNature.OVERSEAS_PACKAGE, null, false, "INR"));
@@ -186,6 +196,53 @@ class TaxEngineTest {
         assertThat(result.tcsSection()).isEqualTo("206C(1G)");
         assertThat(result.tcsAmount()).isEqualByComparingTo("5000.00");
         assertThat(result.grandTotal()).isEqualByComparingTo("110000.00");
+    }
+
+    @Test
+    void overseasPackageTcsAppliesOnlyToTheAmountAboveTheCumulativeThreshold() {
+        when(clientService.findAccessibleClient("K9")).thenReturn(
+                Client.builder().id("K9").name("Traveller").stateCode("27").isOverseas(false).build());
+        when(taxRateConfigRepository.findByTaxKindAndSupplyNatureAndIsDefaultTrueAndIsActiveTrue(TaxKind.GST, SupplyNature.OVERSEAS_PACKAGE))
+                .thenReturn(Optional.of(gstConfig(SupplyNature.OVERSEAS_PACKAGE, "5.000")));
+        when(taxRateConfigRepository.findByTaxKindAndSupplyNatureAndIsDefaultTrueAndIsActiveTrue(TaxKind.TCS, SupplyNature.OVERSEAS_PACKAGE))
+                .thenReturn(Optional.of(TaxRateConfig.builder()
+                        .id("TCS2").taxKind(TaxKind.TCS).label("Overseas TCS")
+                        .supplyNature(SupplyNature.OVERSEAS_PACKAGE).ratePercent(new BigDecimal("5.000"))
+                        .thresholdAmount(new BigDecimal("700000.00")).tcsSection("206C(1G)")
+                        .effectiveFrom(LocalDate.now()).isDefault(true).isActive(true)
+                        .build()));
+        // Worked example from the architecture note: client already at 600000 this FY, this
+        // invoice is 300000 -> cumulative 900000 crosses the 700000 threshold by 200000, so TCS
+        // applies to 200000, not the full 300000.
+        when(invoiceRepository.sumConsiderationForClientInFy(eq("K9"), eq(SupplyNature.OVERSEAS_PACKAGE), any()))
+                .thenReturn(new BigDecimal("600000.00"));
+
+        TaxComputationResult result = taxEngine.compute(new TaxComputationRequest(
+                "K9", new BigDecimal("300000.00"), SupplyNature.OVERSEAS_PACKAGE, null, false, "INR"));
+
+        assertThat(result.tcsAmount()).isEqualByComparingTo("10000.00"); // 200000 * 5%
+    }
+
+    @Test
+    void overseasPackageUnderTheCumulativeThresholdIncursNoTcs() {
+        when(clientService.findAccessibleClient("K10")).thenReturn(
+                Client.builder().id("K10").name("Traveller").stateCode("27").isOverseas(false).build());
+        when(taxRateConfigRepository.findByTaxKindAndSupplyNatureAndIsDefaultTrueAndIsActiveTrue(TaxKind.GST, SupplyNature.OVERSEAS_PACKAGE))
+                .thenReturn(Optional.of(gstConfig(SupplyNature.OVERSEAS_PACKAGE, "5.000")));
+        when(taxRateConfigRepository.findByTaxKindAndSupplyNatureAndIsDefaultTrueAndIsActiveTrue(TaxKind.TCS, SupplyNature.OVERSEAS_PACKAGE))
+                .thenReturn(Optional.of(TaxRateConfig.builder()
+                        .id("TCS3").taxKind(TaxKind.TCS).label("Overseas TCS")
+                        .supplyNature(SupplyNature.OVERSEAS_PACKAGE).ratePercent(new BigDecimal("5.000"))
+                        .thresholdAmount(new BigDecimal("700000.00")).tcsSection("206C(1G)")
+                        .effectiveFrom(LocalDate.now()).isDefault(true).isActive(true)
+                        .build()));
+        when(invoiceRepository.sumConsiderationForClientInFy(eq("K10"), eq(SupplyNature.OVERSEAS_PACKAGE), any()))
+                .thenReturn(BigDecimal.ZERO);
+
+        TaxComputationResult result = taxEngine.compute(new TaxComputationRequest(
+                "K10", new BigDecimal("100000.00"), SupplyNature.OVERSEAS_PACKAGE, null, false, "INR"));
+
+        assertThat(result.tcsAmount()).isEqualByComparingTo("0.00");
     }
 
     @Test

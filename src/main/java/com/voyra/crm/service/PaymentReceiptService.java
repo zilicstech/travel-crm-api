@@ -99,6 +99,7 @@ public class PaymentReceiptService {
                 .createdAt(LocalDateTime.now())
                 .createdBy(actor)
                 .build();
+        applyGatewayFields(receipt, request, invoice.getFxRateToInr());
         paymentReceiptRepository.save(receipt);
         postForReceipt(receipt);
         postForReceiptJournal(receipt, isProforma);
@@ -151,6 +152,7 @@ public class PaymentReceiptService {
                 .createdAt(LocalDateTime.now())
                 .createdBy(actor)
                 .build();
+        applyGatewayFields(receipt, request, BigDecimal.ONE);
         paymentReceiptRepository.save(receipt);
         postForReceipt(receipt);
         postForReceiptJournal(receipt, true);
@@ -393,11 +395,16 @@ public class PaymentReceiptService {
     }
 
     /**
-     * Posting-rule-table rows 4/5 - a brand-new (non-reversal) receipt only; a reversal row is
-     * handled by {@link #reverseReceiptJournal}, which reverses the ORIGINAL entry rather than
-     * posting a fresh one, per Rule 1.6.2. {@code isProforma} (or no invoice at all) routes to
-     * row 5 - cash held with nothing real to attach it to yet is exactly what Client Advances
-     * Held means, whether or not a proforma happens to exist for it.
+     * Posting-rule-table rows 4/5 (and 15 for a gateway receipt) - a brand-new (non-reversal)
+     * receipt only; a reversal row is handled by {@link #reverseReceiptJournal}, which reverses
+     * the ORIGINAL entry rather than posting a fresh one, per Rule 1.6.2. {@code isProforma} (or
+     * no invoice at all) routes to row 5 - cash held with nothing real to attach it to yet is
+     * exactly what Client Advances Held means, whether or not a proforma happens to exist for it.
+     *
+     * <p>Decision 5 Rule 5.3: a gateway fee never reduces what clears the client's side - the
+     * credit line is always the full gross {@code amountInr}. The fee splits the DEBIT side
+     * instead: {@code netDepositInr} actually reaches the bank, {@code gatewayFeeInr} is an
+     * agency expense (5610), and the two sum back to the gross credit so the entry still balances.
      */
     private void postForReceiptJournal(PaymentReceipt receipt, boolean isProforma) {
         BigDecimal amountInr = receipt.getAmountInr();
@@ -405,8 +412,10 @@ public class PaymentReceiptService {
             return;
         }
         boolean isDeposit = receipt.getInvoiceId() == null || isProforma;
-        com.voyra.crm.enums.JournalPurpose purpose = isDeposit
-                ? com.voyra.crm.enums.JournalPurpose.RECEIPT_ADVANCE
+        boolean hasGatewayFee = receipt.getGatewayFeeInr() != null && receipt.getGatewayFeeInr().compareTo(BigDecimal.ZERO) > 0;
+        com.voyra.crm.enums.JournalPurpose purpose = hasGatewayFee
+                ? com.voyra.crm.enums.JournalPurpose.GATEWAY_RECEIPT
+                : isDeposit ? com.voyra.crm.enums.JournalPurpose.RECEIPT_ADVANCE
                 : com.voyra.crm.enums.JournalPurpose.RECEIPT_AGAINST_INVOICE;
         String creditAccount = isDeposit
                 ? com.voyra.crm.enums.SystemAccount.CLIENT_ADVANCES_HELD.code()
@@ -416,12 +425,35 @@ public class PaymentReceiptService {
                 : com.voyra.crm.enums.SystemAccount.BANK_ACCOUNTS.code();
         String narration = "Receipt " + receipt.getReceiptNumber() + " recorded";
 
+        List<com.voyra.crm.models.JournalLinePosting> lines = new ArrayList<>();
+        if (hasGatewayFee) {
+            BigDecimal netInr = receipt.getNetDepositInr() != null ? receipt.getNetDepositInr() : amountInr.subtract(receipt.getGatewayFeeInr());
+            lines.add(com.voyra.crm.models.JournalLinePosting.debit(debitAccount, netInr, narration));
+            lines.add(com.voyra.crm.models.JournalLinePosting.debit(
+                    com.voyra.crm.enums.SystemAccount.PAYMENT_PROCESSING_FEES.code(), receipt.getGatewayFeeInr(),
+                    "Gateway fee on receipt " + receipt.getReceiptNumber()));
+        } else {
+            lines.add(com.voyra.crm.models.JournalLinePosting.debit(debitAccount, amountInr, narration));
+        }
+        lines.add(com.voyra.crm.models.JournalLinePosting.creditParty(
+                creditAccount, "CLIENT", receipt.getClientId(), amountInr, narration));
+
         journalService.post(new com.voyra.crm.models.JournalPosting(
                 receipt.getReceivedOn(), com.voyra.crm.enums.JournalSourceType.RECEIPT, receipt.getId(), purpose,
-                narration, receipt.getBookingId(), null, List.of(
-                        com.voyra.crm.models.JournalLinePosting.debit(debitAccount, amountInr, narration),
-                        com.voyra.crm.models.JournalLinePosting.creditParty(
-                                creditAccount, "CLIENT", receipt.getClientId(), amountInr, narration))));
+                narration, receipt.getBookingId(), null, lines));
+    }
+
+    /** Decision 5 - optional gateway fields on a brand-new receipt. A no-op when gatewayFee is absent or zero. */
+    private void applyGatewayFields(PaymentReceipt receipt, PaymentReceiptRequest request, BigDecimal fxRateToInr) {
+        if (request.getGatewayFee() == null || request.getGatewayFee().compareTo(BigDecimal.ZERO) <= 0) {
+            return;
+        }
+        BigDecimal feeInr = scaleToInr(request.getGatewayFee(), fxRateToInr);
+        receipt.setGatewayProvider(request.getGatewayProvider());
+        receipt.setGatewayTxnRef(request.getGatewayTxnRef());
+        receipt.setGatewayFee(request.getGatewayFee());
+        receipt.setGatewayFeeInr(feeInr);
+        receipt.setNetDepositInr(receipt.getAmountInr().subtract(feeInr));
     }
 
     /** Posting-rule-table row 6 - moves a balance from the client's wallet onto this invoice's receivable. */
@@ -506,6 +538,8 @@ public class PaymentReceiptService {
                 .bookingId(r.getBookingId()).currencyCode(r.getCurrencyCode()).fxRateToInr(r.getFxRateToInr())
                 .amount(r.getAmount()).amountInr(r.getAmountInr()).paymentMode(r.getPaymentMode())
                 .instrumentRef(r.getInstrumentRef()).bankAccountLabel(r.getBankAccountLabel())
+                .gatewayProvider(r.getGatewayProvider()).gatewayTxnRef(r.getGatewayTxnRef())
+                .gatewayFee(r.getGatewayFee()).gatewayFeeInr(r.getGatewayFeeInr()).netDepositInr(r.getNetDepositInr())
                 .receivedOn(r.getReceivedOn()).isAdvance(r.getIsAdvance()).appliedFromAdvance(r.getAppliedFromAdvance())
                 .reversesReceiptId(r.getReversesReceiptId()).reversedAt(r.getReversedAt())
                 .reversedBy(r.getReversedBy()).reversalReason(r.getReversalReason())

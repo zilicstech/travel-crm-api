@@ -54,7 +54,8 @@ public class JournalEntry {
     @Column(name = "source_type", nullable = false, length = 30)
     private JournalSourceType sourceType;
 
-    @Column(name = "source_id", length = 36)
+    /** Usually a 36-char entity id; a period-qualified revaluation source ("&lt;bill id&gt;@&lt;yyyyMM&gt;", V47) needs more. */
+    @Column(name = "source_id", length = 50)
     private String sourceId;
 
     @Enumerated(EnumType.STRING)

@@ -61,6 +61,7 @@ public class SupplierPaymentService {
     private final AuditService auditService;
     private final JournalService journalService;
     private final com.voyra.crm.repository.JournalEntryRepository journalEntryRepository;
+    private final ExchangeRateProvider exchangeRateProvider;
 
     @Transactional
     public SupplierPaymentResponse pay(SupplierPaymentRequest request) {
@@ -79,6 +80,21 @@ public class SupplierPaymentService {
         String number = documentNumberService.next(DocumentKind.PAYMENT_VOUCHER, paidOn);
         String actor = currentUserId();
 
+        // Rule 3.4.1 - a settlement against a foreign bill uses the rate on the day the money
+        // actually left, not the rate the bill was booked at (that's what made the variance
+        // unrepresentable before). Advances and INR bills are untouched: their settlement rate
+        // is always the bill's own rate (or 1, for an advance), so fxVarianceInr stays null.
+        BigDecimal settlementRate = invoice != null ? invoice.getFxRateToInr() : BigDecimal.ONE;
+        BigDecimal fxVarianceInr = null;
+        if (invoice != null && !"INR".equals(invoice.getCurrencyCode())) {
+            settlementRate = resolveSettlementRate(request, invoice, paidOn);
+            // Positive = settlement cost more INR than the bill rate implied (a loss) - same
+            // sign convention as postPaymentJournal's own variance, which is the actual posting.
+            BigDecimal atBillRateInr = scaleToInr(request.getAmount(), invoice.getFxRateToInr());
+            BigDecimal atSettlementRateInr = scaleToInr(request.getAmount(), settlementRate);
+            fxVarianceInr = atSettlementRateInr.subtract(atBillRateInr);
+        }
+
         SupplierPayment payment = SupplierPayment.builder()
                 .id(UniqueIdResolver.resolve(supplierPaymentRepository::existsById))
                 .voucherNumber(number)
@@ -89,9 +105,11 @@ public class SupplierPaymentService {
                 .supplierInvoiceId(invoice != null ? invoice.getId() : null)
                 .bookingId(invoice != null ? invoice.getBookingId() : null)
                 .currencyCode(invoice != null ? invoice.getCurrencyCode() : "INR")
-                .fxRateToInr(invoice != null ? invoice.getFxRateToInr() : BigDecimal.ONE)
+                .fxRateToInr(settlementRate)
+                .settlementFxRate(invoice != null && !"INR".equals(invoice.getCurrencyCode()) ? settlementRate : null)
+                .fxVarianceInr(fxVarianceInr)
                 .amount(request.getAmount())
-                .amountInr(scaleToInr(request.getAmount(), invoice != null ? invoice.getFxRateToInr() : BigDecimal.ONE))
+                .amountInr(scaleToInr(request.getAmount(), settlementRate))
                 .tdsWithheld(request.getTdsWithheld() != null ? request.getTdsWithheld() : BigDecimal.ZERO)
                 .paymentMode(request.getPaymentMode())
                 .instrumentRef(request.getInstrumentRef())
@@ -203,6 +221,8 @@ public class SupplierPaymentService {
                 .bookingId(original.getBookingId())
                 .currencyCode(original.getCurrencyCode())
                 .fxRateToInr(original.getFxRateToInr())
+                .settlementFxRate(original.getSettlementFxRate())
+                .fxVarianceInr(original.getFxVarianceInr() != null ? original.getFxVarianceInr().negate() : null)
                 .amount(original.getAmount().negate())
                 .amountInr(original.getAmountInr().negate())
                 .tdsWithheld(original.getTdsWithheld())
@@ -297,6 +317,27 @@ public class SupplierPaymentService {
 
     // ---------------------------------------------------------------- internals
 
+    /**
+     * Rule 3.4.1 - an explicit {@code settlementFxRate} on the request wins outright (the
+     * accountant knows the actual bank rate); otherwise resolve the rate for the payment date
+     * from the daily table. A pair with no rate at all - not even a stale one - must never block
+     * recording that money actually left the bank, so this falls back to the bill's own rate and
+     * logs a warning rather than throwing (Rule 3.2.3 forbids defaulting to 1.0, not reusing a
+     * real, already-known rate as a documented fallback).
+     */
+    private BigDecimal resolveSettlementRate(SupplierPaymentRequest request, SupplierInvoice invoice, LocalDate paidOn) {
+        if (request.getSettlementFxRate() != null) {
+            return request.getSettlementFxRate();
+        }
+        try {
+            return exchangeRateProvider.resolve(invoice.getCurrencyCode(), "INR", paidOn).rate();
+        } catch (IllegalStateException e) {
+            log.warn("No exchange rate available for {}/INR on {} - falling back to the bill's own rate {}: {}",
+                    invoice.getCurrencyCode(), paidOn, invoice.getFxRateToInr(), e.getMessage());
+            return invoice.getFxRateToInr();
+        }
+    }
+
     private BigDecimal remainingAdvancePool(String vendorId) {
         BigDecimal totalAdvance = supplierPaymentRepository.findByVendorIdAndIsAdvanceTrueOrderByPaidOnAsc(vendorId)
                 .stream().filter(p -> p.getReversedAt() == null).map(SupplierPayment::getAmount)
@@ -341,12 +382,15 @@ public class SupplierPaymentService {
      * Posting-rule-table rows 9/9a/9b (bill payment) and 10 (advance). A brand-new payment only -
      * a reversal row is handled by {@link #reversePaymentJournal}, per Rule 1.6.2.
      *
-     * <p>Row 9a/9b (realized forex gain/loss) do not fire yet: {@code payment.fxRateToInr} is
-     * always copied from {@code invoice.fxRateToInr} at the call site above (the known blocker
-     * ACCOUNTING_EXPANSION_ARCHITECTURE.md §3.4 names - a settlement rate cannot yet differ from
-     * the bill rate), so AP and Bank always move by the same INR amount and the variance is
-     * always exactly zero. This method computes the variance correctly regardless, so Decision 3
-     * (a real settlement-rate field) lights it up with no further change here.
+     * <p>Row 9a/9b (realized forex): {@code variance = amountInr (settlement rate) - apDebitInr
+     * (bill rate)} - positive means the settlement cost MORE INR than the bill rate implied (a
+     * loss, debited), negative means it cost less (a gain, credited). Debit AP at the bill rate
+     * so the payable clears to exactly zero; credit Bank at the settlement rate, the cash that
+     * actually left; the variance is the balancing plug - {@code apDebitInr + variance ==
+     * amountInr} always, which is what makes the three lines balance. (The variance used to be
+     * computed the other way around, {@code apDebitInr - amountInr}, which both inverted the
+     * gain/loss sign and failed to balance at all - caught once a settlement rate could actually
+     * differ from the bill rate, Decision 3.)
      */
     private void postPaymentJournal(SupplierPayment payment, SupplierInvoice invoice) {
         BigDecimal amountInr = payment.getAmountInr();
@@ -360,7 +404,7 @@ public class SupplierPaymentService {
 
         if (invoice != null) {
             BigDecimal apDebitInr = payment.getAmount().multiply(invoice.getFxRateToInr()).setScale(2, RoundingMode.HALF_UP);
-            BigDecimal variance = apDebitInr.subtract(amountInr);
+            BigDecimal variance = amountInr.subtract(apDebitInr);
             List<com.voyra.crm.models.JournalLinePosting> lines = new java.util.ArrayList<>(List.of(
                     com.voyra.crm.models.JournalLinePosting.debitParty(
                             com.voyra.crm.enums.SystemAccount.ACCOUNTS_PAYABLE.code(), "VENDOR", payment.getVendorId(), apDebitInr, narration)));
@@ -458,6 +502,7 @@ public class SupplierPaymentService {
                 .direction(p.getDirection()).vendorId(p.getVendorId()).vendorName(p.getVendorName())
                 .supplierInvoiceId(p.getSupplierInvoiceId()).bookingId(p.getBookingId())
                 .currencyCode(p.getCurrencyCode()).fxRateToInr(p.getFxRateToInr())
+                .settlementFxRate(p.getSettlementFxRate()).fxVarianceInr(p.getFxVarianceInr())
                 .amount(p.getAmount()).amountInr(p.getAmountInr()).tdsWithheld(p.getTdsWithheld())
                 .paymentMode(p.getPaymentMode()).instrumentRef(p.getInstrumentRef()).bankAccountLabel(p.getBankAccountLabel())
                 .paidOn(p.getPaidOn()).isAdvance(p.getIsAdvance()).appliedFromAdvance(p.getAppliedFromAdvance())

@@ -14,7 +14,9 @@ import com.voyra.crm.enums.PaymentMode;
 import com.voyra.crm.enums.SupplierInvoiceStatus;
 import com.voyra.crm.enums.SupplierPaymentDirection;
 import com.voyra.crm.enums.UserType;
+import com.voyra.crm.enums.FxRateSource;
 import com.voyra.crm.models.JournalPosting;
+import com.voyra.crm.models.ResolvedExchangeRate;
 import com.voyra.crm.repository.JournalEntryRepository;
 import com.voyra.crm.repository.SupplierInvoiceRepository;
 import com.voyra.crm.repository.SupplierPaymentRepository;
@@ -70,6 +72,8 @@ class SupplierPaymentServiceTest {
     private JournalService journalService;
     @Mock
     private JournalEntryRepository journalEntryRepository;
+    @Mock
+    private ExchangeRateProvider exchangeRateProvider;
 
     @InjectMocks
     private SupplierPaymentService supplierPaymentService;
@@ -105,6 +109,13 @@ class SupplierPaymentServiceTest {
         r.setPaymentMode(PaymentMode.BANK_TRANSFER);
         r.setPaidOn(LocalDate.of(2026, 9, 19));
         return r;
+    }
+
+    private SupplierInvoice foreignBill(BigDecimal grandTotal, BigDecimal billRate) {
+        return SupplierInvoice.builder().id("SI1").vendorId("V1").vendorName("Novotel Goa")
+                .status(SupplierInvoiceStatus.APPROVED).currencyCode("USD").fxRateToInr(billRate)
+                .grandTotal(grandTotal).amountPaid(BigDecimal.ZERO).creditNoteTotal(BigDecimal.ZERO)
+                .balanceDue(grandTotal).balanceDueInr(grandTotal.multiply(billRate)).build();
     }
 
     @Test
@@ -226,5 +237,142 @@ class SupplierPaymentServiceTest {
         verify(journalService).reverse(org.mockito.ArgumentMatchers.eq("JE1"), any());
         verify(supplierLedgerService).post(any()); // the reversal row itself still posts a subsidiary-ledger entry
         assertThat(invoice.getAmountPaid()).isEqualByComparingTo("0.00");
+    }
+
+    /**
+     * Decision 3.4 - the blocker's actual fix. A settlement rate HIGHER than the bill's own rate
+     * costs more INR than AP cleared at - a realized LOSS, debited, and the three lines balance
+     * exactly (apDebitInr + variance == amountInr).
+     */
+    @Test
+    void settlingAForeignBillAtAHigherRateThanTheBillPostsARealizedForexLoss() {
+        when(vendorRepository.findById("V1")).thenReturn(Optional.of(vendor()));
+        SupplierInvoice invoice = foreignBill(new BigDecimal("1000.00"), new BigDecimal("83.000000"));
+        when(supplierInvoiceRepository.findById("SI1")).thenReturn(Optional.of(invoice));
+        when(supplierPaymentRepository.existsById(any())).thenReturn(false);
+        when(documentNumberService.next(DocumentKind.PAYMENT_VOUCHER, LocalDate.of(2026, 9, 19)))
+                .thenReturn("PAY/2026-27/0004");
+
+        SupplierPaymentRequest req = request("SI1", new BigDecimal("100.00"));
+        req.setSettlementFxRate(new BigDecimal("84.000000"));
+        SupplierPaymentResponse response = supplierPaymentService.pay(req);
+
+        assertThat(response.getFxVarianceInr()).isEqualByComparingTo("100.00");
+
+        ArgumentCaptor<JournalPosting> captor = ArgumentCaptor.forClass(JournalPosting.class);
+        verify(journalService).post(captor.capture());
+        JournalPosting posting = captor.getValue();
+
+        assertThat(posting.lines()).hasSize(3);
+        assertThat(posting.lines().get(0).accountCode()).isEqualTo("2200");
+        assertThat(posting.lines().get(0).debitAmount()).isEqualByComparingTo("8300.00"); // bill rate
+        assertThat(posting.lines().get(1).accountCode()).isEqualTo("5700"); // REALIZED_FOREX_LOSS
+        assertThat(posting.lines().get(1).debitAmount()).isEqualByComparingTo("100.00");
+        assertThat(posting.lines().get(2).accountCode()).isEqualTo("1110");
+        assertThat(posting.lines().get(2).creditAmount()).isEqualByComparingTo("8400.00"); // settlement rate
+
+        BigDecimal debitTotal = posting.lines().stream().map(com.voyra.crm.models.JournalLinePosting::debitAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal creditTotal = posting.lines().stream().map(com.voyra.crm.models.JournalLinePosting::creditAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        assertThat(debitTotal).isEqualByComparingTo(creditTotal);
+    }
+
+    @Test
+    void settlingAForeignBillAtALowerRateThanTheBillPostsARealizedForexGain() {
+        when(vendorRepository.findById("V1")).thenReturn(Optional.of(vendor()));
+        SupplierInvoice invoice = foreignBill(new BigDecimal("1000.00"), new BigDecimal("83.000000"));
+        when(supplierInvoiceRepository.findById("SI1")).thenReturn(Optional.of(invoice));
+        when(supplierPaymentRepository.existsById(any())).thenReturn(false);
+        when(documentNumberService.next(DocumentKind.PAYMENT_VOUCHER, LocalDate.of(2026, 9, 19)))
+                .thenReturn("PAY/2026-27/0005");
+
+        SupplierPaymentRequest req = request("SI1", new BigDecimal("100.00"));
+        req.setSettlementFxRate(new BigDecimal("82.000000"));
+        SupplierPaymentResponse response = supplierPaymentService.pay(req);
+
+        assertThat(response.getFxVarianceInr()).isEqualByComparingTo("-100.00");
+
+        ArgumentCaptor<JournalPosting> captor = ArgumentCaptor.forClass(JournalPosting.class);
+        verify(journalService).post(captor.capture());
+        JournalPosting posting = captor.getValue();
+
+        assertThat(posting.lines()).hasSize(3);
+        assertThat(posting.lines().get(0).accountCode()).isEqualTo("2200");
+        assertThat(posting.lines().get(0).debitAmount()).isEqualByComparingTo("8300.00");
+        assertThat(posting.lines().get(1).accountCode()).isEqualTo("4700"); // REALIZED_FOREX_GAIN
+        assertThat(posting.lines().get(1).creditAmount()).isEqualByComparingTo("100.00");
+        assertThat(posting.lines().get(2).accountCode()).isEqualTo("1110");
+        assertThat(posting.lines().get(2).creditAmount()).isEqualByComparingTo("8200.00");
+
+        BigDecimal debitTotal = posting.lines().stream().map(com.voyra.crm.models.JournalLinePosting::debitAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal creditTotal = posting.lines().stream().map(com.voyra.crm.models.JournalLinePosting::creditAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        assertThat(debitTotal).isEqualByComparingTo(creditTotal);
+    }
+
+    @Test
+    void anInrBillsVarianceIsAlwaysExactlyZeroRegardlessOfAnySettlementRateField() {
+        when(vendorRepository.findById("V1")).thenReturn(Optional.of(vendor()));
+        SupplierInvoice invoice = approvedBill(new BigDecimal("1000.00"));
+        when(supplierInvoiceRepository.findById("SI1")).thenReturn(Optional.of(invoice));
+        when(supplierPaymentRepository.existsById(any())).thenReturn(false);
+        when(documentNumberService.next(DocumentKind.PAYMENT_VOUCHER, LocalDate.of(2026, 9, 19)))
+                .thenReturn("PAY/2026-27/0006");
+
+        SupplierPaymentResponse response = supplierPaymentService.pay(request("SI1", new BigDecimal("400.00")));
+
+        assertThat(response.getFxVarianceInr()).isNull(); // INR bill - nothing to vary, never even looked at settlementFxRate
+        verify(exchangeRateProvider, never()).resolve(any(), any(), any());
+    }
+
+    @Test
+    void anExplicitSettlementRateOnTheRequestIsUsedWithoutConsultingTheExchangeRateTable() {
+        when(vendorRepository.findById("V1")).thenReturn(Optional.of(vendor()));
+        SupplierInvoice invoice = foreignBill(new BigDecimal("1000.00"), new BigDecimal("83.000000"));
+        when(supplierInvoiceRepository.findById("SI1")).thenReturn(Optional.of(invoice));
+        when(supplierPaymentRepository.existsById(any())).thenReturn(false);
+        when(documentNumberService.next(DocumentKind.PAYMENT_VOUCHER, LocalDate.of(2026, 9, 19)))
+                .thenReturn("PAY/2026-27/0007");
+
+        SupplierPaymentRequest req = request("SI1", new BigDecimal("100.00"));
+        req.setSettlementFxRate(new BigDecimal("85.000000"));
+        supplierPaymentService.pay(req);
+
+        verify(exchangeRateProvider, never()).resolve(any(), any(), any());
+    }
+
+    @Test
+    void withNoExplicitRateTheDailyExchangeRateTableIsConsultedForThePaymentDate() {
+        when(vendorRepository.findById("V1")).thenReturn(Optional.of(vendor()));
+        SupplierInvoice invoice = foreignBill(new BigDecimal("1000.00"), new BigDecimal("83.000000"));
+        when(supplierInvoiceRepository.findById("SI1")).thenReturn(Optional.of(invoice));
+        when(supplierPaymentRepository.existsById(any())).thenReturn(false);
+        when(documentNumberService.next(DocumentKind.PAYMENT_VOUCHER, LocalDate.of(2026, 9, 19)))
+                .thenReturn("PAY/2026-27/0009");
+        when(exchangeRateProvider.resolve("USD", "INR", LocalDate.of(2026, 9, 19)))
+                .thenReturn(new ResolvedExchangeRate(new BigDecimal("84.000000"), FxRateSource.DAILY_TABLE, LocalDate.of(2026, 9, 19)));
+
+        SupplierPaymentResponse response = supplierPaymentService.pay(request("SI1", new BigDecimal("100.00")));
+
+        assertThat(response.getSettlementFxRate()).isEqualByComparingTo("84.000000");
+        assertThat(response.getFxVarianceInr()).isEqualByComparingTo("100.00"); // 84 > 83 - a loss
+    }
+
+    @Test
+    void aMissingExchangeRateFallsBackToTheBillsOwnRateRatherThanBlockingThePayment() {
+        when(vendorRepository.findById("V1")).thenReturn(Optional.of(vendor()));
+        SupplierInvoice invoice = foreignBill(new BigDecimal("1000.00"), new BigDecimal("83.000000"));
+        when(supplierInvoiceRepository.findById("SI1")).thenReturn(Optional.of(invoice));
+        when(supplierPaymentRepository.existsById(any())).thenReturn(false);
+        when(documentNumberService.next(DocumentKind.PAYMENT_VOUCHER, LocalDate.of(2026, 9, 19)))
+                .thenReturn("PAY/2026-27/0008");
+        when(exchangeRateProvider.resolve("USD", "INR", LocalDate.of(2026, 9, 19)))
+                .thenThrow(new IllegalStateException("No exchange rate on or before 2026-09-19 for USD/INR"));
+
+        SupplierPaymentResponse response = supplierPaymentService.pay(request("SI1", new BigDecimal("100.00")));
+
+        assertThat(response.getFxVarianceInr()).isEqualByComparingTo("0.00"); // fell back to the bill's own rate - no variance
     }
 }

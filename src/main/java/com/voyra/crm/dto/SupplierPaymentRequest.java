@@ -44,6 +44,11 @@ public class SupplierPaymentRequest {
     @Schema(example = "2026-09-19")
     private LocalDate paidOn;
 
+    @Schema(description = "Rate actually used to convert the settlement to INR, for a foreign-currency bill payment. "
+            + "Omit to resolve it from the daily exchange_rate table for paidOn - never defaults to the bill's own rate silently.",
+            example = "83.450000")
+    private BigDecimal settlementFxRate;
+
     @Schema(example = "Advance for October bookings")
     private String notes;
 }
