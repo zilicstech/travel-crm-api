@@ -4,12 +4,14 @@ import com.voyra.crm.dto.CalendarEventResponse;
 import com.voyra.crm.entity.Booking;
 import com.voyra.crm.entity.ClientInvoice;
 import com.voyra.crm.entity.LeadFollowUp;
+import com.voyra.crm.entity.SupplierInvoice;
 import com.voyra.crm.entity.Visa;
 import com.voyra.crm.enums.BookingStatus;
 import com.voyra.crm.enums.FollowUpStatus;
 import com.voyra.crm.repository.BookingRepository;
 import com.voyra.crm.repository.ClientInvoiceRepository;
 import com.voyra.crm.repository.LeadFollowUpRepository;
+import com.voyra.crm.repository.SupplierInvoiceRepository;
 import com.voyra.crm.repository.VisaRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.security.SecurityContextUtil;
@@ -17,6 +19,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -39,6 +42,7 @@ public class CalendarService {
     private final LeadFollowUpRepository leadFollowUpRepository;
     private final ClientInvoiceRepository clientInvoiceRepository;
     private final VisaRepository visaRepository;
+    private final SupplierInvoiceRepository supplierInvoiceRepository;
 
     @Transactional(readOnly = true)
     public List<CalendarEventResponse> list(LocalDate from, LocalDate to) {
@@ -118,6 +122,22 @@ public class CalendarService {
                     .subtitle(b.getDestination())
                     .targetId(b.getId()).targetType("BOOKING")
                     .build());
+        }
+
+        // Payables are Owner/Accountant data, never agent-scoped (SupplierInvoiceService.assertOwnerOrAccountant) -
+        // so an agent's calendar simply carries no supplier bill deadlines.
+        if (agentId == null) {
+            List<SupplierInvoice> billsDue = supplierInvoiceRepository
+                    .findByDueDateBetweenAndBalanceDueGreaterThan(from, to, BigDecimal.ZERO);
+            for (SupplierInvoice bill : billsDue) {
+                rows.add(CalendarEventResponse.builder()
+                        .type("SUPPLIER_BILL_DUE").severity("HIGH")
+                        .date(bill.getDueDate())
+                        .title("Supplier bill due: " + bill.getVendorName())
+                        .subtitle(bill.getSupplierInvoiceNumber())
+                        .targetId(bill.getId()).targetType("SUPPLIER_INVOICE")
+                        .build());
+            }
         }
 
         List<Visa> appointments = agentId != null

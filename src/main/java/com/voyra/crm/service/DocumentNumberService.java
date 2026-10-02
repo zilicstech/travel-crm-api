@@ -87,6 +87,7 @@ public class DocumentNumberService {
             case RECEIPT -> "RCP";
             case CREDIT_NOTE -> "CN";
             case PAYMENT_VOUCHER -> "PV";
+            case JOURNAL -> "JNV";
             case AIR_INTERNATIONAL_INVOICE -> "ITI";
             case AIR_DOMESTIC_INVOICE -> "DTI";
             case HOTEL_INVOICE -> "HTL";

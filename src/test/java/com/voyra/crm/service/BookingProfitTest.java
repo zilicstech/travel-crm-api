@@ -21,6 +21,7 @@ import com.voyra.crm.repository.FeedbackRepository;
 import com.voyra.crm.repository.InvoiceRepository;
 import com.voyra.crm.repository.LeadServiceRepository;
 import com.voyra.crm.repository.PaymentReceiptRepository;
+import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -81,6 +82,8 @@ class BookingProfitTest {
     private ServiceBookingStatusSync serviceBookingStatusSync;
     @Mock
     private SupplierInvoiceService supplierInvoiceService;
+    @Mock
+    private TenantRepository tenantRepository;
 
     @InjectMocks
     private BookingService bookingService;

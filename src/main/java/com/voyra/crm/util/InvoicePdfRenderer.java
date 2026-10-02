@@ -4,6 +4,7 @@ import com.lowagie.text.Document;
 import com.lowagie.text.Element;
 import com.lowagie.text.Font;
 import com.lowagie.text.FontFactory;
+import com.lowagie.text.Image;
 import com.lowagie.text.PageSize;
 import com.lowagie.text.Paragraph;
 import com.lowagie.text.Phrase;
@@ -11,10 +12,12 @@ import com.lowagie.text.pdf.PdfPCell;
 import com.lowagie.text.pdf.PdfPTable;
 import com.lowagie.text.pdf.PdfWriter;
 import com.voyra.crm.entity.Booking;
+import com.voyra.crm.entity.BookingCostComponent;
 import com.voyra.crm.entity.Invoice;
 import com.voyra.crm.entity.InvoiceLineItem;
 import com.voyra.crm.entity.InvoiceTax;
 import com.voyra.crm.entity.Tenant;
+import com.voyra.crm.enums.InvoiceBillingModel;
 import com.voyra.crm.enums.InvoiceServiceCategory;
 
 import java.io.ByteArrayOutputStream;
@@ -37,7 +40,7 @@ public final class InvoicePdfRenderer {
 
     /** @deprecated kept only for any caller that hasn't been updated to pass taxes/agency/booking. */
     public static byte[] write(Invoice invoice, List<InvoiceLineItem> lines) {
-        return write(invoice, lines, List.of(), null, null);
+        return write(invoice, lines, List.of(), null, null, List.of());
     }
 
     /**
@@ -49,9 +52,13 @@ public final class InvoicePdfRenderer {
      * {@code taxes} whose {@code visibleToCustomer} is false are never printed as their own
      * line - their amount is folded into the printed fare instead, so the grand total the
      * customer sees always matches {@link Invoice#getGrandTotal()} even though the breakup
-     * doesn't show every tax that was actually charged.
+     * doesn't show every tax that was actually charged. {@code costComponents} feeds the
+     * pass-through disbursement block on a {@link InvoiceBillingModel#COMMISSION_AGENT} invoice
+     * only (Decision 8) - empty for every other invoice, including every PRINCIPAL one, whose
+     * rendering is unchanged from before this parameter existed.
      */
-    public static byte[] write(Invoice invoice, List<InvoiceLineItem> lines, List<InvoiceTax> taxes, Tenant agency, Booking booking) {
+    public static byte[] write(Invoice invoice, List<InvoiceLineItem> lines, List<InvoiceTax> taxes, Tenant agency,
+                                Booking booking, List<BookingCostComponent> costComponents) {
         Document document = new Document(PageSize.A4, 32, 32, 36, 36);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         try {
@@ -85,6 +92,11 @@ public final class InvoicePdfRenderer {
             document.add(lineItemsTable(lines, labelFont, smallFont));
             document.add(new Paragraph(" "));
 
+            if (invoice.getBillingModel() == InvoiceBillingModel.COMMISSION_AGENT) {
+                document.add(passThroughBlock(invoice, costComponents, labelFont, bodyFont, smallFont));
+                document.add(new Paragraph(" "));
+            }
+
             document.add(totalsTable(invoice, taxes, labelFont, bodyFont));
             document.add(new Paragraph(" "));
             document.add(new Paragraph(
@@ -94,7 +106,15 @@ public final class InvoicePdfRenderer {
             PdfPTable bank = bankBlock(agency, labelFont, bodyFont);
             if (bank != null) {
                 document.add(new Paragraph(" "));
-                document.add(bank);
+                PdfPTable bankRow = new PdfPTable(2);
+                bankRow.setWidthPercentage(100);
+                bankRow.setWidths(new float[]{2.4f, 1f});
+                bankRow.addCell(borderless(bank));
+                PdfPCell qrCell = new PdfPCell(qrBlock(agency, invoice, labelFont, smallFont));
+                qrCell.setBorder(0);
+                qrCell.setHorizontalAlignment(Element.ALIGN_CENTER);
+                bankRow.addCell(qrCell);
+                document.add(bankRow);
             }
 
             if (invoice.getNotes() != null && !invoice.getNotes().isBlank()) {
@@ -162,6 +182,34 @@ public final class InvoicePdfRenderer {
 
     private static boolean isBlank(String s) {
         return s == null || s.isBlank();
+    }
+
+    /**
+     * A scan-to-pay QR next to the bank block (ACCOUNTING_EXPANSION epic A, FRD US-ACC-2.1's
+     * "interactive payment link or dynamic QR code"). The agency has no stored UPI VPA today, so
+     * the payload is the same bank-transfer details already printed as text, plus the amount and
+     * invoice number - a scanning app can't auto-pay from this, but it removes the hand-typing a
+     * customer would otherwise do from the printed account number and IFSC.
+     */
+    private static PdfPTable qrBlock(Tenant agency, Invoice invoice, Font labelFont, Font smallFont) {
+        PdfPTable table = new PdfPTable(1);
+        table.setWidthPercentage(100);
+        String payload = "Pay to: " + valueOr(agency.getBankAccountName())
+                + "\nA/C: " + valueOr(agency.getBankAccountNumber())
+                + (!isBlank(agency.getBankIfscCode()) ? "\nIFSC: " + agency.getBankIfscCode() : "")
+                + "\nAmount: " + money(invoice.getGrandTotalInr()) + " INR"
+                + "\nRef: " + valueOr(invoice.getInvoiceNumber());
+        Image qr = QrCodeRenderer.render(payload, 160);
+        qr.scaleToFit(80, 80);
+        PdfPCell imgCell = new PdfPCell(qr);
+        imgCell.setBorder(0);
+        imgCell.setHorizontalAlignment(Element.ALIGN_CENTER);
+        table.addCell(imgCell);
+        PdfPCell caption = new PdfPCell(new Phrase("Scan for bank details", smallFont));
+        caption.setBorder(0);
+        caption.setHorizontalAlignment(Element.ALIGN_CENTER);
+        table.addCell(caption);
+        return table;
     }
 
     private static PdfPTable supplierBlock(Invoice invoice, Font labelFont, Font bodyFont) {
@@ -232,6 +280,57 @@ public final class InvoicePdfRenderer {
             }
             rightCell(table, money(line.getLineTotal()), cellFont);
         }
+        return table;
+    }
+
+    /**
+     * The disbursement block for a {@link InvoiceBillingModel#COMMISSION_AGENT} invoice -
+     * reproduces the client's own "(Reimbursement of air ticket issued by airlines)" framing
+     * (ACCOUNTING_REDESIGN_SPEC.md §3/§5.4). Lists what the agency paid out on the traveller's
+     * behalf (the booking's cost components, one row per vendor component, or the booking's net
+     * cost as a single row when no components were ever captured), then the agency's own service
+     * fee - the same fee {@code InvoiceDocumentService#resolveTaxableBase} isolated as the GST
+     * base. Purely presentational: it never changes {@link Invoice#getTaxableValue()} or any
+     * stored total, it only explains, on paper, why GST was charged on a smaller figure than the
+     * package amount shown above.
+     */
+    private static PdfPTable passThroughBlock(Invoice invoice, List<BookingCostComponent> costComponents,
+                                                Font labelFont, Font bodyFont, Font smallFont) {
+        PdfPTable table = new PdfPTable(new float[]{3.4f, 1.6f});
+        table.setWidthPercentage(100);
+        table.addCell(headerCell("Supplier disbursement (reimbursement - no GST)", labelFont));
+        table.addCell(headerCell("Amount", labelFont));
+
+        BigDecimal disbursementTotal = BigDecimal.ZERO;
+        if (!costComponents.isEmpty()) {
+            for (BookingCostComponent c : costComponents) {
+                String label = (c.getVendorName() != null ? c.getVendorName() : "Supplier")
+                        + (c.getDescription() != null && !c.getDescription().isBlank() ? " - " + c.getDescription() : "");
+                table.addCell(new PdfPCell(new Phrase(label, bodyFont)));
+                rightCell(table, money(c.getNetCostInr()), bodyFont);
+                disbursementTotal = disbursementTotal.add(c.getNetCostInr() != null ? c.getNetCostInr() : BigDecimal.ZERO);
+            }
+        } else {
+            table.addCell(new PdfPCell(new Phrase("Supplier cost", bodyFont)));
+            rightCell(table, money(disbursementTotal), bodyFont);
+        }
+
+        BigDecimal fee = invoice.getTaxableValue().subtract(disbursementTotal);
+        if (fee.compareTo(BigDecimal.ZERO) < 0) {
+            fee = BigDecimal.ZERO;
+        }
+        PdfPCell feeLabel = new PdfPCell(new Phrase("Agency service fee", labelFont));
+        PdfPCell feeValue = new PdfPCell(new Phrase(money(fee), labelFont));
+        feeValue.setHorizontalAlignment(Element.ALIGN_RIGHT);
+        table.addCell(feeLabel);
+        table.addCell(feeValue);
+
+        PdfPCell note = new PdfPCell(new Phrase(
+                "Supplier disbursement is a reimbursement of costs paid on the traveller's behalf - GST applies "
+                        + "only to the agency's own service fee.", smallFont));
+        note.setColspan(2);
+        note.setBorder(0);
+        table.addCell(note);
         return table;
     }
 

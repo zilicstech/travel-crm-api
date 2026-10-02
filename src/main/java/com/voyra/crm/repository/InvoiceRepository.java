@@ -48,4 +48,8 @@ public interface InvoiceRepository extends JpaRepository<Invoice, String>, JpaSp
      *  rather than depending on undefined row order. */
     List<Invoice> findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc(
             String bookingId, InvoiceDocumentType documentType, InvoiceLifecycle excludedStatus);
+
+    /** Revenue recognition job input (ACCOUNTING_EXPANSION_ARCHITECTURE.md Rule 2.3/2.4) - every
+     *  live, invoiced sale against a booking whose departure has arrived. */
+    List<Invoice> findByBookingIdInAndStatusIn(List<String> bookingIds, List<InvoiceLifecycle> statuses);
 }

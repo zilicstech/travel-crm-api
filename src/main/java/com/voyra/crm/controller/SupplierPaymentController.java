@@ -4,12 +4,16 @@ import com.voyra.crm.dto.SupplierAdvanceApplyRequest;
 import com.voyra.crm.dto.SupplierPaymentRequest;
 import com.voyra.crm.dto.SupplierPaymentResponse;
 import com.voyra.crm.dto.SupplierPaymentReverseRequest;
+import com.voyra.crm.dto.SupplierUnallocatedAdvancesResponse;
 import com.voyra.crm.service.SupplierPaymentService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -20,6 +24,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 /** Payments to vendors - regular bill payments, pure advances/deposits, and applying an advance to a bill. */
@@ -56,6 +61,27 @@ public class SupplierPaymentController {
     @Operation(summary = "Get one payment")
     public ResponseEntity<SupplierPaymentResponse> get(@PathVariable String id) {
         return ResponseEntity.ok(supplierPaymentService.get(id));
+    }
+
+    @GetMapping("/{id}/advice-pdf")
+    @Operation(summary = "Render this payment as a Payment Advice PDF",
+            description = "Gross bill, prepayments deducted and net settled amount - see FRD US-ACC-3.2.")
+    public ResponseEntity<byte[]> advicePdf(@PathVariable String id) {
+        SupplierPaymentResponse payment = supplierPaymentService.get(id);
+        byte[] pdf = supplierPaymentService.getAdvicePdf(id);
+        String filename = (payment.getVoucherNumber() != null ? payment.getVoucherNumber() : "ADVICE-" + id.substring(0, 8))
+                .replace("/", "-") + ".pdf";
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_PDF)
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        ContentDisposition.attachment().filename(filename, StandardCharsets.UTF_8).build().toString())
+                .body(pdf);
+    }
+
+    @GetMapping("/vendors/{vendorId}/unallocated-advances")
+    @Operation(summary = "A vendor's unapplied advance pool", description = "Every still-active advance payment and the one remaining total they jointly fund.")
+    public ResponseEntity<SupplierUnallocatedAdvancesResponse> unallocatedAdvances(@PathVariable String vendorId) {
+        return ResponseEntity.ok(supplierPaymentService.unallocatedAdvances(vendorId));
     }
 
     @GetMapping

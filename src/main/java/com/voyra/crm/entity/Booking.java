@@ -109,6 +109,13 @@ public class Booking {
     @Column(name = "journey_date")
     private LocalDate journeyDate;
 
+    /** Canonical, type-agnostic departure date the revenue recognition job queries - derived by
+     *  {@code BookingService} from {@link #journeyDate}/{@link #hotelCheckIn}/{@link #transferDate}
+     *  on every write (ACCOUNTING_EXPANSION_ARCHITECTURE.md Rule 2.2.1). Never set directly from a
+     *  request DTO. Null means no derivable date - recognises immediately, never a blocker. */
+    @Column(name = "departure_date")
+    private LocalDate departureDate;
+
     @Column(name = "return_date")
     private LocalDate returnDate;
 

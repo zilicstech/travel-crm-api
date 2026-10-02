@@ -1,6 +1,7 @@
 package com.voyra.crm.entity;
 
 import com.voyra.crm.enums.FxRateSource;
+import com.voyra.crm.enums.InvoiceBillingModel;
 import com.voyra.crm.enums.InvoiceDocumentType;
 import com.voyra.crm.enums.InvoiceLifecycle;
 import com.voyra.crm.enums.InvoiceServiceCategory;
@@ -43,6 +44,10 @@ public class Invoice {
     @Id
     @Column(name = "id", length = 36)
     private String id;
+
+    /** Nullable - intra-agency partition, column-only for now (ACCOUNTING_EXPANSION_ARCHITECTURE.md §6). */
+    @Column(name = "branch_id", length = 36)
+    private String branchId;
 
     @Column(name = "invoice_number", length = 40)
     private String invoiceNumber;
@@ -115,6 +120,11 @@ public class Invoice {
     @Enumerated(EnumType.STRING)
     @Column(name = "tax_treatment", length = 20)
     private TaxTreatment taxTreatment;
+
+    /** Null is treated as {@link InvoiceBillingModel#PRINCIPAL} everywhere - see that enum's javadoc. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "billing_model", length = 20)
+    private InvoiceBillingModel billingModel;
 
     /** Accountant's own override input - re-supplied to TaxEngine on every draft recompute. Distinct from the resolved {@link #placeOfSupplyCode} above. */
     @Column(name = "place_of_supply_override", length = 2)

@@ -9,6 +9,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 
@@ -28,4 +29,7 @@ public interface SupplierInvoiceRepository extends JpaRepository<SupplierInvoice
     List<SupplierInvoice> findByBookingIdAndStatusNot(String bookingId, SupplierInvoiceStatus excludedStatus);
 
     long countByStatus(SupplierInvoiceStatus status);
+
+    /** Due-date calendar input (Rule 7.6) - only bills with money still owed are a deadline. */
+    List<SupplierInvoice> findByDueDateBetweenAndBalanceDueGreaterThan(LocalDate from, LocalDate to, BigDecimal zero);
 }
