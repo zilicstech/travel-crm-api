@@ -1,10 +1,13 @@
 package com.voyra.crm.service;
 
 import com.voyra.crm.dto.SupplierAdvanceApplyRequest;
+import com.voyra.crm.dto.SupplierAdvanceRowResponse;
 import com.voyra.crm.dto.SupplierPaymentRequest;
 import com.voyra.crm.dto.SupplierPaymentResponse;
+import com.voyra.crm.dto.SupplierUnallocatedAdvancesResponse;
 import com.voyra.crm.entity.SupplierInvoice;
 import com.voyra.crm.entity.SupplierPayment;
+import com.voyra.crm.entity.Tenant;
 import com.voyra.crm.entity.Vendor;
 import com.voyra.crm.enums.AuditEntityType;
 import com.voyra.crm.enums.DocumentKind;
@@ -16,9 +19,11 @@ import com.voyra.crm.enums.SupplierPaymentDirection;
 import com.voyra.crm.models.SupplierLedgerPosting;
 import com.voyra.crm.repository.SupplierInvoiceRepository;
 import com.voyra.crm.repository.SupplierPaymentRepository;
+import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.repository.VendorRepository;
 import com.voyra.crm.security.SecurityContextUtil;
 import com.voyra.crm.util.FinancialYear;
+import com.voyra.crm.util.PaymentAdvicePdfRenderer;
 import com.voyra.crm.util.SupplierInvoiceLifecyclePolicy;
 import com.voyra.crm.util.UniqueIdResolver;
 import lombok.RequiredArgsConstructor;
@@ -50,9 +55,12 @@ public class SupplierPaymentService {
     private final SupplierPaymentRepository supplierPaymentRepository;
     private final SupplierInvoiceRepository supplierInvoiceRepository;
     private final VendorRepository vendorRepository;
+    private final TenantRepository tenantRepository;
     private final DocumentNumberService documentNumberService;
     private final SupplierLedgerService supplierLedgerService;
     private final AuditService auditService;
+    private final JournalService journalService;
+    private final com.voyra.crm.repository.JournalEntryRepository journalEntryRepository;
 
     @Transactional
     public SupplierPaymentResponse pay(SupplierPaymentRequest request) {
@@ -97,6 +105,7 @@ public class SupplierPaymentService {
                 .build();
         supplierPaymentRepository.save(payment);
         postForPayment(payment);
+        postPaymentJournal(payment, invoice);
 
         if (invoice != null) {
             applySettlement(invoice, payment.getAmount());
@@ -129,13 +138,7 @@ public class SupplierPaymentService {
             throw new IllegalArgumentException("This advance belongs to a different vendor");
         }
 
-        BigDecimal totalAdvance = supplierPaymentRepository.findByVendorIdAndIsAdvanceTrueOrderByPaidOnAsc(advance.getVendorId())
-                .stream().filter(p -> p.getReversedAt() == null).map(SupplierPayment::getAmount)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal totalApplied = supplierPaymentRepository.findByVendorIdAndAppliedFromAdvanceTrueOrderByPaidOnAsc(advance.getVendorId())
-                .stream().filter(p -> p.getReversedAt() == null).map(SupplierPayment::getAmount)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal remaining = totalAdvance.subtract(totalApplied);
+        BigDecimal remaining = remainingAdvancePool(advance.getVendorId());
         if (request.getAmount().compareTo(remaining) > 0) {
             throw new IllegalStateException("Only " + remaining + " of advance remains unapplied for this vendor");
         }
@@ -161,7 +164,10 @@ public class SupplierPaymentService {
                 .createdBy(currentUserId())
                 .build();
         supplierPaymentRepository.save(applied);
-        // No ledger post - AD-5.
+        // No SUBSIDIARY ledger post - AD-5. Row 11 still needs a GL entry: moving a balance
+        // from 1300 to 2200 is a real double-entry transfer, the mirror of the customer-side
+        // ADVANCE_APPLIED (PaymentReceiptService#postAdvanceAppliedJournal).
+        postAdvanceAppliedJournal(applied, invoice);
 
         applySettlement(invoice, applied.getAmount());
 
@@ -213,6 +219,7 @@ public class SupplierPaymentService {
         if (!original.getAppliedFromAdvance()) {
             postForPayment(reversal);
         }
+        reversePaymentJournal(original);
 
         original.setReversedAt(now);
         original.setReversedBy(actor);
@@ -248,7 +255,70 @@ public class SupplierPaymentService {
         ).stream().map(SupplierPaymentService::toResponse).toList();
     }
 
+    /**
+     * The unallocated-advance lookup the FRD asks the final-bill review screen to show (US-ACC-3.2:
+     * "the system presents all unallocated prepayments linked to that supplier"). A specific
+     * advance row is not individually tracked once applied - see {@link #applyAdvance} - so this
+     * returns every still-active advance row for the vendor alongside the one remaining pool total
+     * they jointly fund, not a per-row remaining balance.
+     */
+    @Transactional(readOnly = true)
+    public SupplierUnallocatedAdvancesResponse unallocatedAdvances(String vendorId) {
+        Vendor vendor = findVendor(vendorId);
+        List<SupplierPayment> activeAdvances = supplierPaymentRepository
+                .findByVendorIdAndIsAdvanceTrueOrderByPaidOnAsc(vendorId).stream()
+                .filter(p -> p.getReversedAt() == null)
+                .toList();
+        return SupplierUnallocatedAdvancesResponse.builder()
+                .vendorId(vendor.getId())
+                .vendorName(vendor.getName())
+                .remainingAmount(remainingAdvancePool(vendorId))
+                .advances(activeAdvances.stream().map(SupplierPaymentService::toAdvanceRow).toList())
+                .build();
+    }
+
+    /**
+     * Payment Advice PDF (FRD US-ACC-3.2). Read-only and transactional - PDF generation here is
+     * in-memory formatting of already-saved figures, not the file-storage I/O blueprint §8.6
+     * forbids inside a transaction (contrast {@code BookingDocumentService#downloadFile}, which
+     * touches {@code FileStorageService} and is deliberately not transactional).
+     */
+    @Transactional(readOnly = true)
+    public byte[] getAdvicePdf(String id) {
+        SupplierPayment payment = findById(id);
+        SupplierInvoice invoice = payment.getSupplierInvoiceId() != null ? findInvoice(payment.getSupplierInvoiceId()) : null;
+        List<SupplierPayment> invoicePayments = invoice != null
+                ? supplierPaymentRepository.findBySupplierInvoiceIdOrderByPaidOnAscCreatedAtAsc(invoice.getId())
+                : List.of();
+        Vendor vendor = vendorRepository.findById(payment.getVendorId()).orElse(null);
+        Tenant agency = currentAgency();
+        return PaymentAdvicePdfRenderer.write(payment, invoice, invoicePayments, vendor, agency);
+    }
+
     // ---------------------------------------------------------------- internals
+
+    private BigDecimal remainingAdvancePool(String vendorId) {
+        BigDecimal totalAdvance = supplierPaymentRepository.findByVendorIdAndIsAdvanceTrueOrderByPaidOnAsc(vendorId)
+                .stream().filter(p -> p.getReversedAt() == null).map(SupplierPayment::getAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal totalApplied = supplierPaymentRepository.findByVendorIdAndAppliedFromAdvanceTrueOrderByPaidOnAsc(vendorId)
+                .stream().filter(p -> p.getReversedAt() == null).map(SupplierPayment::getAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        return totalAdvance.subtract(totalApplied);
+    }
+
+    private Tenant currentAgency() {
+        String tenantId = SecurityContextUtil.getCurrentUserOrThrow().tenantId();
+        return tenantRepository.findById(tenantId)
+                .orElseThrow(() -> new IllegalStateException("Agency not found: " + tenantId));
+    }
+
+    private static SupplierAdvanceRowResponse toAdvanceRow(SupplierPayment p) {
+        return SupplierAdvanceRowResponse.builder()
+                .id(p.getId()).voucherNumber(p.getVoucherNumber()).paidOn(p.getPaidOn())
+                .amount(p.getAmount()).amountInr(p.getAmountInr())
+                .build();
+    }
 
     private void postForPayment(SupplierPayment payment) {
         boolean isDebit = payment.getAmountInr().compareTo(BigDecimal.ZERO) >= 0;
@@ -265,6 +335,84 @@ public class SupplierPaymentService {
                 payment.getBookingId(), payment.getCurrencyCode(), payment.getFxRateToInr(),
                 isDebit ? amount : BigDecimal.ZERO, isDebit ? BigDecimal.ZERO : amount,
                 isDebit ? amountInr : BigDecimal.ZERO, isDebit ? BigDecimal.ZERO : amountInr));
+    }
+
+    /**
+     * Posting-rule-table rows 9/9a/9b (bill payment) and 10 (advance). A brand-new payment only -
+     * a reversal row is handled by {@link #reversePaymentJournal}, per Rule 1.6.2.
+     *
+     * <p>Row 9a/9b (realized forex gain/loss) do not fire yet: {@code payment.fxRateToInr} is
+     * always copied from {@code invoice.fxRateToInr} at the call site above (the known blocker
+     * ACCOUNTING_EXPANSION_ARCHITECTURE.md §3.4 names - a settlement rate cannot yet differ from
+     * the bill rate), so AP and Bank always move by the same INR amount and the variance is
+     * always exactly zero. This method computes the variance correctly regardless, so Decision 3
+     * (a real settlement-rate field) lights it up with no further change here.
+     */
+    private void postPaymentJournal(SupplierPayment payment, SupplierInvoice invoice) {
+        BigDecimal amountInr = payment.getAmountInr();
+        if (amountInr == null || amountInr.compareTo(BigDecimal.ZERO) <= 0) {
+            return;
+        }
+        String bankCode = payment.getPaymentMode() == PaymentMode.CASH
+                ? com.voyra.crm.enums.SystemAccount.CASH_IN_HAND.code()
+                : com.voyra.crm.enums.SystemAccount.BANK_ACCOUNTS.code();
+        String narration = "Payment " + orId(payment.getVoucherNumber(), payment.getId()) + " recorded";
+
+        if (invoice != null) {
+            BigDecimal apDebitInr = payment.getAmount().multiply(invoice.getFxRateToInr()).setScale(2, RoundingMode.HALF_UP);
+            BigDecimal variance = apDebitInr.subtract(amountInr);
+            List<com.voyra.crm.models.JournalLinePosting> lines = new java.util.ArrayList<>(List.of(
+                    com.voyra.crm.models.JournalLinePosting.debitParty(
+                            com.voyra.crm.enums.SystemAccount.ACCOUNTS_PAYABLE.code(), "VENDOR", payment.getVendorId(), apDebitInr, narration)));
+            if (variance.compareTo(BigDecimal.ZERO) > 0) {
+                lines.add(com.voyra.crm.models.JournalLinePosting.debit(
+                        com.voyra.crm.enums.SystemAccount.REALIZED_FOREX_LOSS.code(), variance, "Realized forex loss on settlement"));
+            } else if (variance.compareTo(BigDecimal.ZERO) < 0) {
+                lines.add(com.voyra.crm.models.JournalLinePosting.credit(
+                        com.voyra.crm.enums.SystemAccount.REALIZED_FOREX_GAIN.code(), variance.abs(), "Realized forex gain on settlement"));
+            }
+            lines.add(com.voyra.crm.models.JournalLinePosting.credit(bankCode, amountInr, narration));
+            journalService.post(new com.voyra.crm.models.JournalPosting(
+                    payment.getPaidOn(), com.voyra.crm.enums.JournalSourceType.SUPPLIER_PAYMENT, payment.getId(),
+                    com.voyra.crm.enums.JournalPurpose.SUPPLIER_PAYMENT_SETTLED, narration, payment.getBookingId(), null, lines));
+        } else {
+            journalService.post(new com.voyra.crm.models.JournalPosting(
+                    payment.getPaidOn(), com.voyra.crm.enums.JournalSourceType.SUPPLIER_PAYMENT, payment.getId(),
+                    com.voyra.crm.enums.JournalPurpose.SUPPLIER_ADVANCE_PAID, narration, payment.getBookingId(), null, List.of(
+                            com.voyra.crm.models.JournalLinePosting.debitParty(
+                                    com.voyra.crm.enums.SystemAccount.SUPPLIER_ADVANCES.code(), "VENDOR", payment.getVendorId(), amountInr, narration),
+                            com.voyra.crm.models.JournalLinePosting.credit(bankCode, amountInr, narration))));
+        }
+    }
+
+    /** Posting-rule-table row 11 - moves a balance from the vendor's advance pool onto this bill's payable. */
+    private void postAdvanceAppliedJournal(SupplierPayment applied, SupplierInvoice invoice) {
+        BigDecimal amountInr = applied.getAmountInr();
+        if (amountInr == null || amountInr.compareTo(BigDecimal.ZERO) <= 0) {
+            return;
+        }
+        String narration = "Advance applied to bill " + invoice.getId();
+        journalService.post(new com.voyra.crm.models.JournalPosting(
+                applied.getPaidOn(), com.voyra.crm.enums.JournalSourceType.SUPPLIER_PAYMENT, applied.getId(),
+                com.voyra.crm.enums.JournalPurpose.SUPPLIER_ADVANCE_APPLIED, narration, invoice.getBookingId(), null, List.of(
+                        com.voyra.crm.models.JournalLinePosting.debitParty(
+                                com.voyra.crm.enums.SystemAccount.ACCOUNTS_PAYABLE.code(), "VENDOR", applied.getVendorId(), amountInr, narration),
+                        com.voyra.crm.models.JournalLinePosting.creditParty(
+                                com.voyra.crm.enums.SystemAccount.SUPPLIER_ADVANCES.code(), "VENDOR", applied.getVendorId(), amountInr, narration))));
+    }
+
+    /** Reverses whichever journal was actually posted for the ORIGINAL payment - at most one of the candidate purposes exists. */
+    private void reversePaymentJournal(SupplierPayment original) {
+        List<com.voyra.crm.enums.JournalPurpose> candidates = Boolean.TRUE.equals(original.getAppliedFromAdvance())
+                ? List.of(com.voyra.crm.enums.JournalPurpose.SUPPLIER_ADVANCE_APPLIED)
+                : List.of(com.voyra.crm.enums.JournalPurpose.SUPPLIER_PAYMENT_SETTLED,
+                          com.voyra.crm.enums.JournalPurpose.SUPPLIER_ADVANCE_PAID);
+        for (com.voyra.crm.enums.JournalPurpose purpose : candidates) {
+            journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(
+                    com.voyra.crm.enums.JournalSourceType.SUPPLIER_PAYMENT, original.getId(), purpose)
+                    .ifPresent(entry -> journalService.reverse(entry.getId(),
+                            "Payment " + orId(original.getVoucherNumber(), original.getId()) + " reversed"));
+        }
     }
 
     /** delta is signed - positive when money/credit is applied toward the bill, negative when a payment against it is reversed. */

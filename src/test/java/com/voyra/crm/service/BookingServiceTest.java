@@ -2,14 +2,25 @@ package com.voyra.crm.service;
 
 import com.voyra.crm.dto.BookingPaymentStatusUpdateRequest;
 import com.voyra.crm.dto.BookingRefundUpdateRequest;
+import com.voyra.crm.dto.BookingStatusUpdateRequest;
+import com.voyra.crm.dto.BookingUpdateRequest;
 import com.voyra.crm.entity.Booking;
+import com.voyra.crm.entity.BookingCostComponent;
+import com.voyra.crm.entity.Invoice;
+import com.voyra.crm.entity.JournalEntry;
 import com.voyra.crm.enums.BookingStatus;
 import com.voyra.crm.enums.CreditNoteStatus;
+import com.voyra.crm.enums.JournalPurpose;
+import com.voyra.crm.enums.JournalSourceType;
+import com.voyra.crm.enums.MarkupMode;
 import com.voyra.crm.enums.PaymentStatus;
 import com.voyra.crm.enums.PaymentStatusSource;
 import com.voyra.crm.enums.RefundState;
+import com.voyra.crm.enums.ServiceType;
 import com.voyra.crm.enums.UserType;
+import com.voyra.crm.repository.AccountingChangeAlertRepository;
 import com.voyra.crm.repository.AgentRepository;
+import com.voyra.crm.repository.BookingCostComponentRepository;
 import com.voyra.crm.repository.BookingDocumentRepository;
 import com.voyra.crm.repository.BookingPassengerRepository;
 import com.voyra.crm.repository.BookingRepository;
@@ -19,9 +30,14 @@ import com.voyra.crm.repository.CreditNoteRepository;
 import com.voyra.crm.repository.CustomerLedgerEntryRepository;
 import com.voyra.crm.repository.FeedbackRepository;
 import com.voyra.crm.repository.InvoiceRepository;
+import com.voyra.crm.repository.JournalEntryRepository;
 import com.voyra.crm.repository.LeadServiceRepository;
 import com.voyra.crm.repository.PaymentReceiptRepository;
+import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
+
+import java.math.BigDecimal;
+import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -72,6 +88,10 @@ class BookingServiceTest {
     @Mock
     private FeedbackRepository feedbackRepository;
     @Mock
+    private BookingCostComponentRepository bookingCostComponentRepository;
+    @Mock
+    private AccountingChangeAlertRepository accountingChangeAlertRepository;
+    @Mock
     private FileStorageService fileStorageService;
     @Mock
     private AuditService auditService;
@@ -81,6 +101,12 @@ class BookingServiceTest {
     private ServiceInstanceService serviceInstanceService;
     @Mock
     private ServiceBookingStatusSync serviceBookingStatusSync;
+    @Mock
+    private TenantRepository tenantRepository;
+    @Mock
+    private JournalService journalService;
+    @Mock
+    private JournalEntryRepository journalEntryRepository;
 
     @InjectMocks
     private BookingService bookingService;
@@ -149,5 +175,126 @@ class BookingServiceTest {
         assertThatThrownBy(() -> bookingService.updateRefund("B1", request))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("credit note exists");
+    }
+
+    @Test
+    void confirmingABookingWithNoCostComponentsSkipsThePriceIntegrityCheck() {
+        Booking booking = Booking.builder().id("B1").agentId("A1").bookingStatus(BookingStatus.PENDING)
+                .sellingPrice(new BigDecimal("50000.00")).build();
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
+        when(bookingCostComponentRepository.findByBookingIdOrderBySortOrder("B1")).thenReturn(List.of());
+
+        BookingStatusUpdateRequest request = new BookingStatusUpdateRequest();
+        request.setBookingStatus(BookingStatus.CONFIRMED);
+
+        var response = bookingService.updateStatus("B1", request);
+
+        assertThat(response.getBookingStatus()).isEqualTo(BookingStatus.CONFIRMED);
+    }
+
+    @Test
+    void confirmingABookingIsRefusedWhenComponentsPlusMarkupDisagreeWithSellingPrice() {
+        Booking booking = Booking.builder().id("B1").agentId("A1").bookingStatus(BookingStatus.PENDING)
+                .sellingPrice(new BigDecimal("50000.00"))
+                .markupMode(MarkupMode.FLAT).markupValue(new BigDecimal("5000.00")).build();
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
+        when(bookingCostComponentRepository.findByBookingIdOrderBySortOrder("B1")).thenReturn(List.of(
+                BookingCostComponent.builder().id("C1").bookingId("B1").serviceType(ServiceType.FLIGHT)
+                        .netCostInr(new BigDecimal("40000.00")).build()));
+
+        BookingStatusUpdateRequest request = new BookingStatusUpdateRequest();
+        request.setBookingStatus(BookingStatus.CONFIRMED);
+
+        // 40000 (components) + 5000 (flat markup) = 45000, but sellingPrice is 50000 - a real mismatch.
+        assertThatThrownBy(() -> bookingService.updateStatus("B1", request))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("variance");
+    }
+
+    @Test
+    void confirmingABookingSucceedsWhenComponentsPlusMarkupMatchSellingPrice() {
+        Booking booking = Booking.builder().id("B1").agentId("A1").bookingStatus(BookingStatus.PENDING)
+                .sellingPrice(new BigDecimal("45000.00"))
+                .markupMode(MarkupMode.FLAT).markupValue(new BigDecimal("5000.00")).build();
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
+        when(bookingCostComponentRepository.findByBookingIdOrderBySortOrder("B1")).thenReturn(List.of(
+                BookingCostComponent.builder().id("C1").bookingId("B1").serviceType(ServiceType.FLIGHT)
+                        .netCostInr(new BigDecimal("40000.00")).build()));
+
+        BookingStatusUpdateRequest request = new BookingStatusUpdateRequest();
+        request.setBookingStatus(BookingStatus.CONFIRMED);
+
+        var response = bookingService.updateStatus("B1", request);
+
+        assertThat(response.getBookingStatus()).isEqualTo(BookingStatus.CONFIRMED);
+    }
+
+    @Test
+    void updatingAHotelBookingDerivesDepartureDateFromCheckIn() {
+        Booking booking = Booking.builder().id("B1").agentId("A1").bookingStatus(BookingStatus.PENDING).build();
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
+        when(invoiceRepository.findByBookingId("B1")).thenReturn(List.of());
+
+        BookingUpdateRequest request = new BookingUpdateRequest();
+        request.setHotelCheckIn(java.time.LocalDate.now().plusDays(10));
+
+        bookingService.updateBooking("B1", request);
+
+        assertThat(booking.getDepartureDate()).isEqualTo(java.time.LocalDate.now().plusDays(10));
+    }
+
+    @Test
+    void updatingATransferBookingDerivesDepartureDateFromTransferDate() {
+        Booking booking = Booking.builder().id("B1").agentId("A1").bookingStatus(BookingStatus.PENDING).build();
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
+        when(invoiceRepository.findByBookingId("B1")).thenReturn(List.of());
+
+        BookingUpdateRequest request = new BookingUpdateRequest();
+        request.setTransferDate(java.time.LocalDate.now().plusDays(3));
+
+        bookingService.updateBooking("B1", request);
+
+        assertThat(booking.getDepartureDate()).isEqualTo(java.time.LocalDate.now().plusDays(3));
+    }
+
+    @Test
+    void reschedulingDepartureLaterAfterRecognitionReversesTheJournal() {
+        java.time.LocalDate oldDate = java.time.LocalDate.now().minusDays(5);
+        java.time.LocalDate newDate = java.time.LocalDate.now().plusDays(20);
+        Booking booking = Booking.builder().id("B1").agentId("A1").bookingStatus(BookingStatus.CONFIRMED)
+                .journeyDate(oldDate).departureDate(oldDate).build();
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
+
+        Invoice invoice = Invoice.builder().id("I1").bookingId("B1").build();
+        when(invoiceRepository.findByBookingId("B1")).thenReturn(List.of(invoice));
+        JournalEntry recognitionEntry = JournalEntry.builder().id("JE1").build();
+        when(journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(
+                JournalSourceType.INVOICE, "I1", JournalPurpose.REVENUE_RECOGNIZED))
+                .thenReturn(Optional.of(recognitionEntry));
+
+        BookingUpdateRequest request = new BookingUpdateRequest();
+        request.setJourneyDate(newDate);
+
+        bookingService.updateBooking("B1", request);
+
+        org.mockito.Mockito.verify(journalService).reverse(org.mockito.ArgumentMatchers.eq("JE1"), org.mockito.ArgumentMatchers.anyString());
+        assertThat(booking.getDepartureDate()).isEqualTo(newDate);
+    }
+
+    @Test
+    void reschedulingDepartureEarlierDoesNotReverseAnything() {
+        java.time.LocalDate oldDate = java.time.LocalDate.now().plusDays(20);
+        java.time.LocalDate newDate = java.time.LocalDate.now().plusDays(5);
+        Booking booking = Booking.builder().id("B1").agentId("A1").bookingStatus(BookingStatus.CONFIRMED)
+                .journeyDate(oldDate).departureDate(oldDate).build();
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
+
+        BookingUpdateRequest request = new BookingUpdateRequest();
+        request.setJourneyDate(newDate);
+
+        bookingService.updateBooking("B1", request);
+
+        org.mockito.Mockito.verifyNoInteractions(journalService);
+        assertThat(booking.getDepartureDate()).isEqualTo(newDate);
     }
 }

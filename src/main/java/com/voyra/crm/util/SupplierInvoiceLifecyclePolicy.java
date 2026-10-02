@@ -10,8 +10,10 @@ import java.math.BigDecimal;
  *
  * <pre>
  * DRAFT --approve--&gt; APPROVED (posts BILL_BOOKED to the vendor ledger)
+ * DRAFT --approve, over cost cap--&gt; PENDING_APPROVAL (no ledger post)
+ * PENDING_APPROVAL --approve, Owner + override reason--&gt; APPROVED
  * APPROVED / PARTIALLY_PAID --payment--&gt; {@link #deriveFromBalance} decides PARTIALLY_PAID vs PAID
- * {DRAFT, APPROVED} --cancel--&gt; CANCELLED (blocked once any payment exists)
+ * {DRAFT, PENDING_APPROVAL, APPROVED} --cancel--&gt; CANCELLED (blocked once any payment exists)
  * </pre>
  */
 public final class SupplierInvoiceLifecyclePolicy {
@@ -33,14 +35,15 @@ public final class SupplierInvoiceLifecyclePolicy {
     }
 
     public static void assertApprovable(SupplierInvoiceStatus status) {
-        if (status != SupplierInvoiceStatus.DRAFT) {
-            throw new IllegalStateException("Only a draft bill can be approved");
+        if (status != SupplierInvoiceStatus.DRAFT && status != SupplierInvoiceStatus.PENDING_APPROVAL) {
+            throw new IllegalStateException("Only a draft or pending-approval bill can be approved");
         }
     }
 
     public static void assertCancellable(SupplierInvoiceStatus status) {
-        if (status != SupplierInvoiceStatus.DRAFT && status != SupplierInvoiceStatus.APPROVED) {
-            throw new IllegalStateException("Only a draft or approved bill can be cancelled at this stage");
+        if (status != SupplierInvoiceStatus.DRAFT && status != SupplierInvoiceStatus.PENDING_APPROVAL
+                && status != SupplierInvoiceStatus.APPROVED) {
+            throw new IllegalStateException("Only a draft, pending-approval or approved bill can be cancelled at this stage");
         }
     }
 

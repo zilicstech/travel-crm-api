@@ -72,6 +72,12 @@ class InvoiceDocumentServiceTest {
     @Mock
     private BookingSectorRepository bookingSectorRepository;
     @Mock
+    private com.voyra.crm.repository.BookingCostComponentRepository bookingCostComponentRepository;
+    @Mock
+    private JournalService journalService;
+    @Mock
+    private com.voyra.crm.repository.JournalEntryRepository journalEntryRepository;
+    @Mock
     private ClientService clientService;
     @Mock
     private TenantRepository tenantRepository;
@@ -178,6 +184,55 @@ class InvoiceDocumentServiceTest {
         assertThat(response.getSgstAmount()).isEqualByComparingTo("1250.00");
         assertThat(response.getGstTotal()).isEqualByComparingTo("2500.00");
         assertThat(response.getGrandTotal()).isEqualByComparingTo("52500.00");
+    }
+
+    @Test
+    void commissionAgentInvoiceTaxesOnlyTheFeeNotTheFullPackage() {
+        // Air booking -> InvoiceServiceCategory.AIR_INTERNATIONAL -> defaults to COMMISSION_AGENT
+        // (Decision 8). sellingPrice 50000, cost components total 40000 -> fee is 10000, and GST
+        // must be computed off that 10000, not the 50000 the line item/taxableValue carries.
+        Booking flightBooking = Booking.builder().id("B1").clientId("K1").clientName("Arjun Mehta")
+                .agentId("A1").agentName("Liam").type(BookingType.FLIGHT).internationalTrip(true)
+                .destination("Addis Ababa").bookingStatus(BookingStatus.CONFIRMED)
+                .paymentStatus(PaymentStatus.PENDING).sellingPrice(new BigDecimal("50000.00")).build();
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(flightBooking));
+        when(invoiceRepository.existsByBookingIdAndDocumentTypeAndStatus(any(), any(), any())).thenReturn(false);
+        when(clientService.findAccessibleClient("K1")).thenReturn(client());
+        when(invoiceRepository.existsById(any())).thenReturn(false);
+        when(invoiceLineItemRepository.existsById(any())).thenReturn(false);
+        when(invoiceTaxRepository.existsById(any())).thenReturn(false);
+        when(taxRateConfigRepository.findById("TC1")).thenReturn(Optional.of(
+                com.voyra.crm.entity.TaxRateConfig.builder().id("TC1").taxKind(com.voyra.crm.enums.TaxKind.GST)
+                        .label("GST 18%").supplyNature(SupplyNature.DOMESTIC_PACKAGE).ratePercent(new BigDecimal("18.000")).build()));
+        when(taxEngine.resolveTreatment(eq("K1"), any(), anyBoolean(), any())).thenReturn(TaxTreatment.INTRA_STATE);
+        when(taxEngine.resolvePlaceOfSupplyCode(eq("K1"), any())).thenReturn("27");
+        com.voyra.crm.entity.BookingCostComponent component = com.voyra.crm.entity.BookingCostComponent.builder()
+                .id("BCC1").bookingId("B1").vendorName("Ethiopian Airlines")
+                .netCost(new BigDecimal("40000.00")).netCostInr(new BigDecimal("40000.00")).build();
+        when(bookingCostComponentRepository.findByBookingIdOrderBySortOrder("B1")).thenReturn(List.of(component));
+
+        InvoiceDraftRequest request = new InvoiceDraftRequest();
+        request.setBookingId("B1");
+        InvoiceLineItemRequest line = new InvoiceLineItemRequest();
+        line.setDescription("Addis Ababa air ticket");
+        line.setQuantity(BigDecimal.ONE);
+        line.setUnitPrice(new BigDecimal("50000.00"));
+        request.setLines(List.of(line));
+        com.voyra.crm.dto.InvoiceTaxRequest tax = new com.voyra.crm.dto.InvoiceTaxRequest();
+        tax.setLabel("GST 18%");
+        tax.setTaxRateConfigId("TC1");
+        tax.setMode(com.voyra.crm.enums.TaxLineMode.PERCENT);
+        tax.setRatePercent(new BigDecimal("18.000"));
+        request.setTaxes(List.of(tax));
+
+        InvoiceResponse response = invoiceDocumentService.createDraft(request);
+
+        assertThat(response.getBillingModel()).isEqualTo(com.voyra.crm.enums.InvoiceBillingModel.COMMISSION_AGENT);
+        assertThat(response.getTaxableValue()).isEqualByComparingTo("50000.00");
+        // GST is 18% of the 10000 fee (1800), split 900/900 intra-state - not 18% of 50000 (9000).
+        assertThat(response.getCgstAmount()).isEqualByComparingTo("900.00");
+        assertThat(response.getSgstAmount()).isEqualByComparingTo("900.00");
+        assertThat(response.getGstTotal()).isEqualByComparingTo("1800.00");
     }
 
     @Test
@@ -319,6 +374,70 @@ class InvoiceDocumentServiceTest {
         assertThat(response.getInvoiceNumber()).isEqualTo("INV/2026-27/0001");
         assertThat(response.getFxLockedAt()).isNotNull();
         assertThat(response.getGrandTotalInr()).isEqualByComparingTo("83120.00");
+    }
+
+    @Test
+    void issuingAPrincipalInvoiceForAFutureDepartureDefersRevenueInTheJournal() {
+        Booking futureBooking = Booking.builder().id("B1").departureDate(LocalDate.now().plusDays(30)).build();
+        Invoice draft = Invoice.builder()
+                .id("I1").documentType(InvoiceDocumentType.TAX_INVOICE).status(InvoiceLifecycle.DRAFT)
+                .clientId("K1").clientName("Arjun Mehta").agentId("A1").bookingId("B1")
+                .serviceCategory(InvoiceServiceCategory.PACKAGE)
+                .currencyCode("INR").fxRateToInr(BigDecimal.ONE)
+                .taxableValue(new BigDecimal("50000.00")).taxableValueInr(new BigDecimal("50000.00"))
+                .gstTotal(BigDecimal.ZERO).gstTotalInr(BigDecimal.ZERO)
+                .tcsAmount(BigDecimal.ZERO).tcsAmountInr(BigDecimal.ZERO)
+                .grandTotal(new BigDecimal("50000.00")).grandTotalInr(new BigDecimal("50000.00"))
+                .build();
+        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(draft));
+        when(invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc("I1"))
+                .thenReturn(List.of(InvoiceLineItem.builder().id("L1").invoiceId("I1").description("x").build()));
+        when(documentNumberService.next(DocumentKind.PACKAGE_INVOICE, LocalDate.now())).thenReturn("PKG/2026-27/0001");
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(futureBooking));
+
+        invoiceDocumentService.issue("I1");
+
+        ArgumentCaptor<com.voyra.crm.models.JournalPosting> captor = ArgumentCaptor.forClass(com.voyra.crm.models.JournalPosting.class);
+        org.mockito.Mockito.verify(journalService).post(captor.capture());
+        com.voyra.crm.models.JournalPosting posting = captor.getValue();
+
+        assertThat(posting.purpose()).isEqualTo(com.voyra.crm.enums.JournalPurpose.INVOICE_RAISED_DEFERRED);
+        assertThat(posting.lines()).hasSize(2);
+        assertThat(posting.lines().get(0).accountCode()).isEqualTo("1200");
+        assertThat(posting.lines().get(0).debitAmount()).isEqualByComparingTo("50000.00");
+        assertThat(posting.lines().get(1).accountCode()).isEqualTo("2120");
+        assertThat(posting.lines().get(1).creditAmount()).isEqualByComparingTo("50000.00");
+    }
+
+    @Test
+    void issuingAPrincipalInvoiceWithNoDepartureDateRecognisesRevenueImmediately() {
+        Invoice draft = Invoice.builder()
+                .id("I1").documentType(InvoiceDocumentType.TAX_INVOICE).status(InvoiceLifecycle.DRAFT)
+                .clientId("K1").clientName("Arjun Mehta").agentId("A1")
+                .serviceCategory(InvoiceServiceCategory.HOTEL)
+                .currencyCode("INR").fxRateToInr(BigDecimal.ONE)
+                .taxableValue(new BigDecimal("20000.00")).taxableValueInr(new BigDecimal("20000.00"))
+                .gstTotal(new BigDecimal("1000.00")).gstTotalInr(new BigDecimal("1000.00"))
+                .tcsAmount(BigDecimal.ZERO).tcsAmountInr(BigDecimal.ZERO)
+                .grandTotal(new BigDecimal("21000.00")).grandTotalInr(new BigDecimal("21000.00"))
+                .build();
+        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(draft));
+        when(invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc("I1"))
+                .thenReturn(List.of(InvoiceLineItem.builder().id("L1").invoiceId("I1").description("x").build()));
+        when(documentNumberService.next(DocumentKind.HOTEL_INVOICE, LocalDate.now())).thenReturn("HTL/2026-27/0001");
+
+        invoiceDocumentService.issue("I1");
+
+        ArgumentCaptor<com.voyra.crm.models.JournalPosting> captor = ArgumentCaptor.forClass(com.voyra.crm.models.JournalPosting.class);
+        org.mockito.Mockito.verify(journalService).post(captor.capture());
+        com.voyra.crm.models.JournalPosting posting = captor.getValue();
+
+        assertThat(posting.purpose()).isEqualTo(com.voyra.crm.enums.JournalPurpose.INVOICE_RAISED_RECOGNIZED);
+        assertThat(posting.lines()).hasSize(3);
+        assertThat(posting.lines().get(1).accountCode()).isEqualTo("4030"); // HOTEL is InvoiceServiceCategory index 2 -> (2+1)*10
+        BigDecimal debitTotal = posting.lines().stream().map(com.voyra.crm.models.JournalLinePosting::debitAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal creditTotal = posting.lines().stream().map(com.voyra.crm.models.JournalLinePosting::creditAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
+        assertThat(debitTotal).isEqualByComparingTo(creditTotal);
     }
 
     @Test

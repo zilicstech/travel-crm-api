@@ -48,6 +48,10 @@ public class SupplierInvoice {
     @Column(name = "id", length = 36)
     private String id;
 
+    /** Nullable - intra-agency partition, column-only for now (ACCOUNTING_EXPANSION_ARCHITECTURE.md §6). */
+    @Column(name = "branch_id", length = 36)
+    private String branchId;
+
     @Column(name = "vendor_id", length = 36)
     private String vendorId;
 

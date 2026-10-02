@@ -33,6 +33,7 @@ public class AgencyService {
     private final AesPasswordEncoder passwordEncoder;
     private final TenantFlywayMigrator tenantFlywayMigrator;
     private final TenantScopedReadService tenantScopedReadService;
+    private final ChartOfAccountsSeedService chartOfAccountsSeedService;
 
     @Transactional
     public AgencyCreateResponse createAgency(AgencyCreateRequest request) {
@@ -52,6 +53,7 @@ public class AgencyService {
         tenantRepository.save(tenant);
         TenantCache.put(tenant.getId(), tenant.getAgencyName(), true);
         tenantFlywayMigrator.migrate(tenant.getId());
+        seedChartOfAccountsFor(tenant.getId());
 
         log.info("Agency created: tenantId={}, agencyName={}", tenant.getId(), tenant.getAgencyName());
         return AgencyCreateResponse.builder()
@@ -127,6 +129,26 @@ public class AgencyService {
                 .totalRevenue(totalRevenue)
                 .createdDate(tenant.getCreatedDate())
                 .build();
+    }
+
+    /**
+     * Cross-tenant write (blueprint §3.5): switch context, seed in a fresh REQUIRES_NEW
+     * transaction, always restore - this method's own {@code createAgency} caller is already
+     * inside a public-schema transaction, so {@link ChartOfAccountsSeedService#seed} must be a
+     * genuinely separate bean or self-invocation would bypass the proxy and seed the wrong schema.
+     */
+    private void seedChartOfAccountsFor(String tenantId) {
+        String previous = TenantContext.getTenantId();
+        try {
+            TenantContext.setTenantId(tenantId);
+            chartOfAccountsSeedService.seed();
+        } finally {
+            if (previous == null || previous.isBlank()) {
+                TenantContext.clear();
+            } else {
+                TenantContext.setTenantId(previous);
+            }
+        }
     }
 
     /** Cross-tenant read (blueprint §3.5): switch context, read in a fresh REQUIRES_NEW transaction, always restore. */

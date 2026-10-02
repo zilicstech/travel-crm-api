@@ -58,6 +58,8 @@ public class PaymentReceiptService {
     private final AuditService auditService;
     private final CustomerLedgerService customerLedgerService;
     private final BookingAccountingSync bookingAccountingSync;
+    private final JournalService journalService;
+    private final com.voyra.crm.repository.JournalEntryRepository journalEntryRepository;
 
     @Transactional
     public PaymentReceiptResponse record(PaymentReceiptRequest request) {
@@ -99,6 +101,7 @@ public class PaymentReceiptService {
                 .build();
         paymentReceiptRepository.save(receipt);
         postForReceipt(receipt);
+        postForReceiptJournal(receipt, isProforma);
 
         if (!isProforma) {
             applySettlement(invoice);
@@ -150,6 +153,7 @@ public class PaymentReceiptService {
                 .build();
         paymentReceiptRepository.save(receipt);
         postForReceipt(receipt);
+        postForReceiptJournal(receipt, true);
 
         auditService.recordCreate(AuditEntityType.PAYMENT_RECEIPT, receipt.getId(), receipt.getReceiptNumber());
         log.info("Deposit recorded: id={}, clientId={}, amount={}", receipt.getId(), client.getId(), receipt.getAmount());
@@ -228,7 +232,10 @@ public class PaymentReceiptService {
                 .createdBy(currentUserId())
                 .build();
         paymentReceiptRepository.save(applied);
-        // No ledger post - the deposit already posted its own credit when it was recorded.
+        // No SUBSIDIARY ledger post - the deposit already posted its own credit when it was
+        // recorded (AD-5). The GL still needs this: moving a balance from 2110 to 1200 is a
+        // real double-entry transfer, not a net-zero convenience the subsidiary ledger can skip.
+        postAdvanceAppliedJournal(applied, invoice, amount);
         applySettlement(invoice);
         return applied;
     }
@@ -301,6 +308,7 @@ public class PaymentReceiptService {
         if (!appliedFromAdvance) {
             postForReceipt(reversal);
         }
+        reverseReceiptJournal(original, appliedFromAdvance);
 
         original.setReversedAt(now);
         original.setReversedBy(actor);
@@ -382,6 +390,68 @@ public class PaymentReceiptService {
                 receipt.getBookingId(), receipt.getCurrencyCode(), receipt.getFxRateToInr(),
                 isCredit ? BigDecimal.ZERO : amount, isCredit ? amount : BigDecimal.ZERO,
                 isCredit ? BigDecimal.ZERO : amountInr, isCredit ? amountInr : BigDecimal.ZERO));
+    }
+
+    /**
+     * Posting-rule-table rows 4/5 - a brand-new (non-reversal) receipt only; a reversal row is
+     * handled by {@link #reverseReceiptJournal}, which reverses the ORIGINAL entry rather than
+     * posting a fresh one, per Rule 1.6.2. {@code isProforma} (or no invoice at all) routes to
+     * row 5 - cash held with nothing real to attach it to yet is exactly what Client Advances
+     * Held means, whether or not a proforma happens to exist for it.
+     */
+    private void postForReceiptJournal(PaymentReceipt receipt, boolean isProforma) {
+        BigDecimal amountInr = receipt.getAmountInr();
+        if (amountInr == null || amountInr.compareTo(BigDecimal.ZERO) <= 0) {
+            return;
+        }
+        boolean isDeposit = receipt.getInvoiceId() == null || isProforma;
+        com.voyra.crm.enums.JournalPurpose purpose = isDeposit
+                ? com.voyra.crm.enums.JournalPurpose.RECEIPT_ADVANCE
+                : com.voyra.crm.enums.JournalPurpose.RECEIPT_AGAINST_INVOICE;
+        String creditAccount = isDeposit
+                ? com.voyra.crm.enums.SystemAccount.CLIENT_ADVANCES_HELD.code()
+                : com.voyra.crm.enums.SystemAccount.ACCOUNTS_RECEIVABLE.code();
+        String debitAccount = receipt.getPaymentMode() == PaymentMode.CASH
+                ? com.voyra.crm.enums.SystemAccount.CASH_IN_HAND.code()
+                : com.voyra.crm.enums.SystemAccount.BANK_ACCOUNTS.code();
+        String narration = "Receipt " + receipt.getReceiptNumber() + " recorded";
+
+        journalService.post(new com.voyra.crm.models.JournalPosting(
+                receipt.getReceivedOn(), com.voyra.crm.enums.JournalSourceType.RECEIPT, receipt.getId(), purpose,
+                narration, receipt.getBookingId(), null, List.of(
+                        com.voyra.crm.models.JournalLinePosting.debit(debitAccount, amountInr, narration),
+                        com.voyra.crm.models.JournalLinePosting.creditParty(
+                                creditAccount, "CLIENT", receipt.getClientId(), amountInr, narration))));
+    }
+
+    /** Posting-rule-table row 6 - moves a balance from the client's wallet onto this invoice's receivable. */
+    private void postAdvanceAppliedJournal(PaymentReceipt applied, Invoice invoice, BigDecimal amountInr) {
+        if (amountInr.compareTo(BigDecimal.ZERO) <= 0) {
+            return;
+        }
+        String narration = "Wallet applied to invoice " + invoice.getId();
+        journalService.post(new com.voyra.crm.models.JournalPosting(
+                applied.getReceivedOn(), com.voyra.crm.enums.JournalSourceType.RECEIPT, applied.getId(),
+                com.voyra.crm.enums.JournalPurpose.ADVANCE_APPLIED, narration, invoice.getBookingId(), null, List.of(
+                        com.voyra.crm.models.JournalLinePosting.debit(
+                                com.voyra.crm.enums.SystemAccount.CLIENT_ADVANCES_HELD.code(), amountInr, narration),
+                        com.voyra.crm.models.JournalLinePosting.creditParty(
+                                com.voyra.crm.enums.SystemAccount.ACCOUNTS_RECEIVABLE.code(), "CLIENT", invoice.getClientId(), amountInr, narration))));
+    }
+
+    /** Reverses whichever journal was actually posted for the ORIGINAL receipt - at most one of the candidate purposes exists. */
+    private void reverseReceiptJournal(PaymentReceipt original, boolean appliedFromAdvance) {
+        List<com.voyra.crm.enums.JournalPurpose> candidates = appliedFromAdvance
+                ? List.of(com.voyra.crm.enums.JournalPurpose.ADVANCE_APPLIED)
+                : List.of(com.voyra.crm.enums.JournalPurpose.RECEIPT_ADVANCE,
+                          com.voyra.crm.enums.JournalPurpose.RECEIPT_AGAINST_INVOICE,
+                          com.voyra.crm.enums.JournalPurpose.GATEWAY_RECEIPT);
+        for (com.voyra.crm.enums.JournalPurpose purpose : candidates) {
+            journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(
+                    com.voyra.crm.enums.JournalSourceType.RECEIPT, original.getId(), purpose)
+                    .ifPresent(entry -> journalService.reverse(entry.getId(),
+                            "Receipt " + (original.getReceiptNumber() != null ? original.getReceiptNumber() : original.getId()) + " reversed"));
+        }
     }
 
     /**

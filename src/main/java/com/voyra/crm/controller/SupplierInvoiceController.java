@@ -1,5 +1,6 @@
 package com.voyra.crm.controller;
 
+import com.voyra.crm.dto.SupplierInvoiceApproveRequest;
 import com.voyra.crm.dto.SupplierInvoiceCancelRequest;
 import com.voyra.crm.dto.SupplierInvoiceDraftRequest;
 import com.voyra.crm.dto.SupplierInvoiceListItemResponse;
@@ -76,9 +77,14 @@ public class SupplierInvoiceController {
     }
 
     @PostMapping("/{id}/approve")
-    @Operation(summary = "Approve a draft bill", description = "Books the payable to the vendor ledger. The recorded GST is validated against the vendor's state, never recomputed.")
-    public ResponseEntity<SupplierInvoiceResponse> approve(@PathVariable String id) {
-        return ResponseEntity.ok(supplierInvoiceService.approve(id));
+    @Operation(summary = "Approve a draft or pending-approval bill",
+            description = "Books the payable to the vendor ledger. The recorded GST is validated against the vendor's state, never recomputed. "
+                    + "A bill exceeding its booking's quoted cost cap for that vendor moves to PENDING_APPROVAL instead, unless the caller is an "
+                    + "Agency Owner supplying overrideReason.")
+    public ResponseEntity<SupplierInvoiceResponse> approve(@PathVariable String id,
+            @RequestBody(required = false) SupplierInvoiceApproveRequest request) {
+        String overrideReason = request != null ? request.getOverrideReason() : null;
+        return ResponseEntity.ok(supplierInvoiceService.approve(id, overrideReason));
     }
 
     @PostMapping("/{id}/cancel")

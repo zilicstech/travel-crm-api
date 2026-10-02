@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
@@ -67,9 +68,11 @@ public class BookingDocumentController {
 
     @GetMapping("/{documentId}/file")
     @PreAuthorize("hasAnyRole('AGENCY_OWNER', 'AGENT', 'ACCOUNTANT')")
-    @Operation(summary = "Download or view a document's stored file")
-    public ResponseEntity<Resource> downloadFile(@PathVariable String bookingId, @PathVariable String documentId) {
-        BookingDocumentService.BookingDocumentFileContent content = bookingDocumentService.downloadFile(bookingId, documentId);
+    @Operation(summary = "Download or view a document's stored file",
+            description = "Blocked for a booking that is not fully paid; an Agency Owner may override with overrideReason.")
+    public ResponseEntity<Resource> downloadFile(@PathVariable String bookingId, @PathVariable String documentId,
+                                                  @RequestParam(value = "overrideReason", required = false) String overrideReason) {
+        BookingDocumentService.BookingDocumentFileContent content = bookingDocumentService.downloadFile(bookingId, documentId, overrideReason);
         MediaType mediaType = content.contentType() != null
                 ? MediaType.parseMediaType(content.contentType())
                 : MediaType.APPLICATION_OCTET_STREAM;

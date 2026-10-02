@@ -39,6 +39,10 @@ public class CreditNote {
     @Column(name = "id", length = 36)
     private String id;
 
+    /** Nullable - intra-agency partition, column-only for now (ACCOUNTING_EXPANSION_ARCHITECTURE.md §6). */
+    @Column(name = "branch_id", length = 36)
+    private String branchId;
+
     @Column(name = "credit_note_number", length = 40)
     private String creditNoteNumber;
 

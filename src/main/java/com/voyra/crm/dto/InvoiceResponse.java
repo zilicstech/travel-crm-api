@@ -1,6 +1,7 @@
 package com.voyra.crm.dto;
 
 import com.voyra.crm.enums.FxRateSource;
+import com.voyra.crm.enums.InvoiceBillingModel;
 import com.voyra.crm.enums.InvoiceDocumentType;
 import com.voyra.crm.enums.InvoiceLifecycle;
 import com.voyra.crm.enums.InvoiceServiceCategory;
@@ -38,6 +39,10 @@ public class InvoiceResponse {
 
     @Schema(description = "Drives the number series, printed title and print template")
     private InvoiceServiceCategory serviceCategory;
+
+    @Schema(description = "PRINCIPAL taxes the full package; COMMISSION_AGENT taxes only the service fee "
+            + "and prints the booking's supplier costs as a pass-through disbursement", example = "PRINCIPAL")
+    private InvoiceBillingModel billingModel;
 
     @Schema(example = "ISSUED")
     private InvoiceLifecycle status;

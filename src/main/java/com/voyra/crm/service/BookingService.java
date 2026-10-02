@@ -1,6 +1,9 @@
 package com.voyra.crm.service;
 
+import com.voyra.crm.dto.AccountingChangeAlertResponse;
 import com.voyra.crm.dto.AuditChange;
+import com.voyra.crm.dto.BookingCostComponentRequest;
+import com.voyra.crm.dto.BookingCostComponentResponse;
 import com.voyra.crm.dto.BookingCreateRequest;
 import com.voyra.crm.dto.BookingDeadlineUpdateRequest;
 import com.voyra.crm.dto.BookingDocumentResponse;
@@ -14,22 +17,29 @@ import com.voyra.crm.dto.BookingSectorResponse;
 import com.voyra.crm.dto.BookingStatusUpdateRequest;
 import com.voyra.crm.dto.BookingUpdateRequest;
 import com.voyra.crm.dto.PagedResponse;
+import com.voyra.crm.entity.AccountingChangeAlert;
 import com.voyra.crm.entity.Agent;
 import com.voyra.crm.entity.Booking;
+import com.voyra.crm.entity.BookingCostComponent;
 import com.voyra.crm.entity.BookingDocument;
 import com.voyra.crm.entity.BookingPassenger;
 import com.voyra.crm.entity.BookingSector;
 import com.voyra.crm.entity.Client;
 import com.voyra.crm.entity.LeadService;
+import com.voyra.crm.entity.Tenant;
+import com.voyra.crm.entity.Vendor;
 import com.voyra.crm.enums.AuditEntityType;
 import com.voyra.crm.enums.BookingStatus;
 import com.voyra.crm.enums.BookingType;
 import com.voyra.crm.enums.CreditNoteStatus;
 import com.voyra.crm.enums.LeadTimelineEventType;
+import com.voyra.crm.enums.MarkupMode;
 import com.voyra.crm.enums.PaymentStatusSource;
 import com.voyra.crm.enums.RefundState;
 import com.voyra.crm.enums.ServiceType;
+import com.voyra.crm.repository.AccountingChangeAlertRepository;
 import com.voyra.crm.repository.AgentRepository;
+import com.voyra.crm.repository.BookingCostComponentRepository;
 import com.voyra.crm.repository.BookingDocumentRepository;
 import com.voyra.crm.repository.BookingPassengerRepository;
 import com.voyra.crm.repository.BookingRepository;
@@ -42,11 +52,14 @@ import com.voyra.crm.repository.InvoiceRepository;
 import com.voyra.crm.repository.LeadRepository;
 import com.voyra.crm.repository.LeadServiceRepository;
 import com.voyra.crm.repository.PaymentReceiptRepository;
+import com.voyra.crm.repository.TenantRepository;
+import com.voyra.crm.repository.VendorRepository;
 import com.voyra.crm.repository.spec.BookingSpecifications;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.security.SecurityContextUtil;
 import com.voyra.crm.util.AuditSnapshot;
 import com.voyra.crm.util.BookingAccessChecker;
+import com.voyra.crm.util.MarginCalculator;
 import com.voyra.crm.util.ServiceBookingTypeMapper;
 import com.voyra.crm.util.UniqueIdResolver;
 import lombok.RequiredArgsConstructor;
@@ -89,6 +102,9 @@ public class BookingService {
     private final BookingDocumentRepository bookingDocumentRepository;
     private final BookingPassengerRepository bookingPassengerRepository;
     private final BookingSectorRepository bookingSectorRepository;
+    private final BookingCostComponentRepository bookingCostComponentRepository;
+    private final AccountingChangeAlertRepository accountingChangeAlertRepository;
+    private final VendorRepository vendorRepository;
     private final ClientRepository clientRepository;
     private final AgentRepository agentRepository;
     private final LeadServiceRepository leadServiceRepository;
@@ -104,6 +120,12 @@ public class BookingService {
     private final ServiceInstanceService serviceInstanceService;
     private final ServiceBookingStatusSync serviceBookingStatusSync;
     private final SupplierInvoiceService supplierInvoiceService;
+    private final TenantRepository tenantRepository;
+    private final JournalService journalService;
+    private final com.voyra.crm.repository.JournalEntryRepository journalEntryRepository;
+
+    /** FRD US-ACC-6.1's example rate, used whenever an agency hasn't set its own in Settings. */
+    private static final BigDecimal DEFAULT_LOW_MARGIN_THRESHOLD_PERCENT = BigDecimal.valueOf(8);
 
     @Transactional
     public BookingResponse createBooking(BookingCreateRequest request) {
@@ -203,6 +225,7 @@ public class BookingService {
         }
 
         Booking booking = builder.build();
+        booking.setDepartureDate(deriveDepartureDate(booking));
         bookingRepository.save(booking);
         if (request.getPassengers() != null) {
             replacePassengers(booking.getId(), request.getPassengers());
@@ -228,14 +251,80 @@ public class BookingService {
 
     @Transactional(readOnly = true)
     public List<BookingResponse> listBookings(BookingType typeFilter, BookingStatus statusFilter) {
-        return bookingRepository.findAll(scopeSpecification(typeFilter, statusFilter)).stream()
-                .map(this::toResponse).toList();
+        return listBookings(typeFilter, statusFilter, null, null, null);
+    }
+
+    /** FRD US-ACC-6.1's profitability filters - destination, agent, vendor. "Package Category" is
+     *  covered by {@code typeFilter}; the booking has no separate category field. */
+    @Transactional(readOnly = true)
+    public List<BookingResponse> listBookings(BookingType typeFilter, BookingStatus statusFilter,
+            String destinationFilter, String agentIdFilter, String vendorIdFilter) {
+        return bookingRepository.findAll(
+                        scopeSpecification(typeFilter, statusFilter, destinationFilter, agentIdFilter, vendorIdFilter))
+                .stream().map(this::toResponse).toList();
     }
 
     @Transactional(readOnly = true)
     public PagedResponse<BookingResponse> listBookings(BookingType typeFilter, BookingStatus statusFilter, Pageable pageable) {
-        Page<Booking> page = bookingRepository.findAll(scopeSpecification(typeFilter, statusFilter), pageable);
+        return listBookings(typeFilter, statusFilter, null, null, null, pageable);
+    }
+
+    @Transactional(readOnly = true)
+    public PagedResponse<BookingResponse> listBookings(BookingType typeFilter, BookingStatus statusFilter,
+            String destinationFilter, String agentIdFilter, String vendorIdFilter, Pageable pageable) {
+        Page<Booking> page = bookingRepository.findAll(
+                scopeSpecification(typeFilter, statusFilter, destinationFilter, agentIdFilter, vendorIdFilter), pageable);
         return PagedResponse.from(page, this::toResponse);
+    }
+
+    /**
+     * FRD US-ACC-1.1's "Unbilled Bookings" workbench - CONFIRMED bookings with no live invoice,
+     * computed server-side (see {@code BookingSpecifications#confirmedAndUnbilled}) rather than
+     * the previous approach of loading every non-cancelled booking into the browser and deriving
+     * state there. Same agent/owner/accountant scoping as {@link #listBookings}.
+     */
+    @Transactional(readOnly = true)
+    public List<BookingResponse> listUnbilledBookings() {
+        List<Specification<Booking>> predicates = new ArrayList<>();
+        CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
+        if (principal.isAgent()) {
+            Agent agent = agentRepository.findById(principal.userId())
+                    .orElseThrow(() -> new IllegalStateException("Agent not found: " + principal.userId()));
+            predicates.add(BookingSpecifications.accessibleToAgent(principal.userId(), agent.getManageableServices()));
+        }
+        predicates.add(BookingSpecifications.confirmedAndUnbilled());
+        return bookingRepository.findAll(Specification.allOf(predicates)).stream().map(this::toResponse).toList();
+    }
+
+    /** Owner/Accountant work queue - see {@link #raiseChangeAlerts}. Not agent-scoped: payables
+     *  and accounting review surfaces are agency-wide, matching SupplierInvoiceController's gate. */
+    @Transactional(readOnly = true)
+    public List<AccountingChangeAlertResponse> listUnacknowledgedChangeAlerts() {
+        Map<String, Booking> bookingsById = new java.util.HashMap<>();
+        return accountingChangeAlertRepository.findByAcknowledgedFalseOrderByRaisedAtDesc().stream()
+                .map(a -> {
+                    Booking b = bookingsById.computeIfAbsent(a.getBookingId(),
+                            bid -> bookingRepository.findById(bid).orElse(null));
+                    return AccountingChangeAlertResponse.builder()
+                            .id(a.getId()).bookingId(a.getBookingId())
+                            .bookingLabel(b != null ? labelFor(b) : null)
+                            .fieldName(a.getFieldName()).oldValue(a.getOldValue()).newValue(a.getNewValue())
+                            .raisedAt(a.getRaisedAt()).raisedBy(a.getRaisedBy())
+                            .acknowledged(a.getAcknowledged())
+                            .acknowledgedAt(a.getAcknowledgedAt()).acknowledgedBy(a.getAcknowledgedBy())
+                            .build();
+                })
+                .toList();
+    }
+
+    @Transactional
+    public void acknowledgeChangeAlert(String id) {
+        AccountingChangeAlert alert = accountingChangeAlertRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Change alert not found: " + id));
+        alert.setAcknowledged(true);
+        alert.setAcknowledgedAt(LocalDateTime.now());
+        alert.setAcknowledgedBy(SecurityContextUtil.getCurrentUserOrThrow().userId());
+        accountingChangeAlertRepository.save(alert);
     }
 
     /**
@@ -244,7 +333,8 @@ public class BookingService {
      * {@code agentRepository.findById} to read {@code manageableServices} (agent callers only),
      * one {@code findAll(spec)} - independent of how many bookings exist.
      */
-    private Specification<Booking> scopeSpecification(BookingType typeFilter, BookingStatus statusFilter) {
+    private Specification<Booking> scopeSpecification(BookingType typeFilter, BookingStatus statusFilter,
+            String destinationFilter, String agentIdFilter, String vendorIdFilter) {
         CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
         List<Specification<Booking>> predicates = new ArrayList<>();
         if (principal.isAgent()) {
@@ -257,6 +347,15 @@ public class BookingService {
         }
         if (statusFilter != null) {
             predicates.add(BookingSpecifications.statusIs(statusFilter));
+        }
+        if (destinationFilter != null && !destinationFilter.isBlank()) {
+            predicates.add(BookingSpecifications.destinationContains(destinationFilter));
+        }
+        if (agentIdFilter != null && !agentIdFilter.isBlank()) {
+            predicates.add(BookingSpecifications.agentIs(agentIdFilter));
+        }
+        if (vendorIdFilter != null && !vendorIdFilter.isBlank()) {
+            predicates.add(BookingSpecifications.vendorIs(vendorIdFilter));
         }
         return Specification.allOf(predicates);
     }
@@ -277,6 +376,8 @@ public class BookingService {
     @Transactional
     public BookingResponse updateBooking(String id, BookingUpdateRequest request) {
         Booking booking = findAccessibleBooking(id);
+        boolean alreadyConfirmed = booking.getBookingStatus() == BookingStatus.CONFIRMED;
+        LocalDate oldDepartureDate = booking.getDepartureDate();
         Map<String, String> before = AuditSnapshot.of(booking, AUDITED);
 
         if (request.getPnr() != null) booking.setPnr(request.getPnr());
@@ -316,6 +417,7 @@ public class BookingService {
         if (request.getInternationalTrip() != null) booking.setInternationalTrip(request.getInternationalTrip());
         // Profit is never client-trusted - always recomputed server-side from the current values.
         booking.setProfit(computeProfit(booking.getSellingPrice(), booking.getNetCost()));
+        booking.setDepartureDate(deriveDepartureDate(booking));
 
         List<AuditChange> changes = AuditSnapshot.diff(before, AuditSnapshot.of(booking, AUDITED));
         touch(booking);
@@ -325,8 +427,121 @@ public class BookingService {
         }
         // Same transaction as the save - a rollback loses the booking edit and its audit row together.
         auditService.recordUpdate(AuditEntityType.BOOKING, booking.getId(), labelFor(booking), changes);
+        if (alreadyConfirmed) {
+            raiseChangeAlerts(booking, changes);
+        }
+        reverseRecognitionIfRescheduledLater(booking, oldDepartureDate);
         log.info("Booking updated: bookingId={}, changedFields={}", id, changes.size());
         return toResponse(booking);
+    }
+
+    /**
+     * ACCOUNTING_EXPANSION_ARCHITECTURE.md Rule 2.2.1 - type-agnostic, so the recognition job
+     * never branches on booking type in SQL. Denormalisation by design, consistent with the
+     * existing *_name snapshot columns.
+     */
+    private LocalDate deriveDepartureDate(Booking booking) {
+        if (booking.getJourneyDate() != null) {
+            return booking.getJourneyDate();
+        }
+        if (booking.getHotelCheckIn() != null) {
+            return booking.getHotelCheckIn();
+        }
+        if (booking.getTransferDate() != null) {
+            return booking.getTransferDate();
+        }
+        return null;
+    }
+
+    /**
+     * Rule 2.5.1 - the only reschedule case needing code at the point of change. "Moved later,
+     * not yet recognised" and any "moved earlier" case need nothing: the recognition job's live
+     * query (Rule 2.4.1) already reads the current departure_date on every run. Only "moved
+     * later while already recognised" must reverse here, because the job itself never sees a
+     * date it didn't witness change. If no REVENUE_RECOGNIZED journal exists for any of this
+     * booking's invoices, this is a no-op - the common case.
+     */
+    private void reverseRecognitionIfRescheduledLater(Booking booking, LocalDate oldDepartureDate) {
+        LocalDate newDepartureDate = booking.getDepartureDate();
+        if (newDepartureDate == null) {
+            return;
+        }
+        if (oldDepartureDate != null && !newDepartureDate.isAfter(oldDepartureDate)) {
+            return;
+        }
+        for (com.voyra.crm.entity.Invoice invoice : invoiceRepository.findByBookingId(booking.getId())) {
+            journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(
+                    com.voyra.crm.enums.JournalSourceType.INVOICE, invoice.getId(),
+                    com.voyra.crm.enums.JournalPurpose.REVENUE_RECOGNIZED)
+                    .ifPresent(entry -> journalService.reverse(entry.getId(),
+                            "Booking " + booking.getId() + " departure rescheduled to " + newDepartureDate
+                                    + ", after revenue was already recognized"));
+        }
+    }
+
+    /**
+     * FRD US-ACC-1.1's "any modification to itinerary line items after confirmation triggers a
+     * change notification in the accounting workbench." Raised in the same transaction as the
+     * audit-log write above, in addition to it - not in place of it. Gated on the booking already
+     * being CONFIRMED at the START of this call (captured before any field was touched), which is
+     * the cheapest check available: no extra query, since {@code bookingStatus} is already loaded.
+     * A booking still PENDING raises nothing, matching today's behaviour exactly.
+     */
+    private void raiseChangeAlerts(Booking booking, List<AuditChange> changes) {
+        if (changes.isEmpty()) {
+            return;
+        }
+        LocalDateTime now = LocalDateTime.now();
+        String actor = SecurityContextUtil.getCurrentUserOrThrow().userId();
+        List<AccountingChangeAlert> alerts = changes.stream()
+                .map(c -> AccountingChangeAlert.builder()
+                        .id(UniqueIdResolver.resolve(accountingChangeAlertRepository::existsById))
+                        .bookingId(booking.getId())
+                        .fieldName(c.getField())
+                        .oldValue(c.getOldValue())
+                        .newValue(c.getNewValue())
+                        .raisedAt(now)
+                        .raisedBy(actor)
+                        .acknowledged(false)
+                        .build())
+                .toList();
+        accountingChangeAlertRepository.saveAll(alerts);
+    }
+
+    /**
+     * FRD US-ACC-1.1: "the system verifies that the sum of supplier net costs plus agency markup
+     * equals the total quoted client price before allowing financial record creation" - enforced
+     * at the PENDING -&gt; CONFIRMED transition. Skipped entirely when the booking has no cost
+     * components yet (the common case today - nothing to validate against), matching Decision 7,
+     * Rule 7.4. A 0.01 tolerance absorbs rounding, not a real mismatch.
+     */
+    private void assertPriceIntegrity(Booking booking) {
+        List<BookingCostComponent> components = bookingCostComponentRepository.findByBookingIdOrderBySortOrder(booking.getId());
+        if (components.isEmpty()) {
+            return;
+        }
+        BigDecimal componentTotal = components.stream()
+                .map(BookingCostComponent::getNetCostInr)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal markup = computeMarkupAmount(booking, componentTotal);
+        BigDecimal expectedSellingPrice = componentTotal.add(markup).setScale(2, java.math.RoundingMode.HALF_UP);
+        BigDecimal actualSellingPrice = booking.getSellingPrice() != null ? booking.getSellingPrice() : BigDecimal.ZERO;
+        BigDecimal variance = expectedSellingPrice.subtract(actualSellingPrice).abs();
+        if (variance.compareTo(new BigDecimal("0.01")) > 0) {
+            throw new IllegalStateException("Supplier net costs (" + componentTotal + ") plus markup (" + markup
+                    + ") = " + expectedSellingPrice + ", but the quoted selling price is " + actualSellingPrice
+                    + " - a variance of " + variance + ". Correct the booking's cost components, markup, or "
+                    + "selling price before confirming.");
+        }
+    }
+
+    private BigDecimal computeMarkupAmount(Booking booking, BigDecimal componentTotal) {
+        BigDecimal markupValue = booking.getMarkupValue() != null ? booking.getMarkupValue() : BigDecimal.ZERO;
+        if (booking.getMarkupMode() == MarkupMode.PERCENT) {
+            return componentTotal.multiply(markupValue)
+                    .divide(BigDecimal.valueOf(100), 2, java.math.RoundingMode.HALF_UP);
+        }
+        return markupValue;
     }
 
     @Transactional
@@ -336,6 +551,9 @@ public class BookingService {
         if (request.getBookingStatus() == BookingStatus.CANCELLED
                 && (request.getCancelReason() == null || request.getCancelReason().isBlank())) {
             throw new IllegalArgumentException("A reason is required when cancelling a booking");
+        }
+        if (request.getBookingStatus() == BookingStatus.CONFIRMED && booking.getBookingStatus() != BookingStatus.CONFIRMED) {
+            assertPriceIntegrity(booking);
         }
         booking.setBookingStatus(request.getBookingStatus());
         if (request.getBookingStatus() == BookingStatus.CANCELLED) {
@@ -528,6 +746,9 @@ public class BookingService {
     private BookingResponse toResponse(Booking b) {
         List<BookingDocumentResponse> documents = bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc(b.getId())
                 .stream().map(this::toDocumentResponse).toList();
+        BigDecimal marginPercent = MarginCalculator.marginPercent(b.getNetCost(), b.getSellingPrice());
+        boolean lowMargin = b.getSellingPrice() != null && b.getSellingPrice().compareTo(BigDecimal.ZERO) > 0
+                && marginPercent.compareTo(lowMarginThreshold()) < 0;
         return BookingResponse.builder()
                 .id(b.getId()).clientId(b.getClientId()).clientName(b.getClientName())
                 .agentId(b.getAgentId()).agentName(b.getAgentName())
@@ -565,8 +786,18 @@ public class BookingService {
                 .refundedTotalInr(b.getRefundedTotalInr()).paymentStatusSource(b.getPaymentStatusSource())
                 .documents(documents)
                 .internationalTrip(b.getInternationalTrip())
+                .marginPercent(marginPercent).lowMargin(lowMargin)
                 .passengers(toPassengerResponses(b.getId()))
                 .build();
+    }
+
+    /** The agency's own setting when present, else {@link #DEFAULT_LOW_MARGIN_THRESHOLD_PERCENT}. */
+    private BigDecimal lowMarginThreshold() {
+        String tenantId = SecurityContextUtil.getCurrentUserOrThrow().tenantId();
+        Tenant tenant = tenantRepository.findById(tenantId).orElse(null);
+        return tenant != null && tenant.getLowMarginThresholdPercent() != null
+                ? tenant.getLowMarginThresholdPercent()
+                : DEFAULT_LOW_MARGIN_THRESHOLD_PERCENT;
     }
 
     private List<BookingPassengerResponse> toPassengerResponses(String bookingId) {
@@ -644,6 +875,91 @@ public class BookingService {
             bookingSectorRepository.deleteByBookingPassengerIdIn(passengerIds);
         }
         bookingPassengerRepository.deleteByBookingId(bookingId);
+    }
+
+    @Transactional(readOnly = true)
+    public List<BookingCostComponentResponse> listCostComponents(String bookingId) {
+        findAccessibleBooking(bookingId);
+        return toCostComponentResponses(bookingId);
+    }
+
+    /**
+     * Replaces the whole cost-component list for a booking - same save-the-whole-set semantics
+     * as {@link #replacePassengers}. When the resulting list is non-empty, {@code booking.netCost}
+     * (and the profit derived from it) is recomputed as the live-synced sum of the components'
+     * {@code netCostInr} in this same transaction (Decision 7, Rule 7.3). {@code booking.vendorId}
+     * is left untouched - it stays the primary-vendor snapshot for list screens. Clearing the list
+     * back to empty deliberately leaves {@code booking.netCost} at its last value rather than
+     * zeroing it - an explicit "no components" state should not silently erase a manually-entered
+     * cost.
+     */
+    @Transactional
+    public List<BookingCostComponentResponse> replaceCostComponents(String bookingId, List<BookingCostComponentRequest> requests) {
+        Booking booking = findAccessibleBooking(bookingId);
+        bookingCostComponentRepository.deleteByBookingId(bookingId);
+
+        LocalDateTime now = LocalDateTime.now();
+        String actor = SecurityContextUtil.getCurrentUserOrThrow().userId();
+        List<BookingCostComponent> components = new ArrayList<>();
+        int sortOrder = 0;
+        for (BookingCostComponentRequest req : requests) {
+            String currencyCode = req.getCurrencyCode() != null && !req.getCurrencyCode().isBlank() ? req.getCurrencyCode() : "INR";
+            BigDecimal fxRate = "INR".equals(currencyCode)
+                    ? BigDecimal.ONE
+                    : (req.getFxRateToInr() != null ? req.getFxRateToInr() : BigDecimal.ONE);
+            BigDecimal netCost = req.getNetCost() != null ? req.getNetCost() : BigDecimal.ZERO;
+            String vendorName = null;
+            if (req.getVendorId() != null && !req.getVendorId().isBlank()) {
+                vendorName = vendorRepository.findById(req.getVendorId()).map(Vendor::getName).orElse(null);
+            }
+
+            components.add(BookingCostComponent.builder()
+                    .id(UniqueIdResolver.resolve(bookingCostComponentRepository::existsById))
+                    .bookingId(bookingId)
+                    .bookingPassengerId(req.getBookingPassengerId())
+                    .serviceType(req.getServiceType())
+                    .vendorId(req.getVendorId())
+                    .vendorName(vendorName)
+                    .description(req.getDescription())
+                    .netCost(netCost)
+                    .currencyCode(currencyCode)
+                    .fxRateToInr(fxRate)
+                    .netCostInr(netCost.multiply(fxRate).setScale(2, java.math.RoundingMode.HALF_UP))
+                    .dueDate(req.getDueDate())
+                    .sortOrder(sortOrder++)
+                    .createdAt(now)
+                    .createdBy(actor)
+                    .build());
+        }
+        bookingCostComponentRepository.saveAll(components);
+
+        if (!components.isEmpty()) {
+            BigDecimal recomputedNetCost = components.stream()
+                    .map(BookingCostComponent::getNetCostInr)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+            Map<String, String> before = AuditSnapshot.of(booking, AUDITED);
+            booking.setNetCost(recomputedNetCost);
+            booking.setProfit(computeProfit(booking.getSellingPrice(), recomputedNetCost));
+            touch(booking);
+            bookingRepository.save(booking);
+            List<AuditChange> changes = AuditSnapshot.diff(before, AuditSnapshot.of(booking, AUDITED));
+            auditService.recordUpdate(AuditEntityType.BOOKING, booking.getId(), labelFor(booking), changes);
+        }
+
+        log.info("Booking cost components replaced: bookingId={}, count={}", bookingId, components.size());
+        return toCostComponentResponses(bookingId);
+    }
+
+    private List<BookingCostComponentResponse> toCostComponentResponses(String bookingId) {
+        return bookingCostComponentRepository.findByBookingIdOrderBySortOrder(bookingId).stream()
+                .map(c -> BookingCostComponentResponse.builder()
+                        .id(c.getId()).bookingPassengerId(c.getBookingPassengerId())
+                        .serviceType(c.getServiceType()).vendorId(c.getVendorId()).vendorName(c.getVendorName())
+                        .description(c.getDescription()).netCost(c.getNetCost())
+                        .currencyCode(c.getCurrencyCode()).fxRateToInr(c.getFxRateToInr()).netCostInr(c.getNetCostInr())
+                        .dueDate(c.getDueDate()).sortOrder(c.getSortOrder())
+                        .build())
+                .toList();
     }
 
     private BookingDocumentResponse toDocumentResponse(BookingDocument d) {

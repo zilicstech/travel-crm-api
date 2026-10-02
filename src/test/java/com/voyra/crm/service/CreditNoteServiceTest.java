@@ -60,6 +60,10 @@ class CreditNoteServiceTest {
     private CustomerLedgerService customerLedgerService;
     @Mock
     private BookingAccountingSync bookingAccountingSync;
+    @Mock
+    private JournalService journalService;
+    @Mock
+    private com.voyra.crm.repository.JournalEntryRepository journalEntryRepository;
 
     @InjectMocks
     private CreditNoteService creditNoteService;
@@ -204,6 +208,45 @@ class CreditNoteServiceTest {
         assertThat(invoice.getCreditNoteTotal()).isEqualByComparingTo("1180.00");
         assertThat(invoice.getBalanceDue()).isEqualByComparingTo("0.00");
         assertThat(invoice.getStatus()).isEqualTo(InvoiceLifecycle.PAID);
+    }
+
+    @Test
+    void issuingPostsAJournalReversingTheOriginalRevenueAccount() {
+        Invoice invoice = issuedInvoice();
+        invoice.setServiceCategory(com.voyra.crm.enums.InvoiceServiceCategory.PACKAGE);
+        CreditNote draft = CreditNote.builder().id("CN1").invoiceId("I1").clientId("K1")
+                .status(CreditNoteStatus.DRAFT).currencyCode("INR").fxRateToInr(BigDecimal.ONE)
+                .taxableValue(new BigDecimal("1000.00")).cgstAmount(new BigDecimal("90.00"))
+                .sgstAmount(new BigDecimal("90.00")).totalAmount(new BigDecimal("1180.00"))
+                .totalAmountInr(new BigDecimal("1180.00")).refundedAmount(BigDecimal.ZERO).build();
+        when(creditNoteRepository.findById("CN1")).thenReturn(Optional.of(draft));
+        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(invoice));
+        when(creditNoteRepository.findByInvoiceIdAndStatus("I1", CreditNoteStatus.ISSUED)).thenReturn(List.of());
+        when(documentNumberService.next(DocumentKind.CREDIT_NOTE, LocalDate.now())).thenReturn("CN/2026-27/0001");
+        when(paymentReceiptRepository.findByInvoiceIdOrderByReceivedOnAscCreatedAtAsc("I1")).thenReturn(List.of(
+                PaymentReceipt.builder().direction(ReceiptDirection.RECEIPT).amount(new BigDecimal("1180.00")).build()));
+        when(journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(
+                com.voyra.crm.enums.JournalSourceType.INVOICE, "I1", com.voyra.crm.enums.JournalPurpose.INVOICE_RAISED_DEFERRED))
+                .thenReturn(Optional.empty());
+        when(journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(
+                com.voyra.crm.enums.JournalSourceType.INVOICE, "I1", com.voyra.crm.enums.JournalPurpose.INVOICE_RAISED_RECOGNIZED))
+                .thenReturn(Optional.of(com.voyra.crm.entity.JournalEntry.builder().id("JE1").build()));
+
+        creditNoteService.issue("CN1");
+
+        org.mockito.ArgumentCaptor<com.voyra.crm.models.JournalPosting> captor =
+                org.mockito.ArgumentCaptor.forClass(com.voyra.crm.models.JournalPosting.class);
+        org.mockito.Mockito.verify(journalService).post(captor.capture());
+        com.voyra.crm.models.JournalPosting posting = captor.getValue();
+
+        assertThat(posting.purpose()).isEqualTo(com.voyra.crm.enums.JournalPurpose.CREDIT_NOTE_ISSUED);
+        assertThat(posting.lines()).hasSize(3);
+        assertThat(posting.lines().get(0).accountCode()).isEqualTo("4070"); // PACKAGE is index 6 -> (6+1)*10
+        assertThat(posting.lines().get(0).debitAmount()).isEqualByComparingTo("1000.00");
+        assertThat(posting.lines().get(1).accountCode()).isEqualTo("2310");
+        assertThat(posting.lines().get(1).debitAmount()).isEqualByComparingTo("180.00");
+        assertThat(posting.lines().get(2).accountCode()).isEqualTo("1200");
+        assertThat(posting.lines().get(2).creditAmount()).isEqualByComparingTo("1180.00");
     }
 
     /** Reproduces the audit finding (F-016): a ₹9,975 invoice with only ₹5,000 ever actually

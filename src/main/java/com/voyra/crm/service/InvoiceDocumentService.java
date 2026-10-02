@@ -10,6 +10,7 @@ import com.voyra.crm.dto.InvoiceTaxRequest;
 import com.voyra.crm.dto.InvoiceTaxResponse;
 import com.voyra.crm.dto.PagedResponse;
 import com.voyra.crm.entity.Booking;
+import com.voyra.crm.entity.BookingCostComponent;
 import com.voyra.crm.entity.BookingPassenger;
 import com.voyra.crm.entity.BookingSector;
 import com.voyra.crm.entity.Client;
@@ -23,15 +24,18 @@ import com.voyra.crm.enums.AuditEntityType;
 import com.voyra.crm.enums.BookingStatus;
 import com.voyra.crm.enums.DocumentKind;
 import com.voyra.crm.enums.FxRateSource;
+import com.voyra.crm.enums.InvoiceBillingModel;
 import com.voyra.crm.enums.InvoiceDocumentType;
 import com.voyra.crm.enums.InvoiceLifecycle;
 import com.voyra.crm.enums.InvoiceServiceCategory;
 import com.voyra.crm.enums.LedgerEntryType;
 import com.voyra.crm.enums.LedgerSourceType;
+import com.voyra.crm.enums.MarkupMode;
 import com.voyra.crm.enums.TaxKind;
 import com.voyra.crm.enums.TaxLineMode;
 import com.voyra.crm.enums.TaxTreatment;
 import com.voyra.crm.models.LedgerPosting;
+import com.voyra.crm.repository.BookingCostComponentRepository;
 import com.voyra.crm.repository.BookingPassengerRepository;
 import com.voyra.crm.repository.BookingRepository;
 import com.voyra.crm.repository.BookingSectorRepository;
@@ -89,6 +93,9 @@ public class InvoiceDocumentService {
     private final BookingRepository bookingRepository;
     private final BookingPassengerRepository bookingPassengerRepository;
     private final BookingSectorRepository bookingSectorRepository;
+    private final BookingCostComponentRepository bookingCostComponentRepository;
+    private final JournalService journalService;
+    private final com.voyra.crm.repository.JournalEntryRepository journalEntryRepository;
     private final ClientService clientService;
     private final TenantRepository tenantRepository;
     private final TaxRateConfigRepository taxRateConfigRepository;
@@ -142,6 +149,7 @@ public class InvoiceDocumentService {
                 .bookingId(booking.getId())
                 .leadId(booking.getLeadId())
                 .agentId(booking.getAgentId())
+                .billingModel(request.getBillingModel() != null ? request.getBillingModel() : category.defaultBillingModel())
                 .createdAt(LocalDateTime.now())
                 .createdBy(currentUserId())
                 .build();
@@ -174,6 +182,11 @@ public class InvoiceDocumentService {
         InvoiceServiceCategory category = invoice.getServiceCategory() != null ? invoice.getServiceCategory()
                 : InvoiceServiceCategory.forBooking(booking.getType(), Boolean.TRUE.equals(booking.getInternationalTrip()));
         invoice.setServiceCategory(category);
+        if (request.getBillingModel() != null) {
+            invoice.setBillingModel(request.getBillingModel());
+        } else if (invoice.getBillingModel() == null) {
+            invoice.setBillingModel(category.defaultBillingModel());
+        }
 
         applyDraftFields(invoice, request);
         invoice.setUpdatedAt(LocalDateTime.now());
@@ -243,7 +256,9 @@ public class InvoiceDocumentService {
         Tenant agency = currentAgency();
         Booking booking = invoice.getBookingId() != null
                 ? bookingRepository.findById(invoice.getBookingId()).orElse(null) : null;
-        return InvoicePdfRenderer.write(invoice, lines, taxes, agency, booking);
+        List<BookingCostComponent> costComponents = booking != null
+                ? bookingCostComponentRepository.findByBookingIdOrderBySortOrder(booking.getId()) : List.of();
+        return InvoicePdfRenderer.write(invoice, lines, taxes, agency, booking, costComponents);
     }
 
     @Transactional(readOnly = true)
@@ -300,6 +315,7 @@ public class InvoiceDocumentService {
         invoice.setFxLockedAt(LocalDateTime.now());
         invoiceRepository.save(invoice);
         postInvoiceRaised(invoice);
+        postInvoiceRaisedJournal(invoice);
         // A returning customer's standing deposit draws down automatically the moment a real
         // invoice exists against them - see PaymentReceiptService#applyAvailableWallet.
         paymentReceiptService.applyAvailableWallet(invoice);
@@ -418,6 +434,7 @@ public class InvoiceDocumentService {
             paymentReceiptRepository.saveAll(advances);
         }
         postInvoiceRaised(taxInvoice);
+        postInvoiceRaisedJournal(taxInvoice);
         bookingAccountingSync.syncPayment(taxInvoice.getBookingId());
 
         proforma.setStatus(InvoiceLifecycle.CANCELLED);
@@ -450,6 +467,7 @@ public class InvoiceDocumentService {
         invoiceRepository.save(invoice);
         if (hadLedgerDebit) {
             postCancellationReversal(invoice);
+            reverseInvoiceRaisedJournal(invoice);
         }
         bookingAccountingSync.syncPayment(invoice.getBookingId());
 
@@ -486,6 +504,95 @@ public class InvoiceDocumentService {
                 "Tax invoice " + invoice.getInvoiceNumber() + " cancelled: " + invoice.getCancelReason(),
                 invoice.getBookingId(), invoice.getCurrencyCode(), invoice.getFxRateToInr(),
                 BigDecimal.ZERO, invoice.getGrandTotal(), BigDecimal.ZERO, invoice.getGrandTotalInr()));
+    }
+
+    /**
+     * Posting-rule-table rows 1/2/3 (ACCOUNTING_EXPANSION_ARCHITECTURE.md §1.5) - the GL side of
+     * {@link #postInvoiceRaised}, called immediately beside it in the same transaction (Rule
+     * 1.8.1). {@code null} {@link Invoice#getBillingModel()} reads as PRINCIPAL throughout, the
+     * pre-existing behaviour. A missing booking (should not happen - bookingId is required at
+     * draft creation) is treated as "departure past or absent," i.e. immediate recognition,
+     * rather than blocking the issue.
+     */
+    private void postInvoiceRaisedJournal(Invoice invoice) {
+        BigDecimal taxableInr = invoice.getTaxableValueInr();
+        BigDecimal gstInr = invoice.getGstTotalInr() != null ? invoice.getGstTotalInr() : BigDecimal.ZERO;
+        BigDecimal tcsInr = invoice.getTcsAmountInr() != null ? invoice.getTcsAmountInr() : BigDecimal.ZERO;
+        BigDecimal grandTotalInr = invoice.getGrandTotalInr();
+        String narration = "Tax invoice " + invoice.getInvoiceNumber() + " raised";
+
+        List<com.voyra.crm.models.JournalLinePosting> lines = new ArrayList<>();
+        lines.add(com.voyra.crm.models.JournalLinePosting.debitParty(
+                com.voyra.crm.enums.SystemAccount.ACCOUNTS_RECEIVABLE.code(), "CLIENT", invoice.getClientId(), grandTotalInr, narration));
+
+        com.voyra.crm.enums.JournalPurpose purpose;
+        if (invoice.getBillingModel() == InvoiceBillingModel.COMMISSION_AGENT) {
+            purpose = com.voyra.crm.enums.JournalPurpose.INVOICE_RAISED_COMMISSION_AGENT;
+            BigDecimal feeInr = resolveTaxableBase(invoice).multiply(invoice.getFxRateToInr()).setScale(2, RoundingMode.HALF_UP);
+            BigDecimal passThroughInr = taxableInr.subtract(feeInr);
+            if (passThroughInr.compareTo(BigDecimal.ZERO) < 0) {
+                passThroughInr = BigDecimal.ZERO;
+            }
+            if (passThroughInr.compareTo(BigDecimal.ZERO) > 0) {
+                lines.add(com.voyra.crm.models.JournalLinePosting.credit(
+                        com.voyra.crm.enums.SystemAccount.CLIENT_PASS_THROUGH_PAYABLE.code(), passThroughInr, "Supplier disbursement pass-through"));
+            }
+            if (feeInr.compareTo(BigDecimal.ZERO) > 0) {
+                lines.add(com.voyra.crm.models.JournalLinePosting.credit(
+                        com.voyra.crm.enums.SystemAccount.SERVICE_FEE_INCOME.code(), feeInr, "Agency service fee"));
+            }
+            if (gstInr.compareTo(BigDecimal.ZERO) > 0) {
+                lines.add(com.voyra.crm.models.JournalLinePosting.credit(
+                        com.voyra.crm.enums.SystemAccount.OUTPUT_GST_PAYABLE.code(), gstInr, "Output GST on fee"));
+            }
+        } else {
+            Booking booking = invoice.getBookingId() != null
+                    ? bookingRepository.findById(invoice.getBookingId()).orElse(null) : null;
+            boolean departureFuture = booking != null && booking.getDepartureDate() != null
+                    && booking.getDepartureDate().isAfter(LocalDate.now());
+            purpose = departureFuture
+                    ? com.voyra.crm.enums.JournalPurpose.INVOICE_RAISED_DEFERRED
+                    : com.voyra.crm.enums.JournalPurpose.INVOICE_RAISED_RECOGNIZED;
+            String revenueAccountCode = departureFuture
+                    ? com.voyra.crm.enums.SystemAccount.UNEARNED_TOUR_REVENUE.code()
+                    : com.voyra.crm.enums.SystemAccount.salesCode(
+                            invoice.getServiceCategory() != null ? invoice.getServiceCategory() : InvoiceServiceCategory.MISCELLANEOUS);
+            if (taxableInr.compareTo(BigDecimal.ZERO) > 0) {
+                lines.add(com.voyra.crm.models.JournalLinePosting.credit(revenueAccountCode, taxableInr,
+                        departureFuture ? "Unearned until departure" : "Recognized on issue"));
+            }
+            if (gstInr.compareTo(BigDecimal.ZERO) > 0) {
+                lines.add(com.voyra.crm.models.JournalLinePosting.credit(
+                        com.voyra.crm.enums.SystemAccount.OUTPUT_GST_PAYABLE.code(), gstInr, "Output GST"));
+            }
+            if (tcsInr.compareTo(BigDecimal.ZERO) > 0) {
+                lines.add(com.voyra.crm.models.JournalLinePosting.credit(
+                        com.voyra.crm.enums.SystemAccount.TCS_PAYABLE.code(), tcsInr, "TCS collected"));
+            }
+        }
+
+        if (lines.size() < 2) {
+            // Degenerate zero-value invoice - nothing to balance against the AR debit. Extremely
+            // unlikely (grandTotal would also be zero) but a one-line entry would fail to post.
+            log.warn("Invoice {} raised with no non-zero credit lines to post - skipping journal", invoice.getId());
+            return;
+        }
+
+        journalService.post(new com.voyra.crm.models.JournalPosting(
+                invoice.getInvoiceDate(), com.voyra.crm.enums.JournalSourceType.INVOICE, invoice.getId(), purpose,
+                narration, invoice.getBookingId(), invoice.getBranchId(), lines));
+    }
+
+    /** Reverses whichever of the three INVOICE_RAISED_* purposes was actually posted for this invoice - at most one exists. */
+    private void reverseInvoiceRaisedJournal(Invoice invoice) {
+        for (com.voyra.crm.enums.JournalPurpose purpose : List.of(
+                com.voyra.crm.enums.JournalPurpose.INVOICE_RAISED_DEFERRED,
+                com.voyra.crm.enums.JournalPurpose.INVOICE_RAISED_RECOGNIZED,
+                com.voyra.crm.enums.JournalPurpose.INVOICE_RAISED_COMMISSION_AGENT)) {
+            journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(
+                    com.voyra.crm.enums.JournalSourceType.INVOICE, invoice.getId(), purpose)
+                    .ifPresent(entry -> journalService.reverse(entry.getId(), "Invoice " + invoice.getInvoiceNumber() + " cancelled: " + invoice.getCancelReason()));
+        }
     }
 
     private void applyDraftFields(Invoice invoice, InvoiceDraftRequest request) {
@@ -563,6 +670,48 @@ public class InvoiceDocumentService {
     }
 
     /**
+     * {@code invoice.taxableValue} stays the full package amount regardless of billing model - it
+     * is what the pass-through block and the printed total are built from. This is only the base
+     * actually fed into the per-row GST computation below, and only {@link InvoiceBillingModel#COMMISSION_AGENT}
+     * ever differs from it (Decision 8, ACCOUNTING_EXPANSION_ARCHITECTURE.md §8).
+     *
+     * <p>The fee is {@code booking.sellingPrice - sum(cost component net costs)} when the booking
+     * has components (Rule 8.3 - this is also what the printed pass-through block lists). With no
+     * components, it falls back to the booking's own {@code markupMode}/{@code markupValue} against
+     * {@code booking.netCost}, mirroring {@code BookingService#computeMarkupAmount}. With neither,
+     * there is nothing to isolate as a fee, so this silently behaves as PRINCIPAL for this invoice.
+     */
+    private BigDecimal resolveTaxableBase(Invoice invoice) {
+        BigDecimal fullPackage = invoice.getTaxableValue();
+        if (invoice.getBillingModel() != InvoiceBillingModel.COMMISSION_AGENT || invoice.getBookingId() == null) {
+            return fullPackage;
+        }
+        Booking booking = bookingRepository.findById(invoice.getBookingId()).orElse(null);
+        if (booking == null) {
+            return fullPackage;
+        }
+        List<BookingCostComponent> components = bookingCostComponentRepository.findByBookingIdOrderBySortOrder(booking.getId());
+        if (!components.isEmpty()) {
+            BigDecimal componentTotal = components.stream()
+                    .map(BookingCostComponent::getNetCostInr).reduce(BigDecimal.ZERO, BigDecimal::add);
+            BigDecimal sellingPrice = booking.getSellingPrice() != null ? booking.getSellingPrice() : BigDecimal.ZERO;
+            BigDecimal fee = sellingPrice.subtract(componentTotal);
+            return fee.compareTo(BigDecimal.ZERO) > 0 ? fee : BigDecimal.ZERO;
+        }
+        if (booking.getMarkupMode() != null && booking.getMarkupValue() != null) {
+            BigDecimal componentTotal = booking.getNetCost() != null ? booking.getNetCost() : BigDecimal.ZERO;
+            if (booking.getMarkupMode() == MarkupMode.PERCENT) {
+                return componentTotal.multiply(booking.getMarkupValue())
+                        .divide(HUNDRED, 2, RoundingMode.HALF_UP);
+            }
+            return booking.getMarkupValue();
+        }
+        log.info("Commission-agent invoice {} has no cost components or markup to isolate a fee from - "
+                + "taxing the full package instead", invoice.getId());
+        return fullPackage;
+    }
+
+    /**
      * Tax is opt-in per invoice: zero requested rows means zero tax, full stop - nothing here
      * ever falls back to a configured default. Each row's amount is derived either from the
      * chosen {@code tax_rate_config}'s own rate or from whatever the accountant typed for a
@@ -572,7 +721,7 @@ public class InvoiceDocumentService {
      */
     private List<InvoiceTax> recomputeTaxes(Invoice invoice, List<InvoiceTaxRequest> taxRequests) {
         List<InvoiceTax> taxes = new ArrayList<>();
-        BigDecimal taxableBase = invoice.getTaxableValue();
+        BigDecimal taxableBase = resolveTaxableBase(invoice);
         BigDecimal cgst = BigDecimal.ZERO;
         BigDecimal sgst = BigDecimal.ZERO;
         BigDecimal igst = BigDecimal.ZERO;
@@ -713,6 +862,7 @@ public class InvoiceDocumentService {
         return InvoiceResponse.builder()
                 .id(i.getId()).invoiceNumber(i.getInvoiceNumber()).financialYear(i.getFinancialYear())
                 .documentType(i.getDocumentType()).status(i.getStatus()).serviceCategory(i.getServiceCategory())
+                .billingModel(i.getBillingModel())
                 .clientId(i.getClientId()).clientName(i.getClientName()).clientGstin(i.getClientGstin())
                 .clientStateCode(i.getClientStateCode()).billingAddress(i.getBillingAddress())
                 .agencyLegalName(i.getAgencyLegalName()).agencyGstin(i.getAgencyGstin())

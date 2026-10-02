@@ -19,6 +19,10 @@ public interface BookingRepository extends JpaRepository<Booking, String>, JpaSp
      *  unrelated to the wider service-access scoping in BookingService.listBookings. */
     List<Booking> findByAgentId(String agentId);
 
+    /** Revenue recognition job input (ACCOUNTING_EXPANSION_ARCHITECTURE.md Rule 2.3/2.4) - every
+     *  booking whose canonical departure has arrived, regardless of type. */
+    List<Booking> findByDepartureDateLessThanEqual(java.time.LocalDate asOf);
+
     List<Booking> findByClientId(String clientId);
 
     /** Every booking logged on one service, oldest first - a round trip is two rows here. */

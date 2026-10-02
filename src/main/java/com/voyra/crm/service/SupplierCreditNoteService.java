@@ -13,6 +13,8 @@ import com.voyra.crm.enums.SupplierLedgerEntryType;
 import com.voyra.crm.enums.SupplierLedgerSourceType;
 import com.voyra.crm.enums.SupplierPaymentDirection;
 import com.voyra.crm.models.SupplierLedgerPosting;
+import com.voyra.crm.repository.JournalEntryRepository;
+import com.voyra.crm.repository.JournalLineRepository;
 import com.voyra.crm.repository.SupplierCreditNoteRepository;
 import com.voyra.crm.repository.SupplierInvoiceRepository;
 import com.voyra.crm.repository.SupplierPaymentRepository;
@@ -53,6 +55,9 @@ public class SupplierCreditNoteService {
     private final DocumentNumberService documentNumberService;
     private final SupplierLedgerService supplierLedgerService;
     private final AuditService auditService;
+    private final JournalService journalService;
+    private final JournalEntryRepository journalEntryRepository;
+    private final JournalLineRepository journalLineRepository;
 
     @Transactional
     public SupplierCreditNoteResponse record(SupplierCreditNoteRequest request) {
@@ -110,6 +115,7 @@ public class SupplierCreditNoteService {
                 "Supplier credit note " + labelFor(note) + " against " + invoice.getSupplierInvoiceNumber(),
                 note.getBookingId(), note.getCurrencyCode(), note.getFxRateToInr(),
                 note.getTotalAmount(), BigDecimal.ZERO, note.getTotalAmountInr(), BigDecimal.ZERO));
+        postCreditNoteJournal(note, invoice);
 
         auditService.recordCreate(AuditEntityType.SUPPLIER_CREDIT_NOTE, note.getId(), labelFor(note));
         log.info("Supplier credit note recorded: id={}, supplierInvoiceId={}, totalAmount={}", note.getId(), invoice.getId(), totalAmount);
@@ -140,6 +146,10 @@ public class SupplierCreditNoteService {
                 "Supplier credit note " + labelFor(note) + " cancelled: " + reason,
                 note.getBookingId(), note.getCurrencyCode(), note.getFxRateToInr(),
                 BigDecimal.ZERO, note.getTotalAmount(), BigDecimal.ZERO, note.getTotalAmountInr()));
+        journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(
+                com.voyra.crm.enums.JournalSourceType.SUPPLIER_CREDIT_NOTE, note.getId(),
+                com.voyra.crm.enums.JournalPurpose.SUPPLIER_CREDIT_NOTE_RECEIVED)
+                .ifPresent(entry -> journalService.reverse(entry.getId(), "Supplier credit note cancelled: " + reason));
 
         note.setStatus(SupplierCreditNoteStatus.CANCELLED);
         note.setCancelledAt(LocalDateTime.now());
@@ -220,6 +230,51 @@ public class SupplierCreditNoteService {
         if (existing.add(candidateAmount).compareTo(invoice.getGrandTotal()) > 0) {
             throw new IllegalStateException("This credit note would credit more than the bill's grand total");
         }
+    }
+
+    /**
+     * Posting-rule-table row 14 - mirrors {@code SupplierInvoiceService#postBillBookedJournal}
+     * reversed: a supplier credit note lowers the payable we booked, giving back the purchase
+     * expense (and the input GST claim, when the original bill was ITC-eligible). Reuses the
+     * ORIGINAL bill's posted purchase account rather than re-deriving a category independently,
+     * so the credit always lands on exactly the account the debit came from.
+     */
+    private void postCreditNoteJournal(SupplierCreditNote note, SupplierInvoice invoice) {
+        BigDecimal gstInr = scaleToInr(note.getCgstAmount().add(note.getSgstAmount()).add(note.getIgstAmount()), note.getFxRateToInr());
+        BigDecimal totalInr = note.getTotalAmountInr();
+        BigDecimal taxableInr = totalInr.subtract(gstInr);
+        boolean itcEligible = invoice.getItcEligibility() == com.voyra.crm.enums.ItcEligibility.ELIGIBLE;
+        BigDecimal purchaseInr = itcEligible ? taxableInr : taxableInr.add(gstInr);
+        BigDecimal inputGstInr = itcEligible ? gstInr : BigDecimal.ZERO;
+
+        String purchaseAccountCode = journalEntryRepository
+                .findBySourceTypeAndSourceIdAndPurpose(com.voyra.crm.enums.JournalSourceType.SUPPLIER_INVOICE,
+                        invoice.getId(), com.voyra.crm.enums.JournalPurpose.SUPPLIER_BILL_BOOKED)
+                .map(entry -> journalLineRepository.findByJournalEntryIdOrderByLineNo(entry.getId()).stream()
+                        .filter(l -> l.getDebitAmount().compareTo(BigDecimal.ZERO) > 0)
+                        .filter(l -> !l.getAccountCode().equals(com.voyra.crm.enums.SystemAccount.INPUT_GST_RECEIVABLE.code()))
+                        .findFirst().map(com.voyra.crm.entity.JournalLine::getAccountCode).orElse(null))
+                .orElse(com.voyra.crm.enums.SystemAccount.purchaseCode(com.voyra.crm.enums.InvoiceServiceCategory.MISCELLANEOUS));
+
+        String narration = "Supplier credit note " + labelFor(note) + " against " + invoice.getSupplierInvoiceNumber();
+        List<com.voyra.crm.models.JournalLinePosting> lines = new java.util.ArrayList<>();
+        lines.add(com.voyra.crm.models.JournalLinePosting.debitParty(
+                com.voyra.crm.enums.SystemAccount.ACCOUNTS_PAYABLE.code(), "VENDOR", note.getVendorId(), totalInr, narration));
+        if (purchaseInr.compareTo(BigDecimal.ZERO) > 0) {
+            lines.add(com.voyra.crm.models.JournalLinePosting.credit(purchaseAccountCode, purchaseInr, narration));
+        }
+        if (inputGstInr.compareTo(BigDecimal.ZERO) > 0) {
+            lines.add(com.voyra.crm.models.JournalLinePosting.credit(
+                    com.voyra.crm.enums.SystemAccount.INPUT_GST_RECEIVABLE.code(), inputGstInr, "Input GST reversed"));
+        }
+        if (lines.size() < 2) {
+            return;
+        }
+
+        journalService.post(new com.voyra.crm.models.JournalPosting(
+                note.getNoteDate(), com.voyra.crm.enums.JournalSourceType.SUPPLIER_CREDIT_NOTE, note.getId(),
+                com.voyra.crm.enums.JournalPurpose.SUPPLIER_CREDIT_NOTE_RECEIVED, narration,
+                note.getBookingId(), null, lines));
     }
 
     private SupplierInvoice findInvoice(String id) {

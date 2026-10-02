@@ -1,5 +1,6 @@
 package com.voyra.crm.dto;
 
+import com.voyra.crm.enums.InvoiceBillingModel;
 import com.voyra.crm.enums.InvoiceServiceCategory;
 import com.voyra.crm.enums.SupplyNature;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -23,6 +24,12 @@ public class InvoiceDraftRequest {
             + "booking's own type - the only way to reach RAIL or MISCELLANEOUS, which have no BookingType "
             + "counterpart. Only read on create; a draft's category never changes on update.", example = "MISCELLANEOUS")
     private InvoiceServiceCategory serviceCategory;
+
+    @Schema(description = "PRINCIPAL taxes the full package; COMMISSION_AGENT passes the booking's "
+            + "supplier costs through untaxed and taxes only the service fee. Unset on create takes the "
+            + "category's own default (air tickets: COMMISSION_AGENT, everything else: PRINCIPAL); unset "
+            + "on update leaves the draft's current value unchanged.", example = "PRINCIPAL")
+    private InvoiceBillingModel billingModel;
 
     @Schema(example = "INR", defaultValue = "INR")
     private String currencyCode;

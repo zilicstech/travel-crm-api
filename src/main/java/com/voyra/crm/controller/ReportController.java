@@ -21,12 +21,12 @@ import org.springframework.web.bind.annotation.RestController;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
-/** Owner-only reports (Reports Center) - revenue, employee, leads, bookings analytics + CSV export. */
+/** Owner/Accountant reports (Reports Center) - revenue, employee, leads, bookings analytics + CSV export. */
 @RestController
 @RequestMapping("/api/reports")
 @RequiredArgsConstructor
 @Tag(name = "Owner - Reports", description = "Aggregate analytics and CSV export")
-@PreAuthorize("hasRole('AGENCY_OWNER')")
+@PreAuthorize("hasAnyRole('AGENCY_OWNER', 'ACCOUNTANT')")
 public class ReportController {
 
     private final ReportService reportService;
