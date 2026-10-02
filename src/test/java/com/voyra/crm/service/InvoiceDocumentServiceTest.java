@@ -509,19 +509,10 @@ class InvoiceDocumentServiceTest {
     }
 
     @Test
-    void issuingAProformaAllocatesAPiNumberAndFlipsDocumentType() {
-        Invoice draft = Invoice.builder().id("I1").documentType(InvoiceDocumentType.TAX_INVOICE)
-                .status(InvoiceLifecycle.DRAFT).grandTotal(new BigDecimal("1000.00")).build();
-        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(draft));
-        when(invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc("I1"))
-                .thenReturn(List.of(InvoiceLineItem.builder().id("L1").invoiceId("I1").description("x").build()));
-        when(documentNumberService.next(DocumentKind.PROFORMA, LocalDate.now())).thenReturn("PI/2026-27/0001");
-
-        InvoiceResponse response = invoiceDocumentService.issueProforma("I1");
-
-        assertThat(response.getDocumentType()).isEqualTo(InvoiceDocumentType.PROFORMA);
-        assertThat(response.getStatus()).isEqualTo(InvoiceLifecycle.PROFORMA_ISSUED);
-        assertThat(response.getInvoiceNumber()).isEqualTo("PI/2026-27/0001");
+    void issuingAProformaIsRetiredAndAlwaysRejected() {
+        assertThatThrownBy(() -> invoiceDocumentService.issueProforma("I1"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("retired");
     }
 
     @Test

@@ -396,6 +396,67 @@ class PaymentReceiptServiceTest {
     }
 
     @Test
+    void recordingAGatewayReceiptSplitsTheDebitBetweenNetDepositAndTheFeeWhileCreditingTheGrossAmount() {
+        Invoice invoice = issuedInvoice(new BigDecimal("1000.00"));
+        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(invoice));
+        when(paymentReceiptRepository.existsById(any())).thenReturn(false);
+        when(documentNumberService.next(DocumentKind.RECEIPT, LocalDate.of(2026, 9, 19))).thenReturn("RCP/2026-27/0001");
+        when(paymentReceiptRepository.findByInvoiceIdOrderByReceivedOnAscCreatedAtAsc("I1"))
+                .thenReturn(List.of(PaymentReceipt.builder().id("R1").invoiceId("I1")
+                        .direction(ReceiptDirection.RECEIPT).amount(new BigDecimal("1000.00")).build()));
+
+        PaymentReceiptRequest req = request(new BigDecimal("1000.00"));
+        req.setGatewayProvider("Razorpay");
+        req.setGatewayTxnRef("pay_P8qN2xK3Jd");
+        req.setGatewayFee(new BigDecimal("28.00"));
+
+        PaymentReceiptResponse response = paymentReceiptService.record(req);
+
+        assertThat(response.getGatewayFeeInr()).isEqualByComparingTo("28.00");
+        assertThat(response.getNetDepositInr()).isEqualByComparingTo("972.00");
+        assertThat(invoice.getAmountReceived()).isEqualByComparingTo("1000.00"); // gross, unreduced - Rule 5.3
+
+        ArgumentCaptor<com.voyra.crm.models.JournalPosting> captor =
+                ArgumentCaptor.forClass(com.voyra.crm.models.JournalPosting.class);
+        org.mockito.Mockito.verify(journalService).post(captor.capture());
+        com.voyra.crm.models.JournalPosting posting = captor.getValue();
+
+        assertThat(posting.purpose()).isEqualTo(com.voyra.crm.enums.JournalPurpose.GATEWAY_RECEIPT);
+        assertThat(posting.lines()).hasSize(3);
+        assertThat(posting.lines().get(0).accountCode()).isEqualTo("1110"); // BANK_ACCOUNTS, net
+        assertThat(posting.lines().get(0).debitAmount()).isEqualByComparingTo("972.00");
+        assertThat(posting.lines().get(1).accountCode()).isEqualTo("5610"); // PAYMENT_PROCESSING_FEES
+        assertThat(posting.lines().get(1).debitAmount()).isEqualByComparingTo("28.00");
+        assertThat(posting.lines().get(2).accountCode()).isEqualTo("1200"); // ACCOUNTS_RECEIVABLE, gross
+        assertThat(posting.lines().get(2).creditAmount()).isEqualByComparingTo("1000.00");
+
+        BigDecimal totalDebit = posting.lines().stream().map(l -> l.debitAmount()).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal totalCredit = posting.lines().stream().map(l -> l.creditAmount()).reduce(BigDecimal.ZERO, BigDecimal::add);
+        assertThat(totalDebit).isEqualByComparingTo(totalCredit);
+    }
+
+    @Test
+    void recordingAReceiptWithNoGatewayFeeKeepsTheOriginalTwoLineShape() {
+        Invoice invoice = issuedInvoice(new BigDecimal("1000.00"));
+        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(invoice));
+        when(paymentReceiptRepository.existsById(any())).thenReturn(false);
+        when(documentNumberService.next(DocumentKind.RECEIPT, LocalDate.of(2026, 9, 19))).thenReturn("RCP/2026-27/0001");
+        when(paymentReceiptRepository.findByInvoiceIdOrderByReceivedOnAscCreatedAtAsc("I1"))
+                .thenReturn(List.of(PaymentReceipt.builder().id("R1").invoiceId("I1")
+                        .direction(ReceiptDirection.RECEIPT).amount(new BigDecimal("1000.00")).build()));
+
+        PaymentReceiptResponse response = paymentReceiptService.record(request(new BigDecimal("1000.00")));
+
+        assertThat(response.getGatewayFeeInr()).isNull();
+        assertThat(response.getNetDepositInr()).isNull();
+        ArgumentCaptor<com.voyra.crm.models.JournalPosting> captor =
+                ArgumentCaptor.forClass(com.voyra.crm.models.JournalPosting.class);
+        org.mockito.Mockito.verify(journalService).post(captor.capture());
+        assertThat(captor.getValue().lines()).hasSize(2);
+        assertThat(captor.getValue().purpose()).isEqualTo(com.voyra.crm.enums.JournalPurpose.RECEIPT_AGAINST_INVOICE);
+    }
+
+    @Test
     void issuingAnInvoiceAutoAppliesWhateverTheClientsWalletHolds() {
         Invoice invoice = issuedInvoice(new BigDecimal("1000.00"));
         when(paymentReceiptRepository.findByClientIdAndInvoiceIdIsNullAndIsAdvanceTrueOrderByReceivedOnAsc("K1"))

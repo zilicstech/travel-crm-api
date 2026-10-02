@@ -58,6 +58,12 @@ public class SupplierPaymentResponse {
     @Schema(example = "0.00")
     private BigDecimal tdsWithheld;
 
+    @Schema(description = "Rate actually used for this settlement - null for an INR bill or an advance", example = "83.450000")
+    private BigDecimal settlementFxRate;
+
+    @Schema(description = "Realized forex gain(-)/loss(+) booked on settlement, in INR - null when there is nothing to vary", example = "125.50")
+    private BigDecimal fxVarianceInr;
+
     @Schema(example = "BANK_TRANSFER")
     private PaymentMode paymentMode;
 
