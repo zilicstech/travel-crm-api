@@ -23,8 +23,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
 /**
- * ACCOUNTING_EXPANSION_ARCHITECTURE.md §1.9. {@code JournalLineRepository.findPostedLinesBetween}/
- * {@code findPostedLinesAsOf} already filter to POSTED-only entries in their JPQL
+ * ACCOUNTING_EXPANSION_ARCHITECTURE.md §1.9. {@code JournalLineRepository.findLedgerLinesBetween}/
+ * {@code findLedgerLinesAsOf} already filter to POSTED-only entries in their JPQL
  * ({@code WHERE je.status = JournalStatus.POSTED}) - that filter is proven by inspection of the
  * query, not re-tested here, matching this codebase's existing convention of no
  * {@code @DataJpaTest} harness. What IS tested here is everything downstream of that filter: the
@@ -63,7 +63,7 @@ class FinancialStatementsServiceTest {
         List<JournalLine> lines = List.of(
                 debit("1200", "1180.00"), credit("4010", "1000.00"), credit("2310", "180.00"),
                 debit("1110", "1180.00"), credit("1200", "1180.00"));
-        when(journalLineRepository.findPostedLinesBetween(any(), any())).thenReturn(lines);
+        when(journalLineRepository.findLedgerLinesBetween(any(), any())).thenReturn(lines);
         when(ledgerAccountRepository.findAll()).thenReturn(List.of(
                 account("1200", "Accounts Receivable", LedgerAccountType.ASSET),
                 account("1110", "Bank Accounts", LedgerAccountType.ASSET),
@@ -88,7 +88,7 @@ class FinancialStatementsServiceTest {
         List<JournalLine> lines = List.of(
                 credit("4010", "1000.00"), credit("4020", "500.00"),
                 debit("5010", "300.00"), debit("5620", "50.00"));
-        when(journalLineRepository.findPostedLinesBetween(any(), any())).thenReturn(lines);
+        when(journalLineRepository.findLedgerLinesBetween(any(), any())).thenReturn(lines);
         when(ledgerAccountRepository.findAll()).thenReturn(List.of(
                 account("4010", "Sales A/c (Package)", LedgerAccountType.INCOME),
                 account("4020", "Sales A/c (Hotel)", LedgerAccountType.INCOME),
@@ -115,7 +115,7 @@ class FinancialStatementsServiceTest {
                 debit("1110", "1180.00"), credit("1200", "1180.00"),
                 // Period 2: raise, still outstanding
                 debit("1200", "590.00"), credit("4010", "500.00"), credit("2310", "90.00"));
-        when(journalLineRepository.findPostedLinesAsOf(LocalDate.of(2026, 9, 30))).thenReturn(cumulativeLines);
+        when(journalLineRepository.findLedgerLinesAsOf(LocalDate.of(2026, 9, 30))).thenReturn(cumulativeLines);
         when(ledgerAccountRepository.findAll()).thenReturn(List.of(
                 account("1200", "Accounts Receivable", LedgerAccountType.ASSET),
                 account("1110", "Bank Accounts", LedgerAccountType.ASSET),
@@ -144,7 +144,7 @@ class FinancialStatementsServiceTest {
 
     @Test
     void anAccountWithNoMovementNeverAppearsInAnyStatement() {
-        when(journalLineRepository.findPostedLinesBetween(any(), any())).thenReturn(List.of(debit("1110", "100.00"), credit("4010", "100.00")));
+        when(journalLineRepository.findLedgerLinesBetween(any(), any())).thenReturn(List.of(debit("1110", "100.00"), credit("4010", "100.00")));
         when(ledgerAccountRepository.findAll()).thenReturn(List.of(
                 account("1110", "Bank Accounts", LedgerAccountType.ASSET),
                 account("4010", "Sales A/c (Package)", LedgerAccountType.INCOME),

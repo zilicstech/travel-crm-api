@@ -30,8 +30,8 @@ import java.util.stream.Collectors;
 
 /**
  * Trial Balance, P&amp;L and Balance Sheet - ACCOUNTING_EXPANSION_ARCHITECTURE.md §1.9. Reads
- * only {@code journal_line} for {@code POSTED} entries (a {@code REVERSED} entry's lines are
- * excluded by {@link JournalLineRepository}'s query, not filtered here) - the GST/TCS registers on
+ * only {@code journal_line}, for entries of either status - a reversed entry and its reversal net
+ * to zero only when both are counted (see {@link JournalLineRepository}) - the GST/TCS registers on
  * {@code AccountsDashboardController} stay untouched and keep reading the source documents
  * directly, per Rule 1.9's explicit instruction not to re-derive them from the GL.
  */
@@ -46,7 +46,7 @@ public class FinancialStatementsService {
 
     @Transactional(readOnly = true)
     public TrialBalanceResponse trialBalance(LocalDate from, LocalDate to) {
-        List<JournalLine> lines = journalLineRepository.findPostedLinesBetween(from, to);
+        List<JournalLine> lines = journalLineRepository.findLedgerLinesBetween(from, to);
         Map<String, LedgerAccount> accountsByCode = accountsByCode();
 
         Map<String, BigDecimal> debitByAccount = sumByAccount(lines, JournalLine::getDebitAmountInr);
@@ -78,13 +78,13 @@ public class FinancialStatementsService {
 
     @Transactional(readOnly = true)
     public ProfitAndLossResponse profitAndLoss(LocalDate from, LocalDate to) {
-        List<JournalLine> lines = journalLineRepository.findPostedLinesBetween(from, to);
+        List<JournalLine> lines = journalLineRepository.findLedgerLinesBetween(from, to);
         return profitAndLossFromLines(lines, from, to);
     }
 
     @Transactional(readOnly = true)
     public BalanceSheetResponse balanceSheet(LocalDate asOf) {
-        List<JournalLine> lines = journalLineRepository.findPostedLinesAsOf(asOf);
+        List<JournalLine> lines = journalLineRepository.findLedgerLinesAsOf(asOf);
         Map<String, LedgerAccount> accountsByCode = accountsByCode();
 
         Map<String, BigDecimal> debitByAccount = sumByAccount(lines, JournalLine::getDebitAmountInr);
