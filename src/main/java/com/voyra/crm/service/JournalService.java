@@ -27,7 +27,10 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * The single writer of {@code journal_entry}/{@code journal_line} - ACCOUNTING_EXPANSION_ARCHITECTURE.md
@@ -216,7 +219,26 @@ public class JournalService {
     }
 
     public JournalEntryResponse toResponse(JournalEntry entry) {
-        List<JournalLineResponse> lines = journalLineRepository.findByJournalEntryIdOrderByLineNo(entry.getId()).stream()
+        return toResponse(entry, journalLineRepository.findByJournalEntryIdOrderByLineNo(entry.getId()));
+    }
+
+    /** Batch form for the journal register - one line query for every entry, not one per entry. */
+    @Transactional(readOnly = true)
+    public List<JournalEntryResponse> toResponses(List<JournalEntry> entries) {
+        if (entries.isEmpty()) {
+            return List.of();
+        }
+        Map<String, List<JournalLine>> linesByEntry = journalLineRepository
+                .findByJournalEntryIdIn(entries.stream().map(JournalEntry::getId).toList()).stream()
+                .sorted(Comparator.comparing(JournalLine::getLineNo))
+                .collect(Collectors.groupingBy(JournalLine::getJournalEntryId));
+        return entries.stream()
+                .map(e -> toResponse(e, linesByEntry.getOrDefault(e.getId(), List.of())))
+                .toList();
+    }
+
+    private JournalEntryResponse toResponse(JournalEntry entry, List<JournalLine> entryLines) {
+        List<JournalLineResponse> lines = entryLines.stream()
                 .map(l -> JournalLineResponse.builder()
                         .id(l.getId()).lineNo(l.getLineNo()).accountCode(l.getAccountCode())
                         .partyType(l.getPartyType()).partyId(l.getPartyId())

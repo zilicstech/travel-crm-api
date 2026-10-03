@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDate;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -21,6 +22,11 @@ public interface JournalEntryRepository extends JpaRepository<JournalEntry, Stri
             JournalSourceType sourceType, String sourceId, JournalPurpose purpose);
 
     List<JournalEntry> findByEntryDateBetween(LocalDate from, LocalDate to);
+
+    /** The journal register's source query - newest first. */
+    List<JournalEntry> findByEntryDateBetweenOrderByEntryDateDescEntryNumberDesc(LocalDate from, LocalDate to);
+
+    List<JournalEntry> findByIdIn(Collection<String> ids);
 
     List<JournalEntry> findByStatus(JournalStatus status);
 }
