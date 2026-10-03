@@ -74,6 +74,7 @@ public class SupplierPaymentService {
                 throw new IllegalArgumentException("This bill does not belong to the selected vendor");
             }
             SupplierInvoiceLifecyclePolicy.assertPayable(invoice.getStatus());
+            assertWithinBalanceDue(invoice, request.getAmount());
         }
 
         LocalDate paidOn = request.getPaidOn();
@@ -136,6 +137,19 @@ public class SupplierPaymentService {
     }
 
     /**
+     * A bill can never be settled for more than it still owes - an overpayment would leave a
+     * negative balance due on a PAID bill (and a payable the vendor ledger says is a receivable).
+     * Pay the surplus as an advance instead.
+     */
+    private static void assertWithinBalanceDue(SupplierInvoice invoice, BigDecimal amount) {
+        BigDecimal balanceDue = invoice.getBalanceDue();
+        if (balanceDue != null && amount.compareTo(balanceDue) > 0) {
+            throw new IllegalStateException("This payment of " + amount + " exceeds the bill's balance due of "
+                    + balanceDue + ". Pay the balance against the bill and record any surplus as an advance.");
+        }
+    }
+
+    /**
      * Moves part or all of an existing advance onto a bill. No ledger row - see class javadoc
      * and AD-5. The remaining advance pool for a vendor is the sum of their advance payments
      * minus the sum of what has already been applied from them; a specific advance row is not
@@ -155,6 +169,8 @@ public class SupplierPaymentService {
         if (!advance.getVendorId().equals(invoice.getVendorId())) {
             throw new IllegalArgumentException("This advance belongs to a different vendor");
         }
+
+        assertWithinBalanceDue(invoice, request.getAmount());
 
         BigDecimal remaining = remainingAdvancePool(advance.getVendorId());
         if (request.getAmount().compareTo(remaining) > 0) {

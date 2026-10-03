@@ -39,6 +39,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -141,6 +142,30 @@ class SupplierPaymentServiceTest {
         assertThat(posting.lines().get(0).debitAmount()).isEqualByComparingTo("400.00");
         assertThat(posting.lines().get(1).accountCode()).isEqualTo("1110"); // BANK_ACCOUNTS
         assertThat(posting.lines().get(1).creditAmount()).isEqualByComparingTo("400.00");
+    }
+
+    @Test
+    void payingMoreThanTheBalanceDueIsRejectedAndPostsNothing() {
+        when(vendorRepository.findById("V1")).thenReturn(Optional.of(vendor()));
+        when(supplierInvoiceRepository.findById("SI1")).thenReturn(Optional.of(approvedBill(new BigDecimal("1000.00"))));
+
+        assertThatThrownBy(() -> supplierPaymentService.pay(request("SI1", new BigDecimal("1000.01"))))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("exceeds the bill's balance due");
+        verify(journalService, never()).post(any());
+        verify(supplierPaymentRepository, never()).save(any());
+    }
+
+    @Test
+    void payingExactlyTheBalanceDueIsAllowed() {
+        when(vendorRepository.findById("V1")).thenReturn(Optional.of(vendor()));
+        when(supplierInvoiceRepository.findById("SI1")).thenReturn(Optional.of(approvedBill(new BigDecimal("1000.00"))));
+        when(supplierPaymentRepository.existsById(any())).thenReturn(false);
+        when(documentNumberService.next(DocumentKind.PAYMENT_VOUCHER, LocalDate.of(2026, 9, 19))).thenReturn("PAY/2026-27/0001");
+
+        supplierPaymentService.pay(request("SI1", new BigDecimal("1000.00")));
+
+        verify(journalService).post(any());
     }
 
     @Test
