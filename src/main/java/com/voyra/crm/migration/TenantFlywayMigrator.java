@@ -80,7 +80,14 @@ public class TenantFlywayMigrator {
                 conn.setAutoCommit(autoCommit);
             }
         } catch (SQLException e) {
-            throw new IllegalStateException("Unable to place pg_trgm extension in public schema", e);
+            // Not fatal: tenants already past V15 do not need it, and a managed Postgres (e.g.
+            // DigitalOcean) forbids moving the extension because its functions belong to the
+            // platform's own role. A tenant that still needs V15 will fail with a clear error;
+            // relocate once by hand: DROP the tenant's idx_client_name_trgm, DROP EXTENSION
+            // pg_trgm, CREATE EXTENSION pg_trgm SCHEMA public, then recreate the index.
+            log.warn("Could not place pg_trgm in public ({}). Agencies created before this fix keep "
+                    + "it inside their own schema; new agencies need it in public - see "
+                    + "TenantFlywayMigrator.ensureTrigramExtensionInPublic.", e.getMessage());
         }
     }
 }
