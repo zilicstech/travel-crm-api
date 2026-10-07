@@ -33,6 +33,7 @@ public class AgencyService {
     private final AesPasswordEncoder passwordEncoder;
     private final TenantFlywayMigrator tenantFlywayMigrator;
     private final TenantScopedReadService tenantScopedReadService;
+    private final TenantDefaultsSeeder tenantDefaultsSeeder;
 
     @Transactional
     public AgencyCreateResponse createAgency(AgencyCreateRequest request) {
@@ -52,6 +53,7 @@ public class AgencyService {
         tenantRepository.save(tenant);
         TenantCache.put(tenant.getId(), tenant.getAgencyName(), true);
         tenantFlywayMigrator.migrate(tenant.getId());
+        seedDefaultsForTenant(tenant.getId());
 
         log.info("Agency created: tenantId={}, agencyName={}", tenant.getId(), tenant.getAgencyName());
         return AgencyCreateResponse.builder()
@@ -127,6 +129,28 @@ public class AgencyService {
                 .totalRevenue(totalRevenue)
                 .createdDate(tenant.getCreatedDate())
                 .build();
+    }
+
+    /**
+     * Cross-tenant write (blueprint §3.5): switch context, seed in a fresh REQUIRES_NEW transaction,
+     * always restore. Not fatal - the startup seed runners repair any tenant that is missed here, and
+     * failing the whole create would leave an orphan migrated schema behind.
+     */
+    private void seedDefaultsForTenant(String tenantId) {
+        String previous = TenantContext.getTenantId();
+        try {
+            TenantContext.setTenantId(tenantId);
+            tenantDefaultsSeeder.seedCurrentTenant();
+        } catch (RuntimeException e) {
+            log.error("Could not seed default settings for new agency {}; they will be seeded on the next restart",
+                    tenantId, e);
+        } finally {
+            if (previous == null || previous.isBlank()) {
+                TenantContext.clear();
+            } else {
+                TenantContext.setTenantId(previous);
+            }
+        }
     }
 
     /** Cross-tenant read (blueprint §3.5): switch context, read in a fresh REQUIRES_NEW transaction, always restore. */

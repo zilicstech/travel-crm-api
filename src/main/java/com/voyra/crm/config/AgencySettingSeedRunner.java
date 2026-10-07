@@ -40,17 +40,26 @@ public class AgencySettingSeedRunner implements ApplicationRunner {
         for (Tenant tenant : tenants) {
             TenantContext.setTenantId(tenant.getId());
             try {
-                seedIfEmpty(AgencySettingKind.TRAVEL_CATEGORY, null, TRAVEL_CATEGORIES);
-                seedIfEmpty(AgencySettingKind.DOCUMENT_TYPE, null, DOCUMENT_TYPES);
-                seedIfEmpty(AgencySettingKind.LEAD_SOURCE, null, LEAD_SOURCES);
-                for (ServiceType type : ServiceType.values()) {
-                    seedIfEmpty(AgencySettingKind.SERVICE_PREFERENCE, type, preferencesFor(type));
-                }
+                seedCurrentTenant();
             } finally {
                 TenantContext.clear();
             }
         }
         log.info("Agency setting defaults checked for {} tenant(s)", tenants.size());
+    }
+
+    /**
+     * Seeds whichever tenant {@link TenantContext} currently points at. Also called when an agency
+     * is created while the app is running (see {@code TenantDefaultsSeeder}) - without that, a new
+     * agency had no travel categories, lead sources or document types until the next restart.
+     */
+    public void seedCurrentTenant() {
+        seedIfEmpty(AgencySettingKind.TRAVEL_CATEGORY, null, TRAVEL_CATEGORIES);
+        seedIfEmpty(AgencySettingKind.DOCUMENT_TYPE, null, DOCUMENT_TYPES);
+        seedIfEmpty(AgencySettingKind.LEAD_SOURCE, null, LEAD_SOURCES);
+        for (ServiceType type : ServiceType.values()) {
+            seedIfEmpty(AgencySettingKind.SERVICE_PREFERENCE, type, preferencesFor(type));
+        }
     }
 
     private void seedIfEmpty(AgencySettingKind kind, ServiceType serviceType, List<Default> defaults) {

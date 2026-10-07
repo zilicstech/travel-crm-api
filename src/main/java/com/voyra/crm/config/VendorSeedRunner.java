@@ -39,8 +39,7 @@ public class VendorSeedRunner implements ApplicationRunner {
         for (Tenant tenant : tenants) {
             TenantContext.setTenantId(tenant.getId());
             try {
-                if (vendorRepository.count() == 0) {
-                    seedDefaults();
+                if (seedCurrentTenant()) {
                     seeded++;
                 }
             } finally {
@@ -48,6 +47,19 @@ public class VendorSeedRunner implements ApplicationRunner {
             }
         }
         log.info("Vendor defaults seeded for {} of {} tenant(s)", seeded, tenants.size());
+    }
+
+    /**
+     * Seeds the tenant {@link TenantContext} currently points at, only if it has no vendors yet.
+     * Also called when an agency is created while the app is running (see
+     * {@code TenantDefaultsSeeder}). Returns whether anything was seeded.
+     */
+    public boolean seedCurrentTenant() {
+        if (vendorRepository.count() != 0) {
+            return false;
+        }
+        seedDefaults();
+        return true;
     }
 
     private void seedDefaults() {
