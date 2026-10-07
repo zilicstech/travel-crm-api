@@ -97,4 +97,34 @@ class GcsCredentialsResolutionTest {
         assertFalse(e.getMessage().contains("something_else"));
         assertNull(e.getCause(), "cause is dropped on purpose: a parser message can echo key material");
     }
+
+    @Test
+    void base64EncodedJsonIsAcceptedToo() throws Exception {
+        String json = serviceAccountJson("b64@test-project.iam.gserviceaccount.com");
+        String encoded = Base64.getEncoder().encodeToString(json.getBytes(StandardCharsets.UTF_8));
+
+        GoogleCredentials creds = GcsFileStorageService.resolveCredentials(encoded, "");
+
+        assertEquals("b64@test-project.iam.gserviceaccount.com",
+                ((ServiceAccountCredentials) creds).getClientEmail());
+    }
+
+    @Test
+    void base64ValueWrappedAcrossLinesStillWorks() throws Exception {
+        String json = serviceAccountJson("wrapped@test-project.iam.gserviceaccount.com");
+        String wrapped = Base64.getMimeEncoder(76, "\n".getBytes(StandardCharsets.UTF_8))
+                .encodeToString(json.getBytes(StandardCharsets.UTF_8)) + "\n";
+
+        GoogleCredentials creds = GcsFileStorageService.resolveCredentials(wrapped, "");
+
+        assertEquals("wrapped@test-project.iam.gserviceaccount.com",
+                ((ServiceAccountCredentials) creds).getClientEmail());
+    }
+
+    @Test
+    void garbageThatIsNeitherJsonNorBase64FailsCleanly() {
+        IllegalStateException e = assertThrows(IllegalStateException.class,
+                () -> GcsFileStorageService.resolveCredentials("not json and not base64 !!!", ""));
+        assertNull(e.getCause());
+    }
 }

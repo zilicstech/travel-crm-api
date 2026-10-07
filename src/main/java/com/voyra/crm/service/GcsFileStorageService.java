@@ -22,6 +22,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Paths;
+import java.util.Base64;
 
 /**
  * Production implementation storing files as objects in a GCS bucket, behind
@@ -63,13 +64,13 @@ public class GcsFileStorageService implements FileStorageService {
      */
     static GoogleCredentials resolveCredentials(String credentialsJson, String credentialsFile) {
         if (credentialsJson != null && !credentialsJson.isBlank()) {
-            try (InputStream in = new ByteArrayInputStream(credentialsJson.getBytes(StandardCharsets.UTF_8))) {
+            try (InputStream in = new ByteArrayInputStream(decodeInlineJson(credentialsJson))) {
                 return GoogleCredentials.fromStream(in);
             } catch (IOException | RuntimeException e) {
                 // Deliberately not chaining e: a parser message can echo part of the key material.
                 throw new IllegalStateException(
                         "Unable to parse GCS credentials from GCP_CREDENTIALS_JSON - it must be the complete "
-                                + "service-account key JSON on a single line");
+                                + "service-account key JSON, or that JSON base64-encoded");
             }
         }
         if (credentialsFile != null && !credentialsFile.isBlank()) {
@@ -80,6 +81,19 @@ public class GcsFileStorageService implements FileStorageService {
             }
         }
         return null;
+    }
+
+    /**
+     * Accepts the raw key JSON, or the same JSON base64-encoded. The encoded form exists because
+     * env-var editors on managed hosts commonly choke on a value full of braces, double quotes and
+     * backslash-n sequences; base64 is plain A-Z a-z 0-9 + / = and survives any of them.
+     */
+    private static byte[] decodeInlineJson(String value) {
+        String trimmed = value.strip();
+        if (trimmed.startsWith("{")) {
+            return trimmed.getBytes(StandardCharsets.UTF_8);
+        }
+        return Base64.getMimeDecoder().decode(trimmed);
     }
 
     @Override
