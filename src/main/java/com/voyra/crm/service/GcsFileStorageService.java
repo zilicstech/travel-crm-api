@@ -16,9 +16,11 @@ import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.ByteArrayInputStream;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Paths;
 
 /**
@@ -39,20 +41,45 @@ public class GcsFileStorageService implements FileStorageService {
             @Value("${app.storage.gcs.bucket}") String bucket,
             @Value("${app.storage.gcs.object-prefix:}") String objectPrefix,
             @Value("${app.storage.gcs.project-id}") String projectId,
-            @Value("${app.storage.gcs.credentials-file:}") String credentialsFile) {
+            @Value("${app.storage.gcs.credentials-file:}") String credentialsFile,
+            @Value("${app.storage.gcs.credentials-json:}") String credentialsJson) {
         this.bucket = bucket;
         this.objectPrefix = objectPrefix == null ? "" : objectPrefix;
 
         StorageOptions.Builder options = StorageOptions.newBuilder().setProjectId(projectId);
+        GoogleCredentials credentials = resolveCredentials(credentialsJson, credentialsFile);
+        if (credentials != null) {
+            options.setCredentials(credentials);
+        }
+        this.storage = options.build().getService();
+        log.info("GCS file storage active: bucket={} prefix={}", bucket, this.objectPrefix);
+    }
+
+    /**
+     * Inline service-account JSON wins over a key file, and a blank for both falls back to Google's
+     * default credentials (local gcloud login, GCE/Cloud Run identity). The inline form exists for
+     * hosts with no persistent filesystem or file mounts (e.g. DigitalOcean App Platform), where a
+     * key file path cannot exist. Neither the JSON nor any part of the key is ever logged.
+     */
+    static GoogleCredentials resolveCredentials(String credentialsJson, String credentialsFile) {
+        if (credentialsJson != null && !credentialsJson.isBlank()) {
+            try (InputStream in = new ByteArrayInputStream(credentialsJson.getBytes(StandardCharsets.UTF_8))) {
+                return GoogleCredentials.fromStream(in);
+            } catch (IOException | RuntimeException e) {
+                // Deliberately not chaining e: a parser message can echo part of the key material.
+                throw new IllegalStateException(
+                        "Unable to parse GCS credentials from GCP_CREDENTIALS_JSON - it must be the complete "
+                                + "service-account key JSON on a single line");
+            }
+        }
         if (credentialsFile != null && !credentialsFile.isBlank()) {
             try (InputStream in = new FileInputStream(credentialsFile)) {
-                options.setCredentials(GoogleCredentials.fromStream(in));
+                return GoogleCredentials.fromStream(in);
             } catch (IOException e) {
                 throw new IllegalStateException("Unable to load GCS credentials from " + credentialsFile, e);
             }
         }
-        this.storage = options.build().getService();
-        log.info("GCS file storage active: bucket={} prefix={}", bucket, this.objectPrefix);
+        return null;
     }
 
     @Override
