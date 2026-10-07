@@ -1,6 +1,5 @@
 package com.voyra.crm.config;
 
-import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.repository.VendorRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -17,14 +16,12 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
-class VendorSeedRunnerTest {
+class VendorDefaultsTest {
 
-    @Mock
-    private TenantRepository tenantRepository;
     @Mock
     private VendorRepository vendorRepository;
     @InjectMocks
-    private VendorSeedRunner runner;
+    private VendorDefaults runner;
 
     @Test
     void seedsTheDefaultVendorsIntoAnEmptyTenant() {

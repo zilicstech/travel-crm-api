@@ -1,59 +1,29 @@
 package com.voyra.crm.config;
 
-import com.voyra.crm.context.TenantContext;
-import com.voyra.crm.entity.Tenant;
 import com.voyra.crm.entity.Vendor;
 import com.voyra.crm.enums.ServiceType;
-import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.repository.VendorRepository;
 import com.voyra.crm.util.UniqueIdResolver;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.ApplicationArguments;
-import org.springframework.boot.ApplicationRunner;
-import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * Seeds a brand-new tenant's vendor table with the same demo names the retired
- * {@code AgencySettingSeedRunner.suppliersFor(type)} used to seed. For an existing tenant, V11's
- * copy-across from {@code agency_setting} already populated this table, so this no-ops. Runs
- * after the agency setting seed (order 150), before demo business data (order 200).
+ * The default vendor rows for a brand-new tenant (the demo names the retired agency_setting
+ * supplier seed used). An existing tenant got its vendors from V11's copy-across, so this no-ops
+ * there. Only ever invoked through {@link com.voyra.crm.service.TenantDefaultsSeeder}, which
+ * supplies the per-tenant transaction and lock; the count-then-insert below is not race-safe on
+ * its own (two instances booting together both saw 0 and both inserted - uq_vendor_name_active).
  */
 @Component
 @RequiredArgsConstructor
-@Slf4j
-@Order(160)
-public class VendorSeedRunner implements ApplicationRunner {
+public class VendorDefaults {
 
-    private final TenantRepository tenantRepository;
     private final VendorRepository vendorRepository;
 
-    @Override
-    public void run(ApplicationArguments args) {
-        List<Tenant> tenants = tenantRepository.findAll();
-        int seeded = 0;
-        for (Tenant tenant : tenants) {
-            TenantContext.setTenantId(tenant.getId());
-            try {
-                if (seedCurrentTenant()) {
-                    seeded++;
-                }
-            } finally {
-                TenantContext.clear();
-            }
-        }
-        log.info("Vendor defaults seeded for {} of {} tenant(s)", seeded, tenants.size());
-    }
-
-    /**
-     * Seeds the tenant {@link TenantContext} currently points at, only if it has no vendors yet.
-     * Also called when an agency is created while the app is running (see
-     * {@code TenantDefaultsSeeder}). Returns whether anything was seeded.
-     */
+    /** Seeds the current tenant only if it has no vendors yet. Returns whether anything was seeded. */
     public boolean seedCurrentTenant() {
         if (vendorRepository.count() != 0) {
             return false;

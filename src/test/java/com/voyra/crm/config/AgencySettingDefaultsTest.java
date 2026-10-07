@@ -3,7 +3,6 @@ package com.voyra.crm.config;
 import com.voyra.crm.entity.AgencySetting;
 import com.voyra.crm.enums.AgencySettingKind;
 import com.voyra.crm.repository.AgencySettingRepository;
-import com.voyra.crm.repository.TenantRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -23,14 +22,12 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
-class AgencySettingSeedRunnerTest {
+class AgencySettingDefaultsTest {
 
-    @Mock
-    private TenantRepository tenantRepository;
     @Mock
     private AgencySettingRepository agencySettingRepository;
     @InjectMocks
-    private AgencySettingSeedRunner runner;
+    private AgencySettingDefaults runner;
 
     @Test
     void seedsEveryKindIntoATenantWithNoSettings() {

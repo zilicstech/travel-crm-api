@@ -1,58 +1,30 @@
 package com.voyra.crm.config;
 
-import com.voyra.crm.context.TenantContext;
 import com.voyra.crm.entity.AgencySetting;
-import com.voyra.crm.entity.Tenant;
 import com.voyra.crm.enums.AgencySettingKind;
 import com.voyra.crm.enums.ServiceType;
 import com.voyra.crm.repository.AgencySettingRepository;
-import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.util.UniqueIdResolver;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.ApplicationArguments;
-import org.springframework.boot.ApplicationRunner;
-import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * Seeds every tenant's agency_setting rows with the defaults the frontend used to hardcode in
- * lib/agencySettings.ts, so a fresh tenant schema is not empty the first time Settings loads.
- * Idempotent per kind - a tenant that already has rows of a given kind (agency-edited or from a
- * previous boot) is left alone; only a genuinely empty kind gets seeded. Runs after tenant schema
- * migrations (order 100) and before demo business data (order 200).
+ * The default agency_setting rows (the values the frontend used to hardcode in
+ * lib/agencySettings.ts), so a fresh tenant schema is not empty the first time Settings loads.
+ * Idempotent per kind - a kind the agency already has rows for is left alone. Only ever invoked
+ * through {@link com.voyra.crm.service.TenantDefaultsSeeder}, which supplies the per-tenant
+ * transaction and lock; it is not race-safe on its own.
  */
 @Component
 @RequiredArgsConstructor
-@Slf4j
-@Order(150)
-public class AgencySettingSeedRunner implements ApplicationRunner {
+public class AgencySettingDefaults {
 
-    private final TenantRepository tenantRepository;
     private final AgencySettingRepository agencySettingRepository;
 
-    @Override
-    public void run(ApplicationArguments args) {
-        List<Tenant> tenants = tenantRepository.findAll();
-        for (Tenant tenant : tenants) {
-            TenantContext.setTenantId(tenant.getId());
-            try {
-                seedCurrentTenant();
-            } finally {
-                TenantContext.clear();
-            }
-        }
-        log.info("Agency setting defaults checked for {} tenant(s)", tenants.size());
-    }
-
-    /**
-     * Seeds whichever tenant {@link TenantContext} currently points at. Also called when an agency
-     * is created while the app is running (see {@code TenantDefaultsSeeder}) - without that, a new
-     * agency had no travel categories, lead sources or document types until the next restart.
-     */
+    /** Seeds whichever tenant {@link com.voyra.crm.context.TenantContext} currently points at. */
     public void seedCurrentTenant() {
         seedIfEmpty(AgencySettingKind.TRAVEL_CATEGORY, null, TRAVEL_CATEGORIES);
         seedIfEmpty(AgencySettingKind.DOCUMENT_TYPE, null, DOCUMENT_TYPES);
