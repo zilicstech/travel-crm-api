@@ -71,6 +71,11 @@ public class SupplierCreditNoteService {
         BigDecimal totalAmount = request.getTaxableValue().add(request.getCgstAmount())
                 .add(request.getSgstAmount()).add(request.getIgstAmount());
         assertWithinInvoiceValue(invoice, totalAmount, null);
+        // Only the part of the credit that exceeds what we still owe on the bill can come back as
+        // cash - and then only up to cash actually paid. The rest simply lowers the payable.
+        BigDecimal stillOwed = invoice.getGrandTotal().subtract(invoice.getAmountPaid())
+                .subtract(invoice.getCreditNoteTotal()).max(BigDecimal.ZERO);
+        BigDecimal refundable = totalAmount.subtract(stillOwed).max(BigDecimal.ZERO);
 
         LocalDate noteDate = request.getNoteDate() != null ? request.getNoteDate() : LocalDate.now();
         String actor = currentUserId();
@@ -94,7 +99,7 @@ public class SupplierCreditNoteService {
                 .retentionFee(retentionFee)
                 .totalAmount(totalAmount)
                 .totalAmountInr(scaleToInr(totalAmount, invoice.getFxRateToInr()))
-                .refundableAmount(totalAmount)
+                .refundableAmount(refundable)
                 .noteDate(noteDate)
                 .recordedAt(now)
                 .recordedBy(actor)
@@ -199,6 +204,18 @@ public class SupplierCreditNoteService {
                 note.getBookingId(), payment.getCurrencyCode(), payment.getFxRateToInr(),
                 BigDecimal.ZERO, payment.getAmountInr(), BigDecimal.ZERO, payment.getAmountInr()));
 
+        postRefundJournal(payment, note);
+
+        // The refund hands back cash we had paid, so net cash paid on the bill falls and the
+        // negative balance the credit note left behind is cleared.
+        SupplierInvoice invoice = findInvoice(note.getSupplierInvoiceId());
+        invoice.setAmountPaid(invoice.getAmountPaid().subtract(request.getAmount()));
+        BigDecimal balanceDue = invoice.getGrandTotal().subtract(invoice.getAmountPaid()).subtract(invoice.getCreditNoteTotal());
+        invoice.setBalanceDue(balanceDue);
+        invoice.setBalanceDueInr(scaleToInr(balanceDue, invoice.getFxRateToInr()));
+        invoice.setStatus(SupplierInvoiceLifecyclePolicy.deriveFromBalance(invoice.getGrandTotal(), balanceDue));
+        supplierInvoiceRepository.save(invoice);
+
         note.setRefundedAmount(note.getRefundedAmount().add(request.getAmount()));
         supplierCreditNoteRepository.save(note);
 
@@ -275,6 +292,24 @@ public class SupplierCreditNoteService {
                 note.getNoteDate(), com.voyra.crm.enums.JournalSourceType.SUPPLIER_CREDIT_NOTE, note.getId(),
                 com.voyra.crm.enums.JournalPurpose.SUPPLIER_CREDIT_NOTE_RECEIVED, narration,
                 note.getBookingId(), null, lines));
+    }
+
+    /** Cash/bank in, payable out: clears the debit balance the credit note left on the vendor's payable. */
+    private void postRefundJournal(SupplierPayment payment, SupplierCreditNote note) {
+        BigDecimal amountInr = payment.getAmountInr();
+        if (amountInr == null || amountInr.compareTo(BigDecimal.ZERO) <= 0) {
+            return;
+        }
+        String bankCode = payment.getPaymentMode() == com.voyra.crm.enums.PaymentMode.CASH
+                ? com.voyra.crm.enums.SystemAccount.CASH_IN_HAND.code()
+                : com.voyra.crm.enums.SystemAccount.BANK_ACCOUNTS.code();
+        String narration = "Refund received against supplier credit note " + labelFor(note);
+        journalService.post(new com.voyra.crm.models.JournalPosting(
+                payment.getPaidOn(), com.voyra.crm.enums.JournalSourceType.SUPPLIER_PAYMENT, payment.getId(),
+                com.voyra.crm.enums.JournalPurpose.SUPPLIER_REFUND_RECEIVED, narration, note.getBookingId(), null,
+                List.of(com.voyra.crm.models.JournalLinePosting.debit(bankCode, amountInr, narration),
+                        com.voyra.crm.models.JournalLinePosting.creditParty(
+                                com.voyra.crm.enums.SystemAccount.ACCOUNTS_PAYABLE.code(), "VENDOR", note.getVendorId(), amountInr, narration))));
     }
 
     private SupplierInvoice findInvoice(String id) {

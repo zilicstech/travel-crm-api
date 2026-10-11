@@ -38,6 +38,15 @@ public class ControlAccountReconciliationController {
         return ResponseEntity.ok(controlAccountReconciliationService.reconcile());
     }
 
+    @GetMapping("/opening-balance-backfill/preview")
+    @PreAuthorize("hasRole('AGENCY_OWNER')")
+    @Operation(summary = "Preview what the opening-balance catch-up would post, without posting it",
+            description = "Lists each control account whose GL balance differs from its subsidiary ledger and has no "
+                    + "opening-balance entry yet. The catch-up closes exactly these variances against 3100.")
+    public ResponseEntity<List<ControlAccountReconciliationRowResponse>> openingBalanceBackfillPreview() {
+        return ResponseEntity.ok(openingBalanceBackfillService.preview());
+    }
+
     /**
      * Posting-rule-table row 17, for this tenant only. Owner-only (not Accountant) - this posts
      * real journal entries closing whatever variance exists right now against 3100, a one-way

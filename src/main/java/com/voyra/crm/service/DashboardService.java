@@ -40,6 +40,7 @@ public class DashboardService {
     private final BookingRepository bookingRepository;
     private final ClientRepository clientRepository;
     private final ClientInvoiceRepository clientInvoiceRepository;
+    private final com.voyra.crm.repository.InvoiceRepository invoiceRepository;
     private final AgentRepository agentRepository;
 
     @Transactional(readOnly = true)
@@ -49,7 +50,9 @@ public class DashboardService {
         long bookedLeads = leadRepository.countByStatus(LeadStatus.BOOKED);
         long lostLeads = leadRepository.countByStatus(LeadStatus.LOST);
 
-        BigDecimal pendingPayments = clientInvoiceRepository.sumOutstanding(InvoiceStatus.PAID);
+        // Legacy client_invoice history plus the Accounts-module invoices that replaced it.
+        BigDecimal pendingPayments = clientInvoiceRepository.sumOutstanding(InvoiceStatus.PAID)
+                .add(invoiceRepository.sumOutstandingTaxInvoicesInr());
 
         return OwnerDashboardSummaryResponse.builder()
                 .totalRevenue(revenue.getTotalRevenue())

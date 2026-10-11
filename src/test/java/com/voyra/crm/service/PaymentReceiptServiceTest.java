@@ -152,6 +152,17 @@ class PaymentReceiptServiceTest {
     }
 
     @Test
+    void aReceiptLargerThanTheBalanceDueIsRejected() {
+        Invoice invoice = issuedInvoice(new BigDecimal("1000.00"));
+        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(invoice));
+
+        assertThatThrownBy(() -> paymentReceiptService.record(request(new BigDecimal("1000.01"))))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("exceeds the invoice's balance due");
+        org.mockito.Mockito.verify(paymentReceiptRepository, org.mockito.Mockito.never()).save(any());
+    }
+
+    @Test
     void aReceiptThatClearsTheBalanceMovesTheInvoiceToPaid() {
         Invoice invoice = issuedInvoice(new BigDecimal("1000.00"));
         when(invoiceRepository.findById("I1")).thenReturn(Optional.of(invoice));

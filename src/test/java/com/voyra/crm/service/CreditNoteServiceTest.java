@@ -368,4 +368,31 @@ class CreditNoteServiceTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("exceeds the remaining refundable balance");
     }
+
+    @Test
+    void refundingBringsTheInvoiceBalanceBackToZeroInsteadOfLeavingItNegative() {
+        // 1,180 fully paid, then fully credited: balance is -1,180 until the cash goes back.
+        Invoice invoice = issuedInvoice();
+        invoice.setAmountReceived(new BigDecimal("1180.00"));
+        invoice.setCreditNoteTotal(new BigDecimal("1180.00"));
+        invoice.setBalanceDue(new BigDecimal("-1180.00"));
+        invoice.setBalanceDueInr(new BigDecimal("-1180.00"));
+        CreditNote note = CreditNote.builder().id("CN1").invoiceId("I1").clientId("K1").creditNoteNumber("CN/1")
+                .status(CreditNoteStatus.ISSUED).currencyCode("INR").fxRateToInr(BigDecimal.ONE)
+                .totalAmount(new BigDecimal("1180.00")).totalAmountInr(new BigDecimal("1180.00"))
+                .refundableAmount(new BigDecimal("1180.00")).refundedAmount(BigDecimal.ZERO).build();
+        when(creditNoteRepository.findById("CN1")).thenReturn(Optional.of(note));
+        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(invoice));
+        when(paymentReceiptRepository.findByCreditNoteIdOrderByReceivedOnAscCreatedAtAsc("CN1")).thenReturn(List.of());
+        when(documentNumberService.next(DocumentKind.RECEIPT, LocalDate.of(2026, 10, 1))).thenReturn("RCP/9");
+
+        CreditNoteRefundRequest req = new CreditNoteRefundRequest();
+        req.setAmount(new BigDecimal("1180.00"));
+        req.setPaymentMode(com.voyra.crm.enums.PaymentMode.BANK_TRANSFER);
+        req.setReceivedOn(LocalDate.of(2026, 10, 1));
+        creditNoteService.refund("CN1", req);
+
+        assertThat(invoice.getAmountReceived()).isEqualByComparingTo("0.00");
+        assertThat(invoice.getBalanceDue()).isEqualByComparingTo("0.00");
+    }
 }

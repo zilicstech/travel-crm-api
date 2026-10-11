@@ -38,6 +38,11 @@ public class CsvStatementParser implements StatementParser {
         return "CSV";
     }
 
+    /** Excel's "CSV UTF-8" export starts with a byte-order mark that would otherwise glue itself to the first header name. */
+    private static String stripBom(String text) {
+        return !text.isEmpty() && text.charAt(0) == '\uFEFF' ? text.substring(1) : text;
+    }
+
     @Override
     public StatementParseResult parse(byte[] fileContent, BankStatementProfile profile) {
         Map<String, String> columnMap = readColumnMap(profile.getColumnMap());
@@ -47,7 +52,7 @@ public class CsvStatementParser implements StatementParser {
         List<String> errors = new ArrayList<>();
 
         try (BufferedReader reader = new BufferedReader(
-                new StringReader(new String(fileContent, StandardCharsets.UTF_8)))) {
+                new StringReader(stripBom(new String(fileContent, StandardCharsets.UTF_8))))) {
             String headerLine = reader.readLine();
             if (headerLine == null) {
                 return new StatementParseResult(lines, List.of("File is empty"));
@@ -128,14 +133,24 @@ public class CsvStatementParser implements StatementParser {
         if (raw == null || raw.isBlank()) {
             throw new IllegalArgumentException("amount is blank");
         }
-        return new BigDecimal(raw.replace(",", "").trim());
+        return toDecimal(raw);
+    }
+
+    /** Strips thousands separators and a leading currency marker (₹, Rs, INR, $) before parsing. */
+    private static BigDecimal toDecimal(String raw) {
+        String cleaned = raw.replaceAll("(?i)(₹|rs\\.?|inr|\\$)", "").replace(",", "").trim();
+        try {
+            return new BigDecimal(cleaned);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("amount \"" + raw.trim() + "\" is not a valid number");
+        }
     }
 
     private static BigDecimal parseAmountOrZero(String raw) {
         if (raw == null || raw.isBlank()) {
             return BigDecimal.ZERO;
         }
-        return new BigDecimal(raw.replace(",", "").trim());
+        return toDecimal(raw);
     }
 
     private static String requireMapping(Map<String, String> columnMap, String logicalField) {

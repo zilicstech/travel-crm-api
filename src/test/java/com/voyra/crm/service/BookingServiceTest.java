@@ -178,6 +178,25 @@ class BookingServiceTest {
     }
 
     @Test
+    void editingCostComponentsOnAConfirmedBookingRaisesChangeAlerts() {
+        Booking booking = Booking.builder().id("B1").agentId("A1").bookingStatus(BookingStatus.CONFIRMED)
+                .sellingPrice(new BigDecimal("44000.00")).netCost(new BigDecimal("40000.00"))
+                .profit(new BigDecimal("4000.00")).build();
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
+        when(bookingCostComponentRepository.existsById(org.mockito.ArgumentMatchers.any())).thenReturn(false);
+
+        com.voyra.crm.dto.BookingCostComponentRequest component = new com.voyra.crm.dto.BookingCostComponentRequest();
+        component.setNetCost(new BigDecimal("30000.00"));
+        bookingService.replaceCostComponents("B1", List.of(component));
+
+        org.mockito.ArgumentCaptor<List<com.voyra.crm.entity.AccountingChangeAlert>> captor =
+                org.mockito.ArgumentCaptor.forClass(List.class);
+        org.mockito.Mockito.verify(accountingChangeAlertRepository).saveAll(captor.capture());
+        assertThat(captor.getValue()).extracting(com.voyra.crm.entity.AccountingChangeAlert::getFieldName)
+                .contains("netCost", "profit");
+    }
+
+    @Test
     void confirmingABookingWithNoCostComponentsSkipsThePriceIntegrityCheck() {
         Booking booking = Booking.builder().id("B1").agentId("A1").bookingStatus(BookingStatus.PENDING)
                 .sellingPrice(new BigDecimal("50000.00")).build();

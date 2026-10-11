@@ -262,7 +262,11 @@ public class JournalService {
         return value != null ? value : BigDecimal.ZERO;
     }
 
+    /** Actor recorded on journals posted by scheduled jobs (revenue recognition, forex
+     *  revaluation), which run on a thread with no authenticated user. */
+    static final String SYSTEM_ACTOR = "SYSTEM";
+
     private String currentUserId() {
-        return SecurityContextUtil.getCurrentUserOrThrow().userId();
+        return SecurityContextUtil.getCurrentUserId().orElse(SYSTEM_ACTOR);
     }
 }

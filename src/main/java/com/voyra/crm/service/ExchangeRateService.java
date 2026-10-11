@@ -48,6 +48,15 @@ public class ExchangeRateService {
         return toResponse(row);
     }
 
+    /** Most recent stored rate on or before {@code onOrBefore} - what a bill/payment form prefills. */
+    @Transactional(readOnly = true)
+    public Optional<ExchangeRateResponse> latest(String baseCurrency, String quoteCurrency, java.time.LocalDate onOrBefore) {
+        return exchangeRateRepository
+                .findFirstByBaseCurrencyAndQuoteCurrencyAndRateDateLessThanEqualOrderByRateDateDesc(
+                        baseCurrency.toUpperCase(), quoteCurrency.toUpperCase(), onOrBefore)
+                .map(ExchangeRateService::toResponse);
+    }
+
     private static ExchangeRateResponse toResponse(ExchangeRate r) {
         return ExchangeRateResponse.builder()
                 .id(r.getId()).rateDate(r.getRateDate())

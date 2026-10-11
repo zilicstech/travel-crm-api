@@ -178,4 +178,59 @@ class SupplierCreditNoteServiceTest {
         verify(journalService).reverse("JE1", "Supplier credit note cancelled: Entered in error");
         assertThat(note.getStatus()).isEqualTo(SupplierCreditNoteStatus.CANCELLED);
     }
+
+    @Test
+    void refundableAmountIsCappedAtCashActuallyPaidBeyondWhatIsStillOwed() {
+        // bill 5,250, 2,000 paid, 3,250 still owed. Credit of 5,250 -> only 2,000 can come back.
+        SupplierInvoice invoice = approvedBill("ELIGIBLE");
+        invoice.setAmountPaid(new BigDecimal("2000.00"));
+        when(supplierInvoiceRepository.findById("SI1")).thenReturn(Optional.of(invoice));
+        when(supplierCreditNoteRepository.findBySupplierInvoiceIdAndStatus("SI1", SupplierCreditNoteStatus.RECORDED))
+                .thenReturn(List.of());
+        when(journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(
+                com.voyra.crm.enums.JournalSourceType.SUPPLIER_INVOICE, "SI1",
+                com.voyra.crm.enums.JournalPurpose.SUPPLIER_BILL_BOOKED)).thenReturn(Optional.empty());
+
+        var response = supplierCreditNoteService.record(
+                request(new BigDecimal("5000.00"), new BigDecimal("125.00"), new BigDecimal("125.00")));
+
+        assertThat(response.getRefundableAmount()).isEqualByComparingTo("2000.00");
+    }
+
+    @Test
+    void receivingARefundPostsBankAgainstPayableAndClearsTheBillBalance() {
+        SupplierCreditNote note = SupplierCreditNote.builder()
+                .id("CN1").vendorId("V1").supplierInvoiceId("SI1").supplierNoteNumber("CN-001")
+                .status(SupplierCreditNoteStatus.RECORDED)
+                .currencyCode("INR").fxRateToInr(BigDecimal.ONE)
+                .totalAmount(new BigDecimal("5250.00")).totalAmountInr(new BigDecimal("5250.00"))
+                .refundableAmount(new BigDecimal("2000.00")).refundedAmount(BigDecimal.ZERO).build();
+        SupplierInvoice invoice = approvedBill("ELIGIBLE");
+        invoice.setAmountPaid(new BigDecimal("2000.00"));
+        invoice.setCreditNoteTotal(new BigDecimal("5250.00"));
+        invoice.setBalanceDue(new BigDecimal("-2000.00"));
+        when(supplierCreditNoteRepository.findById("CN1")).thenReturn(Optional.of(note));
+        when(supplierInvoiceRepository.findById("SI1")).thenReturn(Optional.of(invoice));
+        when(supplierPaymentRepository.save(org.mockito.ArgumentMatchers.any()))
+                .thenAnswer(inv -> inv.getArgument(0));
+
+        com.voyra.crm.dto.SupplierCreditNoteRefundRequest req = new com.voyra.crm.dto.SupplierCreditNoteRefundRequest();
+        req.setAmount(new BigDecimal("2000.00"));
+        req.setPaymentMode(com.voyra.crm.enums.PaymentMode.BANK_TRANSFER);
+        req.setReceivedOn(java.time.LocalDate.of(2026, 10, 1));
+        supplierCreditNoteService.receiveRefund("CN1", req);
+
+        ArgumentCaptor<JournalPosting> captor = ArgumentCaptor.forClass(JournalPosting.class);
+        verify(journalService).post(captor.capture());
+        JournalPosting posting = captor.getValue();
+        assertThat(posting.purpose()).isEqualTo(com.voyra.crm.enums.JournalPurpose.SUPPLIER_REFUND_RECEIVED);
+        assertThat(posting.lines().get(0).accountCode()).isEqualTo("1110");
+        assertThat(posting.lines().get(0).debitAmount()).isEqualByComparingTo("2000.00");
+        assertThat(posting.lines().get(1).accountCode()).isEqualTo("2200");
+        assertThat(posting.lines().get(1).creditAmount()).isEqualByComparingTo("2000.00");
+
+        assertThat(invoice.getAmountPaid()).isEqualByComparingTo("0.00");
+        assertThat(invoice.getBalanceDue()).isEqualByComparingTo("0.00");
+        assertThat(note.getRefundedAmount()).isEqualByComparingTo("2000.00");
+    }
 }

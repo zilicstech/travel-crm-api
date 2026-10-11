@@ -42,6 +42,21 @@ class CsvStatementParserTest {
     }
 
     @Test
+    void aUtf8ByteOrderMarkDoesNotBreakTheFirstHeader() {
+        BankStatementProfile profile = BankStatementProfile.builder()
+                .dateFormat("dd/MM/yyyy")
+                .amountConvention(BankAmountConvention.SINGLE_SIGNED)
+                .columnMap("{\"date\":\"Date\",\"description\":\"Narration\",\"reference\":\"Ref\",\"amount\":\"Amount\"}")
+                .build();
+        String csv = "\uFEFFDate,Narration,Ref,Amount\n20/09/2026,NEFT,UTR1,100.00\n";
+
+        StatementParseResult result = parser.parse(csv.getBytes(StandardCharsets.UTF_8), profile);
+
+        assertThat(result.rowErrors()).isEmpty();
+        assertThat(result.lines()).hasSize(1);
+    }
+
+    @Test
     void parsesADebitCreditColumnStatement() {
         BankStatementProfile profile = BankStatementProfile.builder()
                 .dateFormat("dd/MM/yyyy")
@@ -60,6 +75,26 @@ class CsvStatementParserTest {
         assertThat(result.lines().get(0).direction()).isEqualTo(BankTransactionDirection.DEBIT);
         assertThat(result.lines().get(1).amount()).isEqualByComparingTo("42000.00");
         assertThat(result.lines().get(1).direction()).isEqualTo(BankTransactionDirection.CREDIT);
+    }
+
+    @Test
+    void currencyMarkersAreStrippedAndGarbageAmountsGetAReadableError() {
+        BankStatementProfile profile = BankStatementProfile.builder()
+                .dateFormat("dd/MM/yyyy")
+                .amountConvention(BankAmountConvention.SINGLE_SIGNED)
+                .columnMap("{\"date\":\"Date\",\"amount\":\"Amount\"}")
+                .build();
+        String csv = "Date,Amount\n"
+                + "20/09/2026,\"₹1,000.50\"\n"
+                + "21/09/2026,Rs. 250\n"
+                + "22/09/2026,abc\n";
+
+        StatementParseResult result = parser.parse(csv.getBytes(StandardCharsets.UTF_8), profile);
+
+        assertThat(result.lines()).hasSize(2);
+        assertThat(result.lines().get(0).amount()).isEqualByComparingTo("1000.50");
+        assertThat(result.rowErrors()).hasSize(1);
+        assertThat(result.rowErrors().get(0)).contains("Row 4").contains("is not a valid number");
     }
 
     @Test

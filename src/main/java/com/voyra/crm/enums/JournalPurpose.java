@@ -51,6 +51,9 @@ public enum JournalPurpose {
     /** Row 14 - a supplier credit note received. */
     SUPPLIER_CREDIT_NOTE_RECEIVED,
 
+    /** A refund received back from a supplier against a supplier credit note: Dr bank, Cr payable. */
+    SUPPLIER_REFUND_RECEIVED,
+
     /** Row 15 - an online/gateway receipt, net of the processing fee. */
     GATEWAY_RECEIPT,
 

@@ -69,4 +69,16 @@ public interface InvoiceRepository extends JpaRepository<Invoice, String>, JpaSp
     BigDecimal sumConsiderationForClientInFy(@Param("clientId") String clientId,
                                               @Param("supplyNature") com.voyra.crm.enums.SupplyNature supplyNature,
                                               @Param("financialYear") String financialYear);
+
+    /** Outstanding on live tax invoices (ISSUED / PARTIALLY_PAID), in INR - the owner dashboard's pending payments. */
+    @Query("SELECT COALESCE(SUM(i.balanceDueInr), 0) FROM Invoice i "
+            + "WHERE i.documentType = com.voyra.crm.enums.InvoiceDocumentType.TAX_INVOICE "
+            + "AND i.status IN (com.voyra.crm.enums.InvoiceLifecycle.ISSUED, com.voyra.crm.enums.InvoiceLifecycle.PARTIALLY_PAID) "
+            + "AND i.balanceDueInr > 0")
+    BigDecimal sumOutstandingTaxInvoicesInr();
+
+    /** Unpaid tax invoices falling due in a window - the calendar's invoice-due events. */
+    List<Invoice> findByDocumentTypeAndStatusInAndDueDateBetween(
+            InvoiceDocumentType documentType, List<InvoiceLifecycle> statuses,
+            java.time.LocalDate from, java.time.LocalDate to);
 }

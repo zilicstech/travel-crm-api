@@ -106,6 +106,25 @@ class JournalServiceTest {
     }
 
     @Test
+    void aSystemPostingWithNoAuthenticatedUserIsRecordedAgainstTheSystemActor() {
+        SecurityContextHolder.clearContext();
+        when(ledgerAccountRepository.findByCode("2120")).thenReturn(Optional.of(nonControlAccount("2120")));
+        when(ledgerAccountRepository.findByCode("4030")).thenReturn(Optional.of(nonControlAccount("4030")));
+        when(documentNumberService.next(DocumentKind.JOURNAL, LocalDate.of(2026, 9, 30))).thenReturn("JNV/2026-27/0002");
+        when(journalEntryRepository.existsById(any())).thenReturn(false);
+        when(journalLineRepository.existsById(any())).thenReturn(false);
+
+        JournalEntry entry = journalService.post(new JournalPosting(
+                LocalDate.of(2026, 9, 30), JournalSourceType.INVOICE, "INV1", JournalPurpose.REVENUE_RECOGNIZED,
+                "Nightly recognition", null, null,
+                List.of(
+                        JournalLinePosting.debit("2120", new BigDecimal("500.00"), null),
+                        JournalLinePosting.credit("4030", new BigDecimal("500.00"), null))));
+
+        assertThat(entry.getCreatedBy()).isEqualTo("SYSTEM");
+    }
+
+    @Test
     void anUnbalancedEntryThrows() {
         when(ledgerAccountRepository.findByCode("1100")).thenReturn(Optional.of(nonControlAccount("1100")));
         when(ledgerAccountRepository.findByCode("3100")).thenReturn(Optional.of(nonControlAccount("3100")));

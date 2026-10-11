@@ -41,6 +41,7 @@ public class CalendarService {
     private final BookingRepository bookingRepository;
     private final LeadFollowUpRepository leadFollowUpRepository;
     private final ClientInvoiceRepository clientInvoiceRepository;
+    private final com.voyra.crm.repository.InvoiceRepository invoiceRepository;
     private final VisaRepository visaRepository;
     private final SupplierInvoiceRepository supplierInvoiceRepository;
 
@@ -103,6 +104,23 @@ public class CalendarService {
                     .date(inv.getDueDate())
                     .title("Invoice due: " + inv.getClientName())
                     .subtitle(inv.getDescription())
+                    .targetId(inv.getId()).targetType("CLIENT_INVOICE")
+                    .build());
+        }
+
+        // Invoices raised in the Accounts module (the legacy client_invoice rows above are history only).
+        for (com.voyra.crm.entity.Invoice inv : invoiceRepository.findByDocumentTypeAndStatusInAndDueDateBetween(
+                com.voyra.crm.enums.InvoiceDocumentType.TAX_INVOICE,
+                List.of(com.voyra.crm.enums.InvoiceLifecycle.ISSUED, com.voyra.crm.enums.InvoiceLifecycle.PARTIALLY_PAID),
+                from, to)) {
+            if (agentId != null && !agentId.equals(inv.getAgentId())) {
+                continue;
+            }
+            rows.add(CalendarEventResponse.builder()
+                    .type("INVOICE_DUE").severity("MEDIUM")
+                    .date(inv.getDueDate())
+                    .title("Invoice due: " + inv.getClientName())
+                    .subtitle(inv.getInvoiceNumber())
                     .targetId(inv.getId()).targetType("CLIENT_INVOICE")
                     .build());
         }

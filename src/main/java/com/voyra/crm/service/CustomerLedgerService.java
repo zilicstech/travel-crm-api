@@ -57,6 +57,7 @@ public class CustomerLedgerService {
     private final InvoiceRepository invoiceRepository;
     private final ClientService clientService;
     private final ClientRepository clientRepository;
+    private final JournalService journalService;
 
     @Transactional
     public void post(LedgerPosting posting) {
@@ -238,6 +239,20 @@ public class CustomerLedgerService {
                 "INR", BigDecimal.ONE,
                 isDebit ? magnitude : BigDecimal.ZERO, isDebit ? BigDecimal.ZERO : magnitude,
                 isDebit ? magnitude : BigDecimal.ZERO, isDebit ? BigDecimal.ZERO : magnitude));
+
+        // The GL must move with the sub-ledger, or Books health shows a variance that the
+        // dashboard's catch-up would later plug against 3100 without anyone seeing why.
+        String ar = com.voyra.crm.enums.SystemAccount.ACCOUNTS_RECEIVABLE.code();
+        String equity = com.voyra.crm.enums.SystemAccount.OPENING_BALANCE_EQUITY.code();
+        String narration = "Opening balance - " + client.getName();
+        journalService.post(new com.voyra.crm.models.JournalPosting(
+                request.getAsOfDate(), com.voyra.crm.enums.JournalSourceType.OPENING_BALANCE, client.getId(),
+                com.voyra.crm.enums.JournalPurpose.OPENING_BALANCE_POSTED, narration, null, null,
+                isDebit
+                        ? List.of(com.voyra.crm.models.JournalLinePosting.debitParty(ar, "CLIENT", client.getId(), magnitude, narration),
+                                  com.voyra.crm.models.JournalLinePosting.credit(equity, magnitude, narration))
+                        : List.of(com.voyra.crm.models.JournalLinePosting.debit(equity, magnitude, narration),
+                                  com.voyra.crm.models.JournalLinePosting.creditParty(ar, "CLIENT", client.getId(), magnitude, narration))));
 
         return statement(clientId, null, null);
     }

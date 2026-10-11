@@ -57,9 +57,8 @@ import java.util.List;
  * <p>Issuing posts a {@code CREDIT_NOTE_ISSUED} ledger credit and permanently raises the
  * invoice's {@code creditNoteTotal} (never reduced again, even after a full refund - the invoice
  * keeps an honest historical record of what was credited against it). A refund payout instead
- * posts a {@code REFUND_PAID} debit: it settles the client's credit balance in cash but never
- * touches the invoice's own {@code balanceDue}, since that money was never billed on the invoice
- * to begin with. This means {@code CustomerLedgerService}'s documented invariant needs one more
+ * posts a {@code REFUND_PAID} debit and lowers the invoice's {@code amountReceived} (net cash kept),
+ * which brings the negative balance the credit note left behind back to zero. This means {@code CustomerLedgerService}'s documented invariant needs one more
  * term once a refund exists: {@code SUM(debit_inr - credit_inr)} over the ledger equals
  * {@code SUM(invoice.balance_due_inr)} minus {@code SUM(credit_note.refunded_amount)} (converted
  * to INR at each credit note's own locked rate), plus any opening balance.
@@ -280,6 +279,18 @@ public class CreditNoteService {
 
         note.setRefundedAmount(alreadyRefunded.add(request.getAmount()));
         creditNoteRepository.save(note);
+
+        // The refund sent cash back, so net cash kept on the invoice drops by that amount and the
+        // negative balance the credit note left behind is cleared.
+        invoiceRepository.findById(note.getInvoiceId()).ifPresent(invoice -> {
+            invoice.setAmountReceived(invoice.getAmountReceived().subtract(request.getAmount()));
+            BigDecimal balanceDue = invoice.getGrandTotal().subtract(invoice.getAmountReceived())
+                    .subtract(invoice.getCreditNoteTotal());
+            invoice.setBalanceDue(balanceDue);
+            invoice.setBalanceDueInr(scaleToInr(balanceDue, invoice.getFxRateToInr()));
+            invoice.setStatus(InvoiceLifecyclePolicy.deriveFromBalance(invoice.getGrandTotal(), balanceDue));
+            invoiceRepository.save(invoice);
+        });
         bookingAccountingSync.syncRefund(note.getBookingId());
         bookingAccountingSync.syncPayment(note.getBookingId());
 
@@ -364,8 +375,7 @@ public class CreditNoteService {
      *  invoice's billed/grand total, which can include amounts never collected. */
     private BigDecimal cashReceiptedOnInvoice(String invoiceId) {
         return paymentReceiptRepository.findByInvoiceIdOrderByReceivedOnAscCreatedAtAsc(invoiceId).stream()
-                .filter(r -> r.getDirection() == ReceiptDirection.RECEIPT)
-                .map(PaymentReceipt::getAmount)
+                .map(r -> r.getDirection() == ReceiptDirection.REFUND ? r.getAmount().negate() : r.getAmount())
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 

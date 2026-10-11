@@ -72,6 +72,9 @@ public class PaymentReceiptService {
                 .orElseThrow(() -> new IllegalArgumentException("Invoice not found: " + request.getInvoiceId()));
         InvoiceLifecyclePolicy.assertReceivable(invoice.getStatus());
         boolean isProforma = invoice.getStatus() == InvoiceLifecycle.PROFORMA_ISSUED;
+        if (!isProforma) {
+            assertWithinBalanceDue(invoice, request.getAmount());
+        }
 
         LocalDate receivedOn = request.getReceivedOn();
         String number = documentNumberService.next(DocumentKind.RECEIPT, receivedOn);
@@ -112,6 +115,19 @@ public class PaymentReceiptService {
         auditService.recordCreate(AuditEntityType.PAYMENT_RECEIPT, receipt.getId(), receipt.getReceiptNumber());
         log.info("Receipt recorded: id={}, invoiceId={}, amount={}", receipt.getId(), invoice.getId(), receipt.getAmount());
         return toResponse(receipt);
+    }
+
+    /**
+     * A tax invoice can never be receipted for more than it still owes - an overpayment would
+     * leave a negative balance due on a PAID invoice. Surplus cash belongs in the customer
+     * wallet (a deposit with no invoice), same rule as supplier bills.
+     */
+    private static void assertWithinBalanceDue(Invoice invoice, BigDecimal amount) {
+        BigDecimal balanceDue = invoice.getBalanceDue();
+        if (balanceDue != null && amount.compareTo(balanceDue) > 0) {
+            throw new IllegalStateException("This receipt of " + amount + " exceeds the invoice's balance due of "
+                    + balanceDue + ". Receipt the balance against the invoice and record any surplus as a deposit.");
+        }
     }
 
     /**
@@ -493,9 +509,10 @@ public class PaymentReceiptService {
      */
     private void applySettlement(Invoice invoice) {
         List<PaymentReceipt> receipts = paymentReceiptRepository.findByInvoiceIdOrderByReceivedOnAscCreatedAtAsc(invoice.getId());
+        // Net of cash refunded back to the client against this invoice's credit notes: that cash
+        // left, so what the invoice has kept is receipts minus refunds.
         BigDecimal received = receipts.stream()
-                .filter(r -> r.getDirection() == ReceiptDirection.RECEIPT)
-                .map(PaymentReceipt::getAmount)
+                .map(r -> r.getDirection() == ReceiptDirection.REFUND ? r.getAmount().negate() : r.getAmount())
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
         invoice.setAmountReceived(received);

@@ -47,6 +47,21 @@ public class OpeningBalanceBackfillService {
     private final JournalService journalService;
 
     /**
+     * What {@link #backfillCurrentTenant()} would post right now, without posting anything: one
+     * row per control account with a non-zero variance that has no opening-balance entry yet.
+     * Shown to the owner for confirmation first, because the backfill plugs any variance - a real
+     * posting bug included - against 3100, which would otherwise hide it.
+     */
+    @Transactional(readOnly = true)
+    public java.util.List<ControlAccountReconciliationRowResponse> preview() {
+        return reconciliationService.reconcile().stream()
+                .filter(row -> row.getVarianceInr().compareTo(BigDecimal.ZERO) != 0)
+                .filter(row -> journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(
+                        JournalSourceType.OPENING_BALANCE, row.getAccountCode(), JournalPurpose.OPENING_BALANCE_POSTED).isEmpty())
+                .toList();
+    }
+
+    /**
      * Idempotent per account: skips any control account that already has an
      * {@code OPENING_BALANCE_POSTED} entry (whether from a prior run of this service or a manual
      * journal), and skips any account whose variance is already zero. Returns the number of

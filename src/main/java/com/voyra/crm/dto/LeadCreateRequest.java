@@ -39,6 +39,7 @@ public class LeadCreateRequest {
     private List<String> categories;
 
     @Size(max = 50, message = "Budget must be 50 characters or fewer")
+    @jakarta.validation.constraints.Pattern(regexp = "^(?!\\s*-).*$", message = "Budget cannot be negative")
     @Schema(description = "Free-text budget range as entered by the agent", example = "1,50,000 - 2,00,000")
     private String budget;
 

@@ -9,6 +9,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
+import jakarta.validation.constraints.DecimalMin;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
@@ -153,6 +154,7 @@ public class BookingCreateRequest {
     @Schema(description = "Carried over from the winning proposal line, when this booking was logged from one", example = "PERCENT")
     private MarkupMode markupMode;
 
+    @DecimalMin(value = "0.0", message = "markupValue cannot be negative")
     @Schema(description = "The markup value under markupMode", example = "5.00")
     private BigDecimal markupValue;
 

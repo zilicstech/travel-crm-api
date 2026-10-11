@@ -934,6 +934,7 @@ public class BookingService {
         bookingCostComponentRepository.saveAll(components);
 
         if (!components.isEmpty()) {
+            boolean alreadyConfirmed = booking.getBookingStatus() == BookingStatus.CONFIRMED;
             BigDecimal recomputedNetCost = components.stream()
                     .map(BookingCostComponent::getNetCostInr)
                     .reduce(BigDecimal.ZERO, BigDecimal::add);
@@ -944,6 +945,11 @@ public class BookingService {
             bookingRepository.save(booking);
             List<AuditChange> changes = AuditSnapshot.diff(before, AuditSnapshot.of(booking, AUDITED));
             auditService.recordUpdate(AuditEntityType.BOOKING, booking.getId(), labelFor(booking), changes);
+            // Net cost and profit just moved under an already-confirmed booking - the same
+            // accounting-workbench notification a direct edit of those fields raises.
+            if (alreadyConfirmed) {
+                raiseChangeAlerts(booking, changes);
+            }
         }
 
         log.info("Booking cost components replaced: bookingId={}, count={}", bookingId, components.size());

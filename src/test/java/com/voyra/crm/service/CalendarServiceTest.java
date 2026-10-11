@@ -50,6 +50,8 @@ class CalendarServiceTest {
     @Mock
     private ClientInvoiceRepository clientInvoiceRepository;
     @Mock
+    private com.voyra.crm.repository.InvoiceRepository invoiceRepository;
+    @Mock
     private VisaRepository visaRepository;
     @Mock
     private SupplierInvoiceRepository supplierInvoiceRepository;
@@ -63,7 +65,7 @@ class CalendarServiceTest {
         CustomUserPrincipal principal = new CustomUserPrincipal(userId, "user", role, "T1");
         SecurityContextHolder.getContext().setAuthentication(
                 new UsernamePasswordAuthenticationToken(principal, null, List.of()));
-        calendarService = new CalendarService(bookingRepository, leadFollowUpRepository, clientInvoiceRepository, visaRepository, supplierInvoiceRepository);
+        calendarService = new CalendarService(bookingRepository, leadFollowUpRepository, clientInvoiceRepository, invoiceRepository, visaRepository, supplierInvoiceRepository);
     }
 
     private void stubEmptyOwnerWide() {

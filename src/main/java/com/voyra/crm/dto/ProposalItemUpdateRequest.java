@@ -4,6 +4,7 @@ import com.voyra.crm.enums.MarkupMode;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
+import jakarta.validation.constraints.DecimalMin;
 import java.math.BigDecimal;
 
 @Data
@@ -26,6 +27,7 @@ public class ProposalItemUpdateRequest {
     @Schema(description = "What the agent intended when setting sellingPrice", example = "PERCENT")
     private MarkupMode markupMode;
 
+    @DecimalMin(value = "0.0", message = "markupValue cannot be negative")
     @Schema(description = "The markup value under markupMode - a percent or a flat rupee amount", example = "5.00")
     private BigDecimal markupValue;
 }

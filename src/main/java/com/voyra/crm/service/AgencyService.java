@@ -116,7 +116,8 @@ public class AgencyService {
     }
 
     private AgencyResponse toResponse(Tenant tenant, boolean includeRevenue) {
-        long agentsCount = agentRepository.countByTenantId(tenant.getId());
+        // Agents only: accountants share the table but are not agents.
+        long agentsCount = agentRepository.countByTenantIdAndUserRole(tenant.getId(), com.voyra.crm.enums.UserType.AGENT);
         BigDecimal totalRevenue = null;
         if (includeRevenue) {
             totalRevenue = readRevenueForTenant(tenant.getId());

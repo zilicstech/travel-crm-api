@@ -91,6 +91,17 @@ public class GlobalExceptionHandler {
                         null, HttpStatus.METHOD_NOT_ALLOWED.value(), path));
     }
 
+    @ExceptionHandler(org.springframework.web.multipart.MaxUploadSizeExceededException.class)
+    public ResponseEntity<ApiErrorResponse> handleUploadTooLarge(
+            org.springframework.web.multipart.MaxUploadSizeExceededException ex, HttpServletRequest request) {
+        String path = getPath(request);
+        log.warn("Upload rejected as too large - path: {}", path);
+
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).body(
+                ApiErrorResponse.of("That file is too large. The maximum size is 10 MB.", "File too large", null,
+                        HttpStatus.PAYLOAD_TOO_LARGE.value(), path));
+    }
+
     @ExceptionHandler(NoResourceFoundException.class)
     public ResponseEntity<ApiErrorResponse> handleNoResourceFound(NoResourceFoundException ex,
                                                                      HttpServletRequest request) {
