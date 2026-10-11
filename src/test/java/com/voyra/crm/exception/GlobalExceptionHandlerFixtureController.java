@@ -34,6 +34,11 @@ public class GlobalExceptionHandlerFixtureController {
                 new java.io.IOException("timeout"));
     }
 
+    @GetMapping("/test/upload-too-large")
+    public String uploadTooLarge() {
+        throw new org.springframework.web.multipart.MaxUploadSizeExceededException(10L * 1024 * 1024);
+    }
+
     @PostMapping("/test/validate")
     public String validate(@Valid @RequestBody FixtureRequest request) {
         return "ok";

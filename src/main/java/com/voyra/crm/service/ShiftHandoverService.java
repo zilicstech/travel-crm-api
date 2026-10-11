@@ -64,7 +64,7 @@ public class ShiftHandoverService {
     public List<ShiftHandoverResponse> list() {
         CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
         List<ShiftHandover> rows = principal.isAgent()
-                ? shiftHandoverRepository.findByToAgentIdOrToAgentIdIsNullOrderByShiftEndedAtDesc(principal.userId())
+                ? shiftHandoverRepository.findVisibleToAgent(principal.userId())
                 : shiftHandoverRepository.findAllByOrderByShiftEndedAtDesc();
         return rows.stream().map(this::toResponse).toList();
     }

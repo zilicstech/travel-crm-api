@@ -11,6 +11,7 @@ import com.voyra.crm.enums.UserType;
 import com.voyra.crm.repository.BookingRepository;
 import com.voyra.crm.repository.ClientInvoiceRepository;
 import com.voyra.crm.repository.LeadFollowUpRepository;
+import com.voyra.crm.repository.SupplierInvoiceRepository;
 import com.voyra.crm.repository.VisaRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import org.junit.jupiter.api.AfterEach;
@@ -49,7 +50,11 @@ class CalendarServiceTest {
     @Mock
     private ClientInvoiceRepository clientInvoiceRepository;
     @Mock
+    private com.voyra.crm.repository.InvoiceRepository invoiceRepository;
+    @Mock
     private VisaRepository visaRepository;
+    @Mock
+    private SupplierInvoiceRepository supplierInvoiceRepository;
 
     private CalendarService calendarService;
 
@@ -60,7 +65,7 @@ class CalendarServiceTest {
         CustomUserPrincipal principal = new CustomUserPrincipal(userId, "user", role, "T1");
         SecurityContextHolder.getContext().setAuthentication(
                 new UsernamePasswordAuthenticationToken(principal, null, List.of()));
-        calendarService = new CalendarService(bookingRepository, leadFollowUpRepository, clientInvoiceRepository, visaRepository);
+        calendarService = new CalendarService(bookingRepository, leadFollowUpRepository, clientInvoiceRepository, invoiceRepository, visaRepository, supplierInvoiceRepository);
     }
 
     private void stubEmptyOwnerWide() {
@@ -70,6 +75,7 @@ class CalendarServiceTest {
         lenient().when(leadFollowUpRepository.findByStatusAndDueDateBetweenOrderByDueDateAsc(any(), any(), any())).thenReturn(List.of());
         lenient().when(clientInvoiceRepository.findByDueDateBetween(any(), any())).thenReturn(List.of());
         lenient().when(visaRepository.findByAppointmentDateBetween(any(), any())).thenReturn(List.of());
+        lenient().when(supplierInvoiceRepository.findByDueDateBetweenAndBalanceDueGreaterThan(any(), any(), any())).thenReturn(List.of());
     }
 
     @AfterEach

@@ -57,9 +57,8 @@ import java.util.List;
  * <p>Issuing posts a {@code CREDIT_NOTE_ISSUED} ledger credit and permanently raises the
  * invoice's {@code creditNoteTotal} (never reduced again, even after a full refund - the invoice
  * keeps an honest historical record of what was credited against it). A refund payout instead
- * posts a {@code REFUND_PAID} debit: it settles the client's credit balance in cash but never
- * touches the invoice's own {@code balanceDue}, since that money was never billed on the invoice
- * to begin with. This means {@code CustomerLedgerService}'s documented invariant needs one more
+ * posts a {@code REFUND_PAID} debit and lowers the invoice's {@code amountReceived} (net cash kept),
+ * which brings the negative balance the credit note left behind back to zero. This means {@code CustomerLedgerService}'s documented invariant needs one more
  * term once a refund exists: {@code SUM(debit_inr - credit_inr)} over the ledger equals
  * {@code SUM(invoice.balance_due_inr)} minus {@code SUM(credit_note.refunded_amount)} (converted
  * to INR at each credit note's own locked rate), plus any opening balance.
@@ -77,6 +76,8 @@ public class CreditNoteService {
     private final AuditService auditService;
     private final CustomerLedgerService customerLedgerService;
     private final BookingAccountingSync bookingAccountingSync;
+    private final JournalService journalService;
+    private final com.voyra.crm.repository.JournalEntryRepository journalEntryRepository;
 
     @Transactional
     public CreditNoteResponse create(CreditNoteRequest request) {
@@ -175,6 +176,7 @@ public class CreditNoteService {
                 "Credit note " + note.getCreditNoteNumber() + " against " + invoice.getInvoiceNumber(),
                 note.getBookingId(), note.getCurrencyCode(), note.getFxRateToInr(),
                 BigDecimal.ZERO, note.getTotalAmount(), BigDecimal.ZERO, note.getTotalAmountInr()));
+        postCreditNoteIssuedJournal(note, invoice);
         bookingAccountingSync.syncRefund(note.getBookingId());
 
         auditService.recordCreate(AuditEntityType.CREDIT_NOTE, note.getId(), note.getCreditNoteNumber());
@@ -212,6 +214,7 @@ public class CreditNoteService {
                     "Credit note " + note.getCreditNoteNumber() + " cancelled: " + reason,
                     note.getBookingId(), note.getCurrencyCode(), note.getFxRateToInr(),
                     note.getTotalAmount(), BigDecimal.ZERO, note.getTotalAmountInr(), BigDecimal.ZERO));
+            reverseCreditNoteIssuedJournal(note, reason);
         }
 
         note.setStatus(CreditNoteStatus.CANCELLED);
@@ -272,9 +275,22 @@ public class CreditNoteService {
                 "Refund " + receipt.getReceiptNumber() + " against " + note.getCreditNoteNumber(),
                 note.getBookingId(), receipt.getCurrencyCode(), receipt.getFxRateToInr(),
                 receipt.getAmountInr(), BigDecimal.ZERO, receipt.getAmountInr(), BigDecimal.ZERO));
+        postRefundPaidJournal(note, receipt);
 
         note.setRefundedAmount(alreadyRefunded.add(request.getAmount()));
         creditNoteRepository.save(note);
+
+        // The refund sent cash back, so net cash kept on the invoice drops by that amount and the
+        // negative balance the credit note left behind is cleared.
+        invoiceRepository.findById(note.getInvoiceId()).ifPresent(invoice -> {
+            invoice.setAmountReceived(invoice.getAmountReceived().subtract(request.getAmount()));
+            BigDecimal balanceDue = invoice.getGrandTotal().subtract(invoice.getAmountReceived())
+                    .subtract(invoice.getCreditNoteTotal());
+            invoice.setBalanceDue(balanceDue);
+            invoice.setBalanceDueInr(scaleToInr(balanceDue, invoice.getFxRateToInr()));
+            invoice.setStatus(InvoiceLifecyclePolicy.deriveFromBalance(invoice.getGrandTotal(), balanceDue));
+            invoiceRepository.save(invoice);
+        });
         bookingAccountingSync.syncRefund(note.getBookingId());
         bookingAccountingSync.syncPayment(note.getBookingId());
 
@@ -359,13 +375,100 @@ public class CreditNoteService {
      *  invoice's billed/grand total, which can include amounts never collected. */
     private BigDecimal cashReceiptedOnInvoice(String invoiceId) {
         return paymentReceiptRepository.findByInvoiceIdOrderByReceivedOnAscCreatedAtAsc(invoiceId).stream()
-                .filter(r -> r.getDirection() == ReceiptDirection.RECEIPT)
-                .map(PaymentReceipt::getAmount)
+                .map(r -> r.getDirection() == ReceiptDirection.REFUND ? r.getAmount().negate() : r.getAmount())
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
     private static BigDecimal scaleToInr(BigDecimal amount, BigDecimal fxRateToInr) {
         return amount.multiply(fxRateToInr).setScale(2, RoundingMode.HALF_UP);
+    }
+
+    /**
+     * Posting-rule-table row 12 - reverses revenue against whichever account the ORIGINAL
+     * invoice actually credited (found via {@link com.voyra.crm.enums.JournalPurpose}, not
+     * recomputed from today's departure date, since that can have moved on since issue). Only
+     * {@code taxableValue} is reversed, never {@code cancellationFee} - Rule 1.5.1: the retained
+     * fee stays in income, so there is nothing to post for it. A COMMISSION_AGENT invoice has no
+     * posting-rule-table entry for its credit note yet - skipped with a log note rather than a
+     * guess.
+     */
+    private void postCreditNoteIssuedJournal(CreditNote note, Invoice invoice) {
+        BigDecimal taxableInr = note.getTaxableValue().multiply(note.getFxRateToInr()).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal taxInr = note.getTotalAmountInr().subtract(taxableInr);
+        if (taxInr.compareTo(BigDecimal.ZERO) < 0) {
+            taxInr = BigDecimal.ZERO;
+        }
+
+        String revenueAccountCode = findOriginalRevenueAccountCode(invoice);
+        if (revenueAccountCode == null) {
+            log.warn("Credit note {} - could not find the original invoice's revenue posting (likely COMMISSION_AGENT, "
+                    + "not yet covered by the posting-rule table) - skipping GL entry", note.getId());
+            return;
+        }
+
+        List<com.voyra.crm.models.JournalLinePosting> lines = new ArrayList<>();
+        if (taxableInr.compareTo(BigDecimal.ZERO) > 0) {
+            lines.add(com.voyra.crm.models.JournalLinePosting.debit(revenueAccountCode, taxableInr, "Revenue reversed"));
+        }
+        if (taxInr.compareTo(BigDecimal.ZERO) > 0) {
+            lines.add(com.voyra.crm.models.JournalLinePosting.debit(
+                    com.voyra.crm.enums.SystemAccount.OUTPUT_GST_PAYABLE.code(), taxInr, "GST reversed"));
+        }
+        if (lines.isEmpty()) {
+            return;
+        }
+        lines.add(com.voyra.crm.models.JournalLinePosting.creditParty(
+                com.voyra.crm.enums.SystemAccount.ACCOUNTS_RECEIVABLE.code(), "CLIENT", note.getClientId(),
+                taxableInr.add(taxInr), "Credit note " + note.getCreditNoteNumber()));
+
+        journalService.post(new com.voyra.crm.models.JournalPosting(
+                note.getNoteDate() != null ? note.getNoteDate() : LocalDate.now(),
+                com.voyra.crm.enums.JournalSourceType.CREDIT_NOTE, note.getId(),
+                com.voyra.crm.enums.JournalPurpose.CREDIT_NOTE_ISSUED,
+                "Credit note " + note.getCreditNoteNumber() + " against " + invoice.getInvoiceNumber(),
+                note.getBookingId(), note.getBranchId(), lines));
+    }
+
+    /** The account code the original invoice's issue journal credited for revenue - null if none of the three purposes posted (or posting predates the GL). */
+    private String findOriginalRevenueAccountCode(Invoice invoice) {
+        for (com.voyra.crm.enums.JournalPurpose purpose : List.of(
+                com.voyra.crm.enums.JournalPurpose.INVOICE_RAISED_DEFERRED,
+                com.voyra.crm.enums.JournalPurpose.INVOICE_RAISED_RECOGNIZED)) {
+            var entry = journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(
+                    com.voyra.crm.enums.JournalSourceType.INVOICE, invoice.getId(), purpose);
+            if (entry.isPresent()) {
+                return purpose == com.voyra.crm.enums.JournalPurpose.INVOICE_RAISED_DEFERRED
+                        ? com.voyra.crm.enums.SystemAccount.UNEARNED_TOUR_REVENUE.code()
+                        : com.voyra.crm.enums.SystemAccount.salesCode(
+                                invoice.getServiceCategory() != null ? invoice.getServiceCategory() : com.voyra.crm.enums.InvoiceServiceCategory.MISCELLANEOUS);
+            }
+        }
+        return null;
+    }
+
+    private void reverseCreditNoteIssuedJournal(CreditNote note, String reason) {
+        journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(
+                com.voyra.crm.enums.JournalSourceType.CREDIT_NOTE, note.getId(), com.voyra.crm.enums.JournalPurpose.CREDIT_NOTE_ISSUED)
+                .ifPresent(entry -> journalService.reverse(entry.getId(),
+                        "Credit note " + note.getCreditNoteNumber() + " cancelled: " + reason));
+    }
+
+    /** Posting-rule-table row 13 - a cash refund paid out against a credit note. */
+    private void postRefundPaidJournal(CreditNote note, PaymentReceipt receipt) {
+        BigDecimal amountInr = receipt.getAmountInr();
+        if (amountInr == null || amountInr.compareTo(BigDecimal.ZERO) <= 0) {
+            return;
+        }
+        String bankCode = receipt.getPaymentMode() == com.voyra.crm.enums.PaymentMode.CASH
+                ? com.voyra.crm.enums.SystemAccount.CASH_IN_HAND.code()
+                : com.voyra.crm.enums.SystemAccount.BANK_ACCOUNTS.code();
+        String narration = "Refund " + receipt.getReceiptNumber() + " against " + note.getCreditNoteNumber();
+        journalService.post(new com.voyra.crm.models.JournalPosting(
+                receipt.getReceivedOn(), com.voyra.crm.enums.JournalSourceType.RECEIPT, receipt.getId(),
+                com.voyra.crm.enums.JournalPurpose.CLIENT_REFUND_PAID, narration, note.getBookingId(), note.getBranchId(), List.of(
+                        com.voyra.crm.models.JournalLinePosting.debitParty(
+                                com.voyra.crm.enums.SystemAccount.ACCOUNTS_RECEIVABLE.code(), "CLIENT", note.getClientId(), amountInr, narration),
+                        com.voyra.crm.models.JournalLinePosting.credit(bankCode, amountInr, narration))));
     }
 
     private CreditNote findById(String id) {

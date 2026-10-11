@@ -9,6 +9,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 
@@ -22,10 +23,23 @@ public interface SupplierInvoiceRepository extends JpaRepository<SupplierInvoice
 
     boolean existsByBookingId(String bookingId);
 
+    /** Bank-reconciliation tier-1 exact match (Rule 4.3) looks a bill up by the number printed on the bank statement line. */
+    java.util.Optional<SupplierInvoice> findBySupplierInvoiceNumber(String supplierInvoiceNumber);
+
+    /** Bank-reconciliation tier-1 amount narrowing (Rule 4.3) - open bills whose outstanding balance equals the bank line's amount exactly. */
+    List<SupplierInvoice> findByStatusInAndBalanceDueInr(List<SupplierInvoiceStatus> statuses, BigDecimal balanceDueInr);
+
     List<SupplierInvoice> findByStatusNotAndInvoiceDateBetween(SupplierInvoiceStatus excludedStatus, LocalDate from, LocalDate to);
 
     /** Cost reconciliation input: every non-cancelled bill against one booking, whichever vendor. */
     List<SupplierInvoice> findByBookingIdAndStatusNot(String bookingId, SupplierInvoiceStatus excludedStatus);
 
     long countByStatus(SupplierInvoiceStatus status);
+
+    /** Due-date calendar input (Rule 7.6) - only bills with money still owed are a deadline. */
+    List<SupplierInvoice> findByDueDateBetweenAndBalanceDueGreaterThan(LocalDate from, LocalDate to, BigDecimal zero);
+
+    /** Month-end unrealized revaluation input (Rule 3.5.1) - every open, foreign-currency bill with a real outstanding balance. */
+    List<SupplierInvoice> findByCurrencyCodeNotAndBalanceDueGreaterThanAndStatusIn(
+            String inr, BigDecimal zero, List<SupplierInvoiceStatus> openStatuses);
 }

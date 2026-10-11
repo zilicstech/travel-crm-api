@@ -7,6 +7,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
+import jakarta.validation.constraints.DecimalMin;
 import java.math.BigDecimal;
 
 @Data
@@ -33,6 +34,7 @@ public class ProposalItemBatchLine {
     @Schema(description = "What the agent intended when setting sellingPrice - omit for a line typed straight in with no markup calculator", example = "PERCENT")
     private MarkupMode markupMode;
 
+    @DecimalMin(value = "0.0", message = "markupValue cannot be negative")
     @Schema(description = "The markup value under markupMode - a percent or a flat rupee amount", example = "5.00")
     private BigDecimal markupValue;
 }

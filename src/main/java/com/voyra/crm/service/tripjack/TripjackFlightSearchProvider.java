@@ -17,6 +17,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -117,6 +118,13 @@ public class TripjackFlightSearchProvider implements FlightSearchProvider {
                     .body(requestBody)
                     .retrieve()
                     .body(String.class);
+        } catch (RestClientResponseException e) {
+            // 401/403 here usually means this server's public IP is not whitelisted by Tripjack
+            // (or the key is wrong) - log the body so that is diagnosable without a debugger.
+            log.error("Tripjack flight search HTTP {} from {}: {}", e.getStatusCode().value(),
+                    credential.getBaseUrl(), e.getResponseBodyAsString());
+            throw new SupplierException("Tripjack flight search call failed (HTTP "
+                    + e.getStatusCode().value() + ")", e);
         } catch (RestClientException e) {
             throw new SupplierException("Tripjack flight search call failed", e);
         }

@@ -55,6 +55,7 @@ public class SupplierLedgerService {
     private final SupplierLedgerEntryRepository ledgerRepository;
     private final SupplierInvoiceRepository supplierInvoiceRepository;
     private final VendorRepository vendorRepository;
+    private final JournalService journalService;
 
     @Transactional
     public void post(SupplierLedgerPosting posting) {
@@ -242,6 +243,19 @@ public class SupplierLedgerService {
                 "INR", BigDecimal.ONE,
                 isCredit ? BigDecimal.ZERO : magnitude, isCredit ? magnitude : BigDecimal.ZERO,
                 isCredit ? BigDecimal.ZERO : magnitude, isCredit ? magnitude : BigDecimal.ZERO));
+
+        // Keep the GL in step with the sub-ledger (see CustomerLedgerService#openingBalance).
+        String ap = com.voyra.crm.enums.SystemAccount.ACCOUNTS_PAYABLE.code();
+        String equity = com.voyra.crm.enums.SystemAccount.OPENING_BALANCE_EQUITY.code();
+        String narration = "Opening balance - " + vendor.getName();
+        journalService.post(new com.voyra.crm.models.JournalPosting(
+                request.getAsOfDate(), com.voyra.crm.enums.JournalSourceType.OPENING_BALANCE, vendor.getId(),
+                com.voyra.crm.enums.JournalPurpose.OPENING_BALANCE_POSTED, narration, null, null,
+                isCredit
+                        ? java.util.List.of(com.voyra.crm.models.JournalLinePosting.debit(equity, magnitude, narration),
+                                  com.voyra.crm.models.JournalLinePosting.creditParty(ap, "VENDOR", vendor.getId(), magnitude, narration))
+                        : java.util.List.of(com.voyra.crm.models.JournalLinePosting.debitParty(ap, "VENDOR", vendor.getId(), magnitude, narration),
+                                  com.voyra.crm.models.JournalLinePosting.credit(equity, magnitude, narration))));
 
         return statement(vendorId, null, null);
     }

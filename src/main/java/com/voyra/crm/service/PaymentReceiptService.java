@@ -58,6 +58,8 @@ public class PaymentReceiptService {
     private final AuditService auditService;
     private final CustomerLedgerService customerLedgerService;
     private final BookingAccountingSync bookingAccountingSync;
+    private final JournalService journalService;
+    private final com.voyra.crm.repository.JournalEntryRepository journalEntryRepository;
 
     @Transactional
     public PaymentReceiptResponse record(PaymentReceiptRequest request) {
@@ -70,6 +72,9 @@ public class PaymentReceiptService {
                 .orElseThrow(() -> new IllegalArgumentException("Invoice not found: " + request.getInvoiceId()));
         InvoiceLifecyclePolicy.assertReceivable(invoice.getStatus());
         boolean isProforma = invoice.getStatus() == InvoiceLifecycle.PROFORMA_ISSUED;
+        if (!isProforma) {
+            assertWithinBalanceDue(invoice, request.getAmount());
+        }
 
         LocalDate receivedOn = request.getReceivedOn();
         String number = documentNumberService.next(DocumentKind.RECEIPT, receivedOn);
@@ -97,8 +102,10 @@ public class PaymentReceiptService {
                 .createdAt(LocalDateTime.now())
                 .createdBy(actor)
                 .build();
+        applyGatewayFields(receipt, request, invoice.getFxRateToInr());
         paymentReceiptRepository.save(receipt);
         postForReceipt(receipt);
+        postForReceiptJournal(receipt, isProforma);
 
         if (!isProforma) {
             applySettlement(invoice);
@@ -108,6 +115,19 @@ public class PaymentReceiptService {
         auditService.recordCreate(AuditEntityType.PAYMENT_RECEIPT, receipt.getId(), receipt.getReceiptNumber());
         log.info("Receipt recorded: id={}, invoiceId={}, amount={}", receipt.getId(), invoice.getId(), receipt.getAmount());
         return toResponse(receipt);
+    }
+
+    /**
+     * A tax invoice can never be receipted for more than it still owes - an overpayment would
+     * leave a negative balance due on a PAID invoice. Surplus cash belongs in the customer
+     * wallet (a deposit with no invoice), same rule as supplier bills.
+     */
+    private static void assertWithinBalanceDue(Invoice invoice, BigDecimal amount) {
+        BigDecimal balanceDue = invoice.getBalanceDue();
+        if (balanceDue != null && amount.compareTo(balanceDue) > 0) {
+            throw new IllegalStateException("This receipt of " + amount + " exceeds the invoice's balance due of "
+                    + balanceDue + ". Receipt the balance against the invoice and record any surplus as a deposit.");
+        }
     }
 
     /**
@@ -148,8 +168,10 @@ public class PaymentReceiptService {
                 .createdAt(LocalDateTime.now())
                 .createdBy(actor)
                 .build();
+        applyGatewayFields(receipt, request, BigDecimal.ONE);
         paymentReceiptRepository.save(receipt);
         postForReceipt(receipt);
+        postForReceiptJournal(receipt, true);
 
         auditService.recordCreate(AuditEntityType.PAYMENT_RECEIPT, receipt.getId(), receipt.getReceiptNumber());
         log.info("Deposit recorded: id={}, clientId={}, amount={}", receipt.getId(), client.getId(), receipt.getAmount());
@@ -228,7 +250,10 @@ public class PaymentReceiptService {
                 .createdBy(currentUserId())
                 .build();
         paymentReceiptRepository.save(applied);
-        // No ledger post - the deposit already posted its own credit when it was recorded.
+        // No SUBSIDIARY ledger post - the deposit already posted its own credit when it was
+        // recorded (AD-5). The GL still needs this: moving a balance from 2110 to 1200 is a
+        // real double-entry transfer, not a net-zero convenience the subsidiary ledger can skip.
+        postAdvanceAppliedJournal(applied, invoice, amount);
         applySettlement(invoice);
         return applied;
     }
@@ -301,6 +326,7 @@ public class PaymentReceiptService {
         if (!appliedFromAdvance) {
             postForReceipt(reversal);
         }
+        reverseReceiptJournal(original, appliedFromAdvance);
 
         original.setReversedAt(now);
         original.setReversedBy(actor);
@@ -385,15 +411,108 @@ public class PaymentReceiptService {
     }
 
     /**
+     * Posting-rule-table rows 4/5 (and 15 for a gateway receipt) - a brand-new (non-reversal)
+     * receipt only; a reversal row is handled by {@link #reverseReceiptJournal}, which reverses
+     * the ORIGINAL entry rather than posting a fresh one, per Rule 1.6.2. {@code isProforma} (or
+     * no invoice at all) routes to row 5 - cash held with nothing real to attach it to yet is
+     * exactly what Client Advances Held means, whether or not a proforma happens to exist for it.
+     *
+     * <p>Decision 5 Rule 5.3: a gateway fee never reduces what clears the client's side - the
+     * credit line is always the full gross {@code amountInr}. The fee splits the DEBIT side
+     * instead: {@code netDepositInr} actually reaches the bank, {@code gatewayFeeInr} is an
+     * agency expense (5610), and the two sum back to the gross credit so the entry still balances.
+     */
+    private void postForReceiptJournal(PaymentReceipt receipt, boolean isProforma) {
+        BigDecimal amountInr = receipt.getAmountInr();
+        if (amountInr == null || amountInr.compareTo(BigDecimal.ZERO) <= 0) {
+            return;
+        }
+        boolean isDeposit = receipt.getInvoiceId() == null || isProforma;
+        boolean hasGatewayFee = receipt.getGatewayFeeInr() != null && receipt.getGatewayFeeInr().compareTo(BigDecimal.ZERO) > 0;
+        com.voyra.crm.enums.JournalPurpose purpose = hasGatewayFee
+                ? com.voyra.crm.enums.JournalPurpose.GATEWAY_RECEIPT
+                : isDeposit ? com.voyra.crm.enums.JournalPurpose.RECEIPT_ADVANCE
+                : com.voyra.crm.enums.JournalPurpose.RECEIPT_AGAINST_INVOICE;
+        String creditAccount = isDeposit
+                ? com.voyra.crm.enums.SystemAccount.CLIENT_ADVANCES_HELD.code()
+                : com.voyra.crm.enums.SystemAccount.ACCOUNTS_RECEIVABLE.code();
+        String debitAccount = receipt.getPaymentMode() == PaymentMode.CASH
+                ? com.voyra.crm.enums.SystemAccount.CASH_IN_HAND.code()
+                : com.voyra.crm.enums.SystemAccount.BANK_ACCOUNTS.code();
+        String narration = "Receipt " + receipt.getReceiptNumber() + " recorded";
+
+        List<com.voyra.crm.models.JournalLinePosting> lines = new ArrayList<>();
+        if (hasGatewayFee) {
+            BigDecimal netInr = receipt.getNetDepositInr() != null ? receipt.getNetDepositInr() : amountInr.subtract(receipt.getGatewayFeeInr());
+            lines.add(com.voyra.crm.models.JournalLinePosting.debit(debitAccount, netInr, narration));
+            lines.add(com.voyra.crm.models.JournalLinePosting.debit(
+                    com.voyra.crm.enums.SystemAccount.PAYMENT_PROCESSING_FEES.code(), receipt.getGatewayFeeInr(),
+                    "Gateway fee on receipt " + receipt.getReceiptNumber()));
+        } else {
+            lines.add(com.voyra.crm.models.JournalLinePosting.debit(debitAccount, amountInr, narration));
+        }
+        lines.add(com.voyra.crm.models.JournalLinePosting.creditParty(
+                creditAccount, "CLIENT", receipt.getClientId(), amountInr, narration));
+
+        journalService.post(new com.voyra.crm.models.JournalPosting(
+                receipt.getReceivedOn(), com.voyra.crm.enums.JournalSourceType.RECEIPT, receipt.getId(), purpose,
+                narration, receipt.getBookingId(), null, lines));
+    }
+
+    /** Decision 5 - optional gateway fields on a brand-new receipt. A no-op when gatewayFee is absent or zero. */
+    private void applyGatewayFields(PaymentReceipt receipt, PaymentReceiptRequest request, BigDecimal fxRateToInr) {
+        if (request.getGatewayFee() == null || request.getGatewayFee().compareTo(BigDecimal.ZERO) <= 0) {
+            return;
+        }
+        BigDecimal feeInr = scaleToInr(request.getGatewayFee(), fxRateToInr);
+        receipt.setGatewayProvider(request.getGatewayProvider());
+        receipt.setGatewayTxnRef(request.getGatewayTxnRef());
+        receipt.setGatewayFee(request.getGatewayFee());
+        receipt.setGatewayFeeInr(feeInr);
+        receipt.setNetDepositInr(receipt.getAmountInr().subtract(feeInr));
+    }
+
+    /** Posting-rule-table row 6 - moves a balance from the client's wallet onto this invoice's receivable. */
+    private void postAdvanceAppliedJournal(PaymentReceipt applied, Invoice invoice, BigDecimal amountInr) {
+        if (amountInr.compareTo(BigDecimal.ZERO) <= 0) {
+            return;
+        }
+        String narration = "Wallet applied to invoice " + invoice.getId();
+        journalService.post(new com.voyra.crm.models.JournalPosting(
+                applied.getReceivedOn(), com.voyra.crm.enums.JournalSourceType.RECEIPT, applied.getId(),
+                com.voyra.crm.enums.JournalPurpose.ADVANCE_APPLIED, narration, invoice.getBookingId(), null, List.of(
+                        com.voyra.crm.models.JournalLinePosting.debit(
+                                com.voyra.crm.enums.SystemAccount.CLIENT_ADVANCES_HELD.code(), amountInr, narration),
+                        com.voyra.crm.models.JournalLinePosting.creditParty(
+                                com.voyra.crm.enums.SystemAccount.ACCOUNTS_RECEIVABLE.code(), "CLIENT", invoice.getClientId(), amountInr, narration))));
+    }
+
+    /** Reverses whichever journal was actually posted for the ORIGINAL receipt - at most one of the candidate purposes exists. */
+    private void reverseReceiptJournal(PaymentReceipt original, boolean appliedFromAdvance) {
+        List<com.voyra.crm.enums.JournalPurpose> candidates = appliedFromAdvance
+                ? List.of(com.voyra.crm.enums.JournalPurpose.ADVANCE_APPLIED)
+                : List.of(com.voyra.crm.enums.JournalPurpose.RECEIPT_ADVANCE,
+                          com.voyra.crm.enums.JournalPurpose.RECEIPT_AGAINST_INVOICE,
+                          com.voyra.crm.enums.JournalPurpose.GATEWAY_RECEIPT);
+        for (com.voyra.crm.enums.JournalPurpose purpose : candidates) {
+            journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(
+                    com.voyra.crm.enums.JournalSourceType.RECEIPT, original.getId(), purpose)
+                    .ifPresent(entry -> journalService.reverse(entry.getId(),
+                            "Receipt " + (original.getReceiptNumber() != null ? original.getReceiptNumber() : original.getId()) + " reversed"));
+        }
+    }
+
+    /**
      * Sums every RECEIPT-direction row currently attached to this invoice id, including ones
      * re-pointed here from a converted proforma - once moved, they are real payments against
      * this real tax invoice regardless of the historical {@code isAdvance} label.
      */
     private void applySettlement(Invoice invoice) {
         List<PaymentReceipt> receipts = paymentReceiptRepository.findByInvoiceIdOrderByReceivedOnAscCreatedAtAsc(invoice.getId());
+        // Net of cash refunded back to the client against this invoice's credit notes: that cash
+        // left, so what the invoice has kept is receipts minus refunds.
         BigDecimal received = receipts.stream()
-                .filter(r -> r.getDirection() == ReceiptDirection.RECEIPT)
-                .map(PaymentReceipt::getAmount)
+                .map(r -> r.getDirection() == ReceiptDirection.REFUND ? r.getAmount().negate() : r.getAmount())
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
         invoice.setAmountReceived(received);
@@ -436,6 +555,8 @@ public class PaymentReceiptService {
                 .bookingId(r.getBookingId()).currencyCode(r.getCurrencyCode()).fxRateToInr(r.getFxRateToInr())
                 .amount(r.getAmount()).amountInr(r.getAmountInr()).paymentMode(r.getPaymentMode())
                 .instrumentRef(r.getInstrumentRef()).bankAccountLabel(r.getBankAccountLabel())
+                .gatewayProvider(r.getGatewayProvider()).gatewayTxnRef(r.getGatewayTxnRef())
+                .gatewayFee(r.getGatewayFee()).gatewayFeeInr(r.getGatewayFeeInr()).netDepositInr(r.getNetDepositInr())
                 .receivedOn(r.getReceivedOn()).isAdvance(r.getIsAdvance()).appliedFromAdvance(r.getAppliedFromAdvance())
                 .reversesReceiptId(r.getReversesReceiptId()).reversedAt(r.getReversedAt())
                 .reversedBy(r.getReversedBy()).reversalReason(r.getReversalReason())

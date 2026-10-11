@@ -93,6 +93,9 @@ public class Tenant {
     @Column(name = "bank_branch", length = 200)
     private String bankBranch;
 
+    @Column(name = "low_margin_threshold_percent", precision = 5, scale = 2)
+    private BigDecimal lowMarginThresholdPercent;
+
     @Column(name = "created_date")
     private LocalDateTime createdDate;
 

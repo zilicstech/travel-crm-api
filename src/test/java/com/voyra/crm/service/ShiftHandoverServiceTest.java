@@ -93,7 +93,7 @@ class ShiftHandoverServiceTest {
     @Test
     void agent_listsOwnAndWholeTeamHandovers() {
         authenticateAs("A1", UserType.AGENT);
-        when(shiftHandoverRepository.findByToAgentIdOrToAgentIdIsNullOrderByShiftEndedAtDesc("A1"))
+        when(shiftHandoverRepository.findVisibleToAgent("A1"))
                 .thenReturn(List.of(ShiftHandover.builder().id("H1").fromAgentId("A2").fromAgentName("X")
                         .summary("s").shiftEndedAt(LocalDateTime.now()).build()));
 

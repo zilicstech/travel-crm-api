@@ -79,7 +79,8 @@ class AccountsDashboardServiceTest {
     @Test
     void gstSummaryGroupsByRate() {
         Invoice inv = invoice(new BigDecimal("1050.00"), new BigDecimal("50.00"), BigDecimal.ZERO, null)
-                .toBuilder().taxableValue(new BigDecimal("1000.00")).build();
+                // commission-basis invoice: taxableValue keeps the full 5,000 fare, GST was levied on the 1,000 fee
+                .toBuilder().taxableValue(new BigDecimal("5000.00")).taxableValueInr(new BigDecimal("1000.00")).build();
         when(invoiceRepository.findByDocumentTypeAndStatusNotAndInvoiceDateBetween(any(), any(), any(), any()))
                 .thenReturn(List.of(inv));
         InvoiceTax tax = InvoiceTax.builder().id("TX1").invoiceId("I1").label("GST 5%")

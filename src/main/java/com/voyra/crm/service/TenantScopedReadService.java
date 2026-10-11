@@ -23,7 +23,9 @@ public class TenantScopedReadService {
 
     @Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
     public BigDecimal sumTotalBookingRevenue() {
+        // Cancelled bookings never sold anything - same definition as the agency dashboard.
         return bookingRepository.findAll().stream()
+                .filter(b -> b.getBookingStatus() != com.voyra.crm.enums.BookingStatus.CANCELLED)
                 .map(b -> b.getSellingPrice() != null ? b.getSellingPrice() : BigDecimal.ZERO)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
     }

@@ -37,6 +37,16 @@ public class PaymentReceiptRequest {
     @Schema(example = "HDFC Current A/c 001")
     private String bankAccountLabel;
 
+    @Schema(description = "Set only when this receipt came in through a payment gateway", example = "Razorpay")
+    private String gatewayProvider;
+
+    @Schema(example = "pay_P8qN2xK3Jd")
+    private String gatewayTxnRef;
+
+    @Schema(description = "The gateway's processing fee, in the receipt's own currency - the invoice is still "
+            + "credited the full gross amount (Rule 5.3); this is posted separately as an agency expense", example = "840.00")
+    private BigDecimal gatewayFee;
+
     @NotNull(message = "receivedOn is required")
     @Schema(example = "2026-09-19")
     private LocalDate receivedOn;

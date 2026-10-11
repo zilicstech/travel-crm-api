@@ -13,6 +13,8 @@ import com.voyra.crm.enums.SupplierLedgerEntryType;
 import com.voyra.crm.enums.SupplierLedgerSourceType;
 import com.voyra.crm.enums.SupplierPaymentDirection;
 import com.voyra.crm.models.SupplierLedgerPosting;
+import com.voyra.crm.repository.JournalEntryRepository;
+import com.voyra.crm.repository.JournalLineRepository;
 import com.voyra.crm.repository.SupplierCreditNoteRepository;
 import com.voyra.crm.repository.SupplierInvoiceRepository;
 import com.voyra.crm.repository.SupplierPaymentRepository;
@@ -53,6 +55,9 @@ public class SupplierCreditNoteService {
     private final DocumentNumberService documentNumberService;
     private final SupplierLedgerService supplierLedgerService;
     private final AuditService auditService;
+    private final JournalService journalService;
+    private final JournalEntryRepository journalEntryRepository;
+    private final JournalLineRepository journalLineRepository;
 
     @Transactional
     public SupplierCreditNoteResponse record(SupplierCreditNoteRequest request) {
@@ -66,6 +71,11 @@ public class SupplierCreditNoteService {
         BigDecimal totalAmount = request.getTaxableValue().add(request.getCgstAmount())
                 .add(request.getSgstAmount()).add(request.getIgstAmount());
         assertWithinInvoiceValue(invoice, totalAmount, null);
+        // Only the part of the credit that exceeds what we still owe on the bill can come back as
+        // cash - and then only up to cash actually paid. The rest simply lowers the payable.
+        BigDecimal stillOwed = invoice.getGrandTotal().subtract(invoice.getAmountPaid())
+                .subtract(invoice.getCreditNoteTotal()).max(BigDecimal.ZERO);
+        BigDecimal refundable = totalAmount.subtract(stillOwed).max(BigDecimal.ZERO);
 
         LocalDate noteDate = request.getNoteDate() != null ? request.getNoteDate() : LocalDate.now();
         String actor = currentUserId();
@@ -89,7 +99,7 @@ public class SupplierCreditNoteService {
                 .retentionFee(retentionFee)
                 .totalAmount(totalAmount)
                 .totalAmountInr(scaleToInr(totalAmount, invoice.getFxRateToInr()))
-                .refundableAmount(totalAmount)
+                .refundableAmount(refundable)
                 .noteDate(noteDate)
                 .recordedAt(now)
                 .recordedBy(actor)
@@ -110,6 +120,7 @@ public class SupplierCreditNoteService {
                 "Supplier credit note " + labelFor(note) + " against " + invoice.getSupplierInvoiceNumber(),
                 note.getBookingId(), note.getCurrencyCode(), note.getFxRateToInr(),
                 note.getTotalAmount(), BigDecimal.ZERO, note.getTotalAmountInr(), BigDecimal.ZERO));
+        postCreditNoteJournal(note, invoice);
 
         auditService.recordCreate(AuditEntityType.SUPPLIER_CREDIT_NOTE, note.getId(), labelFor(note));
         log.info("Supplier credit note recorded: id={}, supplierInvoiceId={}, totalAmount={}", note.getId(), invoice.getId(), totalAmount);
@@ -140,6 +151,10 @@ public class SupplierCreditNoteService {
                 "Supplier credit note " + labelFor(note) + " cancelled: " + reason,
                 note.getBookingId(), note.getCurrencyCode(), note.getFxRateToInr(),
                 BigDecimal.ZERO, note.getTotalAmount(), BigDecimal.ZERO, note.getTotalAmountInr()));
+        journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(
+                com.voyra.crm.enums.JournalSourceType.SUPPLIER_CREDIT_NOTE, note.getId(),
+                com.voyra.crm.enums.JournalPurpose.SUPPLIER_CREDIT_NOTE_RECEIVED)
+                .ifPresent(entry -> journalService.reverse(entry.getId(), "Supplier credit note cancelled: " + reason));
 
         note.setStatus(SupplierCreditNoteStatus.CANCELLED);
         note.setCancelledAt(LocalDateTime.now());
@@ -189,6 +204,18 @@ public class SupplierCreditNoteService {
                 note.getBookingId(), payment.getCurrencyCode(), payment.getFxRateToInr(),
                 BigDecimal.ZERO, payment.getAmountInr(), BigDecimal.ZERO, payment.getAmountInr()));
 
+        postRefundJournal(payment, note);
+
+        // The refund hands back cash we had paid, so net cash paid on the bill falls and the
+        // negative balance the credit note left behind is cleared.
+        SupplierInvoice invoice = findInvoice(note.getSupplierInvoiceId());
+        invoice.setAmountPaid(invoice.getAmountPaid().subtract(request.getAmount()));
+        BigDecimal balanceDue = invoice.getGrandTotal().subtract(invoice.getAmountPaid()).subtract(invoice.getCreditNoteTotal());
+        invoice.setBalanceDue(balanceDue);
+        invoice.setBalanceDueInr(scaleToInr(balanceDue, invoice.getFxRateToInr()));
+        invoice.setStatus(SupplierInvoiceLifecyclePolicy.deriveFromBalance(invoice.getGrandTotal(), balanceDue));
+        supplierInvoiceRepository.save(invoice);
+
         note.setRefundedAmount(note.getRefundedAmount().add(request.getAmount()));
         supplierCreditNoteRepository.save(note);
 
@@ -220,6 +247,69 @@ public class SupplierCreditNoteService {
         if (existing.add(candidateAmount).compareTo(invoice.getGrandTotal()) > 0) {
             throw new IllegalStateException("This credit note would credit more than the bill's grand total");
         }
+    }
+
+    /**
+     * Posting-rule-table row 14 - mirrors {@code SupplierInvoiceService#postBillBookedJournal}
+     * reversed: a supplier credit note lowers the payable we booked, giving back the purchase
+     * expense (and the input GST claim, when the original bill was ITC-eligible). Reuses the
+     * ORIGINAL bill's posted purchase account rather than re-deriving a category independently,
+     * so the credit always lands on exactly the account the debit came from.
+     */
+    private void postCreditNoteJournal(SupplierCreditNote note, SupplierInvoice invoice) {
+        BigDecimal gstInr = scaleToInr(note.getCgstAmount().add(note.getSgstAmount()).add(note.getIgstAmount()), note.getFxRateToInr());
+        BigDecimal totalInr = note.getTotalAmountInr();
+        BigDecimal taxableInr = totalInr.subtract(gstInr);
+        boolean itcEligible = invoice.getItcEligibility() == com.voyra.crm.enums.ItcEligibility.ELIGIBLE;
+        BigDecimal purchaseInr = itcEligible ? taxableInr : taxableInr.add(gstInr);
+        BigDecimal inputGstInr = itcEligible ? gstInr : BigDecimal.ZERO;
+
+        String purchaseAccountCode = journalEntryRepository
+                .findBySourceTypeAndSourceIdAndPurpose(com.voyra.crm.enums.JournalSourceType.SUPPLIER_INVOICE,
+                        invoice.getId(), com.voyra.crm.enums.JournalPurpose.SUPPLIER_BILL_BOOKED)
+                .map(entry -> journalLineRepository.findByJournalEntryIdOrderByLineNo(entry.getId()).stream()
+                        .filter(l -> l.getDebitAmount().compareTo(BigDecimal.ZERO) > 0)
+                        .filter(l -> !l.getAccountCode().equals(com.voyra.crm.enums.SystemAccount.INPUT_GST_RECEIVABLE.code()))
+                        .findFirst().map(com.voyra.crm.entity.JournalLine::getAccountCode).orElse(null))
+                .orElse(com.voyra.crm.enums.SystemAccount.purchaseCode(com.voyra.crm.enums.InvoiceServiceCategory.MISCELLANEOUS));
+
+        String narration = "Supplier credit note " + labelFor(note) + " against " + invoice.getSupplierInvoiceNumber();
+        List<com.voyra.crm.models.JournalLinePosting> lines = new java.util.ArrayList<>();
+        lines.add(com.voyra.crm.models.JournalLinePosting.debitParty(
+                com.voyra.crm.enums.SystemAccount.ACCOUNTS_PAYABLE.code(), "VENDOR", note.getVendorId(), totalInr, narration));
+        if (purchaseInr.compareTo(BigDecimal.ZERO) > 0) {
+            lines.add(com.voyra.crm.models.JournalLinePosting.credit(purchaseAccountCode, purchaseInr, narration));
+        }
+        if (inputGstInr.compareTo(BigDecimal.ZERO) > 0) {
+            lines.add(com.voyra.crm.models.JournalLinePosting.credit(
+                    com.voyra.crm.enums.SystemAccount.INPUT_GST_RECEIVABLE.code(), inputGstInr, "Input GST reversed"));
+        }
+        if (lines.size() < 2) {
+            return;
+        }
+
+        journalService.post(new com.voyra.crm.models.JournalPosting(
+                note.getNoteDate(), com.voyra.crm.enums.JournalSourceType.SUPPLIER_CREDIT_NOTE, note.getId(),
+                com.voyra.crm.enums.JournalPurpose.SUPPLIER_CREDIT_NOTE_RECEIVED, narration,
+                note.getBookingId(), null, lines));
+    }
+
+    /** Cash/bank in, payable out: clears the debit balance the credit note left on the vendor's payable. */
+    private void postRefundJournal(SupplierPayment payment, SupplierCreditNote note) {
+        BigDecimal amountInr = payment.getAmountInr();
+        if (amountInr == null || amountInr.compareTo(BigDecimal.ZERO) <= 0) {
+            return;
+        }
+        String bankCode = payment.getPaymentMode() == com.voyra.crm.enums.PaymentMode.CASH
+                ? com.voyra.crm.enums.SystemAccount.CASH_IN_HAND.code()
+                : com.voyra.crm.enums.SystemAccount.BANK_ACCOUNTS.code();
+        String narration = "Refund received against supplier credit note " + labelFor(note);
+        journalService.post(new com.voyra.crm.models.JournalPosting(
+                payment.getPaidOn(), com.voyra.crm.enums.JournalSourceType.SUPPLIER_PAYMENT, payment.getId(),
+                com.voyra.crm.enums.JournalPurpose.SUPPLIER_REFUND_RECEIVED, narration, note.getBookingId(), null,
+                List.of(com.voyra.crm.models.JournalLinePosting.debit(bankCode, amountInr, narration),
+                        com.voyra.crm.models.JournalLinePosting.creditParty(
+                                com.voyra.crm.enums.SystemAccount.ACCOUNTS_PAYABLE.code(), "VENDOR", note.getVendorId(), amountInr, narration))));
     }
 
     private SupplierInvoice findInvoice(String id) {

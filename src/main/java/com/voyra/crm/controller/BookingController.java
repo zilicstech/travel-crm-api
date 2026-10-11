@@ -1,5 +1,7 @@
 package com.voyra.crm.controller;
 
+import com.voyra.crm.dto.BookingCostComponentRequest;
+import com.voyra.crm.dto.BookingCostComponentResponse;
 import com.voyra.crm.dto.BookingCreateRequest;
 import com.voyra.crm.dto.BookingDeadlineUpdateRequest;
 import com.voyra.crm.dto.BookingPaymentStatusUpdateRequest;
@@ -58,21 +60,34 @@ public class BookingController {
         return ResponseEntity.ok(bookingService.createBooking(request));
     }
 
+    @GetMapping("/unbilled")
+    @PreAuthorize("hasAnyRole('AGENCY_OWNER', 'AGENT', 'ACCOUNTANT')")
+    @Operation(summary = "Unbilled bookings workbench",
+            description = "CONFIRMED bookings with no live invoice yet - FRD US-ACC-1.1. Computed server-side, "
+                    + "not derived by the caller from the full booking list.")
+    public ResponseEntity<List<BookingResponse>> listUnbilledBookings() {
+        return ResponseEntity.ok(bookingService.listUnbilledBookings());
+    }
+
     @GetMapping
     @PreAuthorize("hasAnyRole('AGENCY_OWNER', 'AGENT', 'ACCOUNTANT')")
     @Operation(summary = "List bookings",
             description = "Agents see only their own bookings; Owners and Accountants see the whole agency "
                     + "(the accounts module bills against any booking). Supply ?page= for a paged envelope; "
-                    + "omit it for the full list as a plain array.")
+                    + "omit it for the full list as a plain array. destination/agentId/vendorId are the "
+                    + "FRD US-ACC-6.1 profitability filters - type doubles as package category.")
     public ResponseEntity<Object> listBookings(
             @RequestParam(value = "type", required = false) BookingType type,
             @RequestParam(value = "status", required = false) BookingStatus status,
+            @RequestParam(value = "destination", required = false) String destination,
+            @RequestParam(value = "agentId", required = false) String agentId,
+            @RequestParam(value = "vendorId", required = false) String vendorId,
             @RequestParam(value = "page", required = false) Integer page,
             @RequestParam(value = "size", required = false) Integer size) {
         Pageable pageable = PageRequestUtil.resolve(page, size);
         return ResponseEntity.ok(pageable == null
-                ? bookingService.listBookings(type, status)
-                : bookingService.listBookings(type, status, pageable));
+                ? bookingService.listBookings(type, status, destination, agentId, vendorId)
+                : bookingService.listBookings(type, status, destination, agentId, vendorId, pageable));
     }
 
     @GetMapping("/{id}")
@@ -121,5 +136,20 @@ public class BookingController {
     @Operation(summary = "Generate (or reuse) the public shareable feedback link")
     public ResponseEntity<com.voyra.crm.dto.FeedbackLinkResponse> generateFeedbackLink(@PathVariable String id) {
         return ResponseEntity.ok(feedbackLinkService.generateLink(id));
+    }
+
+    @GetMapping("/{id}/cost-components")
+    @Operation(summary = "List a booking's per-supplier cost components",
+            description = "Empty for a booking placed before cost components existed - its net cost stays the single blended figure it always was.")
+    public ResponseEntity<List<BookingCostComponentResponse>> listCostComponents(@PathVariable String id) {
+        return ResponseEntity.ok(bookingService.listCostComponents(id));
+    }
+
+    @PutMapping("/{id}/cost-components")
+    @Operation(summary = "Replace a booking's per-supplier cost components",
+            description = "Replaces the whole set. Recomputes booking.netCost as the sum of the components when the list is non-empty.")
+    public ResponseEntity<List<BookingCostComponentResponse>> replaceCostComponents(@PathVariable String id,
+            @Valid @RequestBody List<BookingCostComponentRequest> request) {
+        return ResponseEntity.ok(bookingService.replaceCostComponents(id, request));
     }
 }

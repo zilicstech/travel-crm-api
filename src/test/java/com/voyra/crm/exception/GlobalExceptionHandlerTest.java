@@ -63,6 +63,13 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    void oversizeUploadMapsTo413WithAReadableMessageAndNoExceptionDetail() throws Exception {
+        mockMvc.perform(get("/test/upload-too-large"))
+                .andExpect(status().isPayloadTooLarge())
+                .andExpect(jsonPath("$.message").value("That file is too large. The maximum size is 10 MB."));
+    }
+
+    @Test
     void validationFailureMapsTo400WithFieldErrors() throws Exception {
         GlobalExceptionHandlerFixtureController.FixtureRequest invalid =
                 new GlobalExceptionHandlerFixtureController.FixtureRequest();

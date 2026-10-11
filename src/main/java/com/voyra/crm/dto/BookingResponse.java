@@ -243,4 +243,10 @@ public class BookingResponse {
 
     @Schema(description = "Travellers on this booking, each with the fare attributed to them and their itinerary legs")
     private List<BookingPassengerResponse> passengers;
+
+    @Schema(description = "(sellingPrice - netCost) / sellingPrice * 100, server-computed", example = "12.5")
+    private BigDecimal marginPercent;
+
+    @Schema(description = "True when marginPercent is below the agency's configured low-margin threshold (FRD US-ACC-6.1)")
+    private Boolean lowMargin;
 }

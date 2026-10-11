@@ -34,6 +34,7 @@ public class AgencyService {
     private final TenantFlywayMigrator tenantFlywayMigrator;
     private final TenantScopedReadService tenantScopedReadService;
     private final TenantDefaultsSeeder tenantDefaultsSeeder;
+    private final ChartOfAccountsSeedService chartOfAccountsSeedService;
 
     @Transactional
     public AgencyCreateResponse createAgency(AgencyCreateRequest request) {
@@ -54,6 +55,7 @@ public class AgencyService {
         TenantCache.put(tenant.getId(), tenant.getAgencyName(), true);
         tenantFlywayMigrator.migrate(tenant.getId());
         seedDefaultsForTenant(tenant.getId());
+        seedChartOfAccountsFor(tenant.getId());
 
         log.info("Agency created: tenantId={}, agencyName={}", tenant.getId(), tenant.getAgencyName());
         return AgencyCreateResponse.builder()
@@ -114,7 +116,8 @@ public class AgencyService {
     }
 
     private AgencyResponse toResponse(Tenant tenant, boolean includeRevenue) {
-        long agentsCount = agentRepository.countByTenantId(tenant.getId());
+        // Agents only: accountants share the table but are not agents.
+        long agentsCount = agentRepository.countByTenantIdAndUserRole(tenant.getId(), com.voyra.crm.enums.UserType.AGENT);
         BigDecimal totalRevenue = null;
         if (includeRevenue) {
             totalRevenue = readRevenueForTenant(tenant.getId());
@@ -144,6 +147,26 @@ public class AgencyService {
         } catch (RuntimeException e) {
             log.error("Could not seed default settings for new agency {}; they will be seeded on the next restart",
                     tenantId, e);
+        } finally {
+            if (previous == null || previous.isBlank()) {
+                TenantContext.clear();
+            } else {
+                TenantContext.setTenantId(previous);
+            }
+        }
+    }
+
+    /**
+     * Cross-tenant write (blueprint §3.5): switch context, seed in a fresh REQUIRES_NEW
+     * transaction, always restore - this method's own {@code createAgency} caller is already
+     * inside a public-schema transaction, so {@link ChartOfAccountsSeedService#seed} must be a
+     * genuinely separate bean or self-invocation would bypass the proxy and seed the wrong schema.
+     */
+    private void seedChartOfAccountsFor(String tenantId) {
+        String previous = TenantContext.getTenantId();
+        try {
+            TenantContext.setTenantId(tenantId);
+            chartOfAccountsSeedService.seed();
         } finally {
             if (previous == null || previous.isBlank()) {
                 TenantContext.clear();

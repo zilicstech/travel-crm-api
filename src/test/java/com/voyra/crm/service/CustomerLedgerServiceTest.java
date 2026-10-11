@@ -44,6 +44,8 @@ class CustomerLedgerServiceTest {
     private InvoiceRepository invoiceRepository;
     @Mock
     private ClientService clientService;
+    @Mock
+    private JournalService journalService;
 
     @InjectMocks
     private CustomerLedgerService customerLedgerService;
@@ -176,5 +178,14 @@ class CustomerLedgerServiceTest {
         assertThat(saved.getEntryType()).isEqualTo(LedgerEntryType.OPENING_BALANCE);
         assertThat(saved.getDebitAmountInr()).isEqualByComparingTo("15000.00");
         assertThat(saved.getCreditAmountInr()).isEqualByComparingTo("0.00");
+
+        // ...and the GL moves with it: Dr 1200 receivable (party), Cr 3100 opening balance equity.
+        ArgumentCaptor<com.voyra.crm.models.JournalPosting> journal =
+                ArgumentCaptor.forClass(com.voyra.crm.models.JournalPosting.class);
+        org.mockito.Mockito.verify(journalService).post(journal.capture());
+        assertThat(journal.getValue().purpose()).isEqualTo(com.voyra.crm.enums.JournalPurpose.OPENING_BALANCE_POSTED);
+        assertThat(journal.getValue().lines().get(0).accountCode()).isEqualTo("1200");
+        assertThat(journal.getValue().lines().get(0).debitAmount()).isEqualByComparingTo("15000.00");
+        assertThat(journal.getValue().lines().get(1).accountCode()).isEqualTo("3100");
     }
 }

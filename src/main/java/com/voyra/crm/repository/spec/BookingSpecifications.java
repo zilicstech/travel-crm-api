@@ -46,4 +46,37 @@ public final class BookingSpecifications {
     public static Specification<Booking> statusIs(BookingStatus status) {
         return (root, query, cb) -> cb.equal(root.get("bookingStatus"), status);
     }
+
+    /** Case-insensitive substring match - destinations are free text, never an exact enum. */
+    public static Specification<Booking> destinationContains(String destination) {
+        return (root, query, cb) -> cb.like(cb.lower(root.get("destination")), "%" + destination.toLowerCase() + "%");
+    }
+
+    public static Specification<Booking> agentIs(String agentId) {
+        return (root, query, cb) -> cb.equal(root.get("agentId"), agentId);
+    }
+
+    public static Specification<Booking> vendorIs(String vendorId) {
+        return (root, query, cb) -> cb.equal(root.get("vendorId"), vendorId);
+    }
+
+    /**
+     * FRD US-ACC-1.1's "Unbilled Bookings" workbench: CONFIRMED bookings with no live (non-
+     * cancelled) invoice against them yet. A correlated NOT EXISTS subquery against
+     * {@code Invoice}, so this is exactly two tables touched, no join blow-up.
+     */
+    public static Specification<Booking> confirmedAndUnbilled() {
+        return (root, query, cb) -> {
+            jakarta.persistence.criteria.Subquery<Long> sub = query.subquery(Long.class);
+            jakarta.persistence.criteria.Root<com.voyra.crm.entity.Invoice> invoice =
+                    sub.from(com.voyra.crm.entity.Invoice.class);
+            sub.select(cb.literal(1L));
+            sub.where(
+                    cb.equal(invoice.get("bookingId"), root.get("id")),
+                    cb.notEqual(invoice.get("status"), com.voyra.crm.enums.InvoiceLifecycle.CANCELLED));
+            return cb.and(
+                    cb.equal(root.get("bookingStatus"), BookingStatus.CONFIRMED),
+                    cb.not(cb.exists(sub)));
+        };
+    }
 }

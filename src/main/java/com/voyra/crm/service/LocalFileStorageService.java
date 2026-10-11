@@ -42,6 +42,7 @@ public class LocalFileStorageService implements FileStorageService {
         if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException("File is required");
         }
+        com.voyra.crm.util.UploadValidator.assertAllowed(file);
         String sanitizedName = sanitizeFilename(file.getOriginalFilename());
         String fileKey = "%s/%s/%s/%s-%s".formatted(
                 TenantSchemaUtil.toSchemaName(tenantId), category, ownerId, IdGenerator.generateId(), sanitizedName);

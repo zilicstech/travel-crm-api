@@ -67,6 +67,19 @@ public enum InvoiceServiceCategory {
     }
 
     /**
+     * The {@link InvoiceBillingModel} a fresh draft in this category starts with when the caller
+     * supplied none - always overridable per invoice, never a stored agency setting. Air tickets
+     * default to the pass-through/commission-agent treatment the client's own demo invoice uses
+     * (no GST, framed as a reimbursement); every other category defaults to the status quo,
+     * principal/full-package taxation.
+     */
+    public InvoiceBillingModel defaultBillingModel() {
+        return (this == AIR_INTERNATIONAL || this == AIR_DOMESTIC)
+                ? InvoiceBillingModel.COMMISSION_AGENT
+                : InvoiceBillingModel.PRINCIPAL;
+    }
+
+    /**
      * The category a booking falls in by default. {@code international} is a property of the
      * booking itself ({@code Booking.internationalTrip}), set by whoever books it - there is no
      * airport-code lookup here. {@link #RAIL} and {@link #MISCELLANEOUS} have no

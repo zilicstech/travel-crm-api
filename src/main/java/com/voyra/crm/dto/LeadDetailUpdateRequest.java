@@ -15,6 +15,7 @@ public class LeadDetailUpdateRequest {
     private String destination;
 
     @Size(max = 50, message = "Budget must be 50 characters or fewer")
+    @jakarta.validation.constraints.Pattern(regexp = "^(?!\\s*-).*$", message = "Budget cannot be negative")
     @Schema(example = "1,50,000 - 2,00,000")
     private String budget;
 

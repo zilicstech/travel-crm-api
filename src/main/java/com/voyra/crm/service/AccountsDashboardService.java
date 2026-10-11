@@ -129,7 +129,9 @@ public class AccountsDashboardService {
                 String rate = (tax.getRatePercent() != null ? tax.getRatePercent() : BigDecimal.ZERO)
                         .stripTrailingZeros().toPlainString();
                 BigDecimal[] agg = byGroup.computeIfAbsent(rate, k -> zeros(4));
-                BigDecimal taxableInr = scale(invoice.getTaxableValue().multiply(fx));
+                // taxableValueInr is the base GST was actually levied on: the service fee for a
+                // COMMISSION_AGENT invoice, whereas taxableValue keeps the full package amount.
+                BigDecimal taxableInr = invoice.getTaxableValueInr();
                 agg[0] = agg[0].add(taxableInr);
                 agg[1] = agg[1].add(scale(tax.getCgstAmount().multiply(fx)));
                 agg[2] = agg[2].add(scale(tax.getSgstAmount().multiply(fx)));

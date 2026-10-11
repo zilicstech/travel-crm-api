@@ -38,6 +38,10 @@ public class PaymentReceipt {
     @Column(name = "id", length = 36)
     private String id;
 
+    /** Nullable - intra-agency partition, column-only for now (ACCOUNTING_EXPANSION_ARCHITECTURE.md §6). */
+    @Column(name = "branch_id", length = 36)
+    private String branchId;
+
     @Column(name = "receipt_number", length = 40)
     private String receiptNumber;
 
@@ -85,6 +89,27 @@ public class PaymentReceipt {
 
     @Column(name = "bank_account_label", length = 150)
     private String bankAccountLabel;
+
+    /** Set only once a bank_transaction confirms this receipt against a real statement line (Rule 4.1.3) - never required. */
+    @Column(name = "bank_account_id", length = 36)
+    private String bankAccountId;
+
+    /** Orthogonal to {@link #paymentMode} - a gateway payment is still CARD/UPI, see Decision 5 Rule 5.1. */
+    @Column(name = "gateway_provider", length = 30)
+    private String gatewayProvider;
+
+    @Column(name = "gateway_txn_ref", length = 80)
+    private String gatewayTxnRef;
+
+    @Column(name = "gateway_fee")
+    private BigDecimal gatewayFee;
+
+    @Column(name = "gateway_fee_inr")
+    private BigDecimal gatewayFeeInr;
+
+    /** amountInr - gatewayFeeInr. Null when this receipt carries no gateway fee. */
+    @Column(name = "net_deposit_inr")
+    private BigDecimal netDepositInr;
 
     @Column(name = "received_on", nullable = false)
     private LocalDate receivedOn;

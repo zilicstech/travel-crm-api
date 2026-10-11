@@ -1,11 +1,13 @@
 package com.voyra.crm.service;
 
+import com.voyra.crm.dto.AuditChange;
 import com.voyra.crm.dto.SupplierInvoiceDraftRequest;
 import com.voyra.crm.dto.SupplierInvoiceLineItemRequest;
 import com.voyra.crm.dto.SupplierInvoiceLineItemResponse;
 import com.voyra.crm.dto.SupplierInvoiceListItemResponse;
 import com.voyra.crm.dto.SupplierInvoiceResponse;
 import com.voyra.crm.entity.Booking;
+import com.voyra.crm.entity.BookingCostComponent;
 import com.voyra.crm.entity.SupplierInvoice;
 import com.voyra.crm.entity.SupplierInvoiceLineItem;
 import com.voyra.crm.entity.Tenant;
@@ -15,6 +17,7 @@ import com.voyra.crm.enums.SupplierInvoiceStatus;
 import com.voyra.crm.enums.SupplierLedgerEntryType;
 import com.voyra.crm.enums.SupplierLedgerSourceType;
 import com.voyra.crm.models.SupplierLedgerPosting;
+import com.voyra.crm.repository.BookingCostComponentRepository;
 import com.voyra.crm.repository.BookingRepository;
 import com.voyra.crm.repository.SupplierInvoiceLineItemRepository;
 import com.voyra.crm.repository.SupplierInvoiceRepository;
@@ -40,7 +43,11 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * Draft CRUD, approve, cancel, and file attachment for supplier bills - the accounts-payable
@@ -64,10 +71,13 @@ public class SupplierInvoiceService {
     private final SupplierInvoiceLineItemRepository lineItemRepository;
     private final VendorRepository vendorRepository;
     private final BookingRepository bookingRepository;
+    private final BookingCostComponentRepository bookingCostComponentRepository;
     private final TenantRepository tenantRepository;
     private final SupplierLedgerService supplierLedgerService;
     private final AuditService auditService;
     private final FileStorageService fileStorageService;
+    private final JournalService journalService;
+    private final com.voyra.crm.repository.JournalEntryRepository journalEntryRepository;
 
     @Transactional
     public SupplierInvoiceResponse createDraft(SupplierInvoiceDraftRequest request) {
@@ -104,18 +114,84 @@ public class SupplierInvoiceService {
 
     /**
      * Called from {@code BookingService#createBooking} the moment a booking is placed with a
-     * real Vendor and a positive net cost - drafts the matching bill at that cost so the
-     * accountant confirms it against the supplier's real invoice (Accounts ▸ Suppliers ▸
-     * Awaiting confirmation) instead of starting one from scratch. A DRAFT posts nothing to
-     * the ledger - only {@link #approve} does - so nothing here understates or overstates the
-     * vendor's balance until a human has looked at it. GST is left at zero: the agent's net
-     * cost is an estimate, not what the supplier will actually bill tax on.
+     * real Vendor and a positive net cost. When the booking carries no
+     * {@link BookingCostComponent} rows (the common case, and every booking created before
+     * Decision 7), this drafts exactly one bill at the booking's blended net cost - unchanged
+     * from the original behaviour. When the booking DOES carry cost components, it groups them
+     * by {@code vendorId} and drafts one bill per vendor, each with one line per component
+     * (ACCOUNTING_EXPANSION_ARCHITECTURE.md Decision 7, Rule 7.2); components naming no vendor
+     * raise no bill. Every draft posts nothing to the ledger - only {@link #approve} does.
      */
     @Transactional
-    public SupplierInvoiceResponse createAutoDraft(Booking booking, String vendorId) {
-        Vendor vendor = findVendor(vendorId);
+    public List<SupplierInvoiceResponse> createAutoDraft(Booking booking, String vendorId) {
+        List<BookingCostComponent> components = bookingCostComponentRepository.findByBookingIdOrderBySortOrder(booking.getId());
+        if (components.isEmpty()) {
+            return List.of(createAutoDraftSingle(booking, vendorId, booking.getNetCost()));
+        }
 
-        SupplierInvoice invoice = SupplierInvoice.builder()
+        Map<String, List<BookingCostComponent>> byVendor = components.stream()
+                .filter(c -> c.getVendorId() != null && !c.getVendorId().isBlank())
+                .collect(Collectors.groupingBy(BookingCostComponent::getVendorId, LinkedHashMap::new, Collectors.toList()));
+
+        List<SupplierInvoiceResponse> created = new ArrayList<>();
+        for (Map.Entry<String, List<BookingCostComponent>> entry : byVendor.entrySet()) {
+            created.add(createAutoDraftFanned(booking, entry.getKey(), entry.getValue()));
+        }
+        return created;
+    }
+
+    /** The pre-Decision-7 path: one vendor, one line, at the booking's blended net cost. GST is
+     *  left at zero - the agent's net cost is an estimate, not what the supplier will actually
+     *  bill tax on. */
+    private SupplierInvoiceResponse createAutoDraftSingle(Booking booking, String vendorId, BigDecimal netCost) {
+        Vendor vendor = findVendor(vendorId);
+        SupplierInvoice invoice = newAutoDraftHeader(booking, vendor,
+                "Drafted automatically from booking " + booking.getId()
+                        + " at the agent's net cost - confirm against the supplier's real invoice before approving.");
+
+        SupplierInvoiceLineItemRequest line = new SupplierInvoiceLineItemRequest();
+        line.setDescription((booking.getDestination() != null ? booking.getDestination() : "Booking") + " - " + booking.getId());
+        line.setServiceType(booking.getServiceType());
+        line.setQuantity(BigDecimal.ONE);
+        line.setUnitPrice(netCost);
+        line.setGstRatePercent(BigDecimal.ZERO);
+        line.setCgstAmount(BigDecimal.ZERO);
+        line.setSgstAmount(BigDecimal.ZERO);
+        line.setIgstAmount(BigDecimal.ZERO);
+
+        return saveAutoDraft(invoice, List.of(line));
+    }
+
+    /** One vendor's share of a fanned-out booking: one bill, one line per cost component naming
+     *  that vendor. Component amounts are taken at face value in the bill's own currency
+     *  (INR identity) - true multi-currency per component is Decision 3's forex engine, not
+     *  this one. */
+    private SupplierInvoiceResponse createAutoDraftFanned(Booking booking, String vendorId, List<BookingCostComponent> vendorComponents) {
+        Vendor vendor = findVendor(vendorId);
+        SupplierInvoice invoice = newAutoDraftHeader(booking, vendor,
+                "Drafted automatically from booking " + booking.getId() + "'s cost components for this vendor - "
+                        + "confirm against the supplier's real invoice before approving.");
+
+        List<SupplierInvoiceLineItemRequest> lines = new ArrayList<>();
+        for (BookingCostComponent component : vendorComponents) {
+            SupplierInvoiceLineItemRequest line = new SupplierInvoiceLineItemRequest();
+            line.setDescription(component.getDescription() != null && !component.getDescription().isBlank()
+                    ? component.getDescription()
+                    : component.getServiceType() + " - " + booking.getId());
+            line.setServiceType(component.getServiceType());
+            line.setQuantity(BigDecimal.ONE);
+            line.setUnitPrice(component.getNetCost());
+            line.setGstRatePercent(BigDecimal.ZERO);
+            line.setCgstAmount(BigDecimal.ZERO);
+            line.setSgstAmount(BigDecimal.ZERO);
+            line.setIgstAmount(BigDecimal.ZERO);
+            lines.add(line);
+        }
+        return saveAutoDraft(invoice, lines);
+    }
+
+    private SupplierInvoice newAutoDraftHeader(Booking booking, Vendor vendor, String notes) {
+        return SupplierInvoice.builder()
                 .id(UniqueIdResolver.resolve(supplierInvoiceRepository::existsById))
                 .vendorId(vendor.getId())
                 .vendorName(vendor.getName())
@@ -137,29 +213,20 @@ public class SupplierInvoiceService {
                 .isReverseCharge(false)
                 .tdsRatePercent(BigDecimal.ZERO)
                 .autoDrafted(true)
-                .notes("Drafted automatically from booking " + booking.getId()
-                        + " at the agent's net cost - confirm against the supplier's real invoice before approving.")
+                .notes(notes)
                 .createdDate(LocalDateTime.now())
                 .createdBy(currentUserId())
                 .build();
+    }
 
-        SupplierInvoiceLineItemRequest line = new SupplierInvoiceLineItemRequest();
-        line.setDescription((booking.getDestination() != null ? booking.getDestination() : "Booking") + " - " + booking.getId());
-        line.setServiceType(booking.getServiceType());
-        line.setQuantity(BigDecimal.ONE);
-        line.setUnitPrice(booking.getNetCost());
-        line.setGstRatePercent(BigDecimal.ZERO);
-        line.setCgstAmount(BigDecimal.ZERO);
-        line.setSgstAmount(BigDecimal.ZERO);
-        line.setIgstAmount(BigDecimal.ZERO);
-
-        List<SupplierInvoiceLineItem> lines = applyLines(invoice, List.of(line));
+    private SupplierInvoiceResponse saveAutoDraft(SupplierInvoice invoice, List<SupplierInvoiceLineItemRequest> lineRequests) {
+        List<SupplierInvoiceLineItem> lines = applyLines(invoice, lineRequests);
         supplierInvoiceRepository.save(invoice);
         lineItemRepository.saveAll(lines);
 
         auditService.recordCreate(AuditEntityType.SUPPLIER_INVOICE, invoice.getId(), labelFor(invoice));
         log.info("Supplier bill auto-drafted from booking: id={}, bookingId={}, vendorId={}",
-                invoice.getId(), booking.getId(), vendor.getId());
+                invoice.getId(), invoice.getBookingId(), invoice.getVendorId());
         return toResponse(invoice, lines);
     }
 
@@ -198,6 +265,11 @@ public class SupplierInvoiceService {
         return toResponse(findById(id));
     }
 
+    /** Sorted by due-date urgency (Rule 7.6), not recency - a bill with no due date sorts last so
+     *  an undated draft never buries an overdue one. */
+    private static final Sort PAYABLES_URGENCY_SORT =
+            Sort.by(new Sort.Order(Sort.Direction.ASC, "dueDate").nullsLast());
+
     @Transactional(readOnly = true)
     public List<SupplierInvoiceListItemResponse> list(String vendorId, SupplierInvoiceStatus status, String bookingId) {
         Specification<SupplierInvoice> spec = Specification
@@ -205,13 +277,13 @@ public class SupplierInvoiceService {
                         SupplierInvoiceSpecifications.vendorIs(vendorId),
                         SupplierInvoiceSpecifications.statusIs(status),
                         SupplierInvoiceSpecifications.bookingIs(bookingId)));
-        return supplierInvoiceRepository.findAll(spec, Sort.by(Sort.Direction.DESC, "createdDate")).stream()
+        return supplierInvoiceRepository.findAll(spec, PAYABLES_URGENCY_SORT).stream()
                 .map(SupplierInvoiceService::toListItem)
                 .toList();
     }
 
     @Transactional
-    public SupplierInvoiceResponse approve(String id) {
+    public SupplierInvoiceResponse approve(String id, String overrideReason) {
         SupplierInvoice invoice = findById(id);
         SupplierInvoiceLifecyclePolicy.assertApprovable(invoice.getStatus());
         List<SupplierInvoiceLineItem> lines = lineItemRepository.findBySupplierInvoiceIdOrderBySortOrder(id);
@@ -220,6 +292,14 @@ public class SupplierInvoiceService {
         }
         Vendor vendor = invoice.getVendorId() != null ? findVendor(invoice.getVendorId()) : null;
         assertRecordedTaxIsConsistent(invoice, lines);
+
+        List<AuditChange> overrideChange = applyCostCapGate(invoice, overrideReason);
+        if (invoice.getStatus() == SupplierInvoiceStatus.PENDING_APPROVAL) {
+            // Sent to an owner for override - nothing is booked to the ledger until they approve it.
+            supplierInvoiceRepository.save(invoice);
+            log.info("Supplier bill sent for owner approval (over cost cap): id={}, grandTotal={}", id, invoice.getGrandTotal());
+            return toResponse(invoice, lines);
+        }
 
         invoice.setStatus(SupplierInvoiceStatus.APPROVED);
         invoice.setApprovedAt(LocalDateTime.now());
@@ -237,10 +317,61 @@ public class SupplierInvoiceService {
                 invoice.getSupplierInvoiceNumber(), "Supplier bill " + labelFor(invoice) + " booked",
                 invoice.getBookingId(), invoice.getCurrencyCode(), invoice.getFxRateToInr(),
                 BigDecimal.ZERO, invoice.getGrandTotal(), BigDecimal.ZERO, invoice.getGrandTotalInr()));
+        postBillBookedJournal(invoice);
 
-        auditService.recordUpdate(AuditEntityType.SUPPLIER_INVOICE, invoice.getId(), labelFor(invoice), List.of());
+        auditService.recordUpdate(AuditEntityType.SUPPLIER_INVOICE, invoice.getId(), labelFor(invoice), overrideChange);
         log.info("Supplier bill approved: id={}, vendorId={}, grandTotal={}", id, invoice.getVendorId(), invoice.getGrandTotal());
         return toResponse(invoice, lines);
+    }
+
+    /**
+     * Rule 7.5 - a bill whose total exceeds the sum of its booking's cost components for that
+     * same vendor needs an {@code AGENCY_OWNER}'s override to approve. Returns the audit-change
+     * list to record (empty when no cap applied or the cap was not exceeded). Mutates
+     * {@code invoice.status} to {@code PENDING_APPROVAL} in place when a non-owner hits the cap
+     * and no override has been supplied yet - the caller checks that status afterwards and stops
+     * before booking anything to the ledger.
+     */
+    private List<AuditChange> applyCostCapGate(SupplierInvoice invoice, String overrideReason) {
+        BigDecimal cap = costComponentCap(invoice);
+        if (cap == null || invoice.getGrandTotal().compareTo(cap) <= 0) {
+            return List.of();
+        }
+
+        CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
+        boolean hasOverride = overrideReason != null && !overrideReason.isBlank();
+
+        if (!principal.isAgencyOwner()) {
+            if (invoice.getStatus() == SupplierInvoiceStatus.PENDING_APPROVAL) {
+                throw new AccessDeniedException(
+                        "This bill exceeds the booking's quoted cost and needs an Agency Owner's override to approve");
+            }
+            invoice.setStatus(SupplierInvoiceStatus.PENDING_APPROVAL);
+            return List.of();
+        }
+        if (!hasOverride) {
+            throw new IllegalArgumentException("This bill exceeds the booking's quoted cost cap of " + cap
+                    + " by " + invoice.getGrandTotal().subtract(cap) + " - an override reason is required to approve it anyway");
+        }
+        return List.of(AuditChange.builder()
+                .field("costCapOverride")
+                .oldValue("cap " + cap)
+                .newValue(overrideReason)
+                .build());
+    }
+
+    /** Null when there is nothing to compare against - no booking, no vendor, or the booking
+     *  names no cost components for this vendor (pre-Decision-7 bookings, always). */
+    private BigDecimal costComponentCap(SupplierInvoice invoice) {
+        if (invoice.getBookingId() == null || invoice.getVendorId() == null) {
+            return null;
+        }
+        List<BookingCostComponent> components =
+                bookingCostComponentRepository.findByBookingIdAndVendorId(invoice.getBookingId(), invoice.getVendorId());
+        if (components.isEmpty()) {
+            return null;
+        }
+        return components.stream().map(BookingCostComponent::getNetCost).reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
     @Transactional
@@ -264,6 +395,10 @@ public class SupplierInvoiceService {
                     invoice.getSupplierInvoiceNumber(), "Supplier bill " + labelFor(invoice) + " cancelled",
                     invoice.getBookingId(), invoice.getCurrencyCode(), invoice.getFxRateToInr(),
                     invoice.getGrandTotal(), BigDecimal.ZERO, invoice.getGrandTotalInr(), BigDecimal.ZERO));
+            journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(
+                    com.voyra.crm.enums.JournalSourceType.SUPPLIER_INVOICE, invoice.getId(),
+                    com.voyra.crm.enums.JournalPurpose.SUPPLIER_BILL_BOOKED)
+                    .ifPresent(entry -> journalService.reverse(entry.getId(), "Supplier bill cancelled: " + reason));
         }
         log.info("Supplier bill cancelled: id={}, reason={}", id, reason);
         return toResponse(invoice);
@@ -444,6 +579,56 @@ public class SupplierInvoiceService {
                 .subtract(invoice.getCreditNoteTotal().multiply(invoice.getFxRateToInr()).setScale(2, RoundingMode.HALF_UP)));
 
         return lines;
+    }
+
+    /**
+     * Posting-rule-table row 8. Ineligible/blocked input GST is folded into the purchase debit
+     * instead of {@code 1400} - GST that cannot be claimed back is a cost, not an asset.
+     * {@code invoice.category} is a {@code BookingType}, not an {@code InvoiceServiceCategory},
+     * so the purchase account is resolved the same way the customer-invoice side resolves its
+     * sales account: via the linked booking's own type and {@code internationalTrip} flag when
+     * one exists, falling back to MISCELLANEOUS when the bill has no booking.
+     */
+    private void postBillBookedJournal(SupplierInvoice invoice) {
+        BigDecimal taxableInr = invoice.getTaxableValueInr();
+        BigDecimal gstInr = invoice.getGstTotalInr() != null ? invoice.getGstTotalInr() : BigDecimal.ZERO;
+        BigDecimal grandTotalInr = invoice.getGrandTotalInr();
+        boolean itcEligible = invoice.getItcEligibility() == com.voyra.crm.enums.ItcEligibility.ELIGIBLE;
+        BigDecimal purchaseInr = itcEligible ? taxableInr : taxableInr.add(gstInr);
+        BigDecimal inputGstInr = itcEligible ? gstInr : BigDecimal.ZERO;
+
+        com.voyra.crm.enums.InvoiceServiceCategory category = resolvePurchaseCategory(invoice);
+        String narration = "Supplier bill " + labelFor(invoice) + " booked";
+
+        List<com.voyra.crm.models.JournalLinePosting> lines = new ArrayList<>();
+        if (purchaseInr.compareTo(BigDecimal.ZERO) > 0) {
+            lines.add(com.voyra.crm.models.JournalLinePosting.debit(
+                    com.voyra.crm.enums.SystemAccount.purchaseCode(category), purchaseInr, narration));
+        }
+        if (inputGstInr.compareTo(BigDecimal.ZERO) > 0) {
+            lines.add(com.voyra.crm.models.JournalLinePosting.debit(
+                    com.voyra.crm.enums.SystemAccount.INPUT_GST_RECEIVABLE.code(), inputGstInr, "Input GST"));
+        }
+        if (lines.isEmpty()) {
+            return;
+        }
+        lines.add(com.voyra.crm.models.JournalLinePosting.creditParty(
+                com.voyra.crm.enums.SystemAccount.ACCOUNTS_PAYABLE.code(), "VENDOR", invoice.getVendorId(), grandTotalInr, narration));
+
+        journalService.post(new com.voyra.crm.models.JournalPosting(
+                invoice.getInvoiceDate() != null ? invoice.getInvoiceDate() : LocalDate.now(),
+                com.voyra.crm.enums.JournalSourceType.SUPPLIER_INVOICE, invoice.getId(),
+                com.voyra.crm.enums.JournalPurpose.SUPPLIER_BILL_BOOKED, narration,
+                invoice.getBookingId(), null, lines));
+    }
+
+    private com.voyra.crm.enums.InvoiceServiceCategory resolvePurchaseCategory(SupplierInvoice invoice) {
+        if (invoice.getBookingId() == null) {
+            return com.voyra.crm.enums.InvoiceServiceCategory.MISCELLANEOUS;
+        }
+        return bookingRepository.findById(invoice.getBookingId())
+                .map(b -> com.voyra.crm.enums.InvoiceServiceCategory.forBooking(b.getType(), Boolean.TRUE.equals(b.getInternationalTrip())))
+                .orElse(com.voyra.crm.enums.InvoiceServiceCategory.MISCELLANEOUS);
     }
 
     private Vendor findVendor(String vendorId) {
