@@ -3,6 +3,7 @@ package com.voyra.crm.service;
 import com.voyra.crm.dto.FlightOfferResponse;
 import com.voyra.crm.dto.FlightSearchQuery;
 import com.voyra.crm.enums.FlightCabin;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
@@ -16,6 +17,7 @@ import java.util.List;
  * account. Deterministic per query (no randomness) so a demo or a test can assert on it.
  */
 @Service
+@Slf4j
 @ConditionalOnProperty(name = "app.flight-supplier.provider", havingValue = "mock", matchIfMissing = true)
 public class MockFlightSearchProvider implements FlightSearchProvider {
 
@@ -36,6 +38,7 @@ public class MockFlightSearchProvider implements FlightSearchProvider {
 
     @Override
     public List<FlightOfferResponse> search(FlightSearchQuery query) {
+        log.warn("Flight search served by MOCK provider ({} -> {}); Tripjack was NOT called", query.getOrigin(), query.getDestination());
         int pax = Math.max(1, query.getAdults() + query.getChildren());
         BigDecimal cabinMultiplier = cabinMultiplier(query.getCabin());
 

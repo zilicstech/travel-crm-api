@@ -67,14 +67,29 @@ public class TripjackFlightSearchProvider implements FlightSearchProvider {
     public List<FlightOfferResponse> search(FlightSearchQuery query) {
         // Credentials resolved fresh per call, never cached on this singleton bean - it is
         // shared by every tenant, so caching here would serve one agency's key to all of them.
-        SupplierCredentialRevealResponse credential =
-                supplierCredentialService.resolveActive(SupplierProvider.TRIPJACK);
+        log.info("Tripjack flight search start: {} -> {} on {}", query.getOrigin(), query.getDestination(), query.getDepartDate());
+        SupplierCredentialRevealResponse credential;
+        try {
+            credential = supplierCredentialService.resolveActive(SupplierProvider.TRIPJACK);
+        } catch (RuntimeException e) {
+            log.warn("Tripjack flight search aborted - no active credential for this agency: {}", e.getMessage());
+            throw e;
+        }
+        if (credential != null) {
+            String key = credential.getApiKey() == null ? "" : credential.getApiKey();
+            log.info("Tripjack credential resolved: environment={}, baseUrl={}, apiKey=...{} (len {})",
+                    credential.getEnvironment(), credential.getBaseUrl(),
+                    key.length() > 4 ? key.substring(key.length() - 4) : "****", key.length());
+        }
 
         String originCode = AirportCodeResolver.resolve(query.getOrigin());
         String destinationCode = AirportCodeResolver.resolve(query.getDestination());
 
+        long startedAt = System.currentTimeMillis();
         JsonNode response = callSearch(credential, buildRequestBody(query, originCode, destinationCode));
-        return toOffers(response, originCode, destinationCode);
+        List<FlightOfferResponse> offers = toOffers(response, originCode, destinationCode);
+        log.info("Tripjack flight search ok: {} offers in {} ms", offers.size(), System.currentTimeMillis() - startedAt);
+        return offers;
     }
 
     private Map<String, Object> buildRequestBody(FlightSearchQuery query, String originCode, String destinationCode) {
@@ -121,11 +136,14 @@ public class TripjackFlightSearchProvider implements FlightSearchProvider {
         } catch (RestClientResponseException e) {
             // 401/403 here usually means this server's public IP is not whitelisted by Tripjack
             // (or the key is wrong) - log the body so that is diagnosable without a debugger.
-            log.error("Tripjack flight search HTTP {} from {}: {}", e.getStatusCode().value(),
-                    credential.getBaseUrl(), e.getResponseBodyAsString());
+            log.error("Tripjack flight search HTTP {} from {}: {}. Outbound IP of this server as seen "
+                            + "externally: {} (this is the IP Tripjack must have whitelisted)",
+                    e.getStatusCode().value(), credential.getBaseUrl(), e.getResponseBodyAsString(), outboundIp());
             throw new SupplierException("Tripjack flight search call failed (HTTP "
                     + e.getStatusCode().value() + ")", e);
         } catch (RestClientException e) {
+            log.error("Tripjack flight search could not reach {} ({}: {}). Outbound IP of this server: {}",
+                    credential.getBaseUrl(), e.getClass().getSimpleName(), e.getMessage(), outboundIp());
             throw new SupplierException("Tripjack flight search call failed", e);
         }
 
@@ -145,6 +163,21 @@ public class TripjackFlightSearchProvider implements FlightSearchProvider {
             throw new SupplierException("Tripjack flight search returned an error: " + message, null);
         }
         return response;
+    }
+
+    /** Best-effort lookup of this server's public egress IP, called only on a failure so the
+     *  value to whitelist is in the log. Never throws and never carries a credential. */
+    private String outboundIp() {
+        try {
+            var factory = new org.springframework.http.client.SimpleClientHttpRequestFactory();
+            factory.setConnectTimeout(3_000);
+            factory.setReadTimeout(3_000);
+            String ip = RestClient.builder().requestFactory(factory).build()
+                    .get().uri("https://api.ipify.org").retrieve().body(String.class);
+            return ip == null ? "unknown" : ip.trim();
+        } catch (RuntimeException e) {
+            return "unknown (lookup failed: " + e.getClass().getSimpleName() + ")";
+        }
     }
 
     private List<FlightOfferResponse> toOffers(JsonNode response, String originCode, String destinationCode) {
