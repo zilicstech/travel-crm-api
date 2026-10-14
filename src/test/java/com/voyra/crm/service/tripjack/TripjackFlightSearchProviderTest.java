@@ -93,6 +93,7 @@ class TripjackFlightSearchProviderTest {
         FlightOfferResponse saver = offers.get(0);
         assertThat(saver.getOfferId()).isEqualTo("off-saver-1");
         assertThat(saver.getAirline()).isEqualTo("IndiGo");
+        assertThat(saver.getAirlineCode()).isEqualTo("6E");
         assertThat(saver.getFlightNumber()).isEqualTo("6E-204");
         assertThat(saver.getOrigin()).isEqualTo("BLR");
         assertThat(saver.getDestination()).isEqualTo("HKT");

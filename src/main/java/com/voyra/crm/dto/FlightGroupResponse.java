@@ -21,6 +21,7 @@ public class FlightGroupResponse {
     private String key;
 
     private String airline;
+    private String airlineCode;
     private String flightNumber;
     private String origin;
     private String destination;

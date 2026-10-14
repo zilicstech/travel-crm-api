@@ -7,6 +7,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.util.List;
+import java.util.Map;
 
 @Data
 @Builder
@@ -26,6 +27,9 @@ public class FlightSearchPageResponse {
 
     @Schema(description = "Every airline in the unfiltered result, so the filter list does not shrink as you filter")
     private List<String> airlines;
+
+    @Schema(description = "Airline name to IATA code for every airline in the unfiltered result, so the filter list can show logos")
+    private Map<String, String> airlineCodes;
 
     @Schema(description = "Key of the cheapest flight in the filtered set (null when empty)")
     private String cheapestKey;

@@ -32,6 +32,16 @@ public class MockFlightSearchProvider implements FlightSearchProvider {
             new Template("Vistara", "UK", LocalTime.of(18, 0), 180, 0, new BigDecimal("5600"), true, "Flexi")
     );
 
+    private record FareTier(String name, BigDecimal multiplier, boolean refundable, String baggage) {
+    }
+
+    private static final List<FareTier> FARE_TIERS = List.of(
+            new FareTier("PUBLISHED", BigDecimal.ONE, false, "15kg check-in"),
+            new FareTier("FLEXI_PLUS", new BigDecimal("1.18"), true, "20kg check-in + 7kg cabin"),
+            new FareTier("CORPORATE", new BigDecimal("1.25"), true, "20kg check-in"),
+            new FareTier("SME", new BigDecimal("1.30"), true, "25kg check-in + 7kg cabin")
+    );
+
     private static final BigDecimal CABIN_MULTIPLIER_BUSINESS = new BigDecimal("3.2");
     private static final BigDecimal CABIN_MULTIPLIER_PREMIUM = new BigDecimal("1.6");
     private static final BigDecimal CABIN_MULTIPLIER_FIRST = new BigDecimal("5.0");
@@ -42,29 +52,33 @@ public class MockFlightSearchProvider implements FlightSearchProvider {
         int pax = Math.max(1, query.getAdults() + query.getChildren());
         BigDecimal cabinMultiplier = cabinMultiplier(query.getCabin());
 
-        return TEMPLATES.stream()
-                .map(t -> {
-                    LocalTime arrive = t.depart().plusMinutes(t.durationMinutes());
-                    BigDecimal price = t.baseFare().multiply(cabinMultiplier).multiply(BigDecimal.valueOf(pax));
-                    return FlightOfferResponse.builder()
-                            .offerId("mock-" + t.airline().toLowerCase().replace(" ", "") + "-" + t.depart())
-                            .airline(t.airline())
-                            .flightNumber(t.flightNumberPrefix() + "-" + (200 + t.depart().getHour()))
-                            .origin(query.getOrigin())
-                            .destination(query.getDestination())
-                            .departTime(t.depart())
-                            .arriveTime(arrive)
-                            .duration(formatDuration(t.durationMinutes()))
-                            .stops(t.stops())
-                            .supplier("Tripjack")
-                            .price(price.setScale(2, java.math.RoundingMode.HALF_UP))
-                            .currency("INR")
-                            .refundable(t.refundable())
-                            .baggage(t.refundable() ? "20kg check-in + 7kg cabin" : "15kg check-in")
-                            .fareType(t.fareType())
-                            .build();
-                })
-                .toList();
+        // Like the real supplier: one row per fare, several fares per flight.
+        List<FlightOfferResponse> offers = new java.util.ArrayList<>();
+        for (Template t : TEMPLATES) {
+            LocalTime arrive = t.depart().plusMinutes(t.durationMinutes());
+            BigDecimal base = t.baseFare().multiply(cabinMultiplier).multiply(BigDecimal.valueOf(pax));
+            for (FareTier tier : FARE_TIERS) {
+                offers.add(FlightOfferResponse.builder()
+                        .offerId("mock-" + t.airline().toLowerCase().replace(" ", "") + "-" + t.depart() + "-" + tier.name())
+                        .airline(t.airline())
+                        .airlineCode(t.flightNumberPrefix())
+                        .flightNumber(t.flightNumberPrefix() + "-" + (200 + t.depart().getHour()))
+                        .origin(query.getOrigin())
+                        .destination(query.getDestination())
+                        .departTime(t.depart())
+                        .arriveTime(arrive)
+                        .duration(formatDuration(t.durationMinutes()))
+                        .stops(t.stops())
+                        .supplier("Tripjack")
+                        .price(base.multiply(tier.multiplier()).setScale(2, java.math.RoundingMode.HALF_UP))
+                        .currency("INR")
+                        .refundable(tier.refundable())
+                        .baggage(tier.baggage())
+                        .fareType(tier.name())
+                        .build());
+            }
+        }
+        return offers;
     }
 
     private BigDecimal cabinMultiplier(FlightCabin cabin) {

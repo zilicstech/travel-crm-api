@@ -32,7 +32,7 @@ class FlightSearchServiceTest {
         for (int i = 0; i < 25; i++) {
             for (int fare = 0; fare < 2; fare++) {
                 offers.add(FlightOfferResponse.builder()
-                        .offerId("o" + i + "-" + fare).airline(i % 2 == 0 ? "IndiGo" : "Air India")
+                        .offerId("o" + i + "-" + fare).airline(i % 2 == 0 ? "IndiGo" : "Air India").airlineCode(i % 2 == 0 ? "6E" : "AI")
                         .flightNumber("F" + i).origin("BLR").destination("GOI")
                         .departTime(LocalTime.of(5, 0).plusMinutes(i * 10L)).arriveTime(LocalTime.of(7, 0).plusMinutes(i * 10L))
                         .duration(String.valueOf(200 - i)).stops(i % 5 == 0 ? 1 : 0)
@@ -140,6 +140,18 @@ class FlightSearchServiceTest {
         // The filter must not have trimmed the cached flights: an unfiltered follow-up still sees 25.
         assertThat(service.searchPage(request(1)).getTotalFlights()).isEqualTo(25);
         assertThat(supplierCalls.get()).isEqualTo(1);
+    }
+
+    @Test
+    void airlineCodesSurviveGroupingAndTheRefundableCopyAndFeedTheFacet() {
+        loginAsTenant("t1");
+        FlightSearchPageRequest req = request(1);
+        req.setRefundableOnly(true);
+        FlightSearchPageResponse res = service.searchPage(req);
+
+        assertThat(res.getFlights()).isNotEmpty()
+                .allSatisfy(g -> assertThat(g.getAirlineCode()).isIn("6E", "AI"));
+        assertThat(res.getAirlineCodes()).containsEntry("IndiGo", "6E").containsEntry("Air India", "AI");
     }
 
     @Test
