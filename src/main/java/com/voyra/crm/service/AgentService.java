@@ -6,6 +6,7 @@ import com.voyra.crm.dto.AgentCreateResponse;
 import com.voyra.crm.dto.AgentPerformanceResponse;
 import com.voyra.crm.dto.AgentUpdateRequest;
 import com.voyra.crm.dto.CredentialsResponse;
+import com.voyra.crm.dto.PasswordResetRequest;
 import com.voyra.crm.dto.PagedResponse;
 import com.voyra.crm.dto.TeammateResponse;
 import com.voyra.crm.entity.Agent;
@@ -226,6 +227,18 @@ public class AgentService {
                 .email(agent.getEmail())
                 .password(passwordEncoder.decode(agent.getPassword()))
                 .build();
+    }
+
+    @Transactional
+    public void resetPassword(String id, PasswordResetRequest request) {
+        Agent agent = findOwnedAgent(id);
+        if (!request.getNewPassword().equals(request.getConfirmPassword())) {
+            throw new IllegalArgumentException("New password and confirmation do not match");
+        }
+        agent.setPassword(passwordEncoder.encode(request.getNewPassword()));
+        agentRepository.save(agent);
+        log.info("Agent password reset: agentId={}, role={}, by={}", id, agent.getUserRole(),
+                SecurityContextUtil.getAuditInfo());
     }
 
     /**

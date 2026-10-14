@@ -6,6 +6,7 @@ import com.voyra.crm.dto.AgentCreateResponse;
 import com.voyra.crm.dto.AgentPerformanceResponse;
 import com.voyra.crm.dto.AgentUpdateRequest;
 import com.voyra.crm.dto.CredentialsResponse;
+import com.voyra.crm.dto.PasswordResetRequest;
 import com.voyra.crm.dto.TeammateResponse;
 import com.voyra.crm.enums.UserType;
 import com.voyra.crm.service.AgentService;
@@ -110,5 +111,14 @@ public class OwnerAgentController {
     @Operation(summary = "Retrieve an agent's login credentials", description = "Every retrieval is logged.")
     public ResponseEntity<CredentialsResponse> getCredentials(@PathVariable String id) {
         return ResponseEntity.ok(agentService.getCredentials(id));
+    }
+
+    @PostMapping("/{id}/reset-password")
+    @Operation(summary = "Reset an agent's or accountant's password",
+            description = "Owner supplies the new password twice; a mismatch is rejected with 400. Every reset is logged.")
+    public ResponseEntity<Void> resetPassword(@PathVariable String id,
+                                              @Valid @RequestBody PasswordResetRequest request) {
+        agentService.resetPassword(id, request);
+        return ResponseEntity.noContent().build();
     }
 }
