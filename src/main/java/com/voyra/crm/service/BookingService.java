@@ -120,6 +120,8 @@ public class BookingService {
     private final ServiceInstanceService serviceInstanceService;
     private final ServiceBookingStatusSync serviceBookingStatusSync;
     private final SupplierInvoiceService supplierInvoiceService;
+    private final com.voyra.crm.repository.SupplierInvoiceRepository supplierInvoiceRepository;
+    private final com.voyra.crm.repository.SupplierPaymentRepository supplierPaymentRepository;
     private final TenantRepository tenantRepository;
     private final JournalService journalService;
     private final com.voyra.crm.repository.JournalEntryRepository journalEntryRepository;
@@ -674,6 +676,11 @@ public class BookingService {
             throw new IllegalStateException("This booking has accounting records - cancel it instead");
         }
 
+        // A bill nobody has approved yet carries no postings - it goes with the booking.
+        for (com.voyra.crm.entity.SupplierInvoice bill : unpostedBills(id)) {
+            supplierInvoiceService.cancelForBooking(bill.getId(), "Booking deleted");
+        }
+
         List<BookingDocument> documents = bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc(id);
         bookingDocumentRepository.deleteByBookingId(id);
         documents.stream().map(BookingDocument::getFileKey).filter(java.util.Objects::nonNull)
@@ -696,7 +703,18 @@ public class BookingService {
                 || paymentReceiptRepository.existsByBookingId(bookingId)
                 || creditNoteRepository.existsByBookingIdAndStatusNot(bookingId, CreditNoteStatus.CANCELLED)
                 || customerLedgerEntryRepository.existsByBookingId(bookingId)
-                || feedbackRepository.existsByBookingId(bookingId);
+                || feedbackRepository.existsByBookingId(bookingId)
+                || supplierPaymentRepository.existsByBookingId(bookingId)
+                // An approved (or paid) supplier bill is posted to the ledger - deleting the booking would orphan it.
+                || supplierInvoiceRepository.findByBookingIdAndStatusNot(bookingId, com.voyra.crm.enums.SupplierInvoiceStatus.CANCELLED)
+                        .size() > unpostedBills(bookingId).size();
+    }
+
+    private List<com.voyra.crm.entity.SupplierInvoice> unpostedBills(String bookingId) {
+        return supplierInvoiceRepository.findByBookingIdAndStatusNot(bookingId, com.voyra.crm.enums.SupplierInvoiceStatus.CANCELLED)
+                .stream().filter(b -> b.getStatus() == com.voyra.crm.enums.SupplierInvoiceStatus.DRAFT
+                        || b.getStatus() == com.voyra.crm.enums.SupplierInvoiceStatus.PENDING_APPROVAL)
+                .toList();
     }
 
     /** Explicit, not a @PreUpdate - a JPA listener cannot reach the current principal (§5.3). */

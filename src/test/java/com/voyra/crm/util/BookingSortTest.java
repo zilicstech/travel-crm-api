@@ -21,6 +21,12 @@ class BookingSortTest {
     }
 
     @Test
+    void travelDateSortsBookingsWithNoDateLast() {
+        assertThat(BookingSort.parse("journeyDate,desc")).isEqualTo(Sort.by(Sort.Direction.ASC, "noJourneyDate")
+                .and(Sort.by(Sort.Direction.DESC, "journeyDate")).and(Sort.by(Sort.Direction.DESC, "bookingNumber")));
+    }
+
+    @Test
     void unknownColumnIsRejected() {
         assertThatThrownBy(() -> BookingSort.parse("netCost,desc"))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("netCost");

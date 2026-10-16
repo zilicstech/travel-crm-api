@@ -30,6 +30,10 @@ public final class BookingSort {
         Sort.Direction dir = parts.length > 1 && parts[1].trim().equalsIgnoreCase("asc") ? Sort.Direction.ASC : Sort.Direction.DESC;
         // Ties (same date, same client) fall back to the booking number so paging is stable.
         Sort sort = Sort.by(dir, column);
+        if (column.equals("journeyDate")) {
+            // Spring Data drops nullsLast() on criteria queries; a computed "has no date" flag does the job.
+            sort = Sort.by(Sort.Direction.ASC, "noJourneyDate").and(sort);
+        }
         return column.equals("bookingNumber") ? sort : sort.and(Sort.by(Sort.Direction.DESC, "bookingNumber"));
     }
 }

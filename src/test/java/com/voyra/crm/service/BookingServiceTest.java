@@ -107,6 +107,13 @@ class BookingServiceTest {
     @Mock
     private JournalEntryRepository journalEntryRepository;
 
+    @Mock
+    private SupplierInvoiceService supplierInvoiceService;
+    @Mock
+    private com.voyra.crm.repository.SupplierInvoiceRepository supplierInvoiceRepository;
+    @Mock
+    private com.voyra.crm.repository.SupplierPaymentRepository supplierPaymentRepository;
+
     @InjectMocks
     private BookingService bookingService;
 
@@ -297,5 +304,34 @@ class BookingServiceTest {
 
         org.mockito.Mockito.verifyNoInteractions(journalService);
         assertThat(booking.getDepartureDate()).isEqualTo(newDate);
+    }
+
+    @Test
+    void deletingABookingCancelsItsDraftSupplierBill() {
+        Booking booking = Booking.builder().id("B1").agentId("A1").bookingStatus(BookingStatus.CONFIRMED).build();
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
+        com.voyra.crm.entity.SupplierInvoice draft = com.voyra.crm.entity.SupplierInvoice.builder()
+                .id("S1").status(com.voyra.crm.enums.SupplierInvoiceStatus.DRAFT).build();
+        when(supplierInvoiceRepository.findByBookingIdAndStatusNot("B1", com.voyra.crm.enums.SupplierInvoiceStatus.CANCELLED))
+                .thenReturn(List.of(draft));
+
+        bookingService.deleteBooking("B1");
+
+        org.mockito.Mockito.verify(supplierInvoiceService).cancelForBooking(org.mockito.ArgumentMatchers.eq("S1"), org.mockito.ArgumentMatchers.anyString());
+        org.mockito.Mockito.verify(bookingRepository).delete(booking);
+    }
+
+    @Test
+    void aBookingWithAnApprovedSupplierBillCannotBeDeleted() {
+        Booking booking = Booking.builder().id("B1").agentId("A1").bookingStatus(BookingStatus.CONFIRMED).build();
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
+        com.voyra.crm.entity.SupplierInvoice approved = com.voyra.crm.entity.SupplierInvoice.builder()
+                .id("S1").status(com.voyra.crm.enums.SupplierInvoiceStatus.APPROVED).build();
+        when(supplierInvoiceRepository.findByBookingIdAndStatusNot("B1", com.voyra.crm.enums.SupplierInvoiceStatus.CANCELLED))
+                .thenReturn(List.of(approved));
+
+        assertThatThrownBy(() -> bookingService.deleteBooking("B1"))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("cancel it instead");
+        org.mockito.Mockito.verify(bookingRepository, org.mockito.Mockito.never()).delete(booking);
     }
 }

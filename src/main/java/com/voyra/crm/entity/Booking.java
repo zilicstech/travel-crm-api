@@ -15,6 +15,7 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
+import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
@@ -110,6 +111,11 @@ public class Booking {
      *  stays the display-name snapshot kept in sync by VendorService on rename. */
     @Column(name = "vendor_id", length = 36)
     private String vendorId;
+
+    /** Sort key only: true when there is no travel date, so those rows sort last either way (see BookingSort). */
+    @org.hibernate.annotations.Formula("(journey_date is null)")
+    @Setter(AccessLevel.NONE)
+    private Boolean noJourneyDate;
 
     @Column(name = "journey_date")
     private LocalDate journeyDate;
