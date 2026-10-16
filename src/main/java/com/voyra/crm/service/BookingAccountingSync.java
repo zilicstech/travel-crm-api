@@ -133,7 +133,7 @@ public class BookingAccountingSync {
     /** An advance still on the client's account (no invoice yet) is not money received for the booking until an invoice draws it down. */
     private BigDecimal sumReceiptsInr(String bookingId, ReceiptDirection direction) {
         return sumInr(paymentReceiptRepository.findByBookingIdAndDirection(bookingId, direction).stream()
-                .filter(r -> !(r.getInvoiceId() == null && Boolean.TRUE.equals(r.getIsAdvance())))
+                .filter(r -> direction != ReceiptDirection.RECEIPT || !(r.getInvoiceId() == null && Boolean.TRUE.equals(r.getIsAdvance())))
                 .toList(), PaymentReceipt::getAmountInr);
     }
 

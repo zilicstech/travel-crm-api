@@ -509,4 +509,16 @@ class PaymentReceiptServiceTest {
         assertThat(paymentReceiptService.availableWalletFor("K1", "BB")).isEqualByComparingTo("0.00");
         assertThat(paymentReceiptService.availableWalletFor("K1", "BA")).isEqualByComparingTo("1000.00");
     }
+
+    /** Regression run 7, N1: refunding a held advance on cancel releases it rather than growing the pool. */
+    @Test
+    void aRefundPaidOutOfAHeldAdvanceDrawsItDown() {
+        when(paymentReceiptRepository.findByClientIdAndInvoiceIdIsNullAndIsAdvanceTrueOrderByReceivedOnAsc("K1")).thenReturn(List.of(
+                PaymentReceipt.builder().id("D1").bookingId("BA").isAdvance(true).direction(ReceiptDirection.RECEIPT).amountInr(new BigDecimal("2000.00")).build(),
+                PaymentReceipt.builder().id("R1").bookingId("BA").isAdvance(true).direction(ReceiptDirection.REFUND).amountInr(new BigDecimal("1500.00")).build()));
+        when(paymentReceiptRepository.findByClientIdAndAppliedFromAdvanceTrueOrderByReceivedOnAsc("K1")).thenReturn(List.of());
+
+        assertThat(paymentReceiptService.heldForBooking("K1", "BA")).isEqualByComparingTo("500.00");
+        assertThat(paymentReceiptService.availableWalletFor("K1", "BA")).isEqualByComparingTo("500.00");
+    }
 }

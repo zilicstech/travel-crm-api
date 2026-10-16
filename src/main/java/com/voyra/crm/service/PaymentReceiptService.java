@@ -309,6 +309,7 @@ public class PaymentReceiptService {
         }
 
         PaymentReceipt applied = applyFromWallet(invoice, request.getAmount(), "Applied from deposit " + advance.getId());
+        bookingAccountingSync.syncPayment(invoice.getBookingId());
         auditService.recordCreate(AuditEntityType.PAYMENT_RECEIPT, invoice.getId(), "Wallet applied to " + invoice.getClientName());
         log.info("Wallet applied: advanceId={}, invoiceId={}, amount={}", advance.getId(), invoiceId, request.getAmount());
         return toResponse(applied);
@@ -382,7 +383,7 @@ public class PaymentReceiptService {
         java.util.Map<String, BigDecimal> held = new java.util.HashMap<>();
         paymentReceiptRepository.findByClientIdAndInvoiceIdIsNullAndIsAdvanceTrueOrderByReceivedOnAsc(clientId).stream()
                 .filter(r -> r.getBookingId() != null && r.getReversedAt() == null)
-                .forEach(r -> held.merge(r.getBookingId(), r.getAmountInr(), BigDecimal::add));
+                .forEach(r -> held.merge(r.getBookingId(), signedAdvance(r), BigDecimal::add));
         paymentReceiptRepository.findByClientIdAndAppliedFromAdvanceTrueOrderByReceivedOnAsc(clientId).stream()
                 .filter(r -> r.getBookingId() != null && r.getReversedAt() == null && held.containsKey(r.getBookingId()))
                 .forEach(r -> held.merge(r.getBookingId(), r.getAmountInr().negate(), BigDecimal::add));
@@ -390,11 +391,22 @@ public class PaymentReceiptService {
         return held;
     }
 
+    /** What is still held for one booking: its advances, less what its invoices drew and what was refunded out of them. */
+    @Transactional(readOnly = true)
+    public BigDecimal heldForBooking(String clientId, String bookingId) {
+        return clientId == null || bookingId == null ? BigDecimal.ZERO : heldPerBooking(clientId).getOrDefault(bookingId, BigDecimal.ZERO);
+    }
+
+    /** A deposit row adds to the pool; a refund paid out of a held advance (same no-invoice shape, REFUND direction) takes from it. */
+    private static BigDecimal signedAdvance(PaymentReceipt r) {
+        return r.getDirection() == ReceiptDirection.REFUND ? r.getAmountInr().negate() : r.getAmountInr();
+    }
+
     /** Total deposits for this client, minus whatever has already been drawn from them. */
     private BigDecimal remainingWallet(String clientId) {
         BigDecimal totalDeposits = paymentReceiptRepository
                 .findByClientIdAndInvoiceIdIsNullAndIsAdvanceTrueOrderByReceivedOnAsc(clientId)
-                .stream().filter(r -> r.getReversedAt() == null).map(PaymentReceipt::getAmountInr)
+                .stream().filter(r -> r.getReversedAt() == null).map(PaymentReceiptService::signedAdvance)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal totalApplied = paymentReceiptRepository
                 .findByClientIdAndAppliedFromAdvanceTrueOrderByReceivedOnAsc(clientId)

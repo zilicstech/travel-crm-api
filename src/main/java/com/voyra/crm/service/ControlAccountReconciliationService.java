@@ -1,5 +1,7 @@
 package com.voyra.crm.service;
 
+import com.voyra.crm.enums.ReceiptDirection;
+
 import com.voyra.crm.dto.ControlAccountReconciliationRowResponse;
 import com.voyra.crm.entity.CustomerLedgerEntry;
 import com.voyra.crm.entity.JournalLine;
@@ -110,7 +112,8 @@ public class ControlAccountReconciliationService {
     private BigDecimal clientAdvancesHeldSubsidiaryTotal() {
         BigDecimal deposited = paymentReceiptRepository.findAll().stream()
                 .filter((PaymentReceipt r) -> Boolean.TRUE.equals(r.getIsAdvance()) && r.getInvoiceId() == null && r.getReversedAt() == null)
-                .map(PaymentReceipt::getAmountInr)
+                // A refund paid out of a held advance (no invoice) draws the pool down, it is not a deposit.
+                .map((PaymentReceipt r) -> r.getDirection() == ReceiptDirection.REFUND ? r.getAmountInr().negate() : r.getAmountInr())
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal applied = paymentReceiptRepository.findAll().stream()
                 .filter((PaymentReceipt r) -> Boolean.TRUE.equals(r.getAppliedFromAdvance()) && r.getReversedAt() == null)

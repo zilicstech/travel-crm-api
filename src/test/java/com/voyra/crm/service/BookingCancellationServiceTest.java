@@ -97,6 +97,20 @@ class BookingCancellationServiceTest {
         return r;
     }
 
+    /** Regression run 7, N1: an advance held on account for the booking (no invoice yet) is refundable on cancel. */
+    @Test
+    void anAdvanceHeldForTheBookingIsRefundableWhenItIsCancelledBeforeInvoicing() {
+        Booking b = booking(BookingStatus.CONFIRMED);
+        b.setReceivedTotalInr(BigDecimal.ZERO);
+        when(paymentReceiptService.heldForBooking("C1", "B1")).thenReturn(d("2000"));
+
+        assertThat(service.preview("B1", d("500"), BigDecimal.ZERO).getCustomerRefundDue()).isEqualByComparingTo("1500");
+        service.cancel("B1", cancel("500", "0"));
+
+        assertThat(b.getCustomerRefundDue()).isEqualByComparingTo("1500");
+        assertThat(b.getRefundState()).isEqualTo(RefundState.REFUND_PENDING);
+    }
+
     @Test
     void withoutInvoiceOrBillTheRefundIsPaidLessWhatIsKept() {
         Booking b = booking(BookingStatus.CONFIRMED);

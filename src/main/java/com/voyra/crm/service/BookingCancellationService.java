@@ -77,7 +77,7 @@ public class BookingCancellationService {
         BigDecimal charge = nz(supplierCharge);
         BigDecimal kept = charge.add(nz(agencyFee));
         Invoice invoice = liveTaxInvoice(bookingId);
-        BigDecimal customerPaid = customerPaid(booking);
+        BigDecimal customerPaid = invoice != null ? customerPaid(booking) : paidIncludingHeldAdvance(booking);
         BigDecimal due = invoice != null
                 ? creditNoteService.previewRefundable(invoice, kept)
                 : CancellationMath.customerRefundDue(customerPaid, charge, nz(agencyFee));
@@ -99,7 +99,7 @@ public class BookingCancellationService {
         BigDecimal charge = nz(request.getSupplierCharge());
         BigDecimal fee = nz(request.getAgencyFee());
         bookingAccountingSync.syncPayment(bookingId);
-        BigDecimal customerPaid = customerPaid(booking);
+        BigDecimal customerPaid = liveTaxInvoice(bookingId) != null ? customerPaid(booking) : paidIncludingHeldAdvance(booking);
 
         String reason = request.getReason() == null || request.getReason().isBlank()
                 ? request.getType().label() : request.getReason().trim();
@@ -309,6 +309,15 @@ public class BookingCancellationService {
                 // refund then follows the money actually held, like an uninvoiced booking.
                 .filter(i -> i.getCreditNoteTotal() == null || i.getCreditNoteTotal().signum() == 0)
                 .findFirst().orElse(null);
+    }
+
+    /**
+     * With no invoice yet, money the client paid for this booking may still sit on their account
+     * as an advance held for it (see PaymentReceiptService#availableWalletFor). That is money they
+     * paid for this booking, so it is refundable on cancellation like any other.
+     */
+    private BigDecimal paidIncludingHeldAdvance(Booking booking) {
+        return customerPaid(booking).add(nz(paymentReceiptService.heldForBooking(booking.getClientId(), booking.getId())));
     }
 
     private static BigDecimal customerPaid(Booking booking) {
