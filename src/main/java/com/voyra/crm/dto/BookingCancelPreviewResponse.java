@@ -23,6 +23,9 @@ public class BookingCancelPreviewResponse {
     @Schema(description = "What the supplier would owe the agency back", example = "6000.00")
     private BigDecimal supplierRefundExpected;
 
+    @Schema(description = "What the agency would still owe the supplier: the part of their cancellation charge not already paid", example = "20000.00")
+    private BigDecimal supplierChargeOwed;
+
     @Schema(description = "True when a tax invoice exists - a credit note is issued automatically")
     private boolean invoiced;
 }

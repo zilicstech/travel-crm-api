@@ -165,8 +165,8 @@ public class BookingLifecycleService {
     @Transactional
     public BookingLifecycleResponse paySupplier(String bookingId, BookingSupplierPaymentRequest request) {
         Booking booking = lockAccessible(bookingId);
-        if (booking.getBookingStatus() == BookingStatus.CANCELLED) {
-            throw new IllegalStateException("This booking is cancelled - record the supplier's refund instead");
+        if (booking.getBookingStatus() == BookingStatus.CANCELLED && openBills(booking.getId()).isEmpty()) {
+            throw new IllegalStateException("This booking is cancelled and nothing is owed to the supplier");
         }
         SupplierInvoice bill = resolveBill(booking, request);
 
@@ -230,6 +230,9 @@ public class BookingLifecycleService {
         }
         if (open.size() > 1) {
             throw new IllegalArgumentException("This booking has several open supplier bills - choose which one to pay");
+        }
+        if (booking.getBookingStatus() == BookingStatus.CANCELLED) {
+            throw new IllegalArgumentException("Nothing is owed to this supplier on the cancelled booking");
         }
         if (vendorId == null) {
             throw new IllegalArgumentException("Pick the supplier to pay");
@@ -310,7 +313,10 @@ public class BookingLifecycleService {
         BigDecimal netCost = nz(b.getNetCost());
         BigDecimal billed = f.bills().stream().map(x -> nz(x.getGrandTotalInr())).reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal supplierPaid = supplierPaidInr(f.supplierPayments());
-        BigDecimal supplierToPay = billed.max(netCost).subtract(supplierPaid).max(BigDecimal.ZERO);
+        BigDecimal supplierToPay = cancelled
+                // After a cancel only real bills are owed (typically the supplier's cancellation charge), not the net cost.
+                ? f.bills().stream().map(x -> nz(x.getBalanceDueInr()).max(BigDecimal.ZERO)).reduce(BigDecimal.ZERO, BigDecimal::add)
+                : billed.max(netCost).subtract(supplierPaid).max(BigDecimal.ZERO);
 
         BigDecimal refundDue = nz(b.getCustomerRefundDue());
         BigDecimal refunded = nz(b.getRefundedTotalInr());
@@ -348,7 +354,7 @@ public class BookingLifecycleService {
         if (ops && live) actions.add(CANCEL);
         if (accounts && !cancelled && !invoiced && nz(b.getSellingPrice()).signum() > 0) actions.add(GENERATE_INVOICE);
         if (accounts && !cancelled && toCollect.signum() > 0) actions.add(RECORD_PAYMENT);
-        if (accounts && !cancelled && supplierToPay.signum() > 0) actions.add(PAY_SUPPLIER);
+        if (accounts && supplierToPay.signum() > 0) actions.add(PAY_SUPPLIER);
         if (accounts && cancelled && clientRefundOpen) actions.add(REFUND_CLIENT);
         if (accounts && cancelled && supplierRefundOpen) actions.add(SUPPLIER_REFUND);
         if (accounts && cancelled && !clientRefundOpen && !supplierRefundOpen && b.getRefundCheckedAt() == null) actions.add(CROSS_CHECK);
@@ -389,6 +395,11 @@ public class BookingLifecycleService {
     }
 
     private static Step supplierStep(Viewer viewer, boolean cancelled, BigDecimal netCost, BigDecimal paid, BigDecimal toPay) {
+        if (cancelled && toPay.signum() > 0) {
+            // The supplier kept a cancellation charge the agency has not paid yet.
+            return step("SUPPLIER", "OPEN", viewer == Viewer.AGENT ? "Cancellation charge still to pay"
+                    : money(toPay) + " cancellation charge still to pay" + (paid.signum() > 0 ? " (" + money(paid) + " paid)" : ""));
+        }
         String state = netCost.signum() == 0 && paid.signum() == 0 ? "NA"
                 : toPay.signum() == 0 ? "DONE" : paid.signum() > 0 ? "PARTIAL" : cancelled ? "NA" : "OPEN";
         if (viewer == Viewer.AGENT) {

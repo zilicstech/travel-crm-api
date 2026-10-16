@@ -211,6 +211,30 @@ class BookingCancellationServiceTest {
         assertThat(b.getSupplierRefundExpected()).isEqualByComparingTo("6000");
     }
 
+    /** A booking whose supplier was never paid: the supplier's charge is owed, so the draft bill becomes a payable for it. */
+    @Test
+    void unpaidDraftBillBecomesAPayableForTheSuppliersCharge() {
+        Booking b = booking(BookingStatus.CONFIRMED);
+        SupplierInvoice draft = SupplierInvoice.builder().id("S0").status(SupplierInvoiceStatus.DRAFT)
+                .grandTotal(d("24000")).amountPaid(BigDecimal.ZERO).creditNoteTotal(BigDecimal.ZERO)
+                .cgstAmount(BigDecimal.ZERO).sgstAmount(BigDecimal.ZERO).igstAmount(BigDecimal.ZERO).build();
+        when(supplierInvoiceRepository.findByBookingIdAndStatusNot("B1", SupplierInvoiceStatus.CANCELLED)).thenReturn(List.of(draft));
+        when(supplierInvoiceService.approve(eq("S0"), anyString())).thenAnswer(inv -> {
+            draft.setStatus(SupplierInvoiceStatus.APPROVED);
+            return com.voyra.crm.dto.SupplierInvoiceResponse.builder().id("S0").status(SupplierInvoiceStatus.APPROVED).build();
+        });
+        when(supplierInvoiceRepository.findById("S0")).thenReturn(Optional.of(draft));
+
+        assertThat(service.preview("B1", d("20000"), d("4000")).getSupplierChargeOwed()).isEqualByComparingTo("20000");
+        service.cancel("B1", cancel("20000", "4000"));
+
+        verify(supplierInvoiceService, never()).cancelForBooking(eq("S0"), anyString());
+        ArgumentCaptor<SupplierCreditNoteRequest> note = ArgumentCaptor.forClass(SupplierCreditNoteRequest.class);
+        verify(supplierCreditNoteService).record(note.capture());
+        assertThat(note.getValue().getTaxableValue()).as("the bill shrinks to the 20000 charge").isEqualByComparingTo("4000");
+        assertThat(b.getSupplierRefundExpected()).isEqualByComparingTo("0");
+    }
+
     @Test
     void unpaidApprovedBillJustShrinksSoNothingComesBack() {
         Booking b = booking(BookingStatus.CONFIRMED);

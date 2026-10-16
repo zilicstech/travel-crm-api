@@ -88,6 +88,7 @@ public class BookingCancellationService {
                 .paidToSupplier(paidToSupplier)
                 .customerRefundDue(due)
                 .supplierRefundExpected(supplierExpected(booking, bills, charge, false))
+                .supplierChargeOwed(supplierChargeOwed(bills, charge))
                 .invoiced(invoice != null)
                 .build();
     }
@@ -246,12 +247,28 @@ public class BookingCancellationService {
         }
         BigDecimal remainingCharge = charge;
         BigDecimal expected = BigDecimal.ZERO;
-        for (SupplierInvoice bill : bills) {
+        // The charge comes out of money already with the supplier first; only what is left of it becomes a payable on an unpaid draft.
+        List<SupplierInvoice> ordered = bills.stream()
+                .sorted(java.util.Comparator.comparing((SupplierInvoice b) -> UNPOSTED.contains(b.getStatus())))
+                .toList();
+        for (SupplierInvoice bill : ordered) {
             if (UNPOSTED.contains(bill.getStatus())) {
-                if (write) {
-                    supplierInvoiceService.cancelForBooking(bill.getId(), "Booking cancelled");
+                // An unpaid draft bill with a charge still to place becomes a real payable for that charge:
+                // the supplier kept it, so the agency owes it even though nothing was paid yet. With no charge
+                // left, the draft is simply withdrawn as before.
+                if (remainingCharge.signum() == 0) {
+                    if (write) {
+                        supplierInvoiceService.cancelForBooking(bill.getId(), "Booking cancelled");
+                    }
+                    continue;
                 }
-                continue;
+                if (write) {
+                    var approved = supplierInvoiceService.approve(bill.getId(), "Supplier cancellation charge on a cancelled booking");
+                    if (approved.getStatus() != SupplierInvoiceStatus.APPROVED) {
+                        continue;
+                    }
+                    bill = supplierInvoiceRepository.findById(bill.getId()).orElse(bill);
+                }
             }
             BigDecimal open = bill.getGrandTotal().subtract(bill.getCreditNoteTotal());
             BigDecimal kept = remainingCharge.min(open);
@@ -331,6 +348,13 @@ public class BookingCancellationService {
      */
     private BigDecimal paidIncludingHeldAdvance(Booking booking) {
         return customerPaid(booking).add(nz(paymentReceiptService.heldForBooking(booking.getClientId(), booking.getId())));
+    }
+
+    /** What the agency would still owe its suppliers after the cancellation: the part of the charge not already paid. */
+    private static BigDecimal supplierChargeOwed(List<SupplierInvoice> bills, BigDecimal charge) {
+        BigDecimal billed = bills.stream().map(SupplierInvoice::getGrandTotal).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal paid = bills.stream().map(SupplierInvoice::getAmountPaid).reduce(BigDecimal.ZERO, BigDecimal::add);
+        return charge.min(billed).subtract(paid).max(BigDecimal.ZERO);
     }
 
     private static BigDecimal customerPaid(Booking booking) {
