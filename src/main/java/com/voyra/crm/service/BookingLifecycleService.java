@@ -375,6 +375,9 @@ public class BookingLifecycleService {
 
     private static Step paymentStep(boolean cancelled, boolean invoiced, BigDecimal received, BigDecimal toCollect, BigDecimal wallet) {
         if (cancelled) {
+            if (received.signum() == 0 && nz(wallet).signum() > 0) {
+                return step("PAYMENT", "DONE", money(wallet) + " held as an advance before cancelling");
+            }
             return step("PAYMENT", received.signum() > 0 ? "DONE" : "NA", money(received) + " received before cancelling");
         }
         if (toCollect.signum() == 0 && received.signum() > 0) {

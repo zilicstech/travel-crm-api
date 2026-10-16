@@ -95,6 +95,7 @@ public class BookingCancellationService {
     @Transactional
     public BookingResponse cancel(String bookingId, BookingCancelRequest request) {
         assertNotNegative(request.getSupplierCharge(), request.getAgencyFee());
+        lock(bookingId);
         Booking booking = cancellable(bookingId);
         BigDecimal charge = nz(request.getSupplierCharge());
         BigDecimal fee = nz(request.getAgencyFee());
@@ -136,6 +137,7 @@ public class BookingCancellationService {
 
     @Transactional
     public BookingResponse payCustomer(String bookingId, RefundSettlementRequest request) {
+        lock(bookingId);
         Booking booking = cancelled(bookingId);
         boolean toAccount = toAccount(request);
         BigDecimal outstanding = booking.getCustomerRefundDue().subtract(booking.getRefundedTotalInr());
@@ -167,6 +169,7 @@ public class BookingCancellationService {
 
     @Transactional
     public BookingResponse receiveFromSupplier(String bookingId, RefundSettlementRequest request) {
+        lock(bookingId);
         Booking booking = cancelled(bookingId);
         boolean toAccount = toAccount(request);
         BigDecimal outstanding = booking.getSupplierRefundExpected().subtract(booking.getSupplierRefundReceived());
@@ -213,6 +216,7 @@ public class BookingCancellationService {
     /** The accountant's cross-check ("cross checked by") once nothing is left to move on either side. */
     @Transactional
     public BookingResponse markChecked(String bookingId) {
+        lock(bookingId);
         Booking booking = cancelled(bookingId);
         if (!settled(booking)) {
             throw new IllegalStateException("Settle both the customer and the supplier refund before cross-checking");
@@ -283,6 +287,15 @@ public class BookingCancellationService {
         r.setRetentionFee(BigDecimal.ZERO);
         r.setNoteDate(LocalDate.now());
         return r;
+    }
+
+    /**
+     * Row lock on the booking before reading what is owed: a second concurrent refund (or a
+     * double cancel) waits here, then reads the first one's result and is refused as over the
+     * amount still outstanding instead of posting money twice.
+     */
+    private void lock(String bookingId) {
+        bookingRepository.findByIdForUpdate(bookingId);
     }
 
     private Booking cancellable(String bookingId) {

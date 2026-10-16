@@ -97,6 +97,24 @@ class BookingCancellationServiceTest {
         return r;
     }
 
+    /** Regression run 8, R8-1: refunds and the cancel itself lock the booking before reading what is owed. */
+    @Test
+    void refundsAndCancelTakeTheBookingLockFirst() {
+        Booking b = booking(BookingStatus.CANCELLED);
+        b.setCustomerRefundDue(d("4000"));
+        b.setSupplierRefundExpected(d("3000"));
+
+        service.payCustomer("B1", pay("4000"));
+        // The fixture has no supplier credit note and refunds are still open, so these two are refused - after the lock.
+        assertThatThrownBy(() -> service.receiveFromSupplier("B1", pay("3000"))).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> service.markChecked("B1")).isInstanceOf(IllegalStateException.class);
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(bookingRepository, bookingService);
+        order.verify(bookingRepository).findByIdForUpdate("B1");
+        order.verify(bookingService).findAccessibleBooking("B1");
+        verify(bookingRepository, org.mockito.Mockito.times(3)).findByIdForUpdate("B1");
+    }
+
     /** Regression run 7, N1: an advance held on account for the booking (no invoice yet) is refundable on cancel. */
     @Test
     void anAdvanceHeldForTheBookingIsRefundableWhenItIsCancelledBeforeInvoicing() {
