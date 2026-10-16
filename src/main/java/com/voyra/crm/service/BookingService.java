@@ -745,7 +745,8 @@ public class BookingService {
     }
 
     private String labelFor(Booking b) {
-        return b.getClientName() + " / " + b.getDestination();
+        String ref = bookingRef(b.getBookingNumber());
+        return (ref != null ? ref + " · " : "") + b.getClientName() + " / " + b.getDestination();
     }
 
     private String labelOrType(Booking b) {
