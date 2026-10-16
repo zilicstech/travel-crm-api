@@ -20,6 +20,7 @@ import com.voyra.crm.enums.InvoiceDocumentType;
 import com.voyra.crm.enums.InvoiceLifecycle;
 import com.voyra.crm.enums.ReceiptDirection;
 import com.voyra.crm.enums.SupplierInvoiceStatus;
+import com.voyra.crm.enums.SupplierPaymentDirection;
 import com.voyra.crm.repository.BookingDocumentRepository;
 import com.voyra.crm.repository.BookingRepository;
 import com.voyra.crm.repository.InvoiceRepository;
@@ -128,7 +129,8 @@ public class BookingLifecycleService {
         receipt.setReceivedOn(request.getReceivedOn());
         receipt.setInstrumentRef(blankToNull(request.getReference()));
         if (issued.isEmpty()) {
-            BigDecimal open = nz(booking.getSellingPrice()).subtract(nz(booking.getReceivedTotalInr()));
+            BigDecimal open = nz(booking.getSellingPrice()).subtract(nz(booking.getReceivedTotalInr()))
+                    .subtract(paymentReceiptService.walletBalance(booking.getClientId()));
             if (request.getAmount().compareTo(open) > 0) {
                 throw new IllegalArgumentException("More than the " + open + " still to collect on this booking");
             }
@@ -269,8 +271,10 @@ public class BookingLifecycleService {
         boolean invoiced = liveInvoices.stream().anyMatch(i -> i.getStatus() != InvoiceLifecycle.DRAFT);
         BigDecimal invoicedTotal = nz(b.getInvoicedTotalInr());
         BigDecimal received = nz(b.getReceivedTotalInr());
+        // Before the invoice, money already held on the client's account will be applied to it, so it is not asked for again.
         BigDecimal toCollect = cancelled ? BigDecimal.ZERO
-                : (invoiced ? invoicedTotal : nz(b.getSellingPrice())).subtract(received).max(BigDecimal.ZERO);
+                : (invoiced ? invoicedTotal.subtract(received) : nz(b.getSellingPrice()).subtract(received).subtract(nz(f.clientWalletInr())))
+                        .max(BigDecimal.ZERO);
 
         BigDecimal netCost = nz(b.getNetCost());
         BigDecimal billed = f.bills().stream().map(x -> nz(x.getGrandTotalInr())).reduce(BigDecimal.ZERO, BigDecimal::add);
@@ -286,8 +290,9 @@ public class BookingLifecycleService {
         boolean supplierRefundOpen = refundReceived.compareTo(refundExpected) < 0;
 
         List<Step> steps = new ArrayList<>();
+        String with = b.getSupplier() != null && !b.getSupplier().isBlank() ? " with " + b.getSupplier() : "";
         steps.add(step("CREATED", "DONE", status == BookingStatus.PENDING ? "Draft - waiting for supplier confirmation"
-                : cancelled ? "Booking created" : "Confirmed" + (b.getSupplier() != null ? " with " + b.getSupplier() : "")));
+                : cancelled ? "Booked" + with : (status == BookingStatus.COMPLETED ? "Completed" : "Confirmed") + with));
         steps.add(step("VOUCHER", f.documentCount() > 0 ? "DONE" : cancelled ? "NA" : "OPEN",
                 f.documentCount() > 0 ? f.documentCount() + " document" + (f.documentCount() == 1 ? "" : "s") + " uploaded" : "No voucher uploaded yet"));
         steps.add(step("INVOICE", invoiced ? "DONE" : cancelled ? "NA" : "OPEN",
@@ -373,7 +378,8 @@ public class BookingLifecycleService {
                         .balanceInr(s.getBalanceDueInr()).party(s.getVendorName()).build());
             }
             for (SupplierPayment p : f.supplierPayments()) {
-                rows.add(MoneyRecord.builder().id(p.getId()).kind("SUPPLIER_PAYMENT").number(p.getVoucherNumber())
+                String kind = p.getDirection() == SupplierPaymentDirection.REFUND_RECEIVED ? "SUPPLIER_REFUND" : "SUPPLIER_PAYMENT";
+                rows.add(MoneyRecord.builder().id(p.getId()).kind(kind).number(p.getVoucherNumber())
                         .date(p.getPaidOn()).amountInr(p.getAmountInr()).party(p.getVendorName())
                         .mode(p.getPaymentMode() != null ? p.getPaymentMode().name() : null)
                         .reversed(p.getReversedAt() != null || p.getReversesPaymentId() != null).parentId(p.getSupplierInvoiceId()).build());

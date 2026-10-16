@@ -59,7 +59,7 @@ public class BookingLifecycleResponse {
     public static class MoneyRecord {
         @Schema(description = "Id of the invoice, receipt, bill or payment")
         private String id;
-        @Schema(description = "INVOICE, RECEIPT, REFUND, SUPPLIER_BILL or SUPPLIER_PAYMENT", example = "RECEIPT")
+        @Schema(description = "INVOICE, RECEIPT, REFUND, SUPPLIER_BILL, SUPPLIER_PAYMENT or SUPPLIER_REFUND", example = "RECEIPT")
         private String kind;
         @Schema(example = "RCPT/2026-27/0012")
         private String number;

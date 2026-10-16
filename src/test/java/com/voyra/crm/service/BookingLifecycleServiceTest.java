@@ -149,6 +149,7 @@ class BookingLifecycleServiceTest {
         BookingLifecycleResponse.Step payment = r.getSteps().stream().filter(s -> s.getKey().equals("PAYMENT")).findFirst().orElseThrow();
         assertThat(payment.getSummary()).contains("held on account");
         assertThat(r.getClientWalletInr()).isEqualByComparingTo("3000");
+        assertThat(r.getToCollectInr()).isEqualByComparingTo("7000");
     }
 
     @Test
@@ -271,6 +272,15 @@ class BookingLifecycleServiceTest {
     }
 
     @Test
+    void anAdvanceAlreadyHeldCountsAgainstWhatCanStillBeCollected() {
+        stubBooking(booking(BookingStatus.CONFIRMED));
+        when(paymentReceiptService.walletBalance("C1")).thenReturn(d("4000"));
+
+        assertThatThrownBy(() -> service.recordPayment("B1", payment("6000.01"))).isInstanceOf(IllegalArgumentException.class);
+        verify(paymentReceiptService, never()).record(any());
+    }
+
+    @Test
     void paymentAfterTheInvoiceSettlesIt() {
         stubBooking(booking(BookingStatus.CONFIRMED));
         when(invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc(eq("B1"), any(), any()))
@@ -353,6 +363,16 @@ class BookingLifecycleServiceTest {
 
         assertThatThrownBy(() -> service.paySupplier("B1", supplierPay(null)))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("supplier");
+    }
+
+    @Test
+    void aRefundFromTheSupplierIsNotListedAsAPaymentToThem() {
+        SupplierPayment refund = SupplierPayment.builder().id("P2").direction(com.voyra.crm.enums.SupplierPaymentDirection.REFUND_RECEIVED)
+                .amountInr(d("3500")).paidOn(LocalDate.now()).build();
+        Facts f = new Facts(booking(BookingStatus.CANCELLED), 0, List.of(), List.of(), List.of(), List.of(refund), BigDecimal.ZERO);
+
+        assertThat(BookingLifecycleService.build(f, Viewer.ACCOUNTANT).getRecords())
+                .extracting(BookingLifecycleResponse.MoneyRecord::getKind).containsExactly("SUPPLIER_REFUND");
     }
 
     @Test
