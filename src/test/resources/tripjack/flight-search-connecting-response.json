@@ -1,0 +1,38 @@
+{
+  "status": { "success": true },
+  "searchResult": {
+    "tripInfos": {
+      "ONWARD": [
+        {
+          "sI": [
+            {
+              "fD": { "aI": { "name": "Air India", "code": "AI", "isLcc": false }, "fN": "AI-501", "eT": "A321" },
+              "stops": 0,
+              "duration": 120,
+              "da": { "code": "BLR", "city": "Bangalore" },
+              "aa": { "code": "DEL", "city": "Delhi" },
+              "dt": "2026-10-09T06:00:00",
+              "at": "2026-10-09T08:00:00"
+            },
+            {
+              "fD": { "aI": { "name": "Air India", "code": "AI", "isLcc": false }, "fN": "AI-332", "eT": "B788" },
+              "stops": 1,
+              "duration": 300,
+              "da": { "code": "DEL", "city": "Delhi" },
+              "aa": { "code": "HKT", "city": "Phuket" },
+              "dt": "2026-10-09T10:30:00",
+              "at": "2026-10-09T17:00:00"
+            }
+          ],
+          "totalPriceList": [
+            {
+              "id": "off-conn-1",
+              "fareIdentifier": "Published",
+              "fd": { "ADULT": { "fC": { "TF": "15400.00" }, "bI": { "iB": "25KG" }, "rT": "REFUNDABLE" } }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

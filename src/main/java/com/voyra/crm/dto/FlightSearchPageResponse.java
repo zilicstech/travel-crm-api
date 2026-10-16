@@ -16,13 +16,17 @@ import java.util.Map;
 @Schema(description = "One page of grouped flights plus the facets the filter panel needs")
 public class FlightSearchPageResponse {
 
+    @Schema(description = "This page of flights")
     private List<FlightGroupResponse> flights;
+    @Schema(description = "1-based page number")
     private int page;
+    @Schema(description = "Flights per page")
     private int pageSize;
 
     @Schema(description = "Flights matching the filters, across all pages")
     private int totalFlights;
 
+    @Schema(description = "Pages available for the current filters")
     private int totalPages;
 
     @Schema(description = "Every airline in the unfiltered result, so the filter list does not shrink as you filter")

@@ -1,5 +1,7 @@
 package com.voyra.crm.service.tripjack;
 
+import com.voyra.crm.service.FlightResultPaging;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.voyra.crm.dto.FlightOfferResponse;
@@ -194,7 +196,19 @@ public class TripjackFlightSearchProvider implements FlightSearchProvider {
             String airlineCode = firstSegment.path("fD").path("aI").path("code").asText("");
             String flightNumber = firstSegment.path("fD").path("fN").asText("");
             int stops = segments.size() - 1;
-            String duration = firstSegment.path("duration").asText("");
+            int journeyMinutes = 0;
+            for (int i = 0; i < segments.size(); i++) {
+                JsonNode seg = segments.get(i);
+                stops += seg.path("stops").asInt(0); // technical stops within one leg
+                int legMinutes = FlightResultPaging.durationMinutes(seg.path("duration").asText(""));
+                journeyMinutes = legMinutes == Integer.MAX_VALUE || journeyMinutes < 0 ? -1 : journeyMinutes + legMinutes;
+                if (i > 0 && journeyMinutes >= 0) {
+                    // Layover: both times are local to the same connecting airport, so the gap is time-zone safe.
+                    Long layover = minutesBetween(segments.get(i - 1).path("at").asText(""), seg.path("dt").asText(""));
+                    journeyMinutes = layover == null ? -1 : journeyMinutes + layover.intValue();
+                }
+            }
+            String duration = journeyMinutes >= 0 ? String.valueOf(journeyMinutes) : firstSegment.path("duration").asText("");
             LocalTime departTime = parseFlightTime(firstSegment.path("dt").asText(""));
             LocalTime arriveTime = parseFlightTime(lastSegment.path("at").asText(""));
             String origin = firstSegment.path("da").path("code").asText(originCode);
@@ -223,6 +237,14 @@ public class TripjackFlightSearchProvider implements FlightSearchProvider {
             }
         }
         return offers;
+    }
+
+    private static Long minutesBetween(String from, String to) {
+        try {
+            return java.time.Duration.between(java.time.LocalDateTime.parse(from), java.time.LocalDateTime.parse(to)).toMinutes();
+        } catch (java.time.format.DateTimeParseException e) {
+            return null;
+        }
     }
 
     private static final Pattern TIME_PATTERN = Pattern.compile("(\\d{2}):(\\d{2})");

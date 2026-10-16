@@ -111,6 +111,24 @@ class TripjackFlightSearchProviderTest {
     }
 
     @Test
+    void search_connectingFlightCountsEveryStopAndTheWholeJourneyTime() throws Exception {
+        when(supplierCredentialService.resolveActive(SupplierProvider.TRIPJACK)).thenReturn(credential());
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo("https://apitest.tripjack.com/fms/v1/air-search-all"))
+                .andRespond(withSuccess(fixture("tripjack/flight-search-connecting-response.json"), MediaType.APPLICATION_JSON));
+
+        FlightOfferResponse offer = new TripjackFlightSearchProvider(supplierCredentialService, builder).search(query()).get(0);
+
+        // One change of plane at DEL plus one technical stop on the second leg.
+        assertThat(offer.getStops()).isEqualTo(2);
+        // 120 min flying + 150 min layover at DEL + 300 min flying - not just the first leg's 120.
+        assertThat(offer.getDuration()).isEqualTo("570");
+        assertThat(offer.getOrigin()).isEqualTo("BLR");
+        assertThat(offer.getDestination()).isEqualTo("HKT");
+    }
+
+    @Test
     void search_unknownCityThrowsBeforeAnyHttpCall() {
         FlightSearchQuery query = query();
         query.setOrigin("Atlantis");
