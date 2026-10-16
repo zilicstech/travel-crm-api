@@ -85,6 +85,9 @@ class BookingProfitTest {
     @Mock
     private TenantRepository tenantRepository;
 
+    @Mock
+    private com.voyra.crm.repository.SupplierInvoiceRepository supplierInvoiceRepository;
+
     @InjectMocks
     private BookingService bookingService;
 

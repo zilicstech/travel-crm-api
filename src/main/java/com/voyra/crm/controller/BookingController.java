@@ -106,12 +106,14 @@ public class BookingController {
             @Parameter(description = "bookingNumber | clientName | sellingPrice | bookingDate | journeyDate, then ,asc or ,desc. "
                     + "Paged list only; default bookingNumber,desc")
             @RequestParam(value = "sort", required = false) String sort,
+            @Parameter(description = "true: only bookings with client money or a refund still open - paged list only")
+            @RequestParam(value = "moneyPending", required = false, defaultValue = "false") boolean moneyPending,
             @RequestParam(value = "page", required = false) Integer page,
             @RequestParam(value = "size", required = false) Integer size) {
         Pageable pageable = PageRequestUtil.resolve(page, size);
         return ResponseEntity.ok(pageable == null
                 ? bookingService.listBookings(type, status, destination, agentId, vendorId)
-                : bookingService.listBookings(type, status, destination, agentId, vendorId, q, sort, pageable));
+                : bookingService.listBookings(type, status, destination, agentId, vendorId, q, sort, moneyPending, pageable));
     }
 
     @GetMapping("/{id}")

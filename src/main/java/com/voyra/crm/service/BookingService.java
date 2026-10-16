@@ -311,11 +311,22 @@ public class BookingService {
     @Transactional(readOnly = true)
     public PagedResponse<BookingResponse> listBookings(BookingType typeFilter, BookingStatus statusFilter,
             String destinationFilter, String agentIdFilter, String vendorIdFilter, String query, String sort, Pageable pageable) {
+        return listBookings(typeFilter, statusFilter, destinationFilter, agentIdFilter, vendorIdFilter, query, sort, false, pageable);
+    }
+
+    /** As above; {@code moneyPending} narrows to bookings with client money or a refund still open - the accountant's worklist. */
+    @Transactional(readOnly = true)
+    public PagedResponse<BookingResponse> listBookings(BookingType typeFilter, BookingStatus statusFilter,
+            String destinationFilter, String agentIdFilter, String vendorIdFilter, String query, String sort,
+            boolean moneyPending, Pageable pageable) {
         pageable = org.springframework.data.domain.PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(),
                 com.voyra.crm.util.BookingSort.parse(sort));
         Specification<Booking> spec = scopeSpecification(typeFilter, statusFilter, destinationFilter, agentIdFilter, vendorIdFilter);
         if (query != null && !query.isBlank()) {
             spec = spec.and(BookingSpecifications.searchMatches(query));
+        }
+        if (moneyPending) {
+            spec = spec.and(BookingSpecifications.moneyPending());
         }
         Page<Booking> page = bookingRepository.findAll(spec, pageable);
         return PagedResponse.from(page, this::toResponse);
@@ -835,10 +846,18 @@ public class BookingService {
                 .cancellationType(b.getCancellationType())
                 .refundCheckedAt(b.getRefundCheckedAt()).refundCheckedBy(b.getRefundCheckedBy())
                 .documents(documents)
+                .nextStep(com.voyra.crm.util.BookingNextStep.of(b, documents.size(), supplierPaidInr(b.getId())))
                 .internationalTrip(b.getInternationalTrip())
                 .marginPercent(marginPercent).lowMargin(lowMargin)
                 .passengers(toPassengerResponses(b.getId()))
                 .build();
+    }
+
+    /** Paid so far across the booking's live supplier bills. shortcut: one query per booking row, batch it if list pages grow past ~100. */
+    private BigDecimal supplierPaidInr(String bookingId) {
+        return supplierInvoiceRepository.findByBookingIdAndStatusNot(bookingId, com.voyra.crm.enums.SupplierInvoiceStatus.CANCELLED).stream()
+                .map(i -> i.getGrandTotalInr().subtract(i.getBalanceDueInr()))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
     /** The agency's own setting when present, else {@link #DEFAULT_LOW_MARGIN_THRESHOLD_PERCENT}. */

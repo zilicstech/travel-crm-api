@@ -351,6 +351,12 @@ public class PaymentReceiptService {
         return applied;
     }
 
+    /** What the client holds on account right now - what the next invoice will draw down. */
+    @Transactional(readOnly = true)
+    public BigDecimal walletBalance(String clientId) {
+        return clientId == null ? BigDecimal.ZERO : remainingWallet(clientId).max(BigDecimal.ZERO);
+    }
+
     /** Total deposits for this client, minus whatever has already been drawn from them. */
     private BigDecimal remainingWallet(String clientId) {
         BigDecimal totalDeposits = paymentReceiptRepository

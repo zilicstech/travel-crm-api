@@ -263,6 +263,9 @@ public class BookingResponse {
     @Schema(description = "Cancellation: who cross-checked the settled refund", example = "Sandli")
     private String refundCheckedBy;
 
+    @Schema(description = "What this booking needs next in its lifecycle; null when nothing is left to do", example = "Generate invoice")
+    private String nextStep;
+
     @Schema(description = "MANUAL until a tax invoice is issued against this booking, then DERIVED forever", example = "MANUAL")
     private PaymentStatusSource paymentStatusSource;
 

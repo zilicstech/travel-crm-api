@@ -40,6 +40,26 @@ public final class BookingSpecifications {
         };
     }
 
+    /**
+     * Client money still open: a live booking not yet invoiced or not fully collected, or a
+     * cancelled one with a refund still to move or to cross-check. Mirrors the money half of
+     * {@link com.voyra.crm.util.BookingNextStep}.
+     */
+    public static Specification<Booking> moneyPending() {
+        return (root, query, cb) -> {
+            var cancelled = cb.equal(root.get("bookingStatus"), BookingStatus.CANCELLED);
+            var live = cb.and(cb.not(cancelled), cb.gt(root.get("sellingPrice"), 0), cb.or(
+                    cb.equal(root.get("invoicedTotalInr"), 0),
+                    cb.lessThan(root.get("receivedTotalInr"), root.get("invoicedTotalInr"))));
+            var refundOpen = cb.and(cancelled, cb.or(
+                    cb.lessThan(root.get("refundedTotalInr"), root.get("customerRefundDue")),
+                    cb.lessThan(root.get("supplierRefundReceived"), root.get("supplierRefundExpected")),
+                    cb.and(cb.isNull(root.get("refundCheckedAt")), cb.or(
+                            cb.gt(root.get("customerRefundDue"), 0), cb.gt(root.get("supplierRefundExpected"), 0)))));
+            return cb.or(live, refundOpen);
+        };
+    }
+
     public static Specification<Booking> typeIs(BookingType type) {
         return (root, query, cb) -> cb.equal(root.get("type"), type);
     }
