@@ -114,6 +114,9 @@ class BookingServiceTest {
     @Mock
     private com.voyra.crm.repository.SupplierPaymentRepository supplierPaymentRepository;
 
+    @Mock
+    private org.springframework.transaction.support.TransactionTemplate transactionTemplate;
+
     @InjectMocks
     private BookingService bookingService;
 
@@ -122,6 +125,13 @@ class BookingServiceTest {
         CustomUserPrincipal principal = new CustomUserPrincipal("O1", "owner", UserType.AGENCY_OWNER, "T1");
         SecurityContextHolder.getContext().setAuthentication(
                 new UsernamePasswordAuthenticationToken(principal, null, java.util.List.of()));
+    }
+
+    /** Runs the delete's transactional block inline, as the real template would. */
+    @BeforeEach
+    void runTransactionsInline() {
+        org.mockito.Mockito.lenient().when(transactionTemplate.execute(org.mockito.ArgumentMatchers.any()))
+                .thenAnswer(inv -> inv.<org.springframework.transaction.support.TransactionCallback<?>>getArgument(0).doInTransaction(null));
     }
 
     @AfterEach
@@ -333,5 +343,18 @@ class BookingServiceTest {
         assertThatThrownBy(() -> bookingService.deleteBooking("B1"))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("cancel it instead");
         org.mockito.Mockito.verify(bookingRepository, org.mockito.Mockito.never()).delete(booking);
+    }
+
+    @Test
+    void voucherFilesAreDeletedOnlyAfterTheRowsAreGone() {
+        Booking booking = Booking.builder().id("B1").agentId("A1").bookingStatus(BookingStatus.CONFIRMED).build();
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
+        when(bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc("B1")).thenReturn(List.of(
+                com.voyra.crm.entity.BookingDocument.builder().id("D1").bookingId("B1").fileKey("vouchers/v1.pdf").build()));
+        org.mockito.Mockito.doThrow(new IllegalStateException("db down")).when(bookingRepository).delete(booking);
+
+        assertThatThrownBy(() -> bookingService.deleteBooking("B1")).hasMessageContaining("db down");
+        // The rows rolled back, so the voucher file must still be there.
+        org.mockito.Mockito.verify(fileStorageService, org.mockito.Mockito.never()).delete(org.mockito.ArgumentMatchers.anyString());
     }
 }

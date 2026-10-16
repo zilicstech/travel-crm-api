@@ -120,6 +120,7 @@ public class BookingService {
     private final ServiceInstanceService serviceInstanceService;
     private final ServiceBookingStatusSync serviceBookingStatusSync;
     private final SupplierInvoiceService supplierInvoiceService;
+    private final org.springframework.transaction.support.TransactionTemplate transactionTemplate;
     private final com.voyra.crm.repository.SupplierInvoiceRepository supplierInvoiceRepository;
     private final com.voyra.crm.repository.SupplierPaymentRepository supplierPaymentRepository;
     private final TenantRepository tenantRepository;
@@ -665,12 +666,17 @@ public class BookingService {
      * a dangling reference the way {@code shift_handover.pinned_booking_ids} (a plain array,
      * no FK) silently does.
      *
-     * <p>Not {@code @Transactional} as one block - deleting each document's stored file is
-     * object storage work blueprint §8.6 forbids inside a transaction, the same reason
-     * {@code BookingDocumentService.deleteDocument} isn't either. The row deletes are each
-     * self-transactional (Spring Data wraps every repository call).
+     * <p>Every database change runs in one transaction, so a failure part-way leaves nothing
+     * half-deleted. The stored voucher files are deleted only after that commits - object storage
+     * work must stay outside a transaction (blueprint §8.6), and a file must never go before its row.
      */
     public void deleteBooking(String id) {
+        List<String> fileKeys = transactionTemplate.execute(status -> deleteBookingRows(id));
+        fileKeys.forEach(fileStorageService::delete);
+    }
+
+    /** @return the stored file keys of the booking's documents, for deletion once this commits */
+    private List<String> deleteBookingRows(String id) {
         Booking booking = findAccessibleBooking(id);
         if (bookingHasAccountingRecords(id)) {
             throw new IllegalStateException("This booking has accounting records - cancel it instead");
@@ -681,11 +687,9 @@ public class BookingService {
             supplierInvoiceService.cancelForBooking(bill.getId(), "Booking deleted");
         }
 
-        List<BookingDocument> documents = bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc(id);
+        List<String> fileKeys = bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc(id).stream()
+                .map(BookingDocument::getFileKey).filter(java.util.Objects::nonNull).toList();
         bookingDocumentRepository.deleteByBookingId(id);
-        documents.stream().map(BookingDocument::getFileKey).filter(java.util.Objects::nonNull)
-                .forEach(fileStorageService::delete);
-
         deletePassengers(id);
         bookingRepository.delete(booking);
         auditService.recordUpdate(AuditEntityType.BOOKING, id, labelFor(booking), List.of());
@@ -696,6 +700,7 @@ public class BookingService {
             serviceBookingStatusSync.onBookingRemoved(booking.getServiceId());
         }
         log.info("Booking deleted: bookingId={}", id);
+        return fileKeys;
     }
 
     private boolean bookingHasAccountingRecords(String bookingId) {
