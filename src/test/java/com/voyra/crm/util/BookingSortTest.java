@@ -15,9 +15,9 @@ class BookingSortTest {
     }
 
     @Test
-    void bookingDateSortsByCreatedDateWithTheNumberAsTieBreak() {
+    void bookingDateSortsWithTheNumberAsTieBreak() {
         assertThat(BookingSort.parse("bookingDate,asc")).isEqualTo(
-                Sort.by(Sort.Direction.ASC, "createdDate").and(Sort.by(Sort.Direction.DESC, "bookingNumber")));
+                Sort.by(Sort.Direction.ASC, "bookingDate").and(Sort.by(Sort.Direction.DESC, "bookingNumber")));
     }
 
     @Test

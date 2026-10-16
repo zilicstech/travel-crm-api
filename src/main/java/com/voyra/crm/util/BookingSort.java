@@ -11,7 +11,7 @@ public final class BookingSort {
             "bookingNumber", "bookingNumber",
             "clientName", "clientName",
             "sellingPrice", "sellingPrice",
-            "bookingDate", "createdDate",
+            "bookingDate", "bookingDate",
             "journeyDate", "journeyDate");
 
     private BookingSort() {
