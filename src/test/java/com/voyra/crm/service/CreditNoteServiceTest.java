@@ -273,6 +273,28 @@ class CreditNoteServiceTest {
         assertThat(response.getRefundableAmount()).isEqualByComparingTo("5000.00");
     }
 
+    /** A partly paid invoice partly credited: only cash beyond what is still billed comes back.
+     *  1180 billed, 1000 paid, 590 credited -> 590 still billed -> 410 refundable, not 590. */
+    @Test
+    void partialCreditOnAPartlyPaidInvoiceRefundsOnlyTheOverpayment() {
+        Invoice invoice = issuedInvoice();
+        invoice.setAmountReceived(new BigDecimal("1000.00"));
+        CreditNote draft = CreditNote.builder().id("CN1").invoiceId("I1").clientId("K1")
+                .status(CreditNoteStatus.DRAFT).currencyCode("INR").fxRateToInr(BigDecimal.ONE)
+                .totalAmount(new BigDecimal("590.00")).totalAmountInr(new BigDecimal("590.00"))
+                .refundedAmount(BigDecimal.ZERO).build();
+        when(creditNoteRepository.findById("CN1")).thenReturn(Optional.of(draft));
+        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(invoice));
+        when(creditNoteRepository.findByInvoiceIdAndStatus("I1", CreditNoteStatus.ISSUED)).thenReturn(List.of());
+        when(documentNumberService.next(DocumentKind.CREDIT_NOTE, LocalDate.now())).thenReturn("CN/2026-27/0003");
+        when(paymentReceiptRepository.findByInvoiceIdOrderByReceivedOnAscCreatedAtAsc("I1")).thenReturn(List.of(
+                PaymentReceipt.builder().direction(ReceiptDirection.RECEIPT).amount(new BigDecimal("1000.00")).build()));
+
+        CreditNoteResponse response = creditNoteService.issue("CN1");
+
+        assertThat(response.getRefundableAmount()).isEqualByComparingTo("410.00");
+    }
+
     @Test
     void issuingBeyondTheInvoicesGrandTotalIsRejected() {
         Invoice invoice = issuedInvoice();

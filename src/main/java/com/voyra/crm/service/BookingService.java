@@ -10,7 +10,6 @@ import com.voyra.crm.dto.BookingDocumentResponse;
 import com.voyra.crm.dto.BookingPassengerRequest;
 import com.voyra.crm.dto.BookingPassengerResponse;
 import com.voyra.crm.dto.BookingPaymentStatusUpdateRequest;
-import com.voyra.crm.dto.BookingRefundUpdateRequest;
 import com.voyra.crm.dto.BookingResponse;
 import com.voyra.crm.dto.BookingSectorRequest;
 import com.voyra.crm.dto.BookingSectorResponse;
@@ -575,69 +574,44 @@ public class BookingService {
 
     @Transactional
     public BookingResponse updateStatus(String id, BookingStatusUpdateRequest request) {
+        if (request.getBookingStatus() == BookingStatus.CANCELLED) {
+            // Cancelling works out refunds and posts accounting - see BookingCancellationService.
+            throw new IllegalArgumentException("Use POST /api/bookings/{id}/cancel to cancel a booking");
+        }
         Booking booking = findAccessibleBooking(id);
         Map<String, String> before = AuditSnapshot.of(booking, AUDITED);
-        if (request.getBookingStatus() == BookingStatus.CANCELLED
-                && (request.getCancelReason() == null || request.getCancelReason().isBlank())) {
-            throw new IllegalArgumentException("A reason is required when cancelling a booking");
-        }
         if (request.getBookingStatus() == BookingStatus.CONFIRMED && booking.getBookingStatus() != BookingStatus.CONFIRMED) {
             assertPriceIntegrity(booking);
         }
         booking.setBookingStatus(request.getBookingStatus());
-        if (request.getBookingStatus() == BookingStatus.CANCELLED) {
-            booking.setCancelReason(request.getCancelReason());
-            if (request.getRefundStatus() != null) {
-                booking.setRefundStatus(request.getRefundStatus());
-            }
-            // A cancellation always needs a refund decision from someone - defaulting to
-            // NOT_APPLICABLE here would make every cancelled booking silently invisible to the
-            // "who still owes us money" view. updateRefund() moves it on from here.
-            if (booking.getRefundState() == RefundState.NOT_APPLICABLE) {
-                booking.setRefundState(RefundState.REFUND_PENDING);
-            }
-            booking.setCancelledAt(LocalDateTime.now());
-            booking.setCancelledBy(SecurityContextUtil.getCurrentUserOrThrow().userId());
-        }
         List<AuditChange> changes = AuditSnapshot.diff(before, AuditSnapshot.of(booking, AUDITED));
         touch(booking);
         bookingRepository.save(booking);
         auditService.recordUpdate(AuditEntityType.BOOKING, booking.getId(), labelFor(booking), changes);
-
-        if (request.getBookingStatus() == BookingStatus.CANCELLED && booking.getServiceId() != null) {
-            leadTimelineService.record(booking.getLeadId(), booking.getServiceId(), LeadTimelineEventType.BOOKING_REMOVED,
-                    labelOrType(booking) + " booking cancelled");
-            serviceBookingStatusSync.onBookingRemoved(booking.getServiceId());
-        }
         log.info("Booking status updated: bookingId={}, status={}", id, request.getBookingStatus());
         return toResponse(booking);
     }
 
-    @Transactional
-    public BookingResponse updateRefund(String id, BookingRefundUpdateRequest request) {
-        Booking booking = findAccessibleBooking(id);
-        if (booking.getBookingStatus() != BookingStatus.CANCELLED) {
-            throw new IllegalStateException("Only a cancelled booking can carry a refund state");
-        }
-        if (creditNoteRepository.existsByBookingIdAndStatusNot(id, CreditNoteStatus.CANCELLED)) {
-            throw new IllegalStateException("A credit note exists for this booking - refund state is derived from it");
-        }
+    /** The status half of a cancellation: audit, timeline and the lead service's status. The
+     *  money half is BookingCancellationService's, which calls this inside its own transaction. */
+    void markCancelled(Booking booking, String reason) {
         Map<String, String> before = AuditSnapshot.of(booking, AUDITED);
-        booking.setRefundState(request.getRefundState());
-        if (request.getRefundAmount() != null) {
-            booking.setRefundAmount(request.getRefundAmount());
-        }
-        if (request.getRefundDueDate() != null) {
-            booking.setRefundDueDate(request.getRefundDueDate());
-        }
-        if (request.getRefundState() == RefundState.REFUNDED || request.getRefundState() == RefundState.PARTIALLY_REFUNDED) {
-            booking.setRefundedAt(LocalDateTime.now());
-        }
+        booking.setBookingStatus(BookingStatus.CANCELLED);
+        booking.setCancelReason(reason);
+        booking.setCancelledAt(LocalDateTime.now());
+        booking.setCancelledBy(SecurityContextUtil.getCurrentUserOrThrow().userId());
         List<AuditChange> changes = AuditSnapshot.diff(before, AuditSnapshot.of(booking, AUDITED));
         touch(booking);
         bookingRepository.save(booking);
         auditService.recordUpdate(AuditEntityType.BOOKING, booking.getId(), labelFor(booking), changes);
-        log.info("Booking refund updated: bookingId={}, refundState={}", id, request.getRefundState());
+        if (booking.getServiceId() != null) {
+            leadTimelineService.record(booking.getLeadId(), booking.getServiceId(), LeadTimelineEventType.BOOKING_REMOVED,
+                    labelOrType(booking) + " booking cancelled: " + reason);
+            serviceBookingStatusSync.onBookingRemoved(booking.getServiceId());
+        }
+    }
+
+    BookingResponse toResponsePublic(Booking booking) {
         return toResponse(booking);
     }
 
@@ -813,6 +787,9 @@ public class BookingService {
                 .primaryInvoiceId(b.getPrimaryInvoiceId())
                 .invoicedTotalInr(b.getInvoicedTotalInr()).receivedTotalInr(b.getReceivedTotalInr())
                 .refundedTotalInr(b.getRefundedTotalInr()).paymentStatusSource(b.getPaymentStatusSource())
+                .cancellationSupplierCharge(b.getCancellationSupplierCharge()).cancellationAgencyFee(b.getCancellationAgencyFee())
+                .customerRefundDue(b.getCustomerRefundDue()).supplierRefundExpected(b.getSupplierRefundExpected())
+                .supplierRefundReceived(b.getSupplierRefundReceived())
                 .documents(documents)
                 .internationalTrip(b.getInternationalTrip())
                 .marginPercent(marginPercent).lowMargin(lowMargin)

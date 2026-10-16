@@ -159,8 +159,7 @@ public class CreditNoteService {
         // Capped at cash actually receipted on the invoice, not the note's own face value -
         // a credit note issued against a partially (or un-)paid invoice cannot be refunded
         // for more than the agency ever actually collected from the client.
-        BigDecimal cashReceipted = cashReceiptedOnInvoice(invoice.getId());
-        note.setRefundableAmount(note.getTotalAmount().min(cashReceipted).max(BigDecimal.ZERO));
+        note.setRefundableAmount(refundableFor(invoice, note.getTotalAmount(), note.getId()));
         creditNoteRepository.save(note);
 
         invoice.setCreditNoteTotal(invoice.getCreditNoteTotal().add(note.getTotalAmount()));
@@ -327,6 +326,14 @@ public class CreditNoteService {
                 .stream().map(CreditNoteService::toResponse).toList();
     }
 
+    /** What a cancellation credit note on this invoice would let the customer get back - the same
+     *  maths {@link #create}/{@link #issue} use, without writing anything. */
+    @Transactional(readOnly = true)
+    public BigDecimal previewRefundable(Invoice invoice, BigDecimal cancellationFee) {
+        BigDecimal fee = cancellationFee.min(invoice.getTaxableValue()).max(BigDecimal.ZERO);
+        return refundableFor(invoice, computeReversal(invoice, fee).totalAmount, null);
+    }
+
     // ---------------------------------------------------------------- internals
 
     private record Reversal(BigDecimal taxableValue, BigDecimal cgstAmount, BigDecimal sgstAmount,
@@ -362,6 +369,17 @@ public class CreditNoteService {
         if (existing.add(candidateAmount).compareTo(invoice.getGrandTotal()) > 0) {
             throw new IllegalStateException("This credit note would credit more than the invoice's grand total");
         }
+    }
+
+    /** Cash comes back only for what the customer paid beyond what is still billed once this
+     *  credit lands - a partly paid invoice that is partly credited may owe nothing back. */
+    private BigDecimal refundableFor(Invoice invoice, BigDecimal noteTotal, String excludeId) {
+        BigDecimal otherCredits = creditNoteRepository.findByInvoiceIdAndStatus(invoice.getId(), CreditNoteStatus.ISSUED).stream()
+                .filter(cn -> !cn.getId().equals(excludeId))
+                .map(CreditNote::getTotalAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal stillBilled = invoice.getGrandTotal().subtract(otherCredits).subtract(noteTotal);
+        return cashReceiptedOnInvoice(invoice.getId()).subtract(stillBilled).max(BigDecimal.ZERO).min(noteTotal);
     }
 
     private BigDecimal sumRefunded(String creditNoteId) {

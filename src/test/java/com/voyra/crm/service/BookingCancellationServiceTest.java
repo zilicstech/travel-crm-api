@@ -1,0 +1,229 @@
+package com.voyra.crm.service;
+
+import com.voyra.crm.dto.BookingCancelRequest;
+import com.voyra.crm.dto.CreditNoteRequest;
+import com.voyra.crm.dto.CreditNoteResponse;
+import com.voyra.crm.dto.RefundSettlementRequest;
+import com.voyra.crm.dto.SupplierCreditNoteRequest;
+import com.voyra.crm.entity.Booking;
+import com.voyra.crm.entity.Invoice;
+import com.voyra.crm.entity.SupplierInvoice;
+import com.voyra.crm.enums.BookingStatus;
+import com.voyra.crm.enums.CreditNoteStatus;
+import com.voyra.crm.enums.InvoiceDocumentType;
+import com.voyra.crm.enums.InvoiceLifecycle;
+import com.voyra.crm.enums.PaymentMode;
+import com.voyra.crm.enums.RefundState;
+import com.voyra.crm.enums.SupplierCreditNoteStatus;
+import com.voyra.crm.enums.SupplierInvoiceStatus;
+import com.voyra.crm.repository.BookingRepository;
+import com.voyra.crm.repository.CreditNoteRepository;
+import com.voyra.crm.repository.InvoiceRepository;
+import com.voyra.crm.repository.SupplierCreditNoteRepository;
+import com.voyra.crm.repository.SupplierInvoiceRepository;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Optional;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+class BookingCancellationServiceTest {
+
+    @Mock private BookingService bookingService;
+    @Mock private BookingRepository bookingRepository;
+    @Mock private BookingAccountingSync bookingAccountingSync;
+    @Mock private InvoiceRepository invoiceRepository;
+    @Mock private CreditNoteRepository creditNoteRepository;
+    @Mock private CreditNoteService creditNoteService;
+    @Mock private SupplierInvoiceRepository supplierInvoiceRepository;
+    @Mock private SupplierInvoiceService supplierInvoiceService;
+    @Mock private SupplierCreditNoteRepository supplierCreditNoteRepository;
+    @Mock private SupplierCreditNoteService supplierCreditNoteService;
+    @Mock private PaymentReceiptService paymentReceiptService;
+    @Mock private RevenueRecognitionTenantService revenueRecognitionTenantService;
+    @InjectMocks private BookingCancellationService service;
+
+    private static BigDecimal d(String v) {
+        return new BigDecimal(v);
+    }
+
+    private Booking booking(BookingStatus status) {
+        Booking b = Booking.builder().id("B1").clientId("C1").bookingStatus(status)
+                .netCost(d("8000")).sellingPrice(d("10000"))
+                .receivedTotalInr(d("10000")).refundedTotalInr(BigDecimal.ZERO).build();
+        when(bookingService.findAccessibleBooking("B1")).thenReturn(b);
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(b));
+        return b;
+    }
+
+    private static BookingCancelRequest cancel(String charge, String fee) {
+        BookingCancelRequest r = new BookingCancelRequest();
+        r.setReason("Client changed plans");
+        r.setSupplierCharge(d(charge));
+        r.setAgencyFee(d(fee));
+        return r;
+    }
+
+    private static RefundSettlementRequest pay(String amount) {
+        RefundSettlementRequest r = new RefundSettlementRequest();
+        r.setAmount(d(amount));
+        r.setPaidOn(LocalDate.of(2026, 10, 16));
+        r.setPaymentMode(PaymentMode.UPI);
+        r.setReference("UTR1");
+        return r;
+    }
+
+    @Test
+    void withoutInvoiceOrBillTheRefundIsPaidLessWhatIsKept() {
+        Booking b = booking(BookingStatus.CONFIRMED);
+
+        service.cancel("B1", cancel("2000", "500"));
+
+        verify(bookingService).markCancelled(b, "Client changed plans");
+        assertThat(b.getCustomerRefundDue()).isEqualByComparingTo("7500");
+        assertThat(b.getSupplierRefundExpected()).isEqualByComparingTo("6000");
+        assertThat(b.getCancellationSupplierCharge()).isEqualByComparingTo("2000");
+        assertThat(b.getRefundState()).isEqualTo(RefundState.REFUND_PENDING);
+        verify(creditNoteService, never()).create(any());
+    }
+
+    @Test
+    void customerWhoPaidLessThanTheChargesIsOwedNothing() {
+        Booking b = booking(BookingStatus.CONFIRMED);
+        b.setReceivedTotalInr(d("1000"));
+
+        service.cancel("B1", cancel("2000", "0"));
+
+        assertThat(b.getCustomerRefundDue()).isEqualByComparingTo("0");
+        assertThat(b.getRefundState()).isEqualTo(RefundState.NOT_APPLICABLE);
+    }
+
+    @Test
+    void invoicedBookingGetsACreditNoteAndKeptRevenueIsRecognised() {
+        Booking b = booking(BookingStatus.CONFIRMED);
+        Invoice invoice = Invoice.builder().id("I1").bookingId("B1").documentType(InvoiceDocumentType.TAX_INVOICE)
+                .status(InvoiceLifecycle.PAID).taxableValue(d("9000")).creditNoteTotal(BigDecimal.ZERO).build();
+        when(invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc(
+                "B1", InvoiceDocumentType.TAX_INVOICE, InvoiceLifecycle.CANCELLED)).thenReturn(List.of(invoice));
+        when(creditNoteService.create(any())).thenReturn(CreditNoteResponse.builder().id("CN1").build());
+        when(creditNoteService.issue("CN1")).thenReturn(CreditNoteResponse.builder().id("CN1")
+                .refundableAmount(d("7200")).taxableValue(d("6500")).build());
+
+        service.cancel("B1", cancel("2000", "500"));
+
+        ArgumentCaptor<CreditNoteRequest> note = ArgumentCaptor.forClass(CreditNoteRequest.class);
+        verify(creditNoteService).create(note.capture());
+        assertThat(note.getValue().getCancellationFee()).isEqualByComparingTo("2500");
+        assertThat(b.getCustomerRefundDue()).isEqualByComparingTo("7200");
+        verify(revenueRecognitionTenantService).recognizeRetainedOnCancellation(eq(invoice), eq(d("6500")), any());
+    }
+
+    @Test
+    void invoiceAlreadyCreditedByHandGetsNoSecondCreditNote() {
+        Booking b = booking(BookingStatus.CONFIRMED);
+        b.setReceivedTotalInr(d("10000"));
+        b.setRefundedTotalInr(d("10000"));
+        Invoice invoice = Invoice.builder().id("I1").bookingId("B1").documentType(InvoiceDocumentType.TAX_INVOICE)
+                .status(InvoiceLifecycle.PAID).taxableValue(d("36000")).grandTotal(d("42480")).creditNoteTotal(d("42480")).build();
+        when(invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc(
+                "B1", InvoiceDocumentType.TAX_INVOICE, InvoiceLifecycle.CANCELLED)).thenReturn(List.of(invoice));
+
+        assertThat(service.preview("B1", d("5000"), d("1000")).getCustomerRefundDue()).isEqualByComparingTo("0");
+        service.cancel("B1", cancel("5000", "1000"));
+
+        verify(creditNoteService, never()).create(any());
+        assertThat(b.getCustomerRefundDue()).isEqualByComparingTo("0");
+    }
+
+    @Test
+    void draftBillIsCancelledAndApprovedBillGetsASupplierCreditNote() {
+        Booking b = booking(BookingStatus.CONFIRMED);
+        SupplierInvoice draft = SupplierInvoice.builder().id("S0").status(SupplierInvoiceStatus.DRAFT)
+                .grandTotal(d("1000")).amountPaid(BigDecimal.ZERO).creditNoteTotal(BigDecimal.ZERO).build();
+        SupplierInvoice paid = SupplierInvoice.builder().id("S1").status(SupplierInvoiceStatus.PAID)
+                .grandTotal(d("8000")).amountPaid(d("8000")).creditNoteTotal(BigDecimal.ZERO)
+                .cgstAmount(BigDecimal.ZERO).sgstAmount(BigDecimal.ZERO).igstAmount(BigDecimal.ZERO).build();
+        when(supplierInvoiceRepository.findByBookingIdAndStatusNot("B1", SupplierInvoiceStatus.CANCELLED))
+                .thenReturn(List.of(draft, paid));
+
+        service.cancel("B1", cancel("2000", "0"));
+
+        verify(supplierInvoiceService).cancel(eq("S0"), anyString());
+        ArgumentCaptor<SupplierCreditNoteRequest> note = ArgumentCaptor.forClass(SupplierCreditNoteRequest.class);
+        verify(supplierCreditNoteService).record(note.capture());
+        assertThat(note.getValue().getTaxableValue()).isEqualByComparingTo("6000");
+        assertThat(b.getSupplierRefundExpected()).isEqualByComparingTo("6000");
+    }
+
+    @Test
+    void unpaidApprovedBillJustShrinksSoNothingComesBack() {
+        Booking b = booking(BookingStatus.CONFIRMED);
+        SupplierInvoice unpaid = SupplierInvoice.builder().id("S1").status(SupplierInvoiceStatus.APPROVED)
+                .grandTotal(d("8000")).amountPaid(BigDecimal.ZERO).creditNoteTotal(BigDecimal.ZERO)
+                .cgstAmount(BigDecimal.ZERO).sgstAmount(BigDecimal.ZERO).igstAmount(BigDecimal.ZERO).build();
+        when(supplierInvoiceRepository.findByBookingIdAndStatusNot("B1", SupplierInvoiceStatus.CANCELLED)).thenReturn(List.of(unpaid));
+
+        service.cancel("B1", cancel("2000", "0"));
+
+        verify(supplierCreditNoteService).record(any());
+        assertThat(b.getSupplierRefundExpected()).isEqualByComparingTo("0");
+    }
+
+    @Test
+    void onlyAPendingOrConfirmedBookingCanBeCancelled() {
+        booking(BookingStatus.COMPLETED);
+        assertThatThrownBy(() -> service.cancel("B1", cancel("0", "0"))).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void customerPaymentCannotExceedWhatIsOutstanding() {
+        Booking b = booking(BookingStatus.CANCELLED);
+        b.setCustomerRefundDue(d("7500"));
+        b.setRefundedTotalInr(d("5000"));
+
+        assertThatThrownBy(() -> service.payCustomer("B1", pay("3000"))).isInstanceOf(IllegalArgumentException.class);
+        verify(paymentReceiptService, never()).refundAdvance(any(), any(), any());
+    }
+
+    @Test
+    void customerWithNoCreditNoteIsPaidFromTheAdvance() {
+        Booking b = booking(BookingStatus.CANCELLED);
+        b.setCustomerRefundDue(d("7500"));
+        when(creditNoteRepository.findByBookingIdAndStatusNot("B1", CreditNoteStatus.CANCELLED)).thenReturn(List.of());
+
+        service.payCustomer("B1", pay("2500"));
+
+        verify(paymentReceiptService).refundAdvance(eq(b), any(), any());
+    }
+
+    @Test
+    void supplierRefundWithNoCreditNoteIsTrackedOnTheBooking() {
+        Booking b = booking(BookingStatus.CANCELLED);
+        b.setSupplierRefundExpected(d("6000"));
+        when(supplierCreditNoteRepository.findByBookingIdAndStatus("B1", SupplierCreditNoteStatus.RECORDED)).thenReturn(List.of());
+
+        service.receiveFromSupplier("B1", pay("6000"));
+
+        assertThat(b.getSupplierRefundReceived()).isEqualByComparingTo("6000");
+        assertThatThrownBy(() -> service.receiveFromSupplier("B1", pay("1"))).isInstanceOf(IllegalArgumentException.class);
+    }
+}

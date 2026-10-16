@@ -30,6 +30,8 @@ public interface BookingRepository extends JpaRepository<Booking, String>, JpaSp
 
     List<Booking> findByLeadId(String leadId);
 
+    List<Booking> findByBookingStatus(com.voyra.crm.enums.BookingStatus status);
+
     /** Drives the auto-BOOKED/back-to-CONFIRMED transition: zero means nothing live remains. */
     long countByServiceIdAndBookingStatusNot(String serviceId, BookingStatus excludedStatus);
 

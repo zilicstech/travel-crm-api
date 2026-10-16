@@ -1,7 +1,6 @@
 package com.voyra.crm.service;
 
 import com.voyra.crm.dto.BookingPaymentStatusUpdateRequest;
-import com.voyra.crm.dto.BookingRefundUpdateRequest;
 import com.voyra.crm.dto.BookingStatusUpdateRequest;
 import com.voyra.crm.dto.BookingUpdateRequest;
 import com.voyra.crm.entity.Booking;
@@ -150,31 +149,14 @@ class BookingServiceTest {
     }
 
     @Test
-    void manualRefundPatchSucceedsWhenNoCreditNoteExists() {
-        Booking booking = Booking.builder().id("B1").agentId("A1").bookingStatus(BookingStatus.CANCELLED).build();
-        when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
-        when(creditNoteRepository.existsByBookingIdAndStatusNot("B1", CreditNoteStatus.CANCELLED)).thenReturn(false);
+    void statusPatchNoLongerCancelsABookingOnItsOwn() {
+        BookingStatusUpdateRequest request = new BookingStatusUpdateRequest();
+        request.setBookingStatus(BookingStatus.CANCELLED);
+        request.setCancelReason("Client changed plans");
 
-        BookingRefundUpdateRequest request = new BookingRefundUpdateRequest();
-        request.setRefundState(RefundState.REFUND_PENDING);
-
-        var response = bookingService.updateRefund("B1", request);
-
-        assertThat(response.getRefundState()).isEqualTo(RefundState.REFUND_PENDING);
-    }
-
-    @Test
-    void manualRefundPatchIsRefusedOnceACreditNoteExists() {
-        Booking booking = Booking.builder().id("B1").agentId("A1").bookingStatus(BookingStatus.CANCELLED).build();
-        when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
-        when(creditNoteRepository.existsByBookingIdAndStatusNot("B1", CreditNoteStatus.CANCELLED)).thenReturn(true);
-
-        BookingRefundUpdateRequest request = new BookingRefundUpdateRequest();
-        request.setRefundState(RefundState.REFUNDED);
-
-        assertThatThrownBy(() -> bookingService.updateRefund("B1", request))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("credit note exists");
+        assertThatThrownBy(() -> bookingService.updateStatus("B1", request))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("/cancel");
     }
 
     @Test

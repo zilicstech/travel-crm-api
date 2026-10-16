@@ -232,6 +232,21 @@ public class BookingResponse {
     @Schema(description = "Sum of REFUND-direction receipts against this booking, in INR", example = "0.00")
     private BigDecimal refundedTotalInr;
 
+    @Schema(description = "Cancellation: what the supplier kept", example = "2000.00")
+    private BigDecimal cancellationSupplierCharge;
+
+    @Schema(description = "Cancellation: the agency's own fee", example = "500.00")
+    private BigDecimal cancellationAgencyFee;
+
+    @Schema(description = "Cancellation: what the customer is owed back in total (refundedTotalInr is what has been paid so far)", example = "7500.00")
+    private BigDecimal customerRefundDue;
+
+    @Schema(description = "Cancellation: what the supplier owes the agency back", example = "6000.00")
+    private BigDecimal supplierRefundExpected;
+
+    @Schema(description = "Cancellation: supplier refund received so far", example = "0.00")
+    private BigDecimal supplierRefundReceived;
+
     @Schema(description = "MANUAL until a tax invoice is issued against this booking, then DERIVED forever", example = "MANUAL")
     private PaymentStatusSource paymentStatusSource;
 

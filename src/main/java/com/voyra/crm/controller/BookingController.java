@@ -1,12 +1,15 @@
 package com.voyra.crm.controller;
 
+import com.voyra.crm.dto.BookingCancelPreviewResponse;
+import com.voyra.crm.dto.BookingCancelRequest;
 import com.voyra.crm.dto.BookingCostComponentRequest;
+import com.voyra.crm.dto.RefundSettlementRequest;
+import com.voyra.crm.service.BookingCancellationService;
 import com.voyra.crm.dto.BookingCostComponentResponse;
 import com.voyra.crm.dto.BookingCreateRequest;
 import com.voyra.crm.dto.BookingDeadlineUpdateRequest;
 import com.voyra.crm.dto.BookingLogRequest;
 import com.voyra.crm.dto.BookingPaymentStatusUpdateRequest;
-import com.voyra.crm.dto.BookingRefundUpdateRequest;
 import com.voyra.crm.dto.BookingResponse;
 import com.voyra.crm.dto.BookingStatusUpdateRequest;
 import com.voyra.crm.dto.BookingUpdateRequest;
@@ -50,6 +53,7 @@ public class BookingController {
 
     private final BookingService bookingService;
     private final BookingLogService bookingLogService;
+    private final BookingCancellationService bookingCancellationService;
     private final FeedbackLinkService feedbackLinkService;
 
     @DeleteMapping("/{id}")
@@ -132,11 +136,39 @@ public class BookingController {
         return ResponseEntity.ok(bookingService.updatePaymentStatus(id, request));
     }
 
-    @PatchMapping("/{id}/refund")
-    @Operation(summary = "Update a cancelled booking's refund state", description = "Only valid once bookingStatus is CANCELLED.")
-    public ResponseEntity<BookingResponse> updateRefund(@PathVariable String id,
-                                                         @Valid @RequestBody BookingRefundUpdateRequest request) {
-        return ResponseEntity.ok(bookingService.updateRefund(id, request));
+    @GetMapping("/{id}/cancel-preview")
+    @Operation(summary = "What cancelling would refund", description = "Customer refund due and supplier refund expected for the given charges. Writes nothing.")
+    public ResponseEntity<BookingCancelPreviewResponse> cancelPreview(@PathVariable String id,
+            @RequestParam(value = "supplierCharge", required = false) java.math.BigDecimal supplierCharge,
+            @RequestParam(value = "agencyFee", required = false) java.math.BigDecimal agencyFee) {
+        return ResponseEntity.ok(bookingCancellationService.preview(id, supplierCharge, agencyFee));
+    }
+
+    @PostMapping("/{id}/cancel")
+    @Operation(summary = "Cancel a booking", description = "Issues the credit note / supplier credit note automatically and records what each side owes.")
+    public ResponseEntity<BookingResponse> cancel(@PathVariable String id, @Valid @RequestBody BookingCancelRequest request) {
+        return ResponseEntity.ok(bookingCancellationService.cancel(id, request));
+    }
+
+    @GetMapping("/refunds")
+    @PreAuthorize("hasAnyRole('AGENCY_OWNER', 'ACCOUNTANT')")
+    @Operation(summary = "Cancelled bookings with money still to move", description = "Customer refunds to pay and supplier refunds to receive.")
+    public ResponseEntity<List<BookingResponse>> listRefunds() {
+        return ResponseEntity.ok(bookingCancellationService.listOutstanding());
+    }
+
+    @PostMapping("/{id}/refunds/customer")
+    @PreAuthorize("hasAnyRole('AGENCY_OWNER', 'ACCOUNTANT')")
+    @Operation(summary = "Record a refund paid to the customer")
+    public ResponseEntity<BookingResponse> payCustomer(@PathVariable String id, @Valid @RequestBody RefundSettlementRequest request) {
+        return ResponseEntity.ok(bookingCancellationService.payCustomer(id, request));
+    }
+
+    @PostMapping("/{id}/refunds/supplier")
+    @PreAuthorize("hasAnyRole('AGENCY_OWNER', 'ACCOUNTANT')")
+    @Operation(summary = "Record a refund received from the supplier")
+    public ResponseEntity<BookingResponse> receiveFromSupplier(@PathVariable String id, @Valid @RequestBody RefundSettlementRequest request) {
+        return ResponseEntity.ok(bookingCancellationService.receiveFromSupplier(id, request));
     }
 
     @PatchMapping("/{id}/deadlines")

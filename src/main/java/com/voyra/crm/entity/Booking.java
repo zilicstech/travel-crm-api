@@ -302,6 +302,27 @@ public class Booking {
     @Builder.Default
     private BigDecimal refundedTotalInr = BigDecimal.ZERO;
 
+    @Column(name = "cancellation_supplier_charge", nullable = false, precision = 19, scale = 2)
+    @Builder.Default
+    private BigDecimal cancellationSupplierCharge = BigDecimal.ZERO;
+
+    @Column(name = "cancellation_agency_fee", nullable = false, precision = 19, scale = 2)
+    @Builder.Default
+    private BigDecimal cancellationAgencyFee = BigDecimal.ZERO;
+
+    /** What the customer is owed back after the cancellation, fixed when the booking is cancelled. */
+    @Column(name = "customer_refund_due", nullable = false, precision = 19, scale = 2)
+    @Builder.Default
+    private BigDecimal customerRefundDue = BigDecimal.ZERO;
+
+    @Column(name = "supplier_refund_expected", nullable = false, precision = 19, scale = 2)
+    @Builder.Default
+    private BigDecimal supplierRefundExpected = BigDecimal.ZERO;
+
+    @Column(name = "supplier_refund_received", nullable = false, precision = 19, scale = 2)
+    @Builder.Default
+    private BigDecimal supplierRefundReceived = BigDecimal.ZERO;
+
     /** MANUAL until a tax invoice is issued against this booking, then DERIVED forever - see {@code BookingAccountingSync}. */
     @Enumerated(EnumType.STRING)
     @Column(name = "payment_status_source", nullable = false, length = 20)

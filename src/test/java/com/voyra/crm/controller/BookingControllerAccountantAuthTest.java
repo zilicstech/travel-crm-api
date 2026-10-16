@@ -9,6 +9,7 @@ import com.voyra.crm.security.JwtAuthenticationFilter;
 import com.voyra.crm.security.JwtService;
 import com.voyra.crm.security.RestAuthenticationEntryPoint;
 import com.voyra.crm.dto.BookingLogRequest;
+import com.voyra.crm.service.BookingCancellationService;
 import com.voyra.crm.service.BookingLogService;
 import com.voyra.crm.service.BookingService;
 import com.voyra.crm.service.FeedbackLinkService;
@@ -53,6 +54,8 @@ class BookingControllerAccountantAuthTest {
     private FeedbackLinkService feedbackLinkService;
     @MockBean
     private BookingLogService bookingLogService;
+    @MockBean
+    private BookingCancellationService bookingCancellationService;
 
     @Test
     void accountantCanListAndReadBookings() throws Exception {
@@ -111,5 +114,19 @@ class BookingControllerAccountantAuthTest {
         request.setSellingPrice(java.math.BigDecimal.valueOf(52000));
         return new MockMultipartFile("booking", "", MediaType.APPLICATION_JSON_VALUE,
                 objectMapper.writeValueAsBytes(request));
+    }
+
+    @Test
+    void agentCannotMarkARefundPaidButAnAccountantCan() throws Exception {
+        String body = "{\"amount\":100,\"paidOn\":\"2026-10-16\",\"paymentMode\":\"UPI\"}";
+        mockMvc.perform(post("/api/bookings/B1/refunds/customer")
+                        .with(SecurityMockMvcRequestPostProcessors.user("agent1").roles("AGENT"))
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isForbidden());
+        when(bookingCancellationService.payCustomer(any(), any())).thenReturn(BookingResponse.builder().id("B1").build());
+        mockMvc.perform(post("/api/bookings/B1/refunds/customer")
+                        .with(SecurityMockMvcRequestPostProcessors.user("accountant1").roles("ACCOUNTANT"))
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk());
     }
 }

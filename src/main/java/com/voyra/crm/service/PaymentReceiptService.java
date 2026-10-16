@@ -186,6 +186,57 @@ public class PaymentReceiptService {
      * whole pooled wallet balance, same as the supplier side - a deposit is not individually
      * tracked once it is in the pool.
      */
+    /**
+     * Pays a cancelled booking's customer back out of money held as an advance (a proforma or
+     * deposit receipt, no tax invoice) - Dr Client Advances Held, Cr Bank/Cash. A booking with a
+     * tax invoice refunds through its credit note instead (CreditNoteService.refund).
+     */
+    @Transactional
+    public PaymentReceiptResponse refundAdvance(com.voyra.crm.entity.Booking booking, String proformaInvoiceId,
+                                                com.voyra.crm.dto.RefundSettlementRequest request) {
+        String number = documentNumberService.next(DocumentKind.RECEIPT, request.getPaidOn());
+        PaymentReceipt receipt = PaymentReceipt.builder()
+                .id(UniqueIdResolver.resolve(paymentReceiptRepository::existsById))
+                .receiptNumber(number)
+                .financialYear(FinancialYear.of(request.getPaidOn()))
+                .direction(ReceiptDirection.REFUND)
+                .invoiceId(proformaInvoiceId)
+                .clientId(booking.getClientId())
+                .bookingId(booking.getId())
+                .currencyCode("INR")
+                .fxRateToInr(BigDecimal.ONE)
+                .amount(request.getAmount())
+                .amountInr(request.getAmount())
+                .paymentMode(request.getPaymentMode())
+                .instrumentRef(request.getReference())
+                .receivedOn(request.getPaidOn())
+                .isAdvance(true)
+                .appliedFromAdvance(false)
+                .notes("Refund on cancelled booking")
+                .createdAt(LocalDateTime.now())
+                .createdBy(currentUserId())
+                .build();
+        paymentReceiptRepository.save(receipt);
+        String narration = "Refund " + number + " on cancelled booking";
+        customerLedgerService.post(new LedgerPosting(
+                receipt.getClientId(), receipt.getReceivedOn(), LedgerEntryType.REFUND_PAID,
+                LedgerSourceType.RECEIPT, receipt.getId(), number, narration, booking.getId(), "INR", BigDecimal.ONE,
+                request.getAmount(), BigDecimal.ZERO, request.getAmount(), BigDecimal.ZERO));
+        String bankCode = request.getPaymentMode() == PaymentMode.CASH
+                ? com.voyra.crm.enums.SystemAccount.CASH_IN_HAND.code()
+                : com.voyra.crm.enums.SystemAccount.BANK_ACCOUNTS.code();
+        journalService.post(new com.voyra.crm.models.JournalPosting(
+                request.getPaidOn(), com.voyra.crm.enums.JournalSourceType.RECEIPT, receipt.getId(),
+                com.voyra.crm.enums.JournalPurpose.CLIENT_REFUND_PAID, narration, booking.getId(), null, List.of(
+                        com.voyra.crm.models.JournalLinePosting.debitParty(
+                                com.voyra.crm.enums.SystemAccount.CLIENT_ADVANCES_HELD.code(), "CLIENT", receipt.getClientId(),
+                                request.getAmount(), narration),
+                        com.voyra.crm.models.JournalLinePosting.credit(bankCode, request.getAmount(), narration))));
+        bookingAccountingSync.syncPayment(booking.getId());
+        auditService.recordCreate(AuditEntityType.PAYMENT_RECEIPT, receipt.getId(), number);
+        return toResponse(receipt);
+    }
+
     @Transactional
     public PaymentReceiptResponse applyAdvance(String invoiceId, PaymentReceiptApplyAdvanceRequest request) {
         Invoice invoice = invoiceRepository.findById(invoiceId)
