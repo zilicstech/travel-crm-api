@@ -105,7 +105,7 @@ class BookingCancellationServiceTest {
 
         verify(bookingService).markCancelled(b, "Client changed plans");
         assertThat(b.getCustomerRefundDue()).isEqualByComparingTo("7500");
-        assertThat(b.getSupplierRefundExpected()).isEqualByComparingTo("6000");
+        assertThat(b.getSupplierRefundExpected()).isEqualByComparingTo("0");
         assertThat(b.getCancellationSupplierCharge()).isEqualByComparingTo("2000");
         assertThat(b.getRefundState()).isEqualTo(RefundState.REFUND_PENDING);
         verify(creditNoteService, never()).create(any());
@@ -221,15 +221,15 @@ class BookingCancellationServiceTest {
     }
 
     @Test
-    void supplierRefundWithNoCreditNoteIsTrackedOnTheBooking() {
+    void supplierRefundWithNoCreditNoteToPostAgainstIsRejected() {
         Booking b = booking(BookingStatus.CANCELLED);
         b.setSupplierRefundExpected(d("6000"));
         when(supplierCreditNoteRepository.findByBookingIdAndStatus("B1", SupplierCreditNoteStatus.RECORDED)).thenReturn(List.of());
 
-        service.receiveFromSupplier("B1", pay("6000"));
-
-        assertThat(b.getSupplierRefundReceived()).isEqualByComparingTo("6000");
-        assertThatThrownBy(() -> service.receiveFromSupplier("B1", pay("1"))).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.receiveFromSupplier("B1", pay("6000")))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("record the supplier bill first");
+        assertThat(b.getSupplierRefundReceived()).isEqualByComparingTo("0");
+        verify(supplierCreditNoteService, never()).receiveRefund(any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
     }
 
     @Test

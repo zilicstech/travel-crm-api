@@ -172,13 +172,20 @@ public class BookingCancellationService {
         BigDecimal outstanding = booking.getSupplierRefundExpected().subtract(booking.getSupplierRefundReceived());
         assertWithin(request.getAmount(), outstanding, "supplier");
         BigDecimal left = request.getAmount();
-        for (SupplierCreditNote note : supplierCreditNoteRepository.findByBookingIdAndStatus(bookingId, SupplierCreditNoteStatus.RECORDED)) {
-            BigDecimal open = note.getRefundableAmount().subtract(note.getRefundedAmount());
-            if (left.signum() <= 0 || open.signum() <= 0) {
+        List<SupplierCreditNote> notes = supplierCreditNoteRepository.findByBookingIdAndStatus(bookingId, SupplierCreditNoteStatus.RECORDED);
+        BigDecimal open = notes.stream().map(n -> n.getRefundableAmount().subtract(n.getRefundedAmount()))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        if (left.compareTo(open) > 0) {
+            // Money with no credit note to post against would never reach the books.
+            throw new IllegalStateException("No supplier credit note covers this refund - record the supplier bill first");
+        }
+        for (SupplierCreditNote note : notes) {
+            BigDecimal noteOpen = note.getRefundableAmount().subtract(note.getRefundedAmount());
+            if (left.signum() <= 0 || noteOpen.signum() <= 0) {
                 continue;
             }
             SupplierCreditNoteRefundRequest refund = new SupplierCreditNoteRefundRequest();
-            refund.setAmount(left.min(open));
+            refund.setAmount(left.min(noteOpen));
             refund.setPaymentMode(request.getPaymentMode());
             refund.setInstrumentRef(request.getReference());
             refund.setReceivedOn(request.getPaidOn());
@@ -189,7 +196,6 @@ public class BookingCancellationService {
             }
             left = left.subtract(refund.getAmount());
         }
-        // Whatever no supplier credit note covers (a booking with no bill) is tracked on the booking only.
         booking.setSupplierRefundReceived(booking.getSupplierRefundReceived().add(request.getAmount()));
         bookingRepository.save(booking);
         return bookingService.toResponsePublic(booking);
@@ -226,12 +232,13 @@ public class BookingCancellationService {
     /**
      * Supplier side. Approved bills get a supplier credit note down to the supplier's charge
      * (its refundable part is cash already paid above the charge); bills never approved carry no
-     * postings and are simply cancelled. With no bill at all, the booking's net cost stands in for
-     * what was paid. {@code write} false is the preview: same numbers, nothing recorded.
+     * postings and are simply cancelled. With no bill at all nothing is recorded as paid to the
+     * supplier, so nothing is expected back - a refund needs a bill (and its credit note) to post
+     * against. {@code write} false is the preview: same numbers, nothing recorded.
      */
     private BigDecimal supplierExpected(Booking booking, List<SupplierInvoice> bills, BigDecimal charge, boolean write) {
         if (bills.isEmpty()) {
-            return CancellationMath.supplierRefundExpected(booking.getNetCost(), charge);
+            return BigDecimal.ZERO;
         }
         BigDecimal remainingCharge = charge;
         BigDecimal expected = BigDecimal.ZERO;

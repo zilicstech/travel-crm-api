@@ -27,12 +27,5 @@ class CancellationMathTest {
     void missingAmountsCountAsZero() {
         assertThat(CancellationMath.customerRefundDue(d("5000"), null, null)).isEqualByComparingTo("5000");
         assertThat(CancellationMath.customerRefundDue(null, null, null)).isEqualByComparingTo("0");
-        assertThat(CancellationMath.supplierRefundExpected(null, d("10"))).isEqualByComparingTo("0");
-    }
-
-    @Test
-    void supplierOwesBackWhatWasPaidLessItsCharge() {
-        assertThat(CancellationMath.supplierRefundExpected(d("8000"), d("2000"))).isEqualByComparingTo("6000");
-        assertThat(CancellationMath.supplierRefundExpected(d("1500"), d("2000"))).isEqualByComparingTo("0");
     }
 }
