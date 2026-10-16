@@ -172,7 +172,7 @@ class BookingCancellationServiceTest {
 
         service.cancel("B1", cancel("2000", "0"));
 
-        verify(supplierInvoiceService).cancel(eq("S0"), anyString());
+        verify(supplierInvoiceService).cancelForBooking(eq("S0"), anyString());
         ArgumentCaptor<SupplierCreditNoteRequest> note = ArgumentCaptor.forClass(SupplierCreditNoteRequest.class);
         verify(supplierCreditNoteService).record(note.capture());
         assertThat(note.getValue().getTaxableValue()).isEqualByComparingTo("6000");
@@ -335,5 +335,13 @@ class BookingCancellationServiceTest {
 
         verify(bookingService).toResponsePublic(open);
         verify(bookingService, never()).toResponsePublic(done);
+    }
+
+    @Test
+    void negativeChargesAreRejectedForPreviewAndCancel() {
+        booking(BookingStatus.CONFIRMED);
+        assertThatThrownBy(() -> service.preview("B1", d("-5000"), BigDecimal.ZERO)).hasMessageContaining("negative");
+        assertThatThrownBy(() -> service.cancel("B1", cancel("0", "-1"))).hasMessageContaining("negative");
+        verify(bookingService, never()).markCancelled(any(), anyString());
     }
 }

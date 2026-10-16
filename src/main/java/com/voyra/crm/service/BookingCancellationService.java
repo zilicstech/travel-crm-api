@@ -72,6 +72,7 @@ public class BookingCancellationService {
 
     @Transactional(readOnly = true)
     public BookingCancelPreviewResponse preview(String bookingId, BigDecimal supplierCharge, BigDecimal agencyFee) {
+        assertNotNegative(supplierCharge, agencyFee);
         Booking booking = cancellable(bookingId);
         BigDecimal charge = nz(supplierCharge);
         BigDecimal kept = charge.add(nz(agencyFee));
@@ -93,6 +94,7 @@ public class BookingCancellationService {
 
     @Transactional
     public BookingResponse cancel(String bookingId, BookingCancelRequest request) {
+        assertNotNegative(request.getSupplierCharge(), request.getAgencyFee());
         Booking booking = cancellable(bookingId);
         BigDecimal charge = nz(request.getSupplierCharge());
         BigDecimal fee = nz(request.getAgencyFee());
@@ -236,7 +238,7 @@ public class BookingCancellationService {
         for (SupplierInvoice bill : bills) {
             if (UNPOSTED.contains(bill.getStatus())) {
                 if (write) {
-                    supplierInvoiceService.cancel(bill.getId(), "Booking cancelled");
+                    supplierInvoiceService.cancelForBooking(bill.getId(), "Booking cancelled");
                 }
                 continue;
             }
@@ -314,6 +316,14 @@ public class BookingCancellationService {
             return RefundState.REFUND_PENDING;
         }
         return nz(refunded).compareTo(due) >= 0 ? RefundState.REFUNDED : RefundState.PARTIALLY_REFUNDED;
+    }
+
+    private static void assertNotNegative(BigDecimal... amounts) {
+        for (BigDecimal a : amounts) {
+            if (a != null && a.signum() < 0) {
+                throw new IllegalArgumentException("Charges cannot be negative");
+            }
+        }
     }
 
     private static boolean settled(Booking b) {

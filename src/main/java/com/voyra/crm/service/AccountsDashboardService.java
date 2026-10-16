@@ -59,7 +59,10 @@ public class AccountsDashboardService {
 
         List<PaymentReceipt> collectedThisMonth = paymentReceiptRepository.findByDirectionAndReceivedOnBetween(
                 ReceiptDirection.RECEIPT, monthStart, monthEnd);
-        BigDecimal collected = sum(collectedThisMonth, PaymentReceipt::getAmountInr);
+        // Adjustment receipts are wallet transfers (a refund kept on account, a deposit applied to an
+        // invoice) - no money reached the bank, so counting them would double the deposit.
+        BigDecimal collected = sum(collectedThisMonth.stream()
+                .filter(r -> r.getPaymentMode() != com.voyra.crm.enums.PaymentMode.ADJUSTMENT).toList(), PaymentReceipt::getAmountInr);
 
         List<Invoice> unpaid = invoiceRepository.findByDocumentTypeAndStatusInAndBalanceDueInrGreaterThan(
                 InvoiceDocumentType.TAX_INVOICE, List.of(InvoiceLifecycle.ISSUED, InvoiceLifecycle.PARTIALLY_PAID), BigDecimal.ZERO);

@@ -13,5 +13,7 @@ public interface BookingCostComponentRepository extends JpaRepository<BookingCos
 
     List<BookingCostComponent> findByBookingIdAndVendorId(String bookingId, String vendorId);
 
+    /** A derived delete needs its own transaction - the callers sit outside one (they touch object storage). */
+    @org.springframework.transaction.annotation.Transactional
     void deleteByBookingId(String bookingId);
 }

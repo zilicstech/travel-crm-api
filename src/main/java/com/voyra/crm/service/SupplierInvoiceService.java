@@ -376,7 +376,23 @@ public class SupplierInvoiceService {
 
     @Transactional
     public SupplierInvoiceResponse cancel(String id, String reason) {
-        SupplierInvoice invoice = findById(id);
+        return cancel(findById(id), reason);
+    }
+
+    /**
+     * Cancels an unposted bill on behalf of a booking cancellation. An agent may cancel their own
+     * booking, and that must not fail because a draft bill exists - so this skips the Owner/Accountant
+     * gate that guards the payables screens. The booking cancellation has already authorised the caller.
+     */
+    @Transactional
+    public SupplierInvoiceResponse cancelForBooking(String id, String reason) {
+        SupplierInvoice invoice = supplierInvoiceRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Supplier bill not found: " + id));
+        return cancel(invoice, reason);
+    }
+
+    private SupplierInvoiceResponse cancel(SupplierInvoice invoice, String reason) {
+        String id = invoice.getId();
         SupplierInvoiceLifecyclePolicy.assertCancellable(invoice.getStatus());
         if (invoice.getAmountPaid().compareTo(BigDecimal.ZERO) > 0) {
             throw new IllegalStateException("This bill has payments recorded against it - reverse them first");
