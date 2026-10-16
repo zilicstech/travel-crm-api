@@ -19,6 +19,7 @@ import com.voyra.crm.enums.CreditNoteReason;
 import com.voyra.crm.enums.CreditNoteStatus;
 import com.voyra.crm.enums.InvoiceDocumentType;
 import com.voyra.crm.enums.InvoiceLifecycle;
+import com.voyra.crm.enums.PaymentMode;
 import com.voyra.crm.enums.RefundState;
 import com.voyra.crm.enums.SupplierCreditNoteReason;
 import com.voyra.crm.enums.SupplierCreditNoteStatus;
@@ -37,6 +38,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -64,6 +66,8 @@ public class BookingCancellationService {
     private final SupplierCreditNoteRepository supplierCreditNoteRepository;
     private final SupplierCreditNoteService supplierCreditNoteService;
     private final PaymentReceiptService paymentReceiptService;
+    private final SupplierPaymentService supplierPaymentService;
+    private final AuthorResolver authorResolver;
     private final RevenueRecognitionTenantService revenueRecognitionTenantService;
 
     @Transactional(readOnly = true)
@@ -95,7 +99,9 @@ public class BookingCancellationService {
         bookingAccountingSync.syncPayment(bookingId);
         BigDecimal customerPaid = customerPaid(booking);
 
-        bookingService.markCancelled(booking, request.getReason().trim());
+        String reason = request.getReason() == null || request.getReason().isBlank()
+                ? request.getType().label() : request.getReason().trim();
+        bookingService.markCancelled(booking, reason);
 
         Invoice invoice = liveTaxInvoice(bookingId);
         BigDecimal due;
@@ -103,7 +109,7 @@ public class BookingCancellationService {
             CreditNoteRequest note = new CreditNoteRequest();
             note.setInvoiceId(invoice.getId());
             note.setReason(CreditNoteReason.BOOKING_CANCELLED);
-            note.setReasonNote(request.getReason().trim());
+            note.setReasonNote(reason);
             note.setCancellationFee(charge.add(fee).min(invoice.getTaxableValue()));
             CreditNoteResponse issued = creditNoteService.issue(creditNoteService.create(note).getId());
             due = issued.getRefundableAmount();
@@ -115,6 +121,7 @@ public class BookingCancellationService {
         List<SupplierInvoice> bills = supplierInvoiceRepository.findByBookingIdAndStatusNot(bookingId, SupplierInvoiceStatus.CANCELLED);
         BigDecimal expected = supplierExpected(booking, bills, charge, true);
 
+        booking.setCancellationType(request.getType());
         booking.setCancellationSupplierCharge(charge);
         booking.setCancellationAgencyFee(fee);
         booking.setCustomerRefundDue(due);
@@ -128,6 +135,7 @@ public class BookingCancellationService {
     @Transactional
     public BookingResponse payCustomer(String bookingId, RefundSettlementRequest request) {
         Booking booking = cancelled(bookingId);
+        boolean toAccount = toAccount(request);
         BigDecimal outstanding = booking.getCustomerRefundDue().subtract(booking.getRefundedTotalInr());
         assertWithin(request.getAmount(), outstanding, "customer");
         CreditNote note = creditNoteRepository.findByBookingIdAndStatusNot(bookingId, CreditNoteStatus.CANCELLED).stream()
@@ -138,12 +146,16 @@ public class BookingCancellationService {
             refund.setPaymentMode(request.getPaymentMode());
             refund.setInstrumentRef(request.getReference());
             refund.setReceivedOn(request.getPaidOn());
-            creditNoteService.refund(note.getId(), refund);
+            creditNoteService.refund(note.getId(), refund, toAccount);
         } else {
             String proformaId = invoiceRepository.findByBookingId(bookingId).stream()
                     .filter(i -> i.getDocumentType() == InvoiceDocumentType.PROFORMA && i.getStatus() != InvoiceLifecycle.CANCELLED)
                     .map(Invoice::getId).findFirst().orElse(null);
-            paymentReceiptService.refundAdvance(booking, proformaId, request);
+            paymentReceiptService.refundAdvance(booking, proformaId, request, toAccount);
+        }
+        if (toAccount) {
+            paymentReceiptService.creditWallet(booking.getClientId(), request.getAmount(), request.getPaidOn(),
+                    "Refund on cancelled booking " + label(booking) + " kept on account");
         }
         Booking fresh = bookingRepository.findById(bookingId).orElseThrow();
         fresh.setRefundState(customerRefundState(fresh.getCustomerRefundDue(), fresh.getRefundedTotalInr()));
@@ -154,6 +166,7 @@ public class BookingCancellationService {
     @Transactional
     public BookingResponse receiveFromSupplier(String bookingId, RefundSettlementRequest request) {
         Booking booking = cancelled(bookingId);
+        boolean toAccount = toAccount(request);
         BigDecimal outstanding = booking.getSupplierRefundExpected().subtract(booking.getSupplierRefundReceived());
         assertWithin(request.getAmount(), outstanding, "supplier");
         BigDecimal left = request.getAmount();
@@ -167,7 +180,11 @@ public class BookingCancellationService {
             refund.setPaymentMode(request.getPaymentMode());
             refund.setInstrumentRef(request.getReference());
             refund.setReceivedOn(request.getPaidOn());
-            supplierCreditNoteService.receiveRefund(note.getId(), refund);
+            supplierCreditNoteService.receiveRefund(note.getId(), refund, toAccount);
+            if (toAccount) {
+                supplierPaymentService.creditWallet(note.getVendorId(), refund.getAmount(), request.getPaidOn(),
+                        "Refund on cancelled booking " + label(booking) + " kept in supplier wallet");
+            }
             left = left.subtract(refund.getAmount());
         }
         // Whatever no supplier credit note covers (a booking with no bill) is tracked on the booking only.
@@ -176,14 +193,30 @@ public class BookingCancellationService {
         return bookingService.toResponsePublic(booking);
     }
 
-    /** Cancelled bookings where either side still has money to move. */
+    /** Cancelled bookings where either side still has money to move, or that Accounts has not cross-checked yet. */
     @Transactional(readOnly = true)
     public List<BookingResponse> listOutstanding() {
         return bookingRepository.findByBookingStatus(BookingStatus.CANCELLED).stream()
-                .filter(b -> b.getCustomerRefundDue().compareTo(b.getRefundedTotalInr()) > 0
-                        || b.getSupplierRefundExpected().compareTo(b.getSupplierRefundReceived()) > 0)
+                .filter(b -> b.getRefundCheckedAt() == null || !settled(b))
                 .map(bookingService::toResponsePublic)
                 .toList();
+    }
+
+    /** The accountant's cross-check ("cross checked by") once nothing is left to move on either side. */
+    @Transactional
+    public BookingResponse markChecked(String bookingId) {
+        Booking booking = cancelled(bookingId);
+        if (!settled(booking)) {
+            throw new IllegalStateException("Settle both the customer and the supplier refund before cross-checking");
+        }
+        if (booking.getRefundCheckedAt() != null) {
+            throw new IllegalStateException("Already cross-checked by " + booking.getRefundCheckedBy());
+        }
+        booking.setRefundCheckedAt(LocalDateTime.now());
+        booking.setRefundCheckedBy(authorResolver.resolveCurrentAuthor().name());
+        bookingRepository.save(booking);
+        log.info("Cancelled booking cross-checked: bookingId={}", bookingId);
+        return bookingService.toResponsePublic(booking);
     }
 
     // ---------------------------------------------------------------- internals
@@ -281,6 +314,27 @@ public class BookingCancellationService {
             return RefundState.REFUND_PENDING;
         }
         return nz(refunded).compareTo(due) >= 0 ? RefundState.REFUNDED : RefundState.PARTIALLY_REFUNDED;
+    }
+
+    private static boolean settled(Booking b) {
+        return b.getCustomerRefundDue().compareTo(b.getRefundedTotalInr()) <= 0
+                && b.getSupplierRefundExpected().compareTo(b.getSupplierRefundReceived()) <= 0;
+    }
+
+    /** To account moves no cash, so it carries the ADJUSTMENT mode; otherwise a real mode is required. */
+    private static boolean toAccount(RefundSettlementRequest request) {
+        if (Boolean.TRUE.equals(request.getToAccount())) {
+            request.setPaymentMode(PaymentMode.ADJUSTMENT);
+            return true;
+        }
+        if (request.getPaymentMode() == null) {
+            throw new IllegalArgumentException("Payment mode is required");
+        }
+        return false;
+    }
+
+    private static String label(Booking b) {
+        return (b.getDestination() != null ? b.getDestination() + " " : "") + "(" + b.getId() + ")";
     }
 
     private static void assertWithin(BigDecimal amount, BigDecimal outstanding, String side) {

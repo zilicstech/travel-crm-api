@@ -1,5 +1,6 @@
 package com.voyra.crm.dto;
 
+import com.voyra.crm.enums.CancellationType;
 import com.voyra.crm.enums.BookingStatus;
 import com.voyra.crm.enums.BookingType;
 import com.voyra.crm.enums.MarkupMode;
@@ -246,6 +247,15 @@ public class BookingResponse {
 
     @Schema(description = "Cancellation: supplier refund received so far", example = "0.00")
     private BigDecimal supplierRefundReceived;
+
+    @Schema(description = "Cancellation: how the booking was cancelled", example = "VOID")
+    private CancellationType cancellationType;
+
+    @Schema(description = "Cancellation: when Accounts cross-checked the settled refund; null while still to check")
+    private LocalDateTime refundCheckedAt;
+
+    @Schema(description = "Cancellation: who cross-checked the settled refund", example = "Sandli")
+    private String refundCheckedBy;
 
     @Schema(description = "MANUAL until a tax invoice is issued against this booking, then DERIVED forever", example = "MANUAL")
     private PaymentStatusSource paymentStatusSource;

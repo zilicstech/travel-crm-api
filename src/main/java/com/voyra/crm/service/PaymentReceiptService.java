@@ -193,7 +193,7 @@ public class PaymentReceiptService {
      */
     @Transactional
     public PaymentReceiptResponse refundAdvance(com.voyra.crm.entity.Booking booking, String proformaInvoiceId,
-                                                com.voyra.crm.dto.RefundSettlementRequest request) {
+                                                com.voyra.crm.dto.RefundSettlementRequest request, boolean toWallet) {
         String number = documentNumberService.next(DocumentKind.RECEIPT, request.getPaidOn());
         PaymentReceipt receipt = PaymentReceipt.builder()
                 .id(UniqueIdResolver.resolve(paymentReceiptRepository::existsById))
@@ -212,7 +212,7 @@ public class PaymentReceiptService {
                 .receivedOn(request.getPaidOn())
                 .isAdvance(true)
                 .appliedFromAdvance(false)
-                .notes("Refund on cancelled booking")
+                .notes(toWallet ? "Refund on cancelled booking, credited to client account" : "Refund on cancelled booking")
                 .createdAt(LocalDateTime.now())
                 .createdBy(currentUserId())
                 .build();
@@ -222,6 +222,13 @@ public class PaymentReceiptService {
                 receipt.getClientId(), receipt.getReceivedOn(), LedgerEntryType.REFUND_PAID,
                 LedgerSourceType.RECEIPT, receipt.getId(), number, narration, booking.getId(), "INR", BigDecimal.ONE,
                 request.getAmount(), BigDecimal.ZERO, request.getAmount(), BigDecimal.ZERO));
+        if (toWallet) {
+            // The money never leaves Client Advances Held - it only moves into the wallet pool
+            // (creditWallet), so there is no journal to post.
+            bookingAccountingSync.syncPayment(booking.getId());
+            auditService.recordCreate(AuditEntityType.PAYMENT_RECEIPT, receipt.getId(), number);
+            return toResponse(receipt);
+        }
         String bankCode = request.getPaymentMode() == PaymentMode.CASH
                 ? com.voyra.crm.enums.SystemAccount.CASH_IN_HAND.code()
                 : com.voyra.crm.enums.SystemAccount.BANK_ACCOUNTS.code();
@@ -233,6 +240,41 @@ public class PaymentReceiptService {
                                 request.getAmount(), narration),
                         com.voyra.crm.models.JournalLinePosting.credit(bankCode, request.getAmount(), narration))));
         bookingAccountingSync.syncPayment(booking.getId());
+        auditService.recordCreate(AuditEntityType.PAYMENT_RECEIPT, receipt.getId(), number);
+        return toResponse(receipt);
+    }
+
+    /**
+     * Puts a cancelled booking's refund into the client's wallet - a deposit with no invoice, so
+     * the next invoice draws it down like any other. No journal: the refund that pairs with it
+     * already credited Client Advances Held. No bookingId either, or the booking would count it
+     * as money received.
+     */
+    @Transactional
+    public PaymentReceiptResponse creditWallet(String clientId, BigDecimal amount, LocalDate on, String narration) {
+        String number = documentNumberService.next(DocumentKind.RECEIPT, on);
+        PaymentReceipt receipt = PaymentReceipt.builder()
+                .id(UniqueIdResolver.resolve(paymentReceiptRepository::existsById))
+                .receiptNumber(number)
+                .financialYear(FinancialYear.of(on))
+                .direction(ReceiptDirection.RECEIPT)
+                .clientId(clientId)
+                .currencyCode("INR")
+                .fxRateToInr(BigDecimal.ONE)
+                .amount(amount)
+                .amountInr(amount)
+                .paymentMode(PaymentMode.ADJUSTMENT)
+                .receivedOn(on)
+                .isAdvance(true)
+                .appliedFromAdvance(false)
+                .notes(narration)
+                .createdAt(LocalDateTime.now())
+                .createdBy(currentUserId())
+                .build();
+        paymentReceiptRepository.save(receipt);
+        customerLedgerService.post(new LedgerPosting(
+                clientId, on, LedgerEntryType.PAYMENT_RECEIVED, LedgerSourceType.RECEIPT, receipt.getId(), number,
+                narration, null, "INR", BigDecimal.ONE, BigDecimal.ZERO, amount, BigDecimal.ZERO, amount));
         auditService.recordCreate(AuditEntityType.PAYMENT_RECEIPT, receipt.getId(), number);
         return toResponse(receipt);
     }

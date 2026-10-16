@@ -790,6 +790,8 @@ public class BookingService {
                 .cancellationSupplierCharge(b.getCancellationSupplierCharge()).cancellationAgencyFee(b.getCancellationAgencyFee())
                 .customerRefundDue(b.getCustomerRefundDue()).supplierRefundExpected(b.getSupplierRefundExpected())
                 .supplierRefundReceived(b.getSupplierRefundReceived())
+                .cancellationType(b.getCancellationType())
+                .refundCheckedAt(b.getRefundCheckedAt()).refundCheckedBy(b.getRefundCheckedBy())
                 .documents(documents)
                 .internationalTrip(b.getInternationalTrip())
                 .marginPercent(marginPercent).lowMargin(lowMargin)

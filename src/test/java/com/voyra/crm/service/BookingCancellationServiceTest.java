@@ -7,8 +7,10 @@ import com.voyra.crm.dto.RefundSettlementRequest;
 import com.voyra.crm.dto.SupplierCreditNoteRequest;
 import com.voyra.crm.entity.Booking;
 import com.voyra.crm.entity.Invoice;
+import com.voyra.crm.entity.SupplierCreditNote;
 import com.voyra.crm.entity.SupplierInvoice;
 import com.voyra.crm.enums.BookingStatus;
+import com.voyra.crm.enums.CancellationType;
 import com.voyra.crm.enums.CreditNoteStatus;
 import com.voyra.crm.enums.InvoiceDocumentType;
 import com.voyra.crm.enums.InvoiceLifecycle;
@@ -60,6 +62,8 @@ class BookingCancellationServiceTest {
     @Mock private SupplierCreditNoteService supplierCreditNoteService;
     @Mock private PaymentReceiptService paymentReceiptService;
     @Mock private RevenueRecognitionTenantService revenueRecognitionTenantService;
+    @Mock private SupplierPaymentService supplierPaymentService;
+    @Mock private AuthorResolver authorResolver;
     @InjectMocks private BookingCancellationService service;
 
     private static BigDecimal d(String v) {
@@ -77,6 +81,7 @@ class BookingCancellationServiceTest {
 
     private static BookingCancelRequest cancel(String charge, String fee) {
         BookingCancelRequest r = new BookingCancelRequest();
+        r.setType(CancellationType.CANCELLATION);
         r.setReason("Client changed plans");
         r.setSupplierCharge(d(charge));
         r.setAgencyFee(d(fee));
@@ -201,7 +206,7 @@ class BookingCancellationServiceTest {
         b.setRefundedTotalInr(d("5000"));
 
         assertThatThrownBy(() -> service.payCustomer("B1", pay("3000"))).isInstanceOf(IllegalArgumentException.class);
-        verify(paymentReceiptService, never()).refundAdvance(any(), any(), any());
+        verify(paymentReceiptService, never()).refundAdvance(any(), any(), any(), eq(false));
     }
 
     @Test
@@ -212,7 +217,7 @@ class BookingCancellationServiceTest {
 
         service.payCustomer("B1", pay("2500"));
 
-        verify(paymentReceiptService).refundAdvance(eq(b), any(), any());
+        verify(paymentReceiptService).refundAdvance(eq(b), any(), any(), eq(false));
     }
 
     @Test
@@ -225,5 +230,110 @@ class BookingCancellationServiceTest {
 
         assertThat(b.getSupplierRefundReceived()).isEqualByComparingTo("6000");
         assertThatThrownBy(() -> service.receiveFromSupplier("B1", pay("1"))).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void typeIsStoredAndStandsInForAMissingReason() {
+        Booking b = booking(BookingStatus.CONFIRMED);
+        BookingCancelRequest r = cancel("500", "0");
+        r.setType(CancellationType.VOID);
+        r.setReason("  ");
+
+        service.cancel("B1", r);
+
+        verify(bookingService).markCancelled(b, "Void");
+        assertThat(b.getCancellationType()).isEqualTo(CancellationType.VOID);
+    }
+
+    @Test
+    void customerRefundToAccountGoesToTheWalletNotTheBank() {
+        Booking b = booking(BookingStatus.CANCELLED);
+        b.setCustomerRefundDue(d("7500"));
+        when(creditNoteRepository.findByBookingIdAndStatusNot("B1", CreditNoteStatus.CANCELLED)).thenReturn(List.of());
+        RefundSettlementRequest r = pay("7500");
+        r.setPaymentMode(null);
+        r.setToAccount(true);
+
+        service.payCustomer("B1", r);
+
+        ArgumentCaptor<RefundSettlementRequest> sent = ArgumentCaptor.forClass(RefundSettlementRequest.class);
+        verify(paymentReceiptService).refundAdvance(eq(b), any(), sent.capture(), eq(true));
+        assertThat(sent.getValue().getPaymentMode()).isEqualTo(PaymentMode.ADJUSTMENT);
+        verify(paymentReceiptService).creditWallet(eq("C1"), eq(d("7500")), eq(LocalDate.of(2026, 10, 16)), anyString());
+    }
+
+    @Test
+    void customerRefundToAccountWithACreditNoteRefundsItToWallet() {
+        Booking b = booking(BookingStatus.CANCELLED);
+        b.setCustomerRefundDue(d("7500"));
+        com.voyra.crm.entity.CreditNote note = com.voyra.crm.entity.CreditNote.builder().id("CN1").status(CreditNoteStatus.ISSUED).build();
+        when(creditNoteRepository.findByBookingIdAndStatusNot("B1", CreditNoteStatus.CANCELLED)).thenReturn(List.of(note));
+        RefundSettlementRequest r = pay("7500");
+        r.setToAccount(true);
+
+        service.payCustomer("B1", r);
+
+        verify(creditNoteService).refund(eq("CN1"), any(), eq(true));
+        verify(paymentReceiptService).creditWallet(eq("C1"), eq(d("7500")), any(), anyString());
+    }
+
+    @Test
+    void supplierRefundToAccountIsKeptInTheSupplierWallet() {
+        Booking b = booking(BookingStatus.CANCELLED);
+        b.setSupplierRefundExpected(d("6000"));
+        SupplierCreditNote note = SupplierCreditNote.builder().id("SCN1").vendorId("V1")
+                .refundableAmount(d("6000")).refundedAmount(BigDecimal.ZERO).build();
+        when(supplierCreditNoteRepository.findByBookingIdAndStatus("B1", SupplierCreditNoteStatus.RECORDED)).thenReturn(List.of(note));
+        RefundSettlementRequest r = pay("6000");
+        r.setToAccount(true);
+
+        service.receiveFromSupplier("B1", r);
+
+        verify(supplierCreditNoteService).receiveRefund(eq("SCN1"), any(), eq(true));
+        verify(supplierPaymentService).creditWallet(eq("V1"), eq(d("6000")), any(), anyString());
+        assertThat(b.getSupplierRefundReceived()).isEqualByComparingTo("6000");
+    }
+
+    @Test
+    void settlingWithoutAModeOrToAccountIsRejected() {
+        Booking b = booking(BookingStatus.CANCELLED);
+        b.setCustomerRefundDue(d("7500"));
+        RefundSettlementRequest r = pay("100");
+        r.setPaymentMode(null);
+
+        assertThatThrownBy(() -> service.payCustomer("B1", r)).hasMessageContaining("Payment mode is required");
+    }
+
+    @Test
+    void crossCheckWaitsUntilBothSidesAreSettled() {
+        Booking b = booking(BookingStatus.CANCELLED);
+        b.setCustomerRefundDue(d("7500"));
+        b.setRefundedTotalInr(d("5000"));
+        assertThatThrownBy(() -> service.markChecked("B1")).isInstanceOf(IllegalStateException.class);
+
+        b.setRefundedTotalInr(d("7500"));
+        when(authorResolver.resolveCurrentAuthor()).thenReturn(new AuthorResolver.AuthorInfo("U1", "Sandli"));
+        service.markChecked("B1");
+
+        assertThat(b.getRefundCheckedBy()).isEqualTo("Sandli");
+        assertThat(b.getRefundCheckedAt()).isNotNull();
+        assertThatThrownBy(() -> service.markChecked("B1")).hasMessageContaining("Already cross-checked");
+    }
+
+    @Test
+    void settledButUncheckedCancellationsStayOnTheList() {
+        Booking open = Booking.builder().id("B1").bookingStatus(BookingStatus.CANCELLED)
+                .customerRefundDue(BigDecimal.ZERO).refundedTotalInr(BigDecimal.ZERO)
+                .supplierRefundExpected(BigDecimal.ZERO).supplierRefundReceived(BigDecimal.ZERO).build();
+        Booking done = Booking.builder().id("B2").bookingStatus(BookingStatus.CANCELLED)
+                .customerRefundDue(BigDecimal.ZERO).refundedTotalInr(BigDecimal.ZERO)
+                .supplierRefundExpected(BigDecimal.ZERO).supplierRefundReceived(BigDecimal.ZERO)
+                .refundCheckedAt(java.time.LocalDateTime.now()).build();
+        when(bookingRepository.findByBookingStatus(BookingStatus.CANCELLED)).thenReturn(List.of(open, done));
+
+        service.listOutstanding();
+
+        verify(bookingService).toResponsePublic(open);
+        verify(bookingService, never()).toResponsePublic(done);
     }
 }

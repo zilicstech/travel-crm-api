@@ -168,6 +168,16 @@ public class SupplierCreditNoteService {
 
     @Transactional
     public SupplierCreditNoteResponse receiveRefund(String id, SupplierCreditNoteRefundRequest request) {
+        return receiveRefund(id, request, false);
+    }
+
+    /**
+     * {@code toWallet}: the supplier keeps the refund as a wallet balance (a portal credit) instead
+     * of paying it into the bank - the journal debits Supplier Advances rather than Bank, and the
+     * caller adds the matching advance (SupplierPaymentService#creditWallet).
+     */
+    @Transactional
+    public SupplierCreditNoteResponse receiveRefund(String id, SupplierCreditNoteRefundRequest request, boolean toWallet) {
         SupplierCreditNote note = findById(id);
         if (note.getStatus() != SupplierCreditNoteStatus.RECORDED) {
             throw new IllegalStateException("Only a recorded credit note can be refunded");
@@ -204,7 +214,7 @@ public class SupplierCreditNoteService {
                 note.getBookingId(), payment.getCurrencyCode(), payment.getFxRateToInr(),
                 BigDecimal.ZERO, payment.getAmountInr(), BigDecimal.ZERO, payment.getAmountInr()));
 
-        postRefundJournal(payment, note);
+        postRefundJournal(payment, note, toWallet);
 
         // The refund hands back cash we had paid, so net cash paid on the bill falls and the
         // negative balance the credit note left behind is cleared.
@@ -295,7 +305,7 @@ public class SupplierCreditNoteService {
     }
 
     /** Cash/bank in, payable out: clears the debit balance the credit note left on the vendor's payable. */
-    private void postRefundJournal(SupplierPayment payment, SupplierCreditNote note) {
+    private void postRefundJournal(SupplierPayment payment, SupplierCreditNote note, boolean toWallet) {
         BigDecimal amountInr = payment.getAmountInr();
         if (amountInr == null || amountInr.compareTo(BigDecimal.ZERO) <= 0) {
             return;
@@ -307,7 +317,10 @@ public class SupplierCreditNoteService {
         journalService.post(new com.voyra.crm.models.JournalPosting(
                 payment.getPaidOn(), com.voyra.crm.enums.JournalSourceType.SUPPLIER_PAYMENT, payment.getId(),
                 com.voyra.crm.enums.JournalPurpose.SUPPLIER_REFUND_RECEIVED, narration, note.getBookingId(), null,
-                List.of(com.voyra.crm.models.JournalLinePosting.debit(bankCode, amountInr, narration),
+                List.of(toWallet
+                                ? com.voyra.crm.models.JournalLinePosting.debitParty(
+                                        com.voyra.crm.enums.SystemAccount.SUPPLIER_ADVANCES.code(), "VENDOR", note.getVendorId(), amountInr, narration)
+                                : com.voyra.crm.models.JournalLinePosting.debit(bankCode, amountInr, narration),
                         com.voyra.crm.models.JournalLinePosting.creditParty(
                                 com.voyra.crm.enums.SystemAccount.ACCOUNTS_PAYABLE.code(), "VENDOR", note.getVendorId(), amountInr, narration))));
     }

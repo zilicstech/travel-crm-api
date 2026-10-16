@@ -171,6 +171,13 @@ public class BookingController {
         return ResponseEntity.ok(bookingCancellationService.receiveFromSupplier(id, request));
     }
 
+    @PostMapping("/{id}/refunds/check")
+    @PreAuthorize("hasAnyRole('AGENCY_OWNER', 'ACCOUNTANT')")
+    @Operation(summary = "Mark a settled cancellation as cross-checked by Accounts")
+    public ResponseEntity<BookingResponse> markRefundChecked(@PathVariable String id) {
+        return ResponseEntity.ok(bookingCancellationService.markChecked(id));
+    }
+
     @PatchMapping("/{id}/deadlines")
     @Operation(summary = "Set ticketing/cancellation deadlines")
     public ResponseEntity<BookingResponse> updateDeadlines(@PathVariable String id,

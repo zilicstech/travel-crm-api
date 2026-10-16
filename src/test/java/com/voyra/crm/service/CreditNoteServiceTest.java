@@ -417,4 +417,29 @@ class CreditNoteServiceTest {
         assertThat(invoice.getAmountReceived()).isEqualByComparingTo("0.00");
         assertThat(invoice.getBalanceDue()).isEqualByComparingTo("0.00");
     }
+
+    @Test
+    void refundToWalletCreditsClientAdvancesInsteadOfTheBank() {
+        CreditNote issued = CreditNote.builder().id("CN1").invoiceId("I1").clientId("K1")
+                .creditNoteNumber("CN/2026-27/0001").status(CreditNoteStatus.ISSUED)
+                .currencyCode("INR").fxRateToInr(BigDecimal.ONE)
+                .totalAmount(new BigDecimal("1180.00")).refundableAmount(new BigDecimal("1180.00"))
+                .refundedAmount(BigDecimal.ZERO).build();
+        when(creditNoteRepository.findById("CN1")).thenReturn(Optional.of(issued));
+        when(paymentReceiptRepository.findByCreditNoteIdOrderByReceivedOnAscCreatedAtAsc("CN1")).thenReturn(List.of());
+        when(documentNumberService.next(DocumentKind.RECEIPT, LocalDate.of(2026, 10, 16))).thenReturn("RCP/11");
+
+        CreditNoteRefundRequest request = new CreditNoteRefundRequest();
+        request.setAmount(new BigDecimal("500.00"));
+        request.setPaymentMode(PaymentMode.ADJUSTMENT);
+        request.setReceivedOn(LocalDate.of(2026, 10, 16));
+        creditNoteService.refund("CN1", request, true);
+
+        org.mockito.ArgumentCaptor<com.voyra.crm.models.JournalPosting> captor =
+                org.mockito.ArgumentCaptor.forClass(com.voyra.crm.models.JournalPosting.class);
+        org.mockito.Mockito.verify(journalService).post(captor.capture());
+        assertThat(captor.getValue().lines()).extracting(com.voyra.crm.models.JournalLinePosting::accountCode)
+                .containsExactlyInAnyOrder(com.voyra.crm.enums.SystemAccount.ACCOUNTS_RECEIVABLE.code(),
+                        com.voyra.crm.enums.SystemAccount.CLIENT_ADVANCES_HELD.code());
+    }
 }

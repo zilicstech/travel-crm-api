@@ -129,4 +129,15 @@ class BookingControllerAccountantAuthTest {
                         .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isOk());
     }
+
+    @Test
+    void agentCannotCrossCheckARefundButAnAccountantCan() throws Exception {
+        mockMvc.perform(post("/api/bookings/B1/refunds/check")
+                        .with(SecurityMockMvcRequestPostProcessors.user("agent1").roles("AGENT")))
+                .andExpect(status().isForbidden());
+        when(bookingCancellationService.markChecked(any())).thenReturn(BookingResponse.builder().id("B1").build());
+        mockMvc.perform(post("/api/bookings/B1/refunds/check")
+                        .with(SecurityMockMvcRequestPostProcessors.user("accountant1").roles("ACCOUNTANT")))
+                .andExpect(status().isOk());
+    }
 }

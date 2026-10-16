@@ -22,9 +22,11 @@ public class RefundSettlementRequest {
     @Schema(example = "2026-10-16")
     private LocalDate paidOn;
 
-    @NotNull(message = "Payment mode is required")
-    @Schema(example = "UPI")
+    @Schema(description = "Required unless toAccount", example = "UPI")
     private PaymentMode paymentMode;
+
+    @Schema(description = "Keep the money on the client's account (or in the supplier's wallet) instead of moving cash", example = "false")
+    private Boolean toAccount;
 
     @Schema(description = "UTR, cheque no. or similar", example = "UTR123456")
     private String reference;

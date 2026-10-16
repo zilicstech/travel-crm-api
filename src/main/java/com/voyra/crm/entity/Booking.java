@@ -1,5 +1,6 @@
 package com.voyra.crm.entity;
 
+import com.voyra.crm.enums.CancellationType;
 import com.voyra.crm.enums.BookingStatus;
 import com.voyra.crm.enums.BookingType;
 import com.voyra.crm.enums.MarkupMode;
@@ -322,6 +323,17 @@ public class Booking {
     @Column(name = "supplier_refund_received", nullable = false, precision = 19, scale = 2)
     @Builder.Default
     private BigDecimal supplierRefundReceived = BigDecimal.ZERO;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "cancellation_type", length = 20)
+    private CancellationType cancellationType;
+
+    /** Set when Accounts has cross-checked a settled cancellation; null while still to check. */
+    @Column(name = "refund_checked_at")
+    private LocalDateTime refundCheckedAt;
+
+    @Column(name = "refund_checked_by")
+    private String refundCheckedBy;
 
     /** MANUAL until a tax invoice is issued against this booking, then DERIVED forever - see {@code BookingAccountingSync}. */
     @Enumerated(EnumType.STRING)

@@ -230,6 +230,16 @@ public class CreditNoteService {
 
     @Transactional
     public CreditNoteResponse refund(String id, CreditNoteRefundRequest request) {
+        return refund(id, request, false);
+    }
+
+    /**
+     * {@code toWallet}: the refund stays with the agency as the client's account balance instead
+     * of leaving the bank - the journal credits Client Advances Held rather than Bank, and the
+     * caller adds the matching wallet deposit (PaymentReceiptService#creditWallet).
+     */
+    @Transactional
+    public CreditNoteResponse refund(String id, CreditNoteRefundRequest request, boolean toWallet) {
         CreditNote note = findById(id);
         if (note.getStatus() != CreditNoteStatus.ISSUED) {
             throw new IllegalStateException("Only an issued credit note can be refunded");
@@ -274,7 +284,7 @@ public class CreditNoteService {
                 "Refund " + receipt.getReceiptNumber() + " against " + note.getCreditNoteNumber(),
                 note.getBookingId(), receipt.getCurrencyCode(), receipt.getFxRateToInr(),
                 receipt.getAmountInr(), BigDecimal.ZERO, receipt.getAmountInr(), BigDecimal.ZERO));
-        postRefundPaidJournal(note, receipt);
+        postRefundPaidJournal(note, receipt, toWallet);
 
         note.setRefundedAmount(alreadyRefunded.add(request.getAmount()));
         creditNoteRepository.save(note);
@@ -472,7 +482,7 @@ public class CreditNoteService {
     }
 
     /** Posting-rule-table row 13 - a cash refund paid out against a credit note. */
-    private void postRefundPaidJournal(CreditNote note, PaymentReceipt receipt) {
+    private void postRefundPaidJournal(CreditNote note, PaymentReceipt receipt, boolean toWallet) {
         BigDecimal amountInr = receipt.getAmountInr();
         if (amountInr == null || amountInr.compareTo(BigDecimal.ZERO) <= 0) {
             return;
@@ -480,13 +490,18 @@ public class CreditNoteService {
         String bankCode = receipt.getPaymentMode() == com.voyra.crm.enums.PaymentMode.CASH
                 ? com.voyra.crm.enums.SystemAccount.CASH_IN_HAND.code()
                 : com.voyra.crm.enums.SystemAccount.BANK_ACCOUNTS.code();
-        String narration = "Refund " + receipt.getReceiptNumber() + " against " + note.getCreditNoteNumber();
+        String narration = "Refund " + receipt.getReceiptNumber() + " against " + note.getCreditNoteNumber()
+                + (toWallet ? ", credited to client account" : "");
+        com.voyra.crm.models.JournalLinePosting creditLine = toWallet
+                ? com.voyra.crm.models.JournalLinePosting.creditParty(
+                        com.voyra.crm.enums.SystemAccount.CLIENT_ADVANCES_HELD.code(), "CLIENT", note.getClientId(), amountInr, narration)
+                : com.voyra.crm.models.JournalLinePosting.credit(bankCode, amountInr, narration);
         journalService.post(new com.voyra.crm.models.JournalPosting(
                 receipt.getReceivedOn(), com.voyra.crm.enums.JournalSourceType.RECEIPT, receipt.getId(),
                 com.voyra.crm.enums.JournalPurpose.CLIENT_REFUND_PAID, narration, note.getBookingId(), note.getBranchId(), List.of(
                         com.voyra.crm.models.JournalLinePosting.debitParty(
                                 com.voyra.crm.enums.SystemAccount.ACCOUNTS_RECEIVABLE.code(), "CLIENT", note.getClientId(), amountInr, narration),
-                        com.voyra.crm.models.JournalLinePosting.credit(bankCode, amountInr, narration))));
+                        creditLine)));
     }
 
     private CreditNote findById(String id) {
