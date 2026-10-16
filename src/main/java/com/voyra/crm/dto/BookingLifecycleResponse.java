@@ -36,7 +36,7 @@ public class BookingLifecycleResponse {
     @Schema(description = "Still to pay the supplier against the booking's net cost. Null for agents.", example = "8000.00")
     private BigDecimal supplierToPayInr;
 
-    @Schema(description = "Money the client holds on account (shared across their bookings), applied automatically to the next invoice", example = "5000.00")
+    @Schema(description = "Money on the client's account this booking's invoice may draw: its own advances plus any not reserved for another booking", example = "5000.00")
     private BigDecimal clientWalletInr;
 
     @Data
@@ -59,7 +59,7 @@ public class BookingLifecycleResponse {
     public static class MoneyRecord {
         @Schema(description = "Id of the invoice, receipt, bill or payment")
         private String id;
-        @Schema(description = "INVOICE, RECEIPT, REFUND, SUPPLIER_BILL, SUPPLIER_PAYMENT or SUPPLIER_REFUND", example = "RECEIPT")
+        @Schema(description = "INVOICE, RECEIPT, ADVANCE, ADVANCE_APPLIED, REFUND, SUPPLIER_BILL, SUPPLIER_PAYMENT or SUPPLIER_REFUND", example = "RECEIPT")
         private String kind;
         @Schema(example = "RCPT/2026-27/0012")
         private String number;

@@ -853,11 +853,9 @@ public class BookingService {
                 .build();
     }
 
-    /** Paid so far across the booking's live supplier bills. shortcut: one query per booking row, batch it if list pages grow past ~100. */
+    /** Paid to the booking's supplier so far. shortcut: one query per booking row, batch it if list pages grow past ~100. */
     private BigDecimal supplierPaidInr(String bookingId) {
-        return supplierInvoiceRepository.findByBookingIdAndStatusNot(bookingId, com.voyra.crm.enums.SupplierInvoiceStatus.CANCELLED).stream()
-                .map(i -> i.getGrandTotalInr().subtract(i.getBalanceDueInr()))
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        return BookingLifecycleService.supplierPaidInr(supplierPaymentRepository.findByBookingId(bookingId));
     }
 
     /** The agency's own setting when present, else {@link #DEFAULT_LOW_MARGIN_THRESHOLD_PERCENT}. */

@@ -97,7 +97,7 @@ public class BookingLifecycleService {
      */
     @Transactional
     public BookingLifecycleResponse generateInvoice(String bookingId, BookingInvoiceRequest request) {
-        Booking booking = bookingService.findAccessibleBooking(bookingId);
+        Booking booking = lockAccessible(bookingId);
         List<Invoice> live = liveTaxInvoices(booking.getId());
         Invoice draft = live.stream().filter(i -> i.getStatus() == InvoiceLifecycle.DRAFT).findFirst().orElse(null);
         if (draft == null && !live.isEmpty()) {
@@ -116,32 +116,44 @@ public class BookingLifecycleService {
      */
     @Transactional
     public BookingLifecycleResponse recordPayment(String bookingId, BookingPaymentRequest request) {
-        Booking booking = bookingService.findAccessibleBooking(bookingId);
+        Booking booking = lockAccessible(bookingId);
         if (booking.getBookingStatus() == BookingStatus.CANCELLED) {
             throw new IllegalStateException("This booking is cancelled - record refunds instead");
         }
         List<Invoice> issued = liveTaxInvoices(booking.getId()).stream()
                 .filter(i -> i.getStatus() != InvoiceLifecycle.DRAFT).toList();
 
-        PaymentReceiptRequest receipt = new PaymentReceiptRequest();
-        receipt.setAmount(request.getAmount());
-        receipt.setPaymentMode(request.getPaymentMode());
-        receipt.setReceivedOn(request.getReceivedOn());
-        receipt.setInstrumentRef(blankToNull(request.getReference()));
         if (issued.isEmpty()) {
             BigDecimal open = nz(booking.getSellingPrice()).subtract(nz(booking.getReceivedTotalInr()))
-                    .subtract(paymentReceiptService.walletBalance(booking.getClientId()));
+                    .subtract(paymentReceiptService.availableWalletFor(booking.getClientId(), booking.getId()));
             if (request.getAmount().compareTo(open) > 0) {
                 throw new IllegalArgumentException("More than the " + open + " still to collect on this booking");
             }
+            PaymentReceiptRequest receipt = receiptRequest(request, request.getAmount());
             receipt.setClientId(booking.getClientId());
+            receipt.setBookingId(booking.getId());
             receipt.setNotes("Advance for " + BookingService.bookingRef(booking.getBookingNumber()));
+            paymentReceiptService.record(receipt);
         } else {
-            Invoice open = issued.stream().filter(i -> nz(i.getBalanceDue()).signum() > 0).findFirst()
-                    .orElseThrow(() -> new IllegalStateException("This booking's invoice is fully paid"));
-            receipt.setInvoiceId(open.getId());
+            // Spread across the booking's open invoices, oldest first, so the full amount shown as due can be paid at once.
+            List<Invoice> open = issued.stream().filter(i -> nz(i.getBalanceDue()).signum() > 0).toList();
+            BigDecimal due = open.stream().map(i -> nz(i.getBalanceDue())).reduce(BigDecimal.ZERO, BigDecimal::add);
+            if (due.signum() == 0) {
+                throw new IllegalStateException("This booking's invoice is fully paid");
+            }
+            if (request.getAmount().compareTo(due) > 0) {
+                throw new IllegalArgumentException("More than the " + due + " still due on this booking's invoices");
+            }
+            BigDecimal left = request.getAmount();
+            for (Invoice invoice : open) {
+                if (left.signum() == 0) break;
+                BigDecimal part = left.min(nz(invoice.getBalanceDue()));
+                PaymentReceiptRequest r = receiptRequest(request, part);
+                r.setInvoiceId(invoice.getId());
+                paymentReceiptService.record(r);
+                left = left.subtract(part);
+            }
         }
-        paymentReceiptService.record(receipt);
         return build(gather(reload(booking)), currentViewer());
     }
 
@@ -152,7 +164,10 @@ public class BookingLifecycleService {
      */
     @Transactional
     public BookingLifecycleResponse paySupplier(String bookingId, BookingSupplierPaymentRequest request) {
-        Booking booking = bookingService.findAccessibleBooking(bookingId);
+        Booking booking = lockAccessible(bookingId);
+        if (booking.getBookingStatus() == BookingStatus.CANCELLED) {
+            throw new IllegalStateException("This booking is cancelled - record the supplier's refund instead");
+        }
         SupplierInvoice bill = resolveBill(booking, request);
 
         if (request.getSupplierInvoiceNumber() != null && !request.getSupplierInvoiceNumber().isBlank()
@@ -177,6 +192,24 @@ public class BookingLifecycleService {
         supplierPaymentService.pay(payment);
         log.info("Booking supplier paid: bookingId={}, billId={}, amount={}", booking.getId(), bill.getId(), request.getAmount());
         return build(gather(reload(booking)), currentViewer());
+    }
+
+    private static PaymentReceiptRequest receiptRequest(BookingPaymentRequest request, BigDecimal amount) {
+        PaymentReceiptRequest r = new PaymentReceiptRequest();
+        r.setAmount(amount);
+        r.setPaymentMode(request.getPaymentMode());
+        r.setReceivedOn(request.getReceivedOn());
+        r.setInstrumentRef(blankToNull(request.getReference()));
+        return r;
+    }
+
+    /**
+     * Locks the booking row first (a second concurrent call waits here, then sees what the first
+     * one wrote), then applies the usual access check to that same, freshly read booking.
+     */
+    private Booking lockAccessible(String bookingId) {
+        bookingRepository.findByIdForUpdate(bookingId);
+        return bookingService.findAccessibleBooking(bookingId);
     }
 
     private SupplierInvoice resolveBill(Booking booking, BookingSupplierPaymentRequest request) {
@@ -243,12 +276,10 @@ public class BookingLifecycleService {
         List<PaymentReceipt> receipts = new ArrayList<>(paymentReceiptRepository.findByBookingIdAndDirection(id, ReceiptDirection.RECEIPT));
         receipts.addAll(paymentReceiptRepository.findByBookingIdAndDirection(id, ReceiptDirection.REFUND));
         List<SupplierInvoice> bills = supplierInvoiceRepository.findByBookingIdAndStatusNot(id, SupplierInvoiceStatus.CANCELLED);
-        List<SupplierPayment> payments = bills.stream()
-                .flatMap(b -> supplierPaymentRepository.findBySupplierInvoiceIdOrderByPaidOnAscCreatedAtAsc(b.getId()).stream())
-                .toList();
+        List<SupplierPayment> payments = supplierPaymentRepository.findByBookingId(id);
         return new Facts(booking, bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc(id).size(),
                 invoiceRepository.findByBookingId(id), receipts, bills, payments,
-                paymentReceiptService.walletBalance(booking.getClientId()));
+                paymentReceiptService.availableWalletFor(booking.getClientId(), booking.getId()));
     }
 
     private static Viewer currentViewer() {
@@ -278,8 +309,7 @@ public class BookingLifecycleService {
 
         BigDecimal netCost = nz(b.getNetCost());
         BigDecimal billed = f.bills().stream().map(x -> nz(x.getGrandTotalInr())).reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal billBalance = f.bills().stream().map(x -> nz(x.getBalanceDueInr())).reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal supplierPaid = billed.subtract(billBalance);
+        BigDecimal supplierPaid = supplierPaidInr(f.supplierPayments());
         BigDecimal supplierToPay = billed.max(netCost).subtract(supplierPaid).max(BigDecimal.ZERO);
 
         BigDecimal refundDue = nz(b.getCustomerRefundDue());
@@ -303,9 +333,12 @@ public class BookingLifecycleService {
             steps.add(step("CANCELLED", "DONE", "Cancelled"));
             steps.add(step("CLIENT_REFUND", refundDue.signum() == 0 ? "NA" : clientRefundOpen ? (refunded.signum() > 0 ? "PARTIAL" : "OPEN") : "DONE",
                     refundDue.signum() == 0 ? "Nothing to refund" : money(refunded) + " of " + money(refundDue) + " refunded"));
-            steps.add(step("SUPPLIER_REFUND", refundExpected.signum() == 0 ? "NA" : supplierRefundOpen ? (refundReceived.signum() > 0 ? "PARTIAL" : "OPEN") : "DONE",
-                    refundExpected.signum() == 0 ? "Nothing expected" : money(refundReceived) + " of " + money(refundExpected) + " received"
-                            + (b.getRefundCheckedAt() != null ? " - cross-checked" : "")));
+            String supplierRefundState = refundExpected.signum() == 0 ? "NA" : supplierRefundOpen ? (refundReceived.signum() > 0 ? "PARTIAL" : "OPEN") : "DONE";
+            String supplierRefundSummary = refundExpected.signum() == 0 ? "Nothing expected"
+                    : accounts ? money(refundReceived) + " of " + money(refundExpected) + " received"
+                    : supplierRefundOpen ? "Waiting for the supplier" : "Received";
+            steps.add(step("SUPPLIER_REFUND", supplierRefundState,
+                    supplierRefundSummary + (b.getRefundCheckedAt() != null ? " - cross-checked" : "")));
         }
 
         List<String> actions = new ArrayList<>();
@@ -329,6 +362,15 @@ public class BookingLifecycleService {
                 .supplierToPayInr(accounts ? supplierToPay : null)
                 .clientWalletInr(accounts ? f.clientWalletInr() : null)
                 .build();
+    }
+
+    /** Money actually sent to the supplier: payments net of their reversals, never a bill balance a credit note lowered. */
+    public static BigDecimal supplierPaidInr(List<SupplierPayment> payments) {
+        return payments.stream()
+                .filter(p -> p.getDirection() != SupplierPaymentDirection.REFUND_RECEIVED)
+                .filter(p -> p.getReversedAt() == null && p.getReversesPaymentId() == null)
+                .map(p -> nz(p.getAmountInr()))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
     private static Step paymentStep(boolean cancelled, boolean invoiced, BigDecimal received, BigDecimal toCollect, BigDecimal wallet) {
@@ -366,7 +408,10 @@ public class BookingLifecycleService {
                     .date(i.getInvoiceDate()).amountInr(i.getGrandTotalInr()).balanceInr(i.getBalanceDueInr()).build());
         }
         for (PaymentReceipt r : f.receipts()) {
-            rows.add(MoneyRecord.builder().id(r.getId()).kind(r.getDirection() == ReceiptDirection.REFUND ? "REFUND" : "RECEIPT")
+            String kind = r.getDirection() == ReceiptDirection.REFUND ? "REFUND"
+                    : r.getInvoiceId() == null && Boolean.TRUE.equals(r.getIsAdvance()) ? "ADVANCE"
+                    : Boolean.TRUE.equals(r.getAppliedFromAdvance()) ? "ADVANCE_APPLIED" : "RECEIPT";
+            rows.add(MoneyRecord.builder().id(r.getId()).kind(kind)
                     .number(r.getReceiptNumber()).date(r.getReceivedOn()).amountInr(r.getAmountInr())
                     .mode(r.getPaymentMode() != null ? r.getPaymentMode().name() : null)
                     .reversed(r.getReversedAt() != null || r.getReversesReceiptId() != null).parentId(r.getInvoiceId()).build());

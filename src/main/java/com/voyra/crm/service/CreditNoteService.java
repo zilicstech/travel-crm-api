@@ -78,6 +78,7 @@ public class CreditNoteService {
     private final BookingAccountingSync bookingAccountingSync;
     private final JournalService journalService;
     private final com.voyra.crm.repository.JournalEntryRepository journalEntryRepository;
+    private final com.voyra.crm.repository.JournalLineRepository journalLineRepository;
 
     @Transactional
     public CreditNoteResponse create(CreditNoteRequest request) {
@@ -428,6 +429,9 @@ public class CreditNoteService {
         }
 
         String revenueAccountCode = findOriginalRevenueAccountCode(invoice);
+        if (revenueAccountCode == null && postCommissionAgentCreditNoteJournal(note, invoice)) {
+            return;
+        }
         if (revenueAccountCode == null) {
             log.warn("Credit note {} - could not find the original invoice's revenue posting (likely COMMISSION_AGENT, "
                     + "not yet covered by the posting-rule table) - skipping GL entry", note.getId());
@@ -455,6 +459,48 @@ public class CreditNoteService {
                 com.voyra.crm.enums.JournalPurpose.CREDIT_NOTE_ISSUED,
                 "Credit note " + note.getCreditNoteNumber() + " against " + invoice.getInvoiceNumber(),
                 note.getBookingId(), note.getBranchId(), lines));
+    }
+
+    /**
+     * A COMMISSION_AGENT invoice credited pass-through payable, service-fee income and GST rather
+     * than one revenue account, so its credit note reverses those same lines in the proportion
+     * the note bears to the invoice (a full refund reverses them in full), against AR. Returns
+     * false when the invoice posted no commission-agent journal (nothing to mirror).
+     */
+    private boolean postCommissionAgentCreditNoteJournal(CreditNote note, Invoice invoice) {
+        var original = journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(
+                com.voyra.crm.enums.JournalSourceType.INVOICE, invoice.getId(),
+                com.voyra.crm.enums.JournalPurpose.INVOICE_RAISED_COMMISSION_AGENT);
+        if (original.isEmpty() || invoice.getGrandTotalInr() == null || invoice.getGrandTotalInr().signum() == 0) {
+            return false;
+        }
+        BigDecimal ratio = note.getTotalAmountInr().divide(invoice.getGrandTotalInr(), 10, RoundingMode.HALF_UP).min(BigDecimal.ONE);
+        String receivable = com.voyra.crm.enums.SystemAccount.ACCOUNTS_RECEIVABLE.code();
+        List<com.voyra.crm.models.JournalLinePosting> lines = new ArrayList<>();
+        BigDecimal reversed = BigDecimal.ZERO;
+        for (com.voyra.crm.entity.JournalLine line : journalLineRepository.findByJournalEntryIdOrderByLineNo(original.get().getId())) {
+            if (receivable.equals(line.getAccountCode())) {
+                continue;
+            }
+            BigDecimal credit = line.getCreditAmountInr() != null ? line.getCreditAmountInr() : BigDecimal.ZERO;
+            BigDecimal amount = credit.multiply(ratio).setScale(2, RoundingMode.HALF_UP);
+            if (amount.signum() > 0) {
+                lines.add(com.voyra.crm.models.JournalLinePosting.debit(line.getAccountCode(), amount, "Reversed: " + line.getNarration()));
+                reversed = reversed.add(amount);
+            }
+        }
+        if (lines.isEmpty()) {
+            return true;
+        }
+        lines.add(com.voyra.crm.models.JournalLinePosting.creditParty(receivable, "CLIENT", note.getClientId(), reversed,
+                "Credit note " + note.getCreditNoteNumber()));
+        journalService.post(new com.voyra.crm.models.JournalPosting(
+                note.getNoteDate() != null ? note.getNoteDate() : LocalDate.now(),
+                com.voyra.crm.enums.JournalSourceType.CREDIT_NOTE, note.getId(),
+                com.voyra.crm.enums.JournalPurpose.CREDIT_NOTE_ISSUED,
+                "Credit note " + note.getCreditNoteNumber() + " against " + invoice.getInvoiceNumber(),
+                note.getBookingId(), note.getBranchId(), lines));
+        return true;
     }
 
     /** The account code the original invoice's issue journal credited for revenue - null if none of the three purposes posted (or posting predates the GL). */

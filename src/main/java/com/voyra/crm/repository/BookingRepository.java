@@ -4,6 +4,7 @@ import com.voyra.crm.entity.Booking;
 import com.voyra.crm.enums.BookingStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -14,6 +15,12 @@ import java.util.List;
 
 @Repository
 public interface BookingRepository extends JpaRepository<Booking, String>, JpaSpecificationExecutor<Booking> {
+
+    /** Row lock for the booking's money actions, so two clicks cannot both raise an invoice or a supplier bill. */
+    @Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("select b from Booking b where b.id = :id")
+    java.util.Optional<Booking> findByIdForUpdate(@Param("id") String id);
+
 
     /** Owner-dashboard "my recent bookings" widget - deliberately the agent's own bookings only,
      *  unrelated to the wider service-access scoping in BookingService.listBookings. */

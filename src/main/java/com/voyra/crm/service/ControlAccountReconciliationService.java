@@ -74,11 +74,18 @@ public class ControlAccountReconciliationService {
         return account.getAccountType() == LedgerAccountType.ASSET ? debit.subtract(credit) : credit.subtract(debit);
     }
 
-    /** Mirrors InvoiceDocumentService#postInvoiceRaised's own comment: SUM(debit_inr - credit_inr) == SUM(balance_due_inr) across every client. */
+    /**
+     * Mirrors InvoiceDocumentService#postInvoiceRaised's own comment: SUM(debit_inr - credit_inr) == SUM(balance_due_inr) across every client.
+     * The customer ledger is the client's statement, so it credits a deposit (money held on account) the day it arrives,
+     * while the GL holds that money in 2110 until it is applied to an invoice. Adding back what is still held puts
+     * both on the same footing - otherwise 1200 disagrees with the subsidiary by exactly the wallet balance, the same
+     * reason the payables row below leaves advances out.
+     */
     private BigDecimal accountsReceivableSubsidiaryTotal() {
         return customerLedgerEntryRepository.findAll().stream()
                 .map(e -> e.getDebitAmountInr().subtract(e.getCreditAmountInr()))
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
+                .reduce(BigDecimal.ZERO, BigDecimal::add)
+                .add(clientAdvancesHeldSubsidiaryTotal());
     }
 
     /**

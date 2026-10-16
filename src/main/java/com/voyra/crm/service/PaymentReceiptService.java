@@ -58,6 +58,7 @@ public class PaymentReceiptService {
     private final AuditService auditService;
     private final CustomerLedgerService customerLedgerService;
     private final BookingAccountingSync bookingAccountingSync;
+    private final com.voyra.crm.repository.BookingRepository bookingRepository;
     private final JournalService journalService;
     private final com.voyra.crm.repository.JournalEntryRepository journalEntryRepository;
 
@@ -142,6 +143,13 @@ public class PaymentReceiptService {
             throw new IllegalArgumentException("clientId is required when invoiceId is omitted");
         }
         Client client = clientService.findAccessibleClient(request.getClientId());
+        if (request.getBookingId() != null && !request.getBookingId().isBlank()) {
+            com.voyra.crm.entity.Booking booking = bookingRepository.findById(request.getBookingId())
+                    .orElseThrow(() -> new IllegalArgumentException("Booking not found: " + request.getBookingId()));
+            if (!client.getId().equals(booking.getClientId())) {
+                throw new IllegalArgumentException("This booking belongs to another client");
+            }
+        }
 
         LocalDate receivedOn = request.getReceivedOn();
         String number = documentNumberService.next(DocumentKind.RECEIPT, receivedOn);
@@ -154,6 +162,7 @@ public class PaymentReceiptService {
                 .direction(ReceiptDirection.RECEIPT)
                 .invoiceId(null)
                 .clientId(client.getId())
+                .bookingId(request.getBookingId() != null && !request.getBookingId().isBlank() ? request.getBookingId() : null)
                 .currencyCode("INR")
                 .fxRateToInr(BigDecimal.ONE)
                 .amount(request.getAmount())
@@ -314,7 +323,7 @@ public class PaymentReceiptService {
      */
     @Transactional
     public void applyAvailableWallet(Invoice invoice) {
-        BigDecimal remaining = remainingWallet(invoice.getClientId());
+        BigDecimal remaining = availableWalletFor(invoice.getClientId(), invoice.getBookingId());
         if (remaining.compareTo(BigDecimal.ZERO) <= 0 || invoice.getBalanceDue().compareTo(BigDecimal.ZERO) <= 0) {
             return;
         }
@@ -351,10 +360,34 @@ public class PaymentReceiptService {
         return applied;
     }
 
-    /** What the client holds on account right now - what the next invoice will draw down. */
+    /**
+     * What one booking's invoice may draw from the client's wallet: the whole pool, less what is
+     * still held for the client's other bookings (advances taken against a specific booking are
+     * ring-fenced for it). With no booking, only money nobody has reserved.
+     */
     @Transactional(readOnly = true)
-    public BigDecimal walletBalance(String clientId) {
-        return clientId == null ? BigDecimal.ZERO : remainingWallet(clientId).max(BigDecimal.ZERO);
+    public BigDecimal availableWalletFor(String clientId, String bookingId) {
+        if (clientId == null) {
+            return BigDecimal.ZERO;
+        }
+        BigDecimal reservedElsewhere = heldPerBooking(clientId).entrySet().stream()
+                .filter(e -> !e.getKey().equals(bookingId))
+                .map(java.util.Map.Entry::getValue)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        return remainingWallet(clientId).subtract(reservedElsewhere).max(BigDecimal.ZERO);
+    }
+
+    /** Per booking: advances taken for it, less what its own invoices have already drawn from the wallet. */
+    private java.util.Map<String, BigDecimal> heldPerBooking(String clientId) {
+        java.util.Map<String, BigDecimal> held = new java.util.HashMap<>();
+        paymentReceiptRepository.findByClientIdAndInvoiceIdIsNullAndIsAdvanceTrueOrderByReceivedOnAsc(clientId).stream()
+                .filter(r -> r.getBookingId() != null && r.getReversedAt() == null)
+                .forEach(r -> held.merge(r.getBookingId(), r.getAmountInr(), BigDecimal::add));
+        paymentReceiptRepository.findByClientIdAndAppliedFromAdvanceTrueOrderByReceivedOnAsc(clientId).stream()
+                .filter(r -> r.getBookingId() != null && r.getReversedAt() == null && held.containsKey(r.getBookingId()))
+                .forEach(r -> held.merge(r.getBookingId(), r.getAmountInr().negate(), BigDecimal::add));
+        held.replaceAll((k, v) -> v.max(BigDecimal.ZERO));
+        return held;
     }
 
     /** Total deposits for this client, minus whatever has already been drawn from them. */

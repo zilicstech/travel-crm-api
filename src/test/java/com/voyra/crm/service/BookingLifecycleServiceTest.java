@@ -152,13 +152,18 @@ class BookingLifecycleServiceTest {
         assertThat(r.getToCollectInr()).isEqualByComparingTo("7000");
     }
 
+    private static SupplierPayment paid(String amount) {
+        return SupplierPayment.builder().id("P" + amount).amountInr(d(amount)).paidOn(LocalDate.now())
+                .direction(com.voyra.crm.enums.SupplierPaymentDirection.PAYMENT).build();
+    }
+
     @Test
-    void supplierStepFollowsTheBillsAgainstNetCost() {
+    void supplierStepFollowsWhatWasActuallyPaidAgainstNetCost() {
         Booking b = booking(BookingStatus.CONFIRMED);
-        BookingLifecycleResponse part = BookingLifecycleService.build(
-                facts(b, 0, List.of(), List.of(bill(SupplierInvoiceStatus.PARTIALLY_PAID, "8000", "3000")), "0"), Viewer.OWNER);
-        BookingLifecycleResponse full = BookingLifecycleService.build(
-                facts(b, 0, List.of(), List.of(bill(SupplierInvoiceStatus.PAID, "8000", "0")), "0"), Viewer.OWNER);
+        BookingLifecycleResponse part = BookingLifecycleService.build(new Facts(b, 0, List.of(), List.of(),
+                List.of(bill(SupplierInvoiceStatus.PARTIALLY_PAID, "8000", "3000")), List.of(paid("5000")), BigDecimal.ZERO), Viewer.OWNER);
+        BookingLifecycleResponse full = BookingLifecycleService.build(new Facts(b, 0, List.of(), List.of(),
+                List.of(bill(SupplierInvoiceStatus.PAID, "8000", "0")), List.of(paid("5000"), paid("3000")), BigDecimal.ZERO), Viewer.OWNER);
 
         assertThat(states(part)).containsEntry("SUPPLIER", "PARTIAL");
         assertThat(part.getSupplierToPayInr()).isEqualByComparingTo("3000");
@@ -185,6 +190,17 @@ class BookingLifecycleServiceTest {
         assertThat(settled.getAllowedActions()).containsExactly("CROSS_CHECK");
     }
 
+    /** Regression run 6, M3: a supplier credit note leaves a negative bill balance - that is not money paid. */
+    @Test
+    void aSupplierCreditNoteIsNotCountedAsPayment() {
+        Booking b = booking(BookingStatus.CONFIRMED);
+        BookingLifecycleResponse r = BookingLifecycleService.build(new Facts(b, 0, List.of(), List.of(),
+                List.of(bill(SupplierInvoiceStatus.PAID, "8000", "-7000")), List.of(paid("8000")), BigDecimal.ZERO), Viewer.OWNER);
+
+        assertThat(r.getSteps().stream().filter(s -> s.getKey().equals("SUPPLIER")).findFirst().orElseThrow().getSummary())
+                .startsWith("₹8,000 paid");
+    }
+
     // ---- roles -------------------------------------------------------------------------
 
     @Test
@@ -202,6 +218,18 @@ class BookingLifecycleServiceTest {
                 .doesNotContain("₹");
     }
 
+    /** Regression run 6, m1: agents see whether the supplier refund arrived, not how much. */
+    @Test
+    void agentSeesNoSupplierRefundAmounts() {
+        Booking b = booking(BookingStatus.CANCELLED);
+        b.setSupplierRefundExpected(d("7000"));
+        b.setSupplierRefundReceived(d("7000"));
+        BookingLifecycleResponse r = BookingLifecycleService.build(facts(b, 0, List.of(), List.of(), "0"), Viewer.AGENT);
+
+        assertThat(r.getSteps().stream().filter(s -> s.getKey().equals("SUPPLIER_REFUND")).findFirst().orElseThrow().getSummary())
+                .isEqualTo("Received").doesNotContain("₹");
+    }
+
     @Test
     void accountantGetsMoneyActionsButCannotConfirmOrCancel() {
         BookingLifecycleResponse r = BookingLifecycleService.build(facts(booking(BookingStatus.PENDING), 0, List.of(), List.of(), "0"), Viewer.ACCOUNTANT);
@@ -214,7 +242,8 @@ class BookingLifecycleServiceTest {
     private Booking stubBooking(Booking b) {
         when(bookingService.findAccessibleBooking("B1")).thenReturn(b);
         when(bookingRepository.findById("B1")).thenReturn(Optional.of(b));
-        when(paymentReceiptService.walletBalance(any())).thenReturn(BigDecimal.ZERO);
+        when(bookingRepository.findByIdForUpdate("B1")).thenReturn(Optional.of(b));
+        when(paymentReceiptService.availableWalletFor(any(), any())).thenReturn(BigDecimal.ZERO);
         return b;
     }
 
@@ -261,6 +290,7 @@ class BookingLifecycleServiceTest {
         assertThat(receipt.getValue().getInvoiceId()).isNull();
         assertThat(receipt.getValue().getClientId()).isEqualTo("C1");
         assertThat(receipt.getValue().getNotes()).isEqualTo("Advance for BK-00007");
+        assertThat(receipt.getValue().getBookingId()).as("held for this booking, not the client's others").isEqualTo("B1");
     }
 
     @Test
@@ -274,7 +304,7 @@ class BookingLifecycleServiceTest {
     @Test
     void anAdvanceAlreadyHeldCountsAgainstWhatCanStillBeCollected() {
         stubBooking(booking(BookingStatus.CONFIRMED));
-        when(paymentReceiptService.walletBalance("C1")).thenReturn(d("4000"));
+        when(paymentReceiptService.availableWalletFor("C1", "B1")).thenReturn(d("4000"));
 
         assertThatThrownBy(() -> service.recordPayment("B1", payment("6000.01"))).isInstanceOf(IllegalArgumentException.class);
         verify(paymentReceiptService, never()).record(any());
@@ -291,6 +321,25 @@ class BookingLifecycleServiceTest {
         ArgumentCaptor<PaymentReceiptRequest> receipt = ArgumentCaptor.forClass(PaymentReceiptRequest.class);
         verify(paymentReceiptService).record(receipt.capture());
         assertThat(receipt.getValue().getInvoiceId()).isEqualTo("I1");
+    }
+
+    /** Regression run 6, m2: a booking with two open invoices can be paid off in one go. */
+    @Test
+    void aPaymentIsSpreadAcrossOpenInvoicesOldestFirst() {
+        stubBooking(booking(BookingStatus.CONFIRMED));
+        Invoice first = issued("4000", "1000");
+        Invoice second = issued("6000", "6000");
+        second.setId("I2");
+        when(invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc(eq("B1"), any(), any()))
+                .thenReturn(List.of(first, second));
+
+        service.recordPayment("B1", payment("7000"));
+
+        ArgumentCaptor<PaymentReceiptRequest> receipts = ArgumentCaptor.forClass(PaymentReceiptRequest.class);
+        verify(paymentReceiptService, org.mockito.Mockito.times(2)).record(receipts.capture());
+        assertThat(receipts.getAllValues()).extracting(PaymentReceiptRequest::getInvoiceId).containsExactly("I1", "I2");
+        assertThat(receipts.getAllValues().get(0).getAmount()).isEqualByComparingTo("1000");
+        assertThat(receipts.getAllValues().get(1).getAmount()).isEqualByComparingTo("6000");
     }
 
     @Test
@@ -355,6 +404,31 @@ class BookingLifecycleServiceTest {
         assertThatThrownBy(() -> service.paySupplier("B1", supplierPay(null)))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("owner");
         verify(supplierPaymentService, never()).pay(any());
+    }
+
+    /** Regression run 6, B4. */
+    @Test
+    void payingTheSupplierOnACancelledBookingIsRefused() {
+        stubBooking(booking(BookingStatus.CANCELLED));
+
+        assertThatThrownBy(() -> service.paySupplier("B1", supplierPay("V1"))).isInstanceOf(IllegalStateException.class);
+        verify(supplierInvoiceService, never()).createAutoDraft(any(), anyString());
+        verify(supplierPaymentService, never()).pay(any());
+    }
+
+    /** Regression run 6, B2/B3: every money action takes the booking's row lock before reading anything. */
+    @Test
+    void moneyActionsLockTheBookingFirst() {
+        stubBooking(booking(BookingStatus.CONFIRMED));
+        when(invoiceDocumentService.createDraft(any())).thenReturn(InvoiceResponse.builder().id("I9").build());
+
+        service.generateInvoice("B1", null);
+        service.recordPayment("B1", payment("100"));
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(bookingRepository, bookingService);
+        order.verify(bookingRepository).findByIdForUpdate("B1");
+        order.verify(bookingService).findAccessibleBooking("B1");
+        verify(bookingRepository, org.mockito.Mockito.times(2)).findByIdForUpdate("B1");
     }
 
     @Test
