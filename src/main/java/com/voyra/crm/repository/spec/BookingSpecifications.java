@@ -4,6 +4,7 @@ import com.voyra.crm.entity.Booking;
 import com.voyra.crm.enums.BookingStatus;
 import com.voyra.crm.enums.BookingType;
 import com.voyra.crm.enums.ServiceType;
+import jakarta.persistence.criteria.Expression;
 import jakarta.persistence.criteria.Predicate;
 import org.springframework.data.jpa.domain.Specification;
 
@@ -54,18 +55,27 @@ public final class BookingSpecifications {
 
     /**
      * One search box for the Bookings screen. A query that is a booking number ("42", "BK-42",
-     * "bk-00042") matches that number exactly; anything else matches client name, destination,
-     * PNR or a supplier reference, case-insensitively.
+     * "bk-00042") matches that number, and is also read as the start of one as people type it:
+     * "BK-001" finds BK-00100 to BK-00199. Anything else matches client name, destination, PNR
+     * or a supplier reference, case-insensitively.
      */
     public static Specification<Booking> searchMatches(String rawQuery) {
         String q = rawQuery.trim().toLowerCase();
         String digits = q.startsWith("bk") ? q.substring(2).replaceAll("[^0-9]", "") : q;
         Long number = digits.matches("\\d{1,18}") ? Long.valueOf(digits) : null;
         String like = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%";
+        if (q.matches("bk[-\\s]*")) {
+            // Just "BK-" so far - the number is still being typed, so don't empty the list.
+            return (root, query, cb) -> cb.conjunction();
+        }
         return (root, query, cb) -> {
             List<Predicate> or = new ArrayList<>();
             if (number != null) {
                 or.add(cb.equal(root.get("bookingNumber"), number));
+                // The number as it is shown (zero-padded to five), matched from the start.
+                Expression<String> shown = cb.function("lpad", String.class,
+                        root.get("bookingNumber").as(String.class), cb.literal(5), cb.literal("0"));
+                or.add(cb.like(shown, digits + "%"));
             }
             for (String field : List.of("clientName", "destination", "pnr", "ticketNo", "hotelConfirmationNo",
                     "visaApplicationNo", "transferVoucherNo")) {
