@@ -8,6 +8,8 @@ import com.voyra.crm.enums.BookingType;
 import com.voyra.crm.security.JwtAuthenticationFilter;
 import com.voyra.crm.security.JwtService;
 import com.voyra.crm.security.RestAuthenticationEntryPoint;
+import com.voyra.crm.dto.BookingLogRequest;
+import com.voyra.crm.service.BookingLogService;
 import com.voyra.crm.service.BookingService;
 import com.voyra.crm.service.FeedbackLinkService;
 import org.junit.jupiter.api.Test;
@@ -16,6 +18,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
@@ -25,6 +28,7 @@ import java.util.List;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -47,6 +51,8 @@ class BookingControllerAccountantAuthTest {
     private BookingService bookingService;
     @MockBean
     private FeedbackLinkService feedbackLinkService;
+    @MockBean
+    private BookingLogService bookingLogService;
 
     @Test
     void accountantCanListAndReadBookings() throws Exception {
@@ -76,5 +82,34 @@ class BookingControllerAccountantAuthTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isForbidden());
+    }
+    @Test
+    void agentCanLogABookingWithItsVoucherAsMultipart() throws Exception {
+        when(bookingLogService.log(any(), any())).thenReturn(BookingResponse.builder().id("B9").build());
+
+        mockMvc.perform(multipart("/api/bookings/log")
+                        .file(logPart())
+                        .file(new MockMultipartFile("file", "ticket.pdf", "application/pdf", new byte[]{1, 2, 3}))
+                        .with(SecurityMockMvcRequestPostProcessors.user("agent1").roles("AGENT")))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void accountantCannotLogABooking() throws Exception {
+        mockMvc.perform(multipart("/api/bookings/log")
+                        .file(logPart())
+                        .file(new MockMultipartFile("file", "ticket.pdf", "application/pdf", new byte[]{1}))
+                        .with(SecurityMockMvcRequestPostProcessors.user("accountant1").roles("ACCOUNTANT")))
+                .andExpect(status().isForbidden());
+    }
+
+    private MockMultipartFile logPart() throws Exception {
+        BookingLogRequest request = new BookingLogRequest();
+        request.setServiceId("S1");
+        request.setReference("ABCXYZ");
+        request.setNetCost(java.math.BigDecimal.valueOf(42000));
+        request.setSellingPrice(java.math.BigDecimal.valueOf(52000));
+        return new MockMultipartFile("booking", "", MediaType.APPLICATION_JSON_VALUE,
+                objectMapper.writeValueAsBytes(request));
     }
 }

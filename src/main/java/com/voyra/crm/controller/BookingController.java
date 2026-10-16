@@ -4,6 +4,7 @@ import com.voyra.crm.dto.BookingCostComponentRequest;
 import com.voyra.crm.dto.BookingCostComponentResponse;
 import com.voyra.crm.dto.BookingCreateRequest;
 import com.voyra.crm.dto.BookingDeadlineUpdateRequest;
+import com.voyra.crm.dto.BookingLogRequest;
 import com.voyra.crm.dto.BookingPaymentStatusUpdateRequest;
 import com.voyra.crm.dto.BookingRefundUpdateRequest;
 import com.voyra.crm.dto.BookingResponse;
@@ -11,6 +12,7 @@ import com.voyra.crm.dto.BookingStatusUpdateRequest;
 import com.voyra.crm.dto.BookingUpdateRequest;
 import com.voyra.crm.enums.BookingStatus;
 import com.voyra.crm.enums.BookingType;
+import com.voyra.crm.service.BookingLogService;
 import com.voyra.crm.service.BookingService;
 import com.voyra.crm.service.FeedbackLinkService;
 import com.voyra.crm.util.PageRequestUtil;
@@ -31,7 +33,9 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 
@@ -45,6 +49,7 @@ import java.util.List;
 public class BookingController {
 
     private final BookingService bookingService;
+    private final BookingLogService bookingLogService;
     private final FeedbackLinkService feedbackLinkService;
 
     @DeleteMapping("/{id}")
@@ -58,6 +63,15 @@ public class BookingController {
     @Operation(summary = "Create a booking", description = "Profit is always server-computed from sellingPrice - netCost.")
     public ResponseEntity<BookingResponse> createBooking(@Valid @RequestBody BookingCreateRequest request) {
         return ResponseEntity.ok(bookingService.createBooking(request));
+    }
+
+    @PostMapping(value = "/log", consumes = "multipart/form-data")
+    @Operation(summary = "Log a confirmed booking with its voucher",
+            description = "Parts: 'booking' (JSON BookingLogRequest) and 'file' (the voucher, required). "
+                    + "Created CONFIRMED. With serviceId, the booking is filled from the lead's service.")
+    public ResponseEntity<BookingResponse> logBooking(@Valid @RequestPart("booking") BookingLogRequest request,
+                                                      @RequestPart(value = "file", required = false) MultipartFile file) {
+        return ResponseEntity.ok(bookingLogService.log(request, file));
     }
 
     @GetMapping("/unbilled")

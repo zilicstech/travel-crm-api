@@ -22,6 +22,7 @@ import com.voyra.crm.entity.Agent;
 import com.voyra.crm.entity.Booking;
 import com.voyra.crm.entity.BookingCostComponent;
 import com.voyra.crm.entity.BookingDocument;
+import com.voyra.crm.enums.BookingDocumentType;
 import com.voyra.crm.entity.BookingPassenger;
 import com.voyra.crm.entity.BookingSector;
 import com.voyra.crm.entity.Client;
@@ -246,6 +247,34 @@ public class BookingService {
         }
 
         log.info("Booking created: bookingId={}, agentId={}, serviceId={}", booking.getId(), owner.id(), request.getServiceId());
+        return toResponse(booking);
+    }
+
+    /**
+     * The "log a booking" path: the supplier has already confirmed (the caller holds a reference
+     * and the voucher), so the booking is created CONFIRMED with its voucher document in the same
+     * transaction. The voucher file itself is stored by the caller before this runs - see
+     * {@link BookingLogService}.
+     */
+    @Transactional
+    public BookingResponse logBooking(BookingCreateRequest request, String documentId, String fileKey,
+                                      String fileName, String contentType, BookingDocumentType docType,
+                                      String reference) {
+        Booking booking = bookingRepository.findById(createBooking(request).getId())
+                .orElseThrow(() -> new IllegalStateException("Booking vanished mid-create"));
+        booking.setBookingStatus(BookingStatus.CONFIRMED);
+        bookingRepository.save(booking);
+        bookingDocumentRepository.save(BookingDocument.builder()
+                .id(documentId)
+                .bookingId(booking.getId())
+                .docType(docType)
+                .referenceNumber(reference)
+                .fileKey(fileKey)
+                .fileName(fileName)
+                .contentType(contentType)
+                .createdAt(LocalDateTime.now())
+                .createdBy(SecurityContextUtil.getCurrentUserOrThrow().userId())
+                .build());
         return toResponse(booking);
     }
 
