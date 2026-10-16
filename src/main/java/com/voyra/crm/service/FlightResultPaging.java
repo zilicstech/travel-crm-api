@@ -38,6 +38,7 @@ final class FlightResultPaging {
             FlightGroupResponse g = byKey.computeIfAbsent(key, k -> FlightGroupResponse.builder()
                     .key(k)
                     .airline(o.getAirline())
+                    .airlineCode(o.getAirlineCode())
                     .flightNumber(o.getFlightNumber())
                     .origin(o.getOrigin())
                     .destination(o.getDestination())
@@ -59,7 +60,13 @@ final class FlightResultPaging {
 
     static FlightSearchPageResponse page(List<FlightGroupResponse> all, FlightSearchPageRequest req) {
         Set<String> airlines = new TreeSet<>();
-        all.forEach(g -> airlines.add(g.getAirline()));
+        Map<String, String> airlineCodes = new LinkedHashMap<>();
+        for (FlightGroupResponse g : all) {
+            airlines.add(g.getAirline());
+            if (g.getAirlineCode() != null && !g.getAirlineCode().isBlank()) {
+                airlineCodes.putIfAbsent(g.getAirline(), g.getAirlineCode());
+            }
+        }
 
         List<FlightGroupResponse> filtered = new ArrayList<>();
         for (FlightGroupResponse g : all) {
@@ -76,7 +83,7 @@ final class FlightResultPaging {
                 }
                 // A copy: the cached group must keep every fare for the next, different filter.
                 filtered.add(FlightGroupResponse.builder()
-                        .key(g.getKey()).airline(g.getAirline()).flightNumber(g.getFlightNumber())
+                        .key(g.getKey()).airline(g.getAirline()).airlineCode(g.getAirlineCode()).flightNumber(g.getFlightNumber())
                         .origin(g.getOrigin()).destination(g.getDestination())
                         .departTime(g.getDepartTime()).arriveTime(g.getArriveTime())
                         .duration(g.getDuration()).stops(g.getStops())
@@ -107,6 +114,7 @@ final class FlightResultPaging {
                 .totalFlights(total)
                 .totalPages(totalPages)
                 .airlines(new ArrayList<>(airlines))
+                .airlineCodes(airlineCodes)
                 .cheapestKey(cheapestKey)
                 .fastestKey(fastestKey)
                 .build();

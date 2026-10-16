@@ -23,6 +23,9 @@ public class FlightOfferResponse {
     @Schema(example = "IndiGo")
     private String airline;
 
+    @Schema(description = "IATA airline code (e.g. 6E) - used for logos; may be blank", example = "6E")
+    private String airlineCode;
+
     @Schema(example = "6E-204")
     private String flightNumber;
 

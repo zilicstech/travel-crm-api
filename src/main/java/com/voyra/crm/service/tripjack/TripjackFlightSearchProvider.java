@@ -191,6 +191,7 @@ public class TripjackFlightSearchProvider implements FlightSearchProvider {
             JsonNode lastSegment = segments.get(segments.size() - 1);
 
             String airline = firstSegment.path("fD").path("aI").path("name").asText("");
+            String airlineCode = firstSegment.path("fD").path("aI").path("code").asText("");
             String flightNumber = firstSegment.path("fD").path("fN").asText("");
             int stops = segments.size() - 1;
             String duration = firstSegment.path("duration").asText("");
@@ -204,6 +205,7 @@ public class TripjackFlightSearchProvider implements FlightSearchProvider {
                 offers.add(FlightOfferResponse.builder()
                         .offerId(fare.path("id").asText())
                         .airline(airline)
+                        .airlineCode(airlineCode)
                         .flightNumber(flightNumber)
                         .origin(origin)
                         .destination(destination)
