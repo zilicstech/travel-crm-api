@@ -44,6 +44,8 @@ public final class FlightResultPaging {
                     .destination(o.getDestination())
                     .departTime(o.getDepartTime())
                     .arriveTime(o.getArriveTime())
+                    .departDate(o.getDepartDate())
+                    .arriveDate(o.getArriveDate())
                     .duration(o.getDuration())
                     .stops(o.getStops())
                     .fares(new ArrayList<>())
@@ -87,6 +89,7 @@ public final class FlightResultPaging {
                         .key(g.getKey()).airline(g.getAirline()).airlineCode(g.getAirlineCode()).flightNumber(g.getFlightNumber())
                         .origin(g.getOrigin()).destination(g.getDestination())
                         .departTime(g.getDepartTime()).arriveTime(g.getArriveTime())
+                        .departDate(g.getDepartDate()).arriveDate(g.getArriveDate())
                         .duration(g.getDuration()).stops(g.getStops())
                         .cheapestPrice(kept.get(0).getPrice()).fares(kept).build());
                 continue;

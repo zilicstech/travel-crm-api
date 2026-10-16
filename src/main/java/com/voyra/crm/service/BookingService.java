@@ -159,6 +159,7 @@ public class BookingService {
 
         Booking.BookingBuilder builder = Booking.builder()
                 .id(generateUniqueBookingId())
+                .bookingNumber(bookingRepository.nextBookingNumber())
                 .clientId(client.getId())
                 .clientName(client.getName())
                 .agentId(owner.id())
@@ -300,8 +301,20 @@ public class BookingService {
     @Transactional(readOnly = true)
     public PagedResponse<BookingResponse> listBookings(BookingType typeFilter, BookingStatus statusFilter,
             String destinationFilter, String agentIdFilter, String vendorIdFilter, Pageable pageable) {
-        Page<Booking> page = bookingRepository.findAll(
-                scopeSpecification(typeFilter, statusFilter, destinationFilter, agentIdFilter, vendorIdFilter), pageable);
+        return listBookings(typeFilter, statusFilter, destinationFilter, agentIdFilter, vendorIdFilter, null, null, pageable);
+    }
+
+    /** The Bookings screen: free-text search (booking no., client, destination, reference) over the caller's scope. */
+    @Transactional(readOnly = true)
+    public PagedResponse<BookingResponse> listBookings(BookingType typeFilter, BookingStatus statusFilter,
+            String destinationFilter, String agentIdFilter, String vendorIdFilter, String query, String sort, Pageable pageable) {
+        pageable = org.springframework.data.domain.PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(),
+                com.voyra.crm.util.BookingSort.parse(sort));
+        Specification<Booking> spec = scopeSpecification(typeFilter, statusFilter, destinationFilter, agentIdFilter, vendorIdFilter);
+        if (query != null && !query.isBlank()) {
+            spec = spec.and(BookingSpecifications.searchMatches(query));
+        }
+        Page<Booking> page = bookingRepository.findAll(spec, pageable);
         return PagedResponse.from(page, this::toResponse);
     }
 
@@ -692,6 +705,11 @@ public class BookingService {
         booking.setUpdatedBy(SecurityContextUtil.getCurrentUserOrThrow().userId());
     }
 
+    /** BK-00042: five digits so numbers line up in lists, growing naturally past 99,999. */
+    public static String bookingRef(Long bookingNumber) {
+        return bookingNumber == null ? null : String.format("BK-%05d", bookingNumber);
+    }
+
     private String labelFor(Booking b) {
         return b.getClientName() + " / " + b.getDestination();
     }
@@ -753,7 +771,8 @@ public class BookingService {
         boolean lowMargin = b.getSellingPrice() != null && b.getSellingPrice().compareTo(BigDecimal.ZERO) > 0
                 && marginPercent.compareTo(lowMarginThreshold()) < 0;
         return BookingResponse.builder()
-                .id(b.getId()).clientId(b.getClientId()).clientName(b.getClientName())
+                .id(b.getId()).bookingNumber(b.getBookingNumber()).bookingRef(bookingRef(b.getBookingNumber()))
+                .clientId(b.getClientId()).clientName(b.getClientName())
                 .agentId(b.getAgentId()).agentName(b.getAgentName())
                 .leadId(b.getLeadId()).serviceId(b.getServiceId()).serviceType(b.getServiceType())
                 .serviceLabel(b.getServiceLabel()).serviceAgentId(b.getServiceAgentId()).serviceAgentName(b.getServiceAgentName())

@@ -38,6 +38,10 @@ public class Booking {
     @Column(name = "id", length = 36)
     private String id;
 
+    /** Per-agency running number from the tenant's booking_number_seq, shown as BK-00042. */
+    @Column(name = "booking_number", nullable = false, updatable = false)
+    private Long bookingNumber;
+
     /** Null for a standalone (walk-in) booking created directly from the Bookings tab. */
     @Column(name = "lead_id", length = 36)
     private String leadId;

@@ -25,6 +25,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Pageable;
+import io.swagger.v3.oas.annotations.Parameter;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -100,12 +101,17 @@ public class BookingController {
             @RequestParam(value = "destination", required = false) String destination,
             @RequestParam(value = "agentId", required = false) String agentId,
             @RequestParam(value = "vendorId", required = false) String vendorId,
+            @Parameter(description = "Search booking no. (42, BK-00042), client, destination or PNR/reference - paged list only")
+            @RequestParam(value = "q", required = false) String q,
+            @Parameter(description = "bookingNumber | clientName | sellingPrice | bookingDate | journeyDate, then ,asc or ,desc. "
+                    + "Paged list only; default bookingNumber,desc")
+            @RequestParam(value = "sort", required = false) String sort,
             @RequestParam(value = "page", required = false) Integer page,
             @RequestParam(value = "size", required = false) Integer size) {
         Pageable pageable = PageRequestUtil.resolve(page, size);
         return ResponseEntity.ok(pageable == null
                 ? bookingService.listBookings(type, status, destination, agentId, vendorId)
-                : bookingService.listBookings(type, status, destination, agentId, vendorId, pageable));
+                : bookingService.listBookings(type, status, destination, agentId, vendorId, q, sort, pageable));
     }
 
     @GetMapping("/{id}")

@@ -89,7 +89,7 @@ public class TripjackFlightSearchProvider implements FlightSearchProvider {
 
         long startedAt = System.currentTimeMillis();
         JsonNode response = callSearch(credential, buildRequestBody(query, originCode, destinationCode));
-        List<FlightOfferResponse> offers = toOffers(response, originCode, destinationCode);
+        List<FlightOfferResponse> offers = toOffers(response, originCode, destinationCode, query.getDepartDate());
         log.info("Tripjack flight search ok: {} offers in {} ms", offers.size(), System.currentTimeMillis() - startedAt);
         return offers;
     }
@@ -182,7 +182,8 @@ public class TripjackFlightSearchProvider implements FlightSearchProvider {
         }
     }
 
-    private List<FlightOfferResponse> toOffers(JsonNode response, String originCode, String destinationCode) {
+    private List<FlightOfferResponse> toOffers(JsonNode response, String originCode, String destinationCode,
+                                             java.time.LocalDate searchDate) {
         List<FlightOfferResponse> offers = new ArrayList<>();
         for (JsonNode trip : response.path("searchResult").path("tripInfos").path("ONWARD")) {
             JsonNode segments = trip.path("sI");
@@ -211,6 +212,9 @@ public class TripjackFlightSearchProvider implements FlightSearchProvider {
             String duration = journeyMinutes >= 0 ? String.valueOf(journeyMinutes) : firstSegment.path("duration").asText("");
             LocalTime departTime = parseFlightTime(firstSegment.path("dt").asText(""));
             LocalTime arriveTime = parseFlightTime(lastSegment.path("at").asText(""));
+            java.time.LocalDate departDate = parseFlightDate(firstSegment.path("dt").asText(""), searchDate);
+            java.time.LocalDate arriveDate = parseFlightDate(lastSegment.path("at").asText(""),
+                    departDate == null ? null : arriveTime.isBefore(departTime) ? departDate.plusDays(1) : departDate);
             String origin = firstSegment.path("da").path("code").asText(originCode);
             String destination = lastSegment.path("aa").path("code").asText(destinationCode);
 
@@ -225,6 +229,8 @@ public class TripjackFlightSearchProvider implements FlightSearchProvider {
                         .destination(destination)
                         .departTime(departTime)
                         .arriveTime(arriveTime)
+                        .departDate(departDate)
+                        .arriveDate(arriveDate)
                         .duration(duration)
                         .stops(stops)
                         .supplier("Tripjack")
@@ -256,6 +262,15 @@ public class TripjackFlightSearchProvider implements FlightSearchProvider {
      * HH:mm substring out of whatever is actually there, rather than silently returning
      * midnight for a field the UI displays directly to an agent.
      */
+    /** The date part of a segment's ISO datetime; {@code fallback} when the supplier sent a bare time. */
+    static java.time.LocalDate parseFlightDate(String raw, java.time.LocalDate fallback) {
+        try {
+            return LocalDateTime.parse(raw).toLocalDate();
+        } catch (DateTimeParseException e) {
+            return fallback;
+        }
+    }
+
     private LocalTime parseFlightTime(String raw) {
         if (raw == null || raw.isBlank()) {
             throw new SupplierException("Tripjack flight response is missing a departure/arrival time", null);

@@ -52,6 +52,29 @@ public final class BookingSpecifications {
         return (root, query, cb) -> cb.like(cb.lower(root.get("destination")), "%" + destination.toLowerCase() + "%");
     }
 
+    /**
+     * One search box for the Bookings screen. A query that is a booking number ("42", "BK-42",
+     * "bk-00042") matches that number exactly; anything else matches client name, destination,
+     * PNR or a supplier reference, case-insensitively.
+     */
+    public static Specification<Booking> searchMatches(String rawQuery) {
+        String q = rawQuery.trim().toLowerCase();
+        String digits = q.startsWith("bk") ? q.substring(2).replaceAll("[^0-9]", "") : q;
+        Long number = digits.matches("\\d{1,18}") ? Long.valueOf(digits) : null;
+        String like = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%";
+        return (root, query, cb) -> {
+            List<Predicate> or = new ArrayList<>();
+            if (number != null) {
+                or.add(cb.equal(root.get("bookingNumber"), number));
+            }
+            for (String field : List.of("clientName", "destination", "pnr", "ticketNo", "hotelConfirmationNo",
+                    "visaApplicationNo", "transferVoucherNo")) {
+                or.add(cb.like(cb.lower(root.get(field)), like, '\\'));
+            }
+            return cb.or(or.toArray(new Predicate[0]));
+        };
+    }
+
     public static Specification<Booking> agentIs(String agentId) {
         return (root, query, cb) -> cb.equal(root.get("agentId"), agentId);
     }

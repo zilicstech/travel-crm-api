@@ -29,6 +29,12 @@ public class BookingResponse {
     @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String id;
 
+    @Schema(description = "Per-agency running number", example = "42")
+    private Long bookingNumber;
+
+    @Schema(description = "The booking number as people quote it", example = "BK-00042")
+    private String bookingRef;
+
     @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String clientId;
 

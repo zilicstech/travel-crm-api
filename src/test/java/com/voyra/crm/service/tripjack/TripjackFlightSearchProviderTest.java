@@ -126,6 +126,16 @@ class TripjackFlightSearchProviderTest {
         assertThat(offer.getDuration()).isEqualTo("570");
         assertThat(offer.getOrigin()).isEqualTo("BLR");
         assertThat(offer.getDestination()).isEqualTo("HKT");
+        assertThat(offer.getDepartDate()).isEqualTo(java.time.LocalDate.of(2026, 10, 9));
+        assertThat(offer.getArriveDate()).isEqualTo(java.time.LocalDate.of(2026, 10, 9));
+    }
+
+    @Test
+    void parseFlightDate_takesTheDateFromAnIsoDatetimeAndFallsBackForABareTime() {
+        assertThat(TripjackFlightSearchProvider.parseFlightDate("2026-10-10T01:40:00", null))
+                .isEqualTo(java.time.LocalDate.of(2026, 10, 10));
+        assertThat(TripjackFlightSearchProvider.parseFlightDate("01:40", java.time.LocalDate.of(2026, 10, 9)))
+                .isEqualTo(java.time.LocalDate.of(2026, 10, 9));
     }
 
     @Test
