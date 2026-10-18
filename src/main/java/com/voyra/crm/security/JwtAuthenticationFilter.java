@@ -63,7 +63,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
                     // JWTs are stateless: without a per-request liveness check, a token issued
                     // before deactivation keeps working until it expires.
-                    if (!isPrincipalActive(principal)) {
+                    if (!isPrincipalActive(principal, claims.getIssuedAt())) {
                         writeUnauthorized(response, "Account is inactive");
                         return;
                     }
@@ -80,12 +80,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         }
     }
 
-    private boolean isPrincipalActive(CustomUserPrincipal principal) {
+    private boolean isPrincipalActive(CustomUserPrincipal principal, java.util.Date issuedAt) {
         return switch (principal.userType()) {
             case SUPER_ADMIN -> PlatformAdminCache.isActive(principal.userId());
             // Owner IS the Tenant record - tenant liveness (already checked above) covers it.
             case AGENCY_OWNER -> true;
-            case AGENT, ACCOUNTANT -> AgentCache.isActive(principal.userId());
+            case AGENT, ACCOUNTANT -> AgentCache.isActive(principal.userId(), issuedAt);
         };
     }
 

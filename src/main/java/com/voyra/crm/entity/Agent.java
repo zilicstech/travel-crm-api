@@ -101,6 +101,10 @@ public class Agent {
     @Column(name = "created_date")
     private LocalDateTime createdDate;
 
+    /** Tokens issued before this instant are refused (set by a password reset). */
+    @Column(name = "password_changed_at")
+    private java.time.Instant passwordChangedAt;
+
     @PrePersist
     protected void onCreate() {
         if (createdDate == null) {

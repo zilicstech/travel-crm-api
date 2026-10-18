@@ -53,4 +53,7 @@ public class PublicProposalResponse {
     @Schema(description = "When true, option selections are frozen - the customer cannot pick or "
             + "confirm further until an agent unlocks it")
     private boolean locked;
+
+    @Schema(description = "True once the customer approved this proposal and nothing on it changed since")
+    private boolean approved;
 }

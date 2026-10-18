@@ -36,6 +36,9 @@ public class FeedbackLinkService {
     @Transactional
     public FeedbackLinkResponse generateLink(String bookingId) {
         Booking booking = bookingService.findAccessibleBooking(bookingId);
+        if (booking.getBookingStatus() != com.voyra.crm.enums.BookingStatus.COMPLETED) {
+            throw new IllegalStateException("Feedback can be requested only after the trip is completed.");
+        }
         String tenantId = SecurityContextUtil.getCurrentUserOrThrow().tenantId();
 
         String token = feedbackLinkRepository

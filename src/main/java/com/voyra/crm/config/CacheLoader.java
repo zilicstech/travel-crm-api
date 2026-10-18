@@ -39,7 +39,7 @@ public class CacheLoader {
 
         List<Agent> agents = agentRepository.findAll();
         AgentCache.loadFrom(agents.stream()
-                .map(a -> new AgentCache.AgentEntry(a.getId(), Boolean.TRUE.equals(a.getIsActive())))
+                .map(a -> new AgentCache.AgentEntry(a.getId(), Boolean.TRUE.equals(a.getIsActive()), a.getPasswordChangedAt()))
                 .toList());
 
         List<PlatformAdmin> admins = platformAdminRepository.findAll();

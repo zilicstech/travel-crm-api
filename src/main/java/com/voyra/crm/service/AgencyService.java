@@ -51,11 +51,13 @@ public class AgencyService {
                 .isActive(true)
                 .build();
 
-        tenantRepository.save(tenant);
-        TenantCache.put(tenant.getId(), tenant.getAgencyName(), true);
+        // Flush first: a concurrent create with the same owner email (a double-click) waits on the
+        // unique index here and fails before it builds a schema, instead of leaving an orphan one.
+        tenantRepository.saveAndFlush(tenant);
         tenantFlywayMigrator.migrate(tenant.getId());
         seedDefaultsForTenant(tenant.getId());
         seedChartOfAccountsFor(tenant.getId());
+        TenantCache.put(tenant.getId(), tenant.getAgencyName(), true);
 
         log.info("Agency created: tenantId={}, agencyName={}", tenant.getId(), tenant.getAgencyName());
         return AgencyCreateResponse.builder()

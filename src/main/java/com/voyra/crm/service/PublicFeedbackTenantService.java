@@ -43,19 +43,21 @@ public class PublicFeedbackTenantService {
         });
     }
 
-    /** Idempotent: resubmitting overwrites the same row rather than accumulating history. */
+    /** One submission per booking: anyone holding the link must not be able to rewrite the rating later. */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public boolean submit(String bookingId, String clientId, FeedbackSubmitRequest request) {
         Optional<Booking> bookingOpt = bookingRepository.findById(bookingId);
         if (bookingOpt.isEmpty()) {
             return false;
         }
-        Feedback feedback = feedbackRepository.findByBookingId(bookingId)
-                .orElseGet(() -> Feedback.builder()
-                        .id(UniqueIdResolver.resolve(feedbackRepository::existsById))
-                        .bookingId(bookingId)
-                        .clientId(clientId)
-                        .build());
+        if (feedbackRepository.findByBookingId(bookingId).isPresent()) {
+            throw new IllegalStateException("Feedback for this trip has already been submitted.");
+        }
+        Feedback feedback = Feedback.builder()
+                .id(UniqueIdResolver.resolve(feedbackRepository::existsById))
+                .bookingId(bookingId)
+                .clientId(clientId)
+                .build();
         feedback.setRating(request.getRating());
         feedback.setComment(request.getComment());
         feedback.setSubmittedAt(LocalDateTime.now());

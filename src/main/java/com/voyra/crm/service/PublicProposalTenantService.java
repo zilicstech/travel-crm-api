@@ -10,6 +10,7 @@ import com.voyra.crm.enums.ServiceStatus;
 import com.voyra.crm.repository.LeadRepository;
 import com.voyra.crm.repository.LeadProposalRepository;
 import com.voyra.crm.repository.LeadServiceRepository;
+import com.voyra.crm.repository.LeadTimelineRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -43,6 +44,12 @@ public class PublicProposalTenantService {
     private final LeadProposalRepository leadProposalRepository;
     private final LeadServiceRepository leadServiceRepository;
     private final LeadTimelineService leadTimelineService;
+    private final LeadTimelineRepository leadTimelineRepository;
+
+    /** Events that change what the customer approved - a later one of these reopens approval. */
+    private static final Set<LeadTimelineEventType> PROPOSAL_CHANGES = Set.of(
+            LeadTimelineEventType.PROPOSAL_UNLOCKED, LeadTimelineEventType.PROPOSAL_ITEM_ADDED,
+            LeadTimelineEventType.PROPOSAL_ITEM_REMOVED);
 
     @Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
     public Optional<PublicProposalResponse> fetchProposal(String leadId) {
@@ -111,7 +118,12 @@ public class PublicProposalTenantService {
         return true;
     }
 
-    /** Idempotent: approving an already-approved-or-further-along proposal is a no-op success. */
+    /**
+     * Idempotent: approving an already-approved proposal is a no-op success. Every option block
+     * must have a saved choice first - otherwise the agency would get an approval of an
+     * incomplete trip at a total the customer never saw. Approving commits the choices, so the
+     * proposal locks.
+     */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public boolean approve(String leadId) {
         Optional<Lead> leadOpt = leadRepository.findById(leadId);
@@ -119,11 +131,45 @@ public class PublicProposalTenantService {
             return false;
         }
         Lead lead = leadOpt.get();
+        if (isApproved(leadId)) {
+            return true;
+        }
+        Map<String, Boolean> groupDecided = new java.util.HashMap<>();
+        for (LeadProposal item : quotedItems(leadId)) {
+            if (item.getOptionGroup() != null) {
+                groupDecided.merge(item.getOptionGroup(), item.isSelected(), Boolean::logicalOr);
+            }
+        }
+        if (groupDecided.containsValue(false)) {
+            throw new IllegalStateException("Pick one option in every block and confirm your choices before approving.");
+        }
         if (!ALREADY_PAST_NEGOTIATING.contains(lead.getStatus())) {
             lead.setStatus(LeadStatus.NEGOTIATING);
-            leadRepository.save(lead);
         }
+        lead.setProposalLocked(true);
+        leadRepository.save(lead);
+        leadTimelineService.recordCustomerAction(leadId, null, LeadTimelineEventType.PROPOSAL_APPROVED,
+                "Customer approved the shared proposal");
         return true;
+    }
+
+    /** Approved, and nothing on the proposal changed since. */
+    private boolean isApproved(String leadId) {
+        return leadTimelineRepository.findByLeadIdOrderByCreatedAtDesc(leadId).stream()
+                .map(com.voyra.crm.entity.LeadTimeline::getEventType)
+                .filter(t -> t == LeadTimelineEventType.PROPOSAL_APPROVED || PROPOSAL_CHANGES.contains(t))
+                .findFirst()
+                .map(t -> t == LeadTimelineEventType.PROPOSAL_APPROVED)
+                .orElse(false);
+    }
+
+    /** Lines a customer is quoted: cancelled services are never shown or counted. */
+    private List<LeadProposal> quotedItems(String leadId) {
+        Map<String, ServiceStatus> statusByServiceId = leadServiceRepository.findByLeadIdOrderBySortOrderAsc(leadId).stream()
+                .collect(Collectors.toMap(com.voyra.crm.entity.LeadService::getId, com.voyra.crm.entity.LeadService::getStatus));
+        return leadProposalRepository.findByLeadId(leadId).stream()
+                .filter(i -> i.getServiceId() == null || statusByServiceId.get(i.getServiceId()) != ServiceStatus.CANCELLED)
+                .toList();
     }
 
     private PublicProposalResponse buildResponse(Lead lead) {
@@ -166,6 +212,7 @@ public class PublicProposalTenantService {
                         .toList())
                 .grandTotal(grandTotal)
                 .locked(lead.isProposalLocked())
+                .approved(isApproved(lead.getId()))
                 .build();
     }
 

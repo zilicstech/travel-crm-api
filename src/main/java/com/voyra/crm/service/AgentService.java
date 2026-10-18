@@ -236,7 +236,11 @@ public class AgentService {
             throw new IllegalArgumentException("New password and confirmation do not match");
         }
         agent.setPassword(passwordEncoder.encode(request.getNewPassword()));
+        // A reset usually follows a compromise: sessions issued before it must stop working.
+        java.time.Instant now = java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+        agent.setPasswordChangedAt(now);
         agentRepository.save(agent);
+        AgentCache.revokeTokensBefore(agent.getId(), now.getEpochSecond());
         log.info("Agent password reset: agentId={}, role={}, by={}", id, agent.getUserRole(),
                 SecurityContextUtil.getAuditInfo());
     }
