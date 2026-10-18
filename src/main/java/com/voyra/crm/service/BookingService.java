@@ -868,6 +868,13 @@ public class BookingService {
         booking.setNetCost(booking.getNetCost().subtract(cost).max(BigDecimal.ZERO));
         booking.setSellingPrice(newPrice.max(BigDecimal.ZERO));
         booking.setProfit(computeProfit(booking.getSellingPrice(), booking.getNetCost()));
+        // Removing the last priced voucher un-books it: a booking is never "Confirmed" at ₹0.
+        // (An edit re-applies the voucher straight after, so only a removal does this.)
+        boolean unconfirmed = guardInvoiced && booking.getBookingStatus() == BookingStatus.CONFIRMED
+                && booking.getSellingPrice().signum() == 0;
+        if (unconfirmed) {
+            booking.setBookingStatus(BookingStatus.PENDING);
+        }
         List<AuditChange> changes = AuditSnapshot.diff(before, AuditSnapshot.of(booking, AUDITED));
         touch(booking);
         bookingRepository.save(booking);

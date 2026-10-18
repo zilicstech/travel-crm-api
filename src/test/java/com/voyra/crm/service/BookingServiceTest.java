@@ -546,6 +546,20 @@ class BookingServiceTest {
     }
 
     @Test
+    void removingTheOnlyPricedVoucherPutsTheBookingBackToPending() {
+        Booking booking = pendingFlight("PNR1", "0");
+        bookingService.applyVoucher(booking, voucher("1000", "20", "PNR1"), null, false);
+        assertThat(booking.getBookingStatus()).isEqualTo(BookingStatus.CONFIRMED);
+        com.voyra.crm.entity.BookingDocument applied = voucher("1000", "20", "PNR1");
+        applied.setSellingPrice(new BigDecimal("1200"));
+
+        bookingService.reverseVoucher(booking, applied);
+
+        assertThat(booking.getSellingPrice()).isEqualByComparingTo("0");
+        assertThat(booking.getBookingStatus()).isEqualTo(BookingStatus.PENDING);
+    }
+
+    @Test
     void aCancelledBookingCannotBeReopened() {
         Booking booking = Booking.builder().id("B1").agentId("A1").bookingStatus(BookingStatus.CANCELLED).build();
         when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
