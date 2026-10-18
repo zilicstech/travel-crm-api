@@ -82,6 +82,39 @@ class BookingAccountingSyncTest {
         assertThat(booking.getPrimaryInvoiceId()).isEqualTo("I1");
     }
 
+    /** An advance still held on the client's account for this booking is not "received" until its invoice draws it down. */
+    @Test
+    void anAdvanceStillHeldOnAccountIsNotCountedAsReceived() {
+        Booking booking = manualBooking();
+        Invoice invoice = Invoice.builder().id("I1").grandTotalInr(new BigDecimal("1000.00")).build();
+        PaymentReceipt held = PaymentReceipt.builder().invoiceId(null).isAdvance(true).amountInr(new BigDecimal("700.00")).build();
+        PaymentReceipt applied = PaymentReceipt.builder().invoiceId("I1").appliedFromAdvance(true).amountInr(new BigDecimal("300.00")).build();
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
+        when(invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc(any(), any(), any())).thenReturn(List.of(invoice));
+        when(paymentReceiptRepository.findByBookingIdAndDirection("B1", ReceiptDirection.RECEIPT)).thenReturn(List.of(held, applied));
+        when(paymentReceiptRepository.findByBookingIdAndDirection("B1", ReceiptDirection.REFUND)).thenReturn(List.of());
+
+        bookingAccountingSync.syncPayment("B1");
+
+        assertThat(booking.getReceivedTotalInr()).isEqualByComparingTo("300.00");
+    }
+
+    /** Regression run 7 follow-up: a refund paid out of a held advance has the same no-invoice shape but must still count as refunded. */
+    @Test
+    void aRefundPaidOutOfAHeldAdvanceCountsAsRefunded() {
+        Booking booking = manualBooking();
+        PaymentReceipt refund = PaymentReceipt.builder().invoiceId(null).isAdvance(true).direction(ReceiptDirection.REFUND)
+                .amountInr(new BigDecimal("1500.00")).build();
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
+        when(invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc(any(), any(), any())).thenReturn(List.of());
+        when(paymentReceiptRepository.findByBookingIdAndDirection("B1", ReceiptDirection.RECEIPT)).thenReturn(List.of());
+        when(paymentReceiptRepository.findByBookingIdAndDirection("B1", ReceiptDirection.REFUND)).thenReturn(List.of(refund));
+
+        bookingAccountingSync.syncPayment("B1");
+
+        assertThat(booking.getRefundedTotalInr()).isEqualByComparingTo("1500.00");
+    }
+
     @Test
     void partialReceiptsComputePartial() {
         Booking booking = manualBooking();

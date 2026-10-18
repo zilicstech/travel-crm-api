@@ -61,6 +61,24 @@ public class BookingUpdateRequest {
     @Schema(example = "Economy")
     private String flightCabin;
 
+    @Size(max = 5)
+    @Schema(description = "Departure, local clock time 'HH:mm'", example = "09:40")
+    private String flightDepartTime;
+
+    @Size(max = 5)
+    @Schema(description = "Arrival, local clock time 'HH:mm'", example = "12:15")
+    private String flightArriveTime;
+
+    @Schema(description = "Arrival date, when it differs from the journey date", example = "2026-12-21")
+    private LocalDate flightArriveDate;
+
+    @Schema(description = "The supplier (Vendor) - settable while no supplier bill is on the booking", example = "5b1c...")
+    private String vendorId;
+
+    @Size(max = 255)
+    @Schema(description = "One-line description of what was booked", example = "DEL → DXB")
+    private String destination;
+
     @Size(max = 100)
     @Schema(example = "HTL-994211")
     private String hotelConfirmationNo;

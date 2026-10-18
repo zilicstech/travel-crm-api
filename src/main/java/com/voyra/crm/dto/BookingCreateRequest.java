@@ -7,6 +7,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 import jakarta.validation.constraints.DecimalMin;
@@ -83,6 +84,17 @@ public class BookingCreateRequest {
     @Schema(example = "Economy")
     private String flightCabin;
 
+    @Size(max = 5)
+    @Schema(description = "Departure, local clock time 'HH:mm'", example = "09:40")
+    private String flightDepartTime;
+
+    @Size(max = 5)
+    @Schema(description = "Arrival, local clock time 'HH:mm'", example = "12:15")
+    private String flightArriveTime;
+
+    @Schema(description = "Arrival date, when it differs from the journey date", example = "2026-12-21")
+    private LocalDate flightArriveDate;
+
     @Schema(example = "HTL-994211")
     private String hotelConfirmationNo;
 
@@ -143,12 +155,10 @@ public class BookingCreateRequest {
     @Schema(description = "Local clock time, 'HH:mm'", example = "14:30")
     private String transferTime;
 
-    @NotNull(message = "Net cost is required")
-    @Schema(description = "Cost paid to the supplier", example = "42000.00")
+    @Schema(description = "Cost paid to the supplier - may be left out on a pending booking and added once booked; defaults to 0", example = "42000.00")
     private BigDecimal netCost;
 
-    @NotNull(message = "Selling price is required")
-    @Schema(description = "Price charged to the customer", example = "52000.00")
+    @Schema(description = "Price charged to the customer - may be left out on a pending booking; defaults to 0", example = "52000.00")
     private BigDecimal sellingPrice;
 
     @Schema(description = "Carried over from the winning proposal line, when this booking was logged from one", example = "PERCENT")

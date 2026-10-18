@@ -82,6 +82,35 @@ public class RevenueRecognitionTenantService {
         return new RecognitionResult(invoices.size(), recognized);
     }
 
+    /**
+     * A cancelled trip never departs, so the nightly job would never move what the agency kept
+     * out of Unearned Tour Revenue (QA F-19). Called inside the cancellation's own transaction,
+     * after the credit note has reversed the refunded part: recognises the rest now.
+     */
+    @Transactional
+    public void recognizeRetainedOnCancellation(Invoice invoice, BigDecimal creditedTaxable, LocalDate asOf) {
+        if (!journalEntryRepository.existsBySourceTypeAndSourceIdAndPurpose(
+                JournalSourceType.INVOICE, invoice.getId(), JournalPurpose.INVOICE_RAISED_DEFERRED)
+                || journalEntryRepository.existsBySourceTypeAndSourceIdAndPurpose(
+                JournalSourceType.INVOICE, invoice.getId(), JournalPurpose.REVENUE_RECOGNIZED)) {
+            return;
+        }
+        BigDecimal fx = invoice.getFxRateToInr() != null ? invoice.getFxRateToInr() : BigDecimal.ONE;
+        BigDecimal retainedInr = invoice.getTaxableValue().subtract(creditedTaxable).multiply(fx)
+                .setScale(2, java.math.RoundingMode.HALF_UP);
+        if (retainedInr.compareTo(BigDecimal.ZERO) <= 0) {
+            return;
+        }
+        InvoiceServiceCategory category = invoice.getServiceCategory() != null
+                ? invoice.getServiceCategory() : InvoiceServiceCategory.MISCELLANEOUS;
+        String narration = "Revenue kept on cancellation, invoice " + invoice.getInvoiceNumber();
+        journalService.post(new JournalPosting(
+                asOf, JournalSourceType.INVOICE, invoice.getId(), JournalPurpose.REVENUE_RECOGNIZED,
+                narration, invoice.getBookingId(), invoice.getBranchId(), List.of(
+                        JournalLinePosting.debit(SystemAccount.UNEARNED_TOUR_REVENUE.code(), retainedInr, narration),
+                        JournalLinePosting.credit(SystemAccount.salesCode(category), retainedInr, narration))));
+    }
+
     private boolean recognize(Invoice invoice, LocalDate asOf) {
         BigDecimal taxableInr = invoice.getTaxableValueInr();
         if (taxableInr == null || taxableInr.compareTo(BigDecimal.ZERO) <= 0) {

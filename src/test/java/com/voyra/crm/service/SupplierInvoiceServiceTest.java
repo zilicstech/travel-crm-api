@@ -158,4 +158,19 @@ class SupplierInvoiceServiceTest {
         assertThat(posting.lines().get(1).accountCode()).isEqualTo("2200");
         assertThat(posting.lines().get(1).creditAmount()).isEqualByComparingTo("2100.00");
     }
+
+    @Test
+    void anAgentCancellingABookingCanStillCancelItsDraftBill() {
+        CustomUserPrincipal agent = new CustomUserPrincipal("A1", "agent", UserType.AGENT, "T1");
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(agent, null, List.of()));
+        SupplierInvoice draft = SupplierInvoice.builder().id("S1").status(SupplierInvoiceStatus.DRAFT)
+                .amountPaid(BigDecimal.ZERO).build();
+        when(supplierInvoiceRepository.findById("S1")).thenReturn(Optional.of(draft));
+
+        supplierInvoiceService.cancelForBooking("S1", "Booking cancelled");
+
+        assertThat(draft.getStatus()).isEqualTo(SupplierInvoiceStatus.CANCELLED);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> supplierInvoiceService.cancel("S1", "x"))
+                .isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
+    }
 }

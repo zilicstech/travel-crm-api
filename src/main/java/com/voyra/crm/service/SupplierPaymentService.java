@@ -156,6 +156,44 @@ public class SupplierPaymentService {
      * individually tracked once paid in, since the ledger already nets the vendor's whole
      * position regardless of which advance funded which bill.
      */
+    /**
+     * Keeps a cancelled booking's supplier refund in the vendor's wallet (a portal balance) as an
+     * advance the next bill can draw on. No journal: the refund that pairs with it already
+     * debited Supplier Advances. No bookingId, so the booking's own figures are untouched.
+     */
+    @Transactional
+    public SupplierPaymentResponse creditWallet(String vendorId, BigDecimal amount, LocalDate on, String narration) {
+        Vendor vendor = findVendor(vendorId);
+        String number = documentNumberService.next(DocumentKind.PAYMENT_VOUCHER, on);
+        SupplierPayment payment = SupplierPayment.builder()
+                .id(UniqueIdResolver.resolve(supplierPaymentRepository::existsById))
+                .voucherNumber(number)
+                .financialYear(FinancialYear.of(on))
+                .direction(SupplierPaymentDirection.PAYMENT)
+                .vendorId(vendor.getId())
+                .vendorName(vendor.getName())
+                .currencyCode("INR")
+                .fxRateToInr(BigDecimal.ONE)
+                .amount(amount)
+                .amountInr(amount)
+                .tdsWithheld(BigDecimal.ZERO)
+                .paymentMode(PaymentMode.ADJUSTMENT)
+                .paidOn(on)
+                .isAdvance(true)
+                .appliedFromAdvance(false)
+                .notes(narration)
+                .createdAt(LocalDateTime.now())
+                .createdBy(currentUserId())
+                .build();
+        supplierPaymentRepository.save(payment);
+        supplierLedgerService.post(new SupplierLedgerPosting(
+                vendor.getId(), on, SupplierLedgerEntryType.ADVANCE_PAID, SupplierLedgerSourceType.SUPPLIER_PAYMENT,
+                payment.getId(), number, narration, null, "INR", BigDecimal.ONE,
+                amount, BigDecimal.ZERO, amount, BigDecimal.ZERO));
+        auditService.recordCreate(AuditEntityType.SUPPLIER_PAYMENT, payment.getId(), number);
+        return toResponse(payment);
+    }
+
     @Transactional
     public SupplierPaymentResponse applyAdvance(String supplierInvoiceId, SupplierAdvanceApplyRequest request) {
         SupplierInvoice invoice = findInvoice(supplierInvoiceId);

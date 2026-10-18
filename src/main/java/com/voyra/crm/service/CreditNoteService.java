@@ -78,6 +78,7 @@ public class CreditNoteService {
     private final BookingAccountingSync bookingAccountingSync;
     private final JournalService journalService;
     private final com.voyra.crm.repository.JournalEntryRepository journalEntryRepository;
+    private final com.voyra.crm.repository.JournalLineRepository journalLineRepository;
 
     @Transactional
     public CreditNoteResponse create(CreditNoteRequest request) {
@@ -159,8 +160,7 @@ public class CreditNoteService {
         // Capped at cash actually receipted on the invoice, not the note's own face value -
         // a credit note issued against a partially (or un-)paid invoice cannot be refunded
         // for more than the agency ever actually collected from the client.
-        BigDecimal cashReceipted = cashReceiptedOnInvoice(invoice.getId());
-        note.setRefundableAmount(note.getTotalAmount().min(cashReceipted).max(BigDecimal.ZERO));
+        note.setRefundableAmount(refundableFor(invoice, note.getTotalAmount(), note.getId()));
         creditNoteRepository.save(note);
 
         invoice.setCreditNoteTotal(invoice.getCreditNoteTotal().add(note.getTotalAmount()));
@@ -231,6 +231,16 @@ public class CreditNoteService {
 
     @Transactional
     public CreditNoteResponse refund(String id, CreditNoteRefundRequest request) {
+        return refund(id, request, false);
+    }
+
+    /**
+     * {@code toWallet}: the refund stays with the agency as the client's account balance instead
+     * of leaving the bank - the journal credits Client Advances Held rather than Bank, and the
+     * caller adds the matching wallet deposit (PaymentReceiptService#creditWallet).
+     */
+    @Transactional
+    public CreditNoteResponse refund(String id, CreditNoteRefundRequest request, boolean toWallet) {
         CreditNote note = findById(id);
         if (note.getStatus() != CreditNoteStatus.ISSUED) {
             throw new IllegalStateException("Only an issued credit note can be refunded");
@@ -275,7 +285,7 @@ public class CreditNoteService {
                 "Refund " + receipt.getReceiptNumber() + " against " + note.getCreditNoteNumber(),
                 note.getBookingId(), receipt.getCurrencyCode(), receipt.getFxRateToInr(),
                 receipt.getAmountInr(), BigDecimal.ZERO, receipt.getAmountInr(), BigDecimal.ZERO));
-        postRefundPaidJournal(note, receipt);
+        postRefundPaidJournal(note, receipt, toWallet);
 
         note.setRefundedAmount(alreadyRefunded.add(request.getAmount()));
         creditNoteRepository.save(note);
@@ -327,6 +337,14 @@ public class CreditNoteService {
                 .stream().map(CreditNoteService::toResponse).toList();
     }
 
+    /** What a cancellation credit note on this invoice would let the customer get back - the same
+     *  maths {@link #create}/{@link #issue} use, without writing anything. */
+    @Transactional(readOnly = true)
+    public BigDecimal previewRefundable(Invoice invoice, BigDecimal cancellationFee) {
+        BigDecimal fee = cancellationFee.min(invoice.getTaxableValue()).max(BigDecimal.ZERO);
+        return refundableFor(invoice, computeReversal(invoice, fee).totalAmount, null);
+    }
+
     // ---------------------------------------------------------------- internals
 
     private record Reversal(BigDecimal taxableValue, BigDecimal cgstAmount, BigDecimal sgstAmount,
@@ -362,6 +380,17 @@ public class CreditNoteService {
         if (existing.add(candidateAmount).compareTo(invoice.getGrandTotal()) > 0) {
             throw new IllegalStateException("This credit note would credit more than the invoice's grand total");
         }
+    }
+
+    /** Cash comes back only for what the customer paid beyond what is still billed once this
+     *  credit lands - a partly paid invoice that is partly credited may owe nothing back. */
+    private BigDecimal refundableFor(Invoice invoice, BigDecimal noteTotal, String excludeId) {
+        BigDecimal otherCredits = creditNoteRepository.findByInvoiceIdAndStatus(invoice.getId(), CreditNoteStatus.ISSUED).stream()
+                .filter(cn -> !cn.getId().equals(excludeId))
+                .map(CreditNote::getTotalAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal stillBilled = invoice.getGrandTotal().subtract(otherCredits).subtract(noteTotal);
+        return cashReceiptedOnInvoice(invoice.getId()).subtract(stillBilled).max(BigDecimal.ZERO).min(noteTotal);
     }
 
     private BigDecimal sumRefunded(String creditNoteId) {
@@ -400,6 +429,9 @@ public class CreditNoteService {
         }
 
         String revenueAccountCode = findOriginalRevenueAccountCode(invoice);
+        if (revenueAccountCode == null && postCommissionAgentCreditNoteJournal(note, invoice)) {
+            return;
+        }
         if (revenueAccountCode == null) {
             log.warn("Credit note {} - could not find the original invoice's revenue posting (likely COMMISSION_AGENT, "
                     + "not yet covered by the posting-rule table) - skipping GL entry", note.getId());
@@ -429,6 +461,48 @@ public class CreditNoteService {
                 note.getBookingId(), note.getBranchId(), lines));
     }
 
+    /**
+     * A COMMISSION_AGENT invoice credited pass-through payable, service-fee income and GST rather
+     * than one revenue account, so its credit note reverses those same lines in the proportion
+     * the note bears to the invoice (a full refund reverses them in full), against AR. Returns
+     * false when the invoice posted no commission-agent journal (nothing to mirror).
+     */
+    private boolean postCommissionAgentCreditNoteJournal(CreditNote note, Invoice invoice) {
+        var original = journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(
+                com.voyra.crm.enums.JournalSourceType.INVOICE, invoice.getId(),
+                com.voyra.crm.enums.JournalPurpose.INVOICE_RAISED_COMMISSION_AGENT);
+        if (original.isEmpty() || invoice.getGrandTotalInr() == null || invoice.getGrandTotalInr().signum() == 0) {
+            return false;
+        }
+        BigDecimal ratio = note.getTotalAmountInr().divide(invoice.getGrandTotalInr(), 10, RoundingMode.HALF_UP).min(BigDecimal.ONE);
+        String receivable = com.voyra.crm.enums.SystemAccount.ACCOUNTS_RECEIVABLE.code();
+        List<com.voyra.crm.models.JournalLinePosting> lines = new ArrayList<>();
+        BigDecimal reversed = BigDecimal.ZERO;
+        for (com.voyra.crm.entity.JournalLine line : journalLineRepository.findByJournalEntryIdOrderByLineNo(original.get().getId())) {
+            if (receivable.equals(line.getAccountCode())) {
+                continue;
+            }
+            BigDecimal credit = line.getCreditAmountInr() != null ? line.getCreditAmountInr() : BigDecimal.ZERO;
+            BigDecimal amount = credit.multiply(ratio).setScale(2, RoundingMode.HALF_UP);
+            if (amount.signum() > 0) {
+                lines.add(com.voyra.crm.models.JournalLinePosting.debit(line.getAccountCode(), amount, "Reversed: " + line.getNarration()));
+                reversed = reversed.add(amount);
+            }
+        }
+        if (lines.isEmpty()) {
+            return true;
+        }
+        lines.add(com.voyra.crm.models.JournalLinePosting.creditParty(receivable, "CLIENT", note.getClientId(), reversed,
+                "Credit note " + note.getCreditNoteNumber()));
+        journalService.post(new com.voyra.crm.models.JournalPosting(
+                note.getNoteDate() != null ? note.getNoteDate() : LocalDate.now(),
+                com.voyra.crm.enums.JournalSourceType.CREDIT_NOTE, note.getId(),
+                com.voyra.crm.enums.JournalPurpose.CREDIT_NOTE_ISSUED,
+                "Credit note " + note.getCreditNoteNumber() + " against " + invoice.getInvoiceNumber(),
+                note.getBookingId(), note.getBranchId(), lines));
+        return true;
+    }
+
     /** The account code the original invoice's issue journal credited for revenue - null if none of the three purposes posted (or posting predates the GL). */
     private String findOriginalRevenueAccountCode(Invoice invoice) {
         for (com.voyra.crm.enums.JournalPurpose purpose : List.of(
@@ -454,7 +528,7 @@ public class CreditNoteService {
     }
 
     /** Posting-rule-table row 13 - a cash refund paid out against a credit note. */
-    private void postRefundPaidJournal(CreditNote note, PaymentReceipt receipt) {
+    private void postRefundPaidJournal(CreditNote note, PaymentReceipt receipt, boolean toWallet) {
         BigDecimal amountInr = receipt.getAmountInr();
         if (amountInr == null || amountInr.compareTo(BigDecimal.ZERO) <= 0) {
             return;
@@ -462,13 +536,18 @@ public class CreditNoteService {
         String bankCode = receipt.getPaymentMode() == com.voyra.crm.enums.PaymentMode.CASH
                 ? com.voyra.crm.enums.SystemAccount.CASH_IN_HAND.code()
                 : com.voyra.crm.enums.SystemAccount.BANK_ACCOUNTS.code();
-        String narration = "Refund " + receipt.getReceiptNumber() + " against " + note.getCreditNoteNumber();
+        String narration = "Refund " + receipt.getReceiptNumber() + " against " + note.getCreditNoteNumber()
+                + (toWallet ? ", credited to client account" : "");
+        com.voyra.crm.models.JournalLinePosting creditLine = toWallet
+                ? com.voyra.crm.models.JournalLinePosting.creditParty(
+                        com.voyra.crm.enums.SystemAccount.CLIENT_ADVANCES_HELD.code(), "CLIENT", note.getClientId(), amountInr, narration)
+                : com.voyra.crm.models.JournalLinePosting.credit(bankCode, amountInr, narration);
         journalService.post(new com.voyra.crm.models.JournalPosting(
                 receipt.getReceivedOn(), com.voyra.crm.enums.JournalSourceType.RECEIPT, receipt.getId(),
                 com.voyra.crm.enums.JournalPurpose.CLIENT_REFUND_PAID, narration, note.getBookingId(), note.getBranchId(), List.of(
                         com.voyra.crm.models.JournalLinePosting.debitParty(
                                 com.voyra.crm.enums.SystemAccount.ACCOUNTS_RECEIVABLE.code(), "CLIENT", note.getClientId(), amountInr, narration),
-                        com.voyra.crm.models.JournalLinePosting.credit(bankCode, amountInr, narration))));
+                        creditLine)));
     }
 
     private CreditNote findById(String id) {

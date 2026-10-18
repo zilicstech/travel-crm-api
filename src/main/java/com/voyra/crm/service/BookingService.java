@@ -10,7 +10,6 @@ import com.voyra.crm.dto.BookingDocumentResponse;
 import com.voyra.crm.dto.BookingPassengerRequest;
 import com.voyra.crm.dto.BookingPassengerResponse;
 import com.voyra.crm.dto.BookingPaymentStatusUpdateRequest;
-import com.voyra.crm.dto.BookingRefundUpdateRequest;
 import com.voyra.crm.dto.BookingResponse;
 import com.voyra.crm.dto.BookingSectorRequest;
 import com.voyra.crm.dto.BookingSectorResponse;
@@ -22,6 +21,7 @@ import com.voyra.crm.entity.Agent;
 import com.voyra.crm.entity.Booking;
 import com.voyra.crm.entity.BookingCostComponent;
 import com.voyra.crm.entity.BookingDocument;
+import com.voyra.crm.enums.BookingDocumentType;
 import com.voyra.crm.entity.BookingPassenger;
 import com.voyra.crm.entity.BookingSector;
 import com.voyra.crm.entity.Client;
@@ -87,7 +87,8 @@ public class BookingService {
      *  Lead/service linkage and type are deliberately excluded - they never change after create. */
     private static final String[] AUDITED = {
             "pnr", "ticketNo", "airline", "supplier", "journeyDate", "returnDate", "tripType", "notes",
-            "flightNumber", "flightFrom", "flightTo", "flightCabin",
+            "flightNumber", "flightFrom", "flightTo", "flightCabin", "flightDepartTime", "flightArriveTime", "flightArriveDate",
+            "destination", "vendorId",
             "hotelConfirmationNo", "hotelName", "hotelCity", "hotelCountryCode", "hotelCheckIn", "hotelCheckOut",
             "hotelRoomType", "hotelBoardBasis", "hotelRooms",
             "visaApplicationNo", "visaCountry", "visaAppliedDate", "visaAppointmentDate", "visaIssuedDate",
@@ -111,6 +112,7 @@ public class BookingService {
     private final LeadRepository leadRepository;
     private final CreditNoteRepository creditNoteRepository;
     private final InvoiceRepository invoiceRepository;
+    private final com.voyra.crm.repository.InvoiceLineItemRepository invoiceLineItemRepository;
     private final PaymentReceiptRepository paymentReceiptRepository;
     private final CustomerLedgerEntryRepository customerLedgerEntryRepository;
     private final FeedbackRepository feedbackRepository;
@@ -120,6 +122,9 @@ public class BookingService {
     private final ServiceInstanceService serviceInstanceService;
     private final ServiceBookingStatusSync serviceBookingStatusSync;
     private final SupplierInvoiceService supplierInvoiceService;
+    private final org.springframework.transaction.support.TransactionTemplate transactionTemplate;
+    private final com.voyra.crm.repository.SupplierInvoiceRepository supplierInvoiceRepository;
+    private final com.voyra.crm.repository.SupplierPaymentRepository supplierPaymentRepository;
     private final TenantRepository tenantRepository;
     private final JournalService journalService;
     private final com.voyra.crm.repository.JournalEntryRepository journalEntryRepository;
@@ -129,6 +134,9 @@ public class BookingService {
 
     @Transactional
     public BookingResponse createBooking(BookingCreateRequest request) {
+        // A pending booking is saved before it is booked with the supplier - the fare comes later.
+        if (request.getNetCost() == null) request.setNetCost(BigDecimal.ZERO);
+        if (request.getSellingPrice() == null) request.setSellingPrice(BigDecimal.ZERO);
         AuthorResolver.AuthorInfo owner = resolveOwningAgent(request.getAgentId());
         Client client = clientRepository.findById(request.getClientId())
                 .orElseThrow(() -> new IllegalArgumentException("Client not found: " + request.getClientId()));
@@ -159,6 +167,7 @@ public class BookingService {
 
         Booking.BookingBuilder builder = Booking.builder()
                 .id(generateUniqueBookingId())
+                .bookingNumber(bookingRepository.nextBookingNumber())
                 .clientId(client.getId())
                 .clientName(client.getName())
                 .agentId(owner.id())
@@ -168,7 +177,7 @@ public class BookingService {
                 .pnr(request.getPnr())
                 .ticketNo(request.getTicketNo())
                 .airline(request.getAirline())
-                .supplier(request.getSupplier())
+                .supplier(supplierName(request.getSupplier(), request.getVendorId()))
                 .vendorId(request.getVendorId())
                 .journeyDate(request.getJourneyDate())
                 .returnDate(request.getReturnDate())
@@ -179,6 +188,9 @@ public class BookingService {
                 .flightFrom(request.getFlightFrom())
                 .flightTo(request.getFlightTo())
                 .flightCabin(request.getFlightCabin())
+                .flightDepartTime(request.getFlightDepartTime())
+                .flightArriveTime(request.getFlightArriveTime())
+                .flightArriveDate(request.getFlightArriveDate())
                 .hotelConfirmationNo(request.getHotelConfirmationNo())
                 .hotelName(request.getHotelName())
                 .hotelCity(request.getHotelCity())
@@ -230,13 +242,6 @@ public class BookingService {
         if (request.getPassengers() != null) {
             replacePassengers(booking.getId(), request.getPassengers());
         }
-        // A booking placed with a real Vendor (not just a free-text supplier name) drafts its
-        // own supplier bill - the accountant confirms it against the paper invoice later
-        // (Accounts ▸ Suppliers ▸ Awaiting confirmation) rather than starting one from scratch.
-        if (request.getVendorId() != null && !request.getVendorId().isBlank()
-                && request.getNetCost().compareTo(BigDecimal.ZERO) > 0) {
-            supplierInvoiceService.createAutoDraft(booking, request.getVendorId());
-        }
         auditService.recordCreate(AuditEntityType.BOOKING, booking.getId(), labelFor(booking));
 
         if (service != null) {
@@ -246,6 +251,35 @@ public class BookingService {
         }
 
         log.info("Booking created: bookingId={}, agentId={}, serviceId={}", booking.getId(), owner.id(), request.getServiceId());
+        return toResponse(booking);
+    }
+
+    /**
+     * The "log a booking" path: the supplier has already confirmed (the caller holds a reference
+     * and the voucher), so the booking is created CONFIRMED with its voucher document in the same
+     * transaction. The voucher file itself is stored by the caller before this runs - see
+     * {@link BookingLogService}.
+     */
+    @Transactional
+    public BookingResponse logBooking(BookingCreateRequest request, String documentId, String fileKey,
+                                      String fileName, String contentType, BookingDocumentType docType,
+                                      String reference) {
+        Booking booking = bookingRepository.findById(createBooking(request).getId())
+                .orElseThrow(() -> new IllegalStateException("Booking vanished mid-create"));
+        booking.setBookingStatus(BookingStatus.CONFIRMED);
+        bookingRepository.save(booking);
+        draftSupplierBillOnce(booking);
+        bookingDocumentRepository.save(BookingDocument.builder()
+                .id(documentId)
+                .bookingId(booking.getId())
+                .docType(docType)
+                .referenceNumber(reference)
+                .fileKey(fileKey)
+                .fileName(fileName)
+                .contentType(contentType)
+                .createdAt(LocalDateTime.now())
+                .createdBy(SecurityContextUtil.getCurrentUserOrThrow().userId())
+                .build());
         return toResponse(booking);
     }
 
@@ -272,8 +306,31 @@ public class BookingService {
     @Transactional(readOnly = true)
     public PagedResponse<BookingResponse> listBookings(BookingType typeFilter, BookingStatus statusFilter,
             String destinationFilter, String agentIdFilter, String vendorIdFilter, Pageable pageable) {
-        Page<Booking> page = bookingRepository.findAll(
-                scopeSpecification(typeFilter, statusFilter, destinationFilter, agentIdFilter, vendorIdFilter), pageable);
+        return listBookings(typeFilter, statusFilter, destinationFilter, agentIdFilter, vendorIdFilter, null, null, pageable);
+    }
+
+    /** The Bookings screen: free-text search (booking no., client, destination, reference) over the caller's scope. */
+    @Transactional(readOnly = true)
+    public PagedResponse<BookingResponse> listBookings(BookingType typeFilter, BookingStatus statusFilter,
+            String destinationFilter, String agentIdFilter, String vendorIdFilter, String query, String sort, Pageable pageable) {
+        return listBookings(typeFilter, statusFilter, destinationFilter, agentIdFilter, vendorIdFilter, query, sort, false, pageable);
+    }
+
+    /** As above; {@code moneyPending} narrows to bookings with client money or a refund still open - the accountant's worklist. */
+    @Transactional(readOnly = true)
+    public PagedResponse<BookingResponse> listBookings(BookingType typeFilter, BookingStatus statusFilter,
+            String destinationFilter, String agentIdFilter, String vendorIdFilter, String query, String sort,
+            boolean moneyPending, Pageable pageable) {
+        pageable = org.springframework.data.domain.PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(),
+                com.voyra.crm.util.BookingSort.parse(sort));
+        Specification<Booking> spec = scopeSpecification(typeFilter, statusFilter, destinationFilter, agentIdFilter, vendorIdFilter);
+        if (query != null && !query.isBlank()) {
+            spec = spec.and(BookingSpecifications.searchMatches(query));
+        }
+        if (moneyPending) {
+            spec = spec.and(BookingSpecifications.moneyPending());
+        }
+        Page<Booking> page = bookingRepository.findAll(spec, pageable);
         return PagedResponse.from(page, this::toResponse);
     }
 
@@ -375,6 +432,8 @@ public class BookingService {
 
     @Transactional
     public BookingResponse updateBooking(String id, BookingUpdateRequest request) {
+        // Locked first: a supplier picked on a confirmed booking drafts its bill, once.
+        bookingRepository.findByIdForUpdate(id);
         Booking booking = findAccessibleBooking(id);
         boolean alreadyConfirmed = booking.getBookingStatus() == BookingStatus.CONFIRMED;
         LocalDate oldDepartureDate = booking.getDepartureDate();
@@ -392,6 +451,11 @@ public class BookingService {
         if (request.getFlightFrom() != null) booking.setFlightFrom(request.getFlightFrom());
         if (request.getFlightTo() != null) booking.setFlightTo(request.getFlightTo());
         if (request.getFlightCabin() != null) booking.setFlightCabin(request.getFlightCabin());
+        if (request.getFlightDepartTime() != null) booking.setFlightDepartTime(request.getFlightDepartTime());
+        if (request.getFlightArriveTime() != null) booking.setFlightArriveTime(request.getFlightArriveTime());
+        if (request.getFlightArriveDate() != null) booking.setFlightArriveDate(request.getFlightArriveDate());
+        if (request.getDestination() != null && !request.getDestination().isBlank()) booking.setDestination(request.getDestination());
+        if (request.getVendorId() != null && !request.getVendorId().equals(booking.getVendorId())) setVendor(booking, request.getVendorId());
         if (request.getHotelConfirmationNo() != null) booking.setHotelConfirmationNo(request.getHotelConfirmationNo());
         if (request.getHotelName() != null) booking.setHotelName(request.getHotelName());
         if (request.getHotelCity() != null) booking.setHotelCity(request.getHotelCity());
@@ -424,6 +488,10 @@ public class BookingService {
         bookingRepository.save(booking);
         if (request.getPassengers() != null) {
             replacePassengers(booking.getId(), request.getPassengers());
+        }
+        if (alreadyConfirmed) {
+            // A supplier picked only after confirming still owes their bill.
+            draftSupplierBillOnce(booking);
         }
         // Same transaction as the save - a rollback loses the booking edit and its audit row together.
         auditService.recordUpdate(AuditEntityType.BOOKING, booking.getId(), labelFor(booking), changes);
@@ -546,69 +614,54 @@ public class BookingService {
 
     @Transactional
     public BookingResponse updateStatus(String id, BookingStatusUpdateRequest request) {
+        if (request.getBookingStatus() == BookingStatus.CANCELLED) {
+            // Cancelling works out refunds and posts accounting - see BookingCancellationService.
+            throw new IllegalArgumentException("Use POST /api/bookings/{id}/cancel to cancel a booking");
+        }
+        // Locked first: two confirms at once must not both draft the supplier bill.
+        bookingRepository.findByIdForUpdate(id);
         Booking booking = findAccessibleBooking(id);
         Map<String, String> before = AuditSnapshot.of(booking, AUDITED);
-        if (request.getBookingStatus() == BookingStatus.CANCELLED
-                && (request.getCancelReason() == null || request.getCancelReason().isBlank())) {
-            throw new IllegalArgumentException("A reason is required when cancelling a booking");
+        boolean confirming = request.getBookingStatus() == BookingStatus.CONFIRMED
+                && booking.getBookingStatus() == BookingStatus.PENDING;
+        if (confirming) {
+            assertReadyToConfirm(booking);
         }
         if (request.getBookingStatus() == BookingStatus.CONFIRMED && booking.getBookingStatus() != BookingStatus.CONFIRMED) {
             assertPriceIntegrity(booking);
         }
         booking.setBookingStatus(request.getBookingStatus());
-        if (request.getBookingStatus() == BookingStatus.CANCELLED) {
-            booking.setCancelReason(request.getCancelReason());
-            if (request.getRefundStatus() != null) {
-                booking.setRefundStatus(request.getRefundStatus());
-            }
-            // A cancellation always needs a refund decision from someone - defaulting to
-            // NOT_APPLICABLE here would make every cancelled booking silently invisible to the
-            // "who still owes us money" view. updateRefund() moves it on from here.
-            if (booking.getRefundState() == RefundState.NOT_APPLICABLE) {
-                booking.setRefundState(RefundState.REFUND_PENDING);
-            }
-            booking.setCancelledAt(LocalDateTime.now());
-            booking.setCancelledBy(SecurityContextUtil.getCurrentUserOrThrow().userId());
-        }
         List<AuditChange> changes = AuditSnapshot.diff(before, AuditSnapshot.of(booking, AUDITED));
         touch(booking);
         bookingRepository.save(booking);
         auditService.recordUpdate(AuditEntityType.BOOKING, booking.getId(), labelFor(booking), changes);
-
-        if (request.getBookingStatus() == BookingStatus.CANCELLED && booking.getServiceId() != null) {
-            leadTimelineService.record(booking.getLeadId(), booking.getServiceId(), LeadTimelineEventType.BOOKING_REMOVED,
-                    labelOrType(booking) + " booking cancelled");
-            serviceBookingStatusSync.onBookingRemoved(booking.getServiceId());
+        if (confirming) {
+            draftSupplierBillOnce(booking);
         }
         log.info("Booking status updated: bookingId={}, status={}", id, request.getBookingStatus());
         return toResponse(booking);
     }
 
-    @Transactional
-    public BookingResponse updateRefund(String id, BookingRefundUpdateRequest request) {
-        Booking booking = findAccessibleBooking(id);
-        if (booking.getBookingStatus() != BookingStatus.CANCELLED) {
-            throw new IllegalStateException("Only a cancelled booking can carry a refund state");
-        }
-        if (creditNoteRepository.existsByBookingIdAndStatusNot(id, CreditNoteStatus.CANCELLED)) {
-            throw new IllegalStateException("A credit note exists for this booking - refund state is derived from it");
-        }
+    /** The status half of a cancellation: audit, timeline and the lead service's status. The
+     *  money half is BookingCancellationService's, which calls this inside its own transaction. */
+    void markCancelled(Booking booking, String reason) {
         Map<String, String> before = AuditSnapshot.of(booking, AUDITED);
-        booking.setRefundState(request.getRefundState());
-        if (request.getRefundAmount() != null) {
-            booking.setRefundAmount(request.getRefundAmount());
-        }
-        if (request.getRefundDueDate() != null) {
-            booking.setRefundDueDate(request.getRefundDueDate());
-        }
-        if (request.getRefundState() == RefundState.REFUNDED || request.getRefundState() == RefundState.PARTIALLY_REFUNDED) {
-            booking.setRefundedAt(LocalDateTime.now());
-        }
+        booking.setBookingStatus(BookingStatus.CANCELLED);
+        booking.setCancelReason(reason);
+        booking.setCancelledAt(LocalDateTime.now());
+        booking.setCancelledBy(SecurityContextUtil.getCurrentUserOrThrow().userId());
         List<AuditChange> changes = AuditSnapshot.diff(before, AuditSnapshot.of(booking, AUDITED));
         touch(booking);
         bookingRepository.save(booking);
         auditService.recordUpdate(AuditEntityType.BOOKING, booking.getId(), labelFor(booking), changes);
-        log.info("Booking refund updated: bookingId={}, refundState={}", id, request.getRefundState());
+        if (booking.getServiceId() != null) {
+            leadTimelineService.record(booking.getLeadId(), booking.getServiceId(), LeadTimelineEventType.BOOKING_REMOVED,
+                    labelOrType(booking) + " booking cancelled: " + reason);
+            serviceBookingStatusSync.onBookingRemoved(booking.getServiceId());
+        }
+    }
+
+    BookingResponse toResponsePublic(Booking booking) {
         return toResponse(booking);
     }
 
@@ -647,22 +700,33 @@ public class BookingService {
      * a dangling reference the way {@code shift_handover.pinned_booking_ids} (a plain array,
      * no FK) silently does.
      *
-     * <p>Not {@code @Transactional} as one block - deleting each document's stored file is
-     * object storage work blueprint §8.6 forbids inside a transaction, the same reason
-     * {@code BookingDocumentService.deleteDocument} isn't either. The row deletes are each
-     * self-transactional (Spring Data wraps every repository call).
+     * <p>Every database change runs in one transaction, so a failure part-way leaves nothing
+     * half-deleted. The stored voucher files are deleted only after that commits - object storage
+     * work must stay outside a transaction (blueprint §8.6), and a file must never go before its row.
      */
     public void deleteBooking(String id) {
+        List<String> fileKeys = transactionTemplate.execute(status -> deleteBookingRows(id));
+        fileKeys.forEach(fileStorageService::delete);
+    }
+
+    /** @return the stored file keys of the booking's documents, for deletion once this commits */
+    private List<String> deleteBookingRows(String id) {
         Booking booking = findAccessibleBooking(id);
+        if (booking.getBookingStatus() != BookingStatus.PENDING) {
+            throw new IllegalStateException("Only a pending booking can be deleted - cancel it instead");
+        }
         if (bookingHasAccountingRecords(id)) {
             throw new IllegalStateException("This booking has accounting records - cancel it instead");
         }
 
-        List<BookingDocument> documents = bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc(id);
-        bookingDocumentRepository.deleteByBookingId(id);
-        documents.stream().map(BookingDocument::getFileKey).filter(java.util.Objects::nonNull)
-                .forEach(fileStorageService::delete);
+        // A bill nobody has approved yet carries no postings - it goes with the booking.
+        for (com.voyra.crm.entity.SupplierInvoice bill : unpostedBills(id)) {
+            supplierInvoiceService.cancelForBooking(bill.getId(), "Booking deleted");
+        }
 
+        List<String> fileKeys = bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc(id).stream()
+                .map(BookingDocument::getFileKey).filter(java.util.Objects::nonNull).toList();
+        bookingDocumentRepository.deleteByBookingId(id);
         deletePassengers(id);
         bookingRepository.delete(booking);
         auditService.recordUpdate(AuditEntityType.BOOKING, id, labelFor(booking), List.of());
@@ -673,6 +737,7 @@ public class BookingService {
             serviceBookingStatusSync.onBookingRemoved(booking.getServiceId());
         }
         log.info("Booking deleted: bookingId={}", id);
+        return fileKeys;
     }
 
     private boolean bookingHasAccountingRecords(String bookingId) {
@@ -680,7 +745,18 @@ public class BookingService {
                 || paymentReceiptRepository.existsByBookingId(bookingId)
                 || creditNoteRepository.existsByBookingIdAndStatusNot(bookingId, CreditNoteStatus.CANCELLED)
                 || customerLedgerEntryRepository.existsByBookingId(bookingId)
-                || feedbackRepository.existsByBookingId(bookingId);
+                || feedbackRepository.existsByBookingId(bookingId)
+                || supplierPaymentRepository.existsByBookingId(bookingId)
+                // An approved (or paid) supplier bill is posted to the ledger - deleting the booking would orphan it.
+                || supplierInvoiceRepository.findByBookingIdAndStatusNot(bookingId, com.voyra.crm.enums.SupplierInvoiceStatus.CANCELLED)
+                        .size() > unpostedBills(bookingId).size();
+    }
+
+    private List<com.voyra.crm.entity.SupplierInvoice> unpostedBills(String bookingId) {
+        return supplierInvoiceRepository.findByBookingIdAndStatusNot(bookingId, com.voyra.crm.enums.SupplierInvoiceStatus.CANCELLED)
+                .stream().filter(b -> b.getStatus() == com.voyra.crm.enums.SupplierInvoiceStatus.DRAFT
+                        || b.getStatus() == com.voyra.crm.enums.SupplierInvoiceStatus.PENDING_APPROVAL)
+                .toList();
     }
 
     /** Explicit, not a @PreUpdate - a JPA listener cannot reach the current principal (§5.3). */
@@ -689,12 +765,198 @@ public class BookingService {
         booking.setUpdatedBy(SecurityContextUtil.getCurrentUserOrThrow().userId());
     }
 
+    /** BK-00042: five digits so numbers line up in lists, growing naturally past 99,999. */
+    public static String bookingRef(Long bookingNumber) {
+        return bookingNumber == null ? null : String.format("BK-%05d", bookingNumber);
+    }
+
     private String labelFor(Booking b) {
-        return b.getClientName() + " / " + b.getDestination();
+        String ref = bookingRef(b.getBookingNumber());
+        return (ref != null ? ref + " · " : "") + b.getClientName() + " / " + b.getDestination();
     }
 
     private String labelOrType(Booking b) {
         return b.getSupplier() != null ? b.getSupplier() : b.getType().name();
+    }
+
+    /** The free-text supplier as given, else the picked Vendor's name, so the booking always shows who it is with. */
+    private String supplierName(String supplier, String vendorId) {
+        if (supplier != null && !supplier.isBlank()) return supplier;
+        if (vendorId == null || vendorId.isBlank()) return supplier;
+        return vendorRepository.findById(vendorId).map(Vendor::getName).orElse(null);
+    }
+
+    /**
+     * A voucher is how a booking gets booked and priced: its cost, and the selling price worked out
+     * from its markup, add to the booking's totals; its reference becomes the booking's when it has
+     * none; a voucher with a supplier and a cost drafts its own supplier bill; and the voucher that
+     * makes a pending booking ready (reference + price) confirms it. Called inside the document's
+     * own transaction, after the row lock.
+     */
+    void applyVoucher(Booking booking, BookingDocument voucher, String requestedVendorId) {
+        BigDecimal cost = voucher.getNetCost() != null ? voucher.getNetCost() : BigDecimal.ZERO;
+        voucher.setSellingPrice(voucher.getMarkupMode() == null ? BigDecimal.ZERO
+                : com.voyra.crm.util.MarkupMath.sellingPrice(cost, voucher.getMarkupMode(), voucher.getMarkupValue()));
+        String vendorId = requestedVendorId != null && !requestedVendorId.isBlank() ? requestedVendorId : booking.getVendorId();
+        voucher.setVendorId(vendorId);
+
+        Map<String, String> before = AuditSnapshot.of(booking, AUDITED);
+        boolean wasConfirmed = booking.getBookingStatus() == BookingStatus.CONFIRMED;
+        booking.setNetCost(booking.getNetCost().add(cost));
+        booking.setSellingPrice(booking.getSellingPrice().add(voucher.getSellingPrice()));
+        booking.setProfit(computeProfit(booking.getSellingPrice(), booking.getNetCost()));
+        if (voucher.getMarkupMode() != null) {
+            booking.setMarkupMode(voucher.getMarkupMode());
+            booking.setMarkupValue(voucher.getMarkupValue());
+        }
+        if (blank(referenceOf(booking)) && !blank(voucher.getReferenceNumber())) {
+            setReference(booking, voucher.getReferenceNumber().trim());
+        }
+        if (booking.getBookingStatus() == BookingStatus.PENDING && readyToConfirm(booking)) {
+            booking.setBookingStatus(BookingStatus.CONFIRMED);
+        }
+        if (vendorId != null && cost.signum() > 0) {
+            voucher.setSupplierInvoiceId(supplierInvoiceService.draftForVoucher(booking, vendorId, cost, voucher.getReferenceNumber()).getId());
+        }
+        List<AuditChange> changes = AuditSnapshot.diff(before, AuditSnapshot.of(booking, AUDITED));
+        touch(booking);
+        bookingRepository.save(booking);
+        auditService.recordUpdate(AuditEntityType.BOOKING, booking.getId(), labelFor(booking), changes);
+        if (wasConfirmed) {
+            raiseChangeAlerts(booking, changes);
+        }
+    }
+
+    /**
+     * Takes a voucher's amounts back off the booking and withdraws its still-unposted supplier bill.
+     * Refused once that bill is approved, or when the booking would end up priced below what is
+     * already invoiced.
+     */
+    void reverseVoucher(Booking booking, BookingDocument voucher) {
+        reverseVoucher(booking, voucher, true);
+    }
+
+    /** @param guardInvoiced false while editing a voucher - the caller checks the price after the new amounts are in */
+    void reverseVoucher(Booking booking, BookingDocument voucher, boolean guardInvoiced) {
+        BigDecimal cost = voucher.getNetCost() != null ? voucher.getNetCost() : BigDecimal.ZERO;
+        BigDecimal price = voucher.getSellingPrice() != null ? voucher.getSellingPrice() : BigDecimal.ZERO;
+        if (cost.signum() == 0 && price.signum() == 0) {
+            return;
+        }
+        if (voucher.getSupplierInvoiceId() != null) {
+            com.voyra.crm.entity.SupplierInvoice bill = supplierInvoiceRepository.findById(voucher.getSupplierInvoiceId()).orElse(null);
+            if (bill != null && bill.getStatus() != com.voyra.crm.enums.SupplierInvoiceStatus.CANCELLED) {
+                if (bill.getStatus() != com.voyra.crm.enums.SupplierInvoiceStatus.DRAFT
+                        && bill.getStatus() != com.voyra.crm.enums.SupplierInvoiceStatus.PENDING_APPROVAL) {
+                    throw new IllegalStateException("This voucher's supplier bill is already approved - it can't be removed");
+                }
+                supplierInvoiceService.cancelForBooking(bill.getId(), "Voucher removed");
+            }
+        }
+        BigDecimal newPrice = booking.getSellingPrice().subtract(price);
+        if (guardInvoiced && newPrice.compareTo(invoicedPrice(booking.getId())) < 0) {
+            throw new IllegalStateException("This voucher's price is already invoiced - it can't be removed");
+        }
+        Map<String, String> before = AuditSnapshot.of(booking, AUDITED);
+        booking.setNetCost(booking.getNetCost().subtract(cost).max(BigDecimal.ZERO));
+        booking.setSellingPrice(newPrice.max(BigDecimal.ZERO));
+        booking.setProfit(computeProfit(booking.getSellingPrice(), booking.getNetCost()));
+        List<AuditChange> changes = AuditSnapshot.diff(before, AuditSnapshot.of(booking, AUDITED));
+        touch(booking);
+        bookingRepository.save(booking);
+        auditService.recordUpdate(AuditEntityType.BOOKING, booking.getId(), labelFor(booking), changes);
+        if (booking.getBookingStatus() == BookingStatus.CONFIRMED) {
+            raiseChangeAlerts(booking, changes);
+        }
+    }
+
+    /** Row lock first, then the usual access check - two vouchers saved at once must not lose either's amounts. */
+    Booking lockAccessibleBooking(String id) {
+        bookingRepository.findByIdForUpdate(id);
+        return findAccessibleBooking(id);
+    }
+
+    /** Removes a voucher and its amounts in one transaction. @return its stored file key, deleted by the caller after commit */
+    @Transactional
+    public String removeVoucher(String bookingId, String documentId) {
+        Booking booking = lockAccessibleBooking(bookingId);
+        BookingDocument document = bookingDocumentRepository.findByIdAndBookingId(documentId, bookingId)
+                .orElseThrow(() -> new IllegalArgumentException("Document not found: " + documentId));
+        reverseVoucher(booking, document);
+        bookingDocumentRepository.delete(document);
+        return document.getFileKey();
+    }
+
+    /** The selling price already on the booking's live tax invoices, before GST. */
+    public BigDecimal invoicedPrice(String bookingId) {
+        return invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc(
+                        bookingId, com.voyra.crm.enums.InvoiceDocumentType.TAX_INVOICE, com.voyra.crm.enums.InvoiceLifecycle.CANCELLED).stream()
+                .filter(i -> i.getStatus() != com.voyra.crm.enums.InvoiceLifecycle.DRAFT)
+                .flatMap(i -> invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc(i.getId()).stream())
+                .map(l -> l.getLineSubtotal() != null ? l.getLineSubtotal() : BigDecimal.ZERO)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    private static boolean blank(String s) {
+        return s == null || s.isBlank();
+    }
+
+    private static String referenceOf(Booking b) {
+        return switch (b.getType()) {
+            case HOTEL -> b.getHotelConfirmationNo();
+            case VISA -> b.getVisaApplicationNo();
+            case TRANSFER -> b.getTransferVoucherNo();
+            default -> b.getPnr();
+        };
+    }
+
+    private static void setReference(Booking b, String reference) {
+        switch (b.getType()) {
+            case HOTEL -> b.setHotelConfirmationNo(reference);
+            case VISA -> b.setVisaApplicationNo(reference);
+            case TRANSFER -> b.setTransferVoucherNo(reference);
+            default -> b.setPnr(reference.length() > 20 ? reference.substring(0, 20) : reference);
+        }
+    }
+
+    private static boolean readyToConfirm(Booking b) {
+        return !blank(referenceOf(b)) && b.getSellingPrice() != null && b.getSellingPrice().signum() > 0;
+    }
+
+    /** A booking is confirmed once it is really booked: the supplier's reference and the price are on it. */
+    static void assertReadyToConfirm(Booking b) {
+        if (!readyToConfirm(b)) {
+            throw new IllegalArgumentException("Add the booking reference and selling price before confirming");
+        }
+    }
+
+    /**
+     * Confirmed with the supplier = their bill is due. A booking with a real Vendor (not just a
+     * free-text supplier name) and a cost drafts its supplier bill for Accounts > Supplier Bills,
+     * from the cost as it stands at confirmation - a pending booking's fare is still moving. Once:
+     * a booking that already has a live bill keeps that one.
+     */
+    private void draftSupplierBillOnce(Booking booking) {
+        if (booking.getVendorId() != null && !booking.getVendorId().isBlank()
+                && booking.getNetCost() != null && booking.getNetCost().compareTo(BigDecimal.ZERO) > 0
+                && supplierInvoiceRepository.findByBookingIdAndStatusNot(booking.getId(),
+                        com.voyra.crm.enums.SupplierInvoiceStatus.CANCELLED).isEmpty()) {
+            supplierInvoiceService.createAutoDraft(booking, booking.getVendorId());
+        }
+    }
+
+    /** Points the booking at a Vendor. Refused once a supplier bill is on the booking - that bill is
+     *  the other vendor's, so it has to be cancelled first in Accounts. */
+    private void setVendor(Booking booking, String vendorId) {
+        if (vendorId.isBlank()) return;
+        Vendor vendor = vendorRepository.findById(vendorId)
+                .orElseThrow(() -> new IllegalArgumentException("Supplier not found: " + vendorId));
+        if (!supplierInvoiceRepository.findByBookingIdAndStatusNot(booking.getId(),
+                com.voyra.crm.enums.SupplierInvoiceStatus.CANCELLED).isEmpty()) {
+            throw new IllegalStateException("This booking already has a supplier bill - cancel it in Accounts before changing the supplier");
+        }
+        booking.setVendorId(vendor.getId());
+        booking.setSupplier(vendor.getName());
     }
 
     private BigDecimal computeProfit(BigDecimal sellingPrice, BigDecimal netCost) {
@@ -745,12 +1007,13 @@ public class BookingService {
 
     private BookingResponse toResponse(Booking b) {
         List<BookingDocumentResponse> documents = bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc(b.getId())
-                .stream().map(this::toDocumentResponse).toList();
+                .stream().map(BookingService::toDocumentResponse).toList();
         BigDecimal marginPercent = MarginCalculator.marginPercent(b.getNetCost(), b.getSellingPrice());
         boolean lowMargin = b.getSellingPrice() != null && b.getSellingPrice().compareTo(BigDecimal.ZERO) > 0
                 && marginPercent.compareTo(lowMarginThreshold()) < 0;
         return BookingResponse.builder()
-                .id(b.getId()).clientId(b.getClientId()).clientName(b.getClientName())
+                .id(b.getId()).bookingNumber(b.getBookingNumber()).bookingRef(bookingRef(b.getBookingNumber()))
+                .clientId(b.getClientId()).clientName(b.getClientName())
                 .agentId(b.getAgentId()).agentName(b.getAgentName())
                 .leadId(b.getLeadId()).serviceId(b.getServiceId()).serviceType(b.getServiceType())
                 .serviceLabel(b.getServiceLabel()).serviceAgentId(b.getServiceAgentId()).serviceAgentName(b.getServiceAgentName())
@@ -760,6 +1023,8 @@ public class BookingService {
                 .returnDate(b.getReturnDate()).tripType(b.getTripType()).notes(b.getNotes())
                 .flightNumber(b.getFlightNumber()).flightFrom(b.getFlightFrom()).flightTo(b.getFlightTo())
                 .flightCabin(b.getFlightCabin())
+                .flightDepartTime(b.getFlightDepartTime()).flightArriveTime(b.getFlightArriveTime())
+                .flightArriveDate(b.getFlightArriveDate())
                 .hotelConfirmationNo(b.getHotelConfirmationNo()).hotelName(b.getHotelName()).hotelCity(b.getHotelCity())
                 .hotelCountryCode(b.getHotelCountryCode())
                 .hotelCheckIn(b.getHotelCheckIn()).hotelCheckOut(b.getHotelCheckOut())
@@ -784,13 +1049,22 @@ public class BookingService {
                 .primaryInvoiceId(b.getPrimaryInvoiceId())
                 .invoicedTotalInr(b.getInvoicedTotalInr()).receivedTotalInr(b.getReceivedTotalInr())
                 .refundedTotalInr(b.getRefundedTotalInr()).paymentStatusSource(b.getPaymentStatusSource())
+                .cancellationSupplierCharge(b.getCancellationSupplierCharge()).cancellationAgencyFee(b.getCancellationAgencyFee())
+                .customerRefundDue(b.getCustomerRefundDue()).supplierRefundExpected(b.getSupplierRefundExpected())
+                .supplierRefundReceived(b.getSupplierRefundReceived())
+                .supplierRefundClaimAmount(b.getSupplierRefundClaimAmount())
+                .supplierRefundClaimBy(b.getSupplierRefundClaimBy())
+                .cancellationType(b.getCancellationType())
+                .refundCheckedAt(b.getRefundCheckedAt()).refundCheckedBy(b.getRefundCheckedBy())
                 .documents(documents)
+                .nextStep(com.voyra.crm.util.BookingNextStep.of(b, documents.size()))
                 .internationalTrip(b.getInternationalTrip())
                 .marginPercent(marginPercent).lowMargin(lowMargin)
                 .passengers(toPassengerResponses(b.getId()))
                 .build();
     }
 
+    /** Paid to the booking's supplier so far. shortcut: one query per booking row, batch it if list pages grow past ~100. */
     /** The agency's own setting when present, else {@link #DEFAULT_LOW_MARGIN_THRESHOLD_PERCENT}. */
     private BigDecimal lowMarginThreshold() {
         String tenantId = SecurityContextUtil.getCurrentUserOrThrow().tenantId();
@@ -968,12 +1242,14 @@ public class BookingService {
                 .toList();
     }
 
-    private BookingDocumentResponse toDocumentResponse(BookingDocument d) {
+    static BookingDocumentResponse toDocumentResponse(BookingDocument d) {
         return BookingDocumentResponse.builder()
                 .id(d.getId()).bookingId(d.getBookingId()).docType(d.getDocType())
                 .referenceNumber(d.getReferenceNumber()).issuedDate(d.getIssuedDate())
                 .hasFile(d.getFileKey() != null).fileName(d.getFileName())
                 .notes(d.getNotes()).createdAt(d.getCreatedAt())
+                .netCost(d.getNetCost()).sellingPrice(d.getSellingPrice())
+                .markupMode(d.getMarkupMode()).markupValue(d.getMarkupValue()).vendorId(d.getVendorId())
                 .build();
     }
 

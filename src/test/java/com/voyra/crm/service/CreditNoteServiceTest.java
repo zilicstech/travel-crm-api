@@ -64,6 +64,8 @@ class CreditNoteServiceTest {
     private JournalService journalService;
     @Mock
     private com.voyra.crm.repository.JournalEntryRepository journalEntryRepository;
+    @Mock
+    private com.voyra.crm.repository.JournalLineRepository journalLineRepository;
 
     @InjectMocks
     private CreditNoteService creditNoteService;
@@ -249,6 +251,50 @@ class CreditNoteServiceTest {
         assertThat(posting.lines().get(2).creditAmount()).isEqualByComparingTo("1180.00");
     }
 
+    /** Regression run 6, B1: a commission-agent invoice has no single revenue account, so its
+     *  credit note used to post no journal at all and left AR and fee income overstated. */
+    @Test
+    void creditNoteOnACommissionAgentInvoiceReversesItsOwnLinesAgainstReceivables() {
+        Invoice invoice = issuedInvoice();
+        invoice.setGrandTotal(new BigDecimal("8000.00"));
+        invoice.setGrandTotalInr(new BigDecimal("8000.00"));
+        CreditNote draft = CreditNote.builder().id("CN1").invoiceId("I1").clientId("K1")
+                .status(CreditNoteStatus.DRAFT).currencyCode("INR").fxRateToInr(BigDecimal.ONE)
+                .taxableValue(new BigDecimal("3389.83")).totalAmount(new BigDecimal("4000.00"))
+                .totalAmountInr(new BigDecimal("4000.00")).refundedAmount(BigDecimal.ZERO).build();
+        when(creditNoteRepository.findById("CN1")).thenReturn(Optional.of(draft));
+        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(invoice));
+        when(creditNoteRepository.findByInvoiceIdAndStatus("I1", CreditNoteStatus.ISSUED)).thenReturn(List.of());
+        when(documentNumberService.next(DocumentKind.CREDIT_NOTE, LocalDate.now())).thenReturn("CN/2026-27/0003");
+        when(paymentReceiptRepository.findByInvoiceIdOrderByReceivedOnAscCreatedAtAsc("I1")).thenReturn(List.of());
+        when(journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(
+                com.voyra.crm.enums.JournalSourceType.INVOICE, "I1", com.voyra.crm.enums.JournalPurpose.INVOICE_RAISED_DEFERRED))
+                .thenReturn(Optional.empty());
+        when(journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(
+                com.voyra.crm.enums.JournalSourceType.INVOICE, "I1", com.voyra.crm.enums.JournalPurpose.INVOICE_RAISED_RECOGNIZED))
+                .thenReturn(Optional.empty());
+        when(journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(
+                com.voyra.crm.enums.JournalSourceType.INVOICE, "I1", com.voyra.crm.enums.JournalPurpose.INVOICE_RAISED_COMMISSION_AGENT))
+                .thenReturn(Optional.of(com.voyra.crm.entity.JournalEntry.builder().id("JE9").build()));
+        when(journalLineRepository.findByJournalEntryIdOrderByLineNo("JE9")).thenReturn(List.of(
+                com.voyra.crm.entity.JournalLine.builder().accountCode("1200").debitAmountInr(new BigDecimal("8000.00")).creditAmountInr(BigDecimal.ZERO).narration("AR").build(),
+                com.voyra.crm.entity.JournalLine.builder().accountCode("2400").debitAmountInr(BigDecimal.ZERO).creditAmountInr(new BigDecimal("7000.00")).narration("Pass-through").build(),
+                com.voyra.crm.entity.JournalLine.builder().accountCode("4600").debitAmountInr(BigDecimal.ZERO).creditAmountInr(new BigDecimal("847.46")).narration("Fee").build(),
+                com.voyra.crm.entity.JournalLine.builder().accountCode("2310").debitAmountInr(BigDecimal.ZERO).creditAmountInr(new BigDecimal("152.54")).narration("GST").build()));
+
+        creditNoteService.issue("CN1");
+
+        org.mockito.ArgumentCaptor<com.voyra.crm.models.JournalPosting> captor =
+                org.mockito.ArgumentCaptor.forClass(com.voyra.crm.models.JournalPosting.class);
+        org.mockito.Mockito.verify(journalService).post(captor.capture());
+        var lines = captor.getValue().lines();
+        assertThat(lines).extracting(com.voyra.crm.models.JournalLinePosting::accountCode).containsExactly("2400", "4600", "2310", "1200");
+        assertThat(lines.get(0).debitAmount()).isEqualByComparingTo("3500.00");
+        assertThat(lines.get(1).debitAmount()).isEqualByComparingTo("423.73");
+        assertThat(lines.get(2).debitAmount()).isEqualByComparingTo("76.27");
+        assertThat(lines.get(3).creditAmount()).isEqualByComparingTo("4000.00");
+    }
+
     /** Reproduces the audit finding (F-016): a ₹9,975 invoice with only ₹5,000 ever actually
      *  receipted must not become refundable for its full ₹9,975 face value once credited. */
     @Test
@@ -271,6 +317,28 @@ class CreditNoteServiceTest {
         CreditNoteResponse response = creditNoteService.issue("CN1");
 
         assertThat(response.getRefundableAmount()).isEqualByComparingTo("5000.00");
+    }
+
+    /** A partly paid invoice partly credited: only cash beyond what is still billed comes back.
+     *  1180 billed, 1000 paid, 590 credited -> 590 still billed -> 410 refundable, not 590. */
+    @Test
+    void partialCreditOnAPartlyPaidInvoiceRefundsOnlyTheOverpayment() {
+        Invoice invoice = issuedInvoice();
+        invoice.setAmountReceived(new BigDecimal("1000.00"));
+        CreditNote draft = CreditNote.builder().id("CN1").invoiceId("I1").clientId("K1")
+                .status(CreditNoteStatus.DRAFT).currencyCode("INR").fxRateToInr(BigDecimal.ONE)
+                .totalAmount(new BigDecimal("590.00")).totalAmountInr(new BigDecimal("590.00"))
+                .refundedAmount(BigDecimal.ZERO).build();
+        when(creditNoteRepository.findById("CN1")).thenReturn(Optional.of(draft));
+        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(invoice));
+        when(creditNoteRepository.findByInvoiceIdAndStatus("I1", CreditNoteStatus.ISSUED)).thenReturn(List.of());
+        when(documentNumberService.next(DocumentKind.CREDIT_NOTE, LocalDate.now())).thenReturn("CN/2026-27/0003");
+        when(paymentReceiptRepository.findByInvoiceIdOrderByReceivedOnAscCreatedAtAsc("I1")).thenReturn(List.of(
+                PaymentReceipt.builder().direction(ReceiptDirection.RECEIPT).amount(new BigDecimal("1000.00")).build()));
+
+        CreditNoteResponse response = creditNoteService.issue("CN1");
+
+        assertThat(response.getRefundableAmount()).isEqualByComparingTo("410.00");
     }
 
     @Test
@@ -394,5 +462,30 @@ class CreditNoteServiceTest {
 
         assertThat(invoice.getAmountReceived()).isEqualByComparingTo("0.00");
         assertThat(invoice.getBalanceDue()).isEqualByComparingTo("0.00");
+    }
+
+    @Test
+    void refundToWalletCreditsClientAdvancesInsteadOfTheBank() {
+        CreditNote issued = CreditNote.builder().id("CN1").invoiceId("I1").clientId("K1")
+                .creditNoteNumber("CN/2026-27/0001").status(CreditNoteStatus.ISSUED)
+                .currencyCode("INR").fxRateToInr(BigDecimal.ONE)
+                .totalAmount(new BigDecimal("1180.00")).refundableAmount(new BigDecimal("1180.00"))
+                .refundedAmount(BigDecimal.ZERO).build();
+        when(creditNoteRepository.findById("CN1")).thenReturn(Optional.of(issued));
+        when(paymentReceiptRepository.findByCreditNoteIdOrderByReceivedOnAscCreatedAtAsc("CN1")).thenReturn(List.of());
+        when(documentNumberService.next(DocumentKind.RECEIPT, LocalDate.of(2026, 10, 16))).thenReturn("RCP/11");
+
+        CreditNoteRefundRequest request = new CreditNoteRefundRequest();
+        request.setAmount(new BigDecimal("500.00"));
+        request.setPaymentMode(PaymentMode.ADJUSTMENT);
+        request.setReceivedOn(LocalDate.of(2026, 10, 16));
+        creditNoteService.refund("CN1", request, true);
+
+        org.mockito.ArgumentCaptor<com.voyra.crm.models.JournalPosting> captor =
+                org.mockito.ArgumentCaptor.forClass(com.voyra.crm.models.JournalPosting.class);
+        org.mockito.Mockito.verify(journalService).post(captor.capture());
+        assertThat(captor.getValue().lines()).extracting(com.voyra.crm.models.JournalLinePosting::accountCode)
+                .containsExactlyInAnyOrder(com.voyra.crm.enums.SystemAccount.ACCOUNTS_RECEIVABLE.code(),
+                        com.voyra.crm.enums.SystemAccount.CLIENT_ADVANCES_HELD.code());
     }
 }

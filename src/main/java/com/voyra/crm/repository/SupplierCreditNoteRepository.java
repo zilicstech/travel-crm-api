@@ -16,5 +16,7 @@ public interface SupplierCreditNoteRepository extends JpaRepository<SupplierCred
 
     List<SupplierCreditNote> findByVendorIdOrderByNoteDateDesc(String vendorId);
 
+    List<SupplierCreditNote> findByBookingIdAndStatus(String bookingId, SupplierCreditNoteStatus status);
+
     boolean existsByBookingId(String bookingId);
 }

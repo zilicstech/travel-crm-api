@@ -1,5 +1,6 @@
 package com.voyra.crm.dto;
 
+import com.voyra.crm.enums.CancellationType;
 import com.voyra.crm.enums.BookingStatus;
 import com.voyra.crm.enums.BookingType;
 import com.voyra.crm.enums.MarkupMode;
@@ -27,6 +28,12 @@ public class BookingResponse {
 
     @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String id;
+
+    @Schema(description = "Per-agency running number", example = "42")
+    private Long bookingNumber;
+
+    @Schema(description = "The booking number as people quote it", example = "BK-00042")
+    private String bookingRef;
 
     @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String clientId;
@@ -102,6 +109,15 @@ public class BookingResponse {
 
     @Schema(example = "Economy")
     private String flightCabin;
+
+    @Schema(description = "Departure, local clock time 'HH:mm'", example = "09:40")
+    private String flightDepartTime;
+
+    @Schema(description = "Arrival, local clock time 'HH:mm'", example = "12:15")
+    private String flightArriveTime;
+
+    @Schema(description = "Arrival date, when it differs from the journey date", example = "2026-12-21")
+    private LocalDate flightArriveDate;
 
     @Schema(example = "HTL-994211")
     private String hotelConfirmationNo;
@@ -231,6 +247,39 @@ public class BookingResponse {
 
     @Schema(description = "Sum of REFUND-direction receipts against this booking, in INR", example = "0.00")
     private BigDecimal refundedTotalInr;
+
+    @Schema(description = "Cancellation: what the supplier kept", example = "2000.00")
+    private BigDecimal cancellationSupplierCharge;
+
+    @Schema(description = "Cancellation: the agency's own fee", example = "500.00")
+    private BigDecimal cancellationAgencyFee;
+
+    @Schema(description = "Cancellation: what the customer is owed back in total (refundedTotalInr is what has been paid so far)", example = "7500.00")
+    private BigDecimal customerRefundDue;
+
+    @Schema(description = "Cancellation: what the supplier owes the agency back", example = "6000.00")
+    private BigDecimal supplierRefundExpected;
+
+    @Schema(description = "Cancellation: supplier refund received so far", example = "0.00")
+    private BigDecimal supplierRefundReceived;
+
+    @Schema(description = "Cancellation: a supplier refund recorded as come into the agency bank, waiting for Accounts' check. Null when none is open.", example = "6000.00")
+    private BigDecimal supplierRefundClaimAmount;
+
+    @Schema(description = "Who recorded the open supplier refund claim", example = "Vikram Rao")
+    private String supplierRefundClaimBy;
+
+    @Schema(description = "Cancellation: how the booking was cancelled", example = "VOID")
+    private CancellationType cancellationType;
+
+    @Schema(description = "Cancellation: when Accounts cross-checked the settled refund; null while still to check")
+    private LocalDateTime refundCheckedAt;
+
+    @Schema(description = "Cancellation: who cross-checked the settled refund", example = "Sandli")
+    private String refundCheckedBy;
+
+    @Schema(description = "What this booking needs next in its lifecycle; null when nothing is left to do", example = "Generate invoice")
+    private String nextStep;
 
     @Schema(description = "MANUAL until a tax invoice is issued against this booking, then DERIVED forever", example = "MANUAL")
     private PaymentStatusSource paymentStatusSource;

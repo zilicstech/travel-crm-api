@@ -4,6 +4,7 @@ import com.voyra.crm.entity.Booking;
 import com.voyra.crm.enums.BookingStatus;
 import com.voyra.crm.enums.BookingType;
 import com.voyra.crm.enums.ServiceType;
+import jakarta.persistence.criteria.Expression;
 import jakarta.persistence.criteria.Predicate;
 import org.springframework.data.jpa.domain.Specification;
 
@@ -39,6 +40,26 @@ public final class BookingSpecifications {
         };
     }
 
+    /**
+     * Client money still open: a live booking not yet invoiced or not fully collected, or a
+     * cancelled one with a refund still to move or to cross-check. Mirrors the money half of
+     * {@link com.voyra.crm.util.BookingNextStep}.
+     */
+    public static Specification<Booking> moneyPending() {
+        return (root, query, cb) -> {
+            var cancelled = cb.equal(root.get("bookingStatus"), BookingStatus.CANCELLED);
+            var live = cb.and(cb.not(cancelled), cb.gt(root.get("sellingPrice"), 0), cb.or(
+                    cb.equal(root.get("invoicedTotalInr"), 0),
+                    cb.lessThan(root.get("receivedTotalInr"), root.get("invoicedTotalInr"))));
+            var refundOpen = cb.and(cancelled, cb.or(
+                    cb.lessThan(root.get("refundedTotalInr"), root.get("customerRefundDue")),
+                    cb.lessThan(root.get("supplierRefundReceived"), root.get("supplierRefundExpected")),
+                    cb.and(cb.isNull(root.get("refundCheckedAt")), cb.or(
+                            cb.gt(root.get("customerRefundDue"), 0), cb.gt(root.get("supplierRefundExpected"), 0)))));
+            return cb.or(live, refundOpen);
+        };
+    }
+
     public static Specification<Booking> typeIs(BookingType type) {
         return (root, query, cb) -> cb.equal(root.get("type"), type);
     }
@@ -50,6 +71,38 @@ public final class BookingSpecifications {
     /** Case-insensitive substring match - destinations are free text, never an exact enum. */
     public static Specification<Booking> destinationContains(String destination) {
         return (root, query, cb) -> cb.like(cb.lower(root.get("destination")), "%" + destination.toLowerCase() + "%");
+    }
+
+    /**
+     * One search box for the Bookings screen. A query that is a booking number ("42", "BK-42",
+     * "bk-00042") matches that number, and is also read as the start of one as people type it:
+     * "BK-001" finds BK-00100 to BK-00199. Anything else matches client name, destination, PNR
+     * or a supplier reference, case-insensitively.
+     */
+    public static Specification<Booking> searchMatches(String rawQuery) {
+        String q = rawQuery.trim().toLowerCase();
+        String digits = q.startsWith("bk") ? q.substring(2).replaceAll("[^0-9]", "") : q;
+        Long number = digits.matches("\\d{1,18}") ? Long.valueOf(digits) : null;
+        String like = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%";
+        if (q.matches("bk[-\\s]*")) {
+            // Just "BK-" so far - the number is still being typed, so don't empty the list.
+            return (root, query, cb) -> cb.conjunction();
+        }
+        return (root, query, cb) -> {
+            List<Predicate> or = new ArrayList<>();
+            if (number != null) {
+                or.add(cb.equal(root.get("bookingNumber"), number));
+                // The number as it is shown (zero-padded to five), matched from the start.
+                Expression<String> shown = cb.function("lpad", String.class,
+                        root.get("bookingNumber").as(String.class), cb.literal(5), cb.literal("0"));
+                or.add(cb.like(shown, digits + "%"));
+            }
+            for (String field : List.of("clientName", "destination", "pnr", "ticketNo", "hotelConfirmationNo",
+                    "visaApplicationNo", "transferVoucherNo")) {
+                or.add(cb.like(cb.lower(root.get(field)), like, '\\'));
+            }
+            return cb.or(or.toArray(new Predicate[0]));
+        };
     }
 
     public static Specification<Booking> agentIs(String agentId) {

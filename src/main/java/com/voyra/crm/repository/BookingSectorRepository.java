@@ -13,5 +13,7 @@ public interface BookingSectorRepository extends JpaRepository<BookingSector, St
 
     List<BookingSector> findByBookingPassengerIdInOrderBySortOrderAsc(List<String> bookingPassengerIds);
 
+    /** A derived delete needs its own transaction when a caller isn't already in one. */
+    @org.springframework.transaction.annotation.Transactional
     void deleteByBookingPassengerIdIn(List<String> bookingPassengerIds);
 }

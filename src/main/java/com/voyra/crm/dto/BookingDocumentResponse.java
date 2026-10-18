@@ -43,4 +43,19 @@ public class BookingDocumentResponse {
 
     @Schema(example = "2026-08-13T09:15:22")
     private LocalDateTime createdAt;
+
+    @Schema(description = "What this voucher added to the booking's net cost", example = "4000.00")
+    private java.math.BigDecimal netCost;
+
+    @Schema(description = "What this voucher added to the booking's selling price", example = "4400.00")
+    private java.math.BigDecimal sellingPrice;
+
+    @Schema(example = "PERCENT")
+    private com.voyra.crm.enums.MarkupMode markupMode;
+
+    @Schema(example = "10.00")
+    private java.math.BigDecimal markupValue;
+
+    @Schema(description = "The supplier (Vendor) of this voucher, when one was picked")
+    private String vendorId;
 }

@@ -18,7 +18,7 @@ public interface CreditNoteRepository extends JpaRepository<CreditNote, String>,
     /** BookingAccountingSync.syncRefund input: every live credit note against this booking, whichever invoice it targets. */
     List<CreditNote> findByBookingIdAndStatusNot(String bookingId, CreditNoteStatus excludedStatus);
 
-    /** BookingService.updateRefund guard: once a credit note exists, the manual refund PATCH can no longer contradict it. */
+    /** A booking with a live credit note has accounting records and cannot be deleted. */
     boolean existsByBookingIdAndStatusNot(String bookingId, CreditNoteStatus excludedStatus);
 
     /** True-revenue input: issued credit notes in range net against the same period's billed taxable value. */

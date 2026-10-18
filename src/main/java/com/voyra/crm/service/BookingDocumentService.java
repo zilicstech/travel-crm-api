@@ -51,7 +51,11 @@ public class BookingDocumentService {
 
     @Transactional
     public BookingDocumentResponse addDocument(String bookingId, BookingDocumentCreateRequest request) {
-        Booking booking = bookingService.findAccessibleBooking(bookingId);
+        Booking booking = bookingService.lockAccessibleBooking(bookingId);
+        if (booking.getBookingStatus() == com.voyra.crm.enums.BookingStatus.CANCELLED
+                && (nz(request.getNetCost()).signum() > 0 || request.getMarkupMode() != null)) {
+            throw new IllegalStateException("This booking is cancelled - a voucher can't add cost or price to it");
+        }
 
         BookingDocument document = BookingDocument.builder()
                 .id(UniqueIdResolver.resolve(bookingDocumentRepository::existsById))
@@ -60,9 +64,13 @@ public class BookingDocumentService {
                 .referenceNumber(request.getReferenceNumber())
                 .issuedDate(request.getIssuedDate())
                 .notes(request.getNotes())
+                .netCost(nz(request.getNetCost()))
+                .markupMode(request.getMarkupMode())
+                .markupValue(request.getMarkupValue())
                 .createdAt(LocalDateTime.now())
                 .createdBy(currentUserId())
                 .build();
+        bookingService.applyVoucher(booking, document, request.getVendorId());
         bookingDocumentRepository.save(document);
 
         if (booking.getLeadId() != null) {
@@ -71,6 +79,40 @@ public class BookingDocumentService {
                     request.getDocType() + " added to " + booking.getDestination() + " booking");
         }
         log.info("Booking document added: bookingId={}, documentId={}", bookingId, document.getId());
+        return toResponse(document);
+    }
+
+    /** Text fields change in place; a changed cost, markup or supplier takes the old money back and books the new. */
+    @Transactional
+    public BookingDocumentResponse updateDocument(String bookingId, String documentId, BookingDocumentCreateRequest request) {
+        Booking booking = bookingService.lockAccessibleBooking(bookingId);
+        BookingDocument document = bookingDocumentRepository.findByIdAndBookingId(documentId, bookingId)
+                .orElseThrow(() -> new IllegalArgumentException("Document not found: " + documentId));
+        document.setDocType(request.getDocType());
+        document.setReferenceNumber(request.getReferenceNumber());
+        document.setIssuedDate(request.getIssuedDate());
+        document.setNotes(request.getNotes());
+        String vendorId = request.getVendorId() != null && !request.getVendorId().isBlank() ? request.getVendorId() : booking.getVendorId();
+        boolean moneyChanged = nz(request.getNetCost()).compareTo(nz(document.getNetCost())) != 0
+                || request.getMarkupMode() != document.getMarkupMode()
+                || nz(request.getMarkupValue()).compareTo(nz(document.getMarkupValue())) != 0
+                || !java.util.Objects.equals(vendorId, document.getVendorId());
+        if (moneyChanged) {
+            if (booking.getBookingStatus() == com.voyra.crm.enums.BookingStatus.CANCELLED) {
+                throw new IllegalStateException("This booking is cancelled - a voucher's cost or price can't change");
+            }
+            bookingService.reverseVoucher(booking, document, false);
+            document.setSupplierInvoiceId(null);
+            document.setNetCost(nz(request.getNetCost()));
+            document.setMarkupMode(request.getMarkupMode());
+            document.setMarkupValue(request.getMarkupValue());
+            bookingService.applyVoucher(booking, document, request.getVendorId());
+            if (booking.getSellingPrice().compareTo(bookingService.invoicedPrice(bookingId)) < 0) {
+                throw new IllegalStateException("This voucher's price is already invoiced - it can't go below that");
+            }
+        }
+        bookingDocumentRepository.save(document);
+        log.info("Booking document edited: bookingId={}, documentId={}, moneyChanged={}", bookingId, documentId, moneyChanged);
         return toResponse(document);
     }
 
@@ -83,12 +125,10 @@ public class BookingDocumentService {
 
     /** Not {@code @Transactional} - see class javadoc. */
     public void deleteDocument(String bookingId, String documentId) {
-        bookingService.findAccessibleBooking(bookingId);
-        BookingDocument document = bookingDocumentRepository.findByIdAndBookingId(documentId, bookingId)
-                .orElseThrow(() -> new IllegalArgumentException("Document not found: " + documentId));
-        bookingDocumentRepository.delete(document);
-        if (document.getFileKey() != null) {
-            fileStorageService.delete(document.getFileKey());
+        // The row and the voucher's amounts go together in one transaction; the file only after it commits.
+        String fileKey = bookingService.removeVoucher(bookingId, documentId);
+        if (fileKey != null) {
+            fileStorageService.delete(fileKey);
         }
         log.info("Booking document removed: bookingId={}, documentId={}", bookingId, documentId);
     }
@@ -166,11 +206,10 @@ public class BookingDocumentService {
     }
 
     private BookingDocumentResponse toResponse(BookingDocument d) {
-        return BookingDocumentResponse.builder()
-                .id(d.getId()).bookingId(d.getBookingId()).docType(d.getDocType())
-                .referenceNumber(d.getReferenceNumber()).issuedDate(d.getIssuedDate())
-                .hasFile(d.getFileKey() != null).fileName(d.getFileName())
-                .notes(d.getNotes()).createdAt(d.getCreatedAt())
-                .build();
+        return BookingService.toDocumentResponse(d);
+    }
+
+    private static java.math.BigDecimal nz(java.math.BigDecimal v) {
+        return v != null ? v : java.math.BigDecimal.ZERO;
     }
 }

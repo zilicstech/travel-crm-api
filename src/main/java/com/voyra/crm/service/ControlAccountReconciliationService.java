@@ -1,5 +1,7 @@
 package com.voyra.crm.service;
 
+import com.voyra.crm.enums.ReceiptDirection;
+
 import com.voyra.crm.dto.ControlAccountReconciliationRowResponse;
 import com.voyra.crm.entity.CustomerLedgerEntry;
 import com.voyra.crm.entity.JournalLine;
@@ -74,11 +76,18 @@ public class ControlAccountReconciliationService {
         return account.getAccountType() == LedgerAccountType.ASSET ? debit.subtract(credit) : credit.subtract(debit);
     }
 
-    /** Mirrors InvoiceDocumentService#postInvoiceRaised's own comment: SUM(debit_inr - credit_inr) == SUM(balance_due_inr) across every client. */
+    /**
+     * Mirrors InvoiceDocumentService#postInvoiceRaised's own comment: SUM(debit_inr - credit_inr) == SUM(balance_due_inr) across every client.
+     * The customer ledger is the client's statement, so it credits a deposit (money held on account) the day it arrives,
+     * while the GL holds that money in 2110 until it is applied to an invoice. Adding back what is still held puts
+     * both on the same footing - otherwise 1200 disagrees with the subsidiary by exactly the wallet balance, the same
+     * reason the payables row below leaves advances out.
+     */
     private BigDecimal accountsReceivableSubsidiaryTotal() {
         return customerLedgerEntryRepository.findAll().stream()
                 .map(e -> e.getDebitAmountInr().subtract(e.getCreditAmountInr()))
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
+                .reduce(BigDecimal.ZERO, BigDecimal::add)
+                .add(clientAdvancesHeldSubsidiaryTotal());
     }
 
     /**
@@ -103,7 +112,8 @@ public class ControlAccountReconciliationService {
     private BigDecimal clientAdvancesHeldSubsidiaryTotal() {
         BigDecimal deposited = paymentReceiptRepository.findAll().stream()
                 .filter((PaymentReceipt r) -> Boolean.TRUE.equals(r.getIsAdvance()) && r.getInvoiceId() == null && r.getReversedAt() == null)
-                .map(PaymentReceipt::getAmountInr)
+                // A refund paid out of a held advance (no invoice) draws the pool down, it is not a deposit.
+                .map((PaymentReceipt r) -> r.getDirection() == ReceiptDirection.REFUND ? r.getAmountInr().negate() : r.getAmountInr())
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal applied = paymentReceiptRepository.findAll().stream()
                 .filter((PaymentReceipt r) -> Boolean.TRUE.equals(r.getAppliedFromAdvance()) && r.getReversedAt() == null)

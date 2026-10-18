@@ -16,6 +16,7 @@ public class FlightSearchPageRequest {
 
     @Valid
     @NotNull(message = "Search query is required")
+    @Schema(description = "The search itself - route, dates, passengers, cabin")
     private FlightSearchQuery query;
 
     @Min(value = 1, message = "Page starts at 1")
@@ -28,10 +29,12 @@ public class FlightSearchPageRequest {
     private int pageSize = 20;
 
     @NotNull(message = "Sort order is required")
+    @Schema(description = "Result order")
     private FlightSortOrder sort = FlightSortOrder.PRICE;
 
-    @Schema(description = "Show flights with at most this many stops; omit for any", example = "0")
-    private Integer maxStops;
+    @Min(value = 0, message = "Stops cannot be negative")
+    @Schema(description = "0 = non-stop only, 1 = exactly one stop, 2 = two or more stops; omit for any", example = "0")
+    private Integer stops;
 
     @Schema(description = "Only these airlines (by name); omit or empty for all")
     private List<String> airlines;

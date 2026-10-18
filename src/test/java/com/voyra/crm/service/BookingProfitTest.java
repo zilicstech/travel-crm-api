@@ -85,6 +85,13 @@ class BookingProfitTest {
     @Mock
     private TenantRepository tenantRepository;
 
+    @Mock
+    private com.voyra.crm.repository.SupplierInvoiceRepository supplierInvoiceRepository;
+    @Mock
+    private com.voyra.crm.repository.SupplierPaymentRepository supplierPaymentRepository;
+    @Mock
+    private com.voyra.crm.repository.VendorRepository vendorRepository;
+
     @InjectMocks
     private BookingService bookingService;
 
@@ -161,7 +168,7 @@ class BookingProfitTest {
     }
 
     @Test
-    void bookingWithAVendorAndPositiveCostAutoDraftsTheSupplierBill() {
+    void aPendingBookingDraftsNoSupplierBillUntilItIsConfirmed() {
         when(agentRepository.findById("A1")).thenReturn(Optional.of(Agent.builder().id("A1").name("Liam").build()));
         when(clientRepository.findById("K1")).thenReturn(Optional.of(Client.builder().id("K1").name("Jane").build()));
         when(bookingRepository.existsById(anyString())).thenReturn(false);
@@ -176,9 +183,9 @@ class BookingProfitTest {
 
         bookingService.createBooking(request);
 
-        org.mockito.ArgumentCaptor<Booking> bookingCaptor = org.mockito.ArgumentCaptor.forClass(Booking.class);
-        org.mockito.Mockito.verify(supplierInvoiceService).createAutoDraft(bookingCaptor.capture(), org.mockito.ArgumentMatchers.eq("V1"));
-        assertThat(bookingCaptor.getValue().getNetCost()).isEqualByComparingTo("42000");
+        // The fare is still moving while pending - the bill is drafted on confirm, from the cost then.
+        org.mockito.Mockito.verify(supplierInvoiceService, org.mockito.Mockito.never())
+                .createAutoDraft(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
     }
 
     @Test

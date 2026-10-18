@@ -65,14 +65,20 @@ class ControlAccountReconciliationServiceTest {
 
     private void seedConsistentFixture() {
         // 1200 Accounts Receivable (ASSET): an invoice raised (debit 1000) then partly paid (credit 400) -> GL 600.
+        // Plus a 20000 invoice settled entirely from the deposit below: GL 1200 nets it to zero, while the
+        // customer ledger (the client's statement) shows that invoice and the whole 50000 deposit as it arrived.
         when(ledgerAccountRepository.findByCode("1200"))
                 .thenReturn(Optional.of(LedgerAccount.builder().code("1200").accountType(LedgerAccountType.ASSET).build()));
         when(journalLineRepository.findByAccountCode("1200")).thenReturn(List.of(
                 line("1200", new BigDecimal("1000.00"), BigDecimal.ZERO),
-                line("1200", BigDecimal.ZERO, new BigDecimal("400.00"))));
+                line("1200", BigDecimal.ZERO, new BigDecimal("400.00")),
+                line("1200", new BigDecimal("20000.00"), BigDecimal.ZERO),
+                line("1200", BigDecimal.ZERO, new BigDecimal("20000.00"))));
         when(customerLedgerEntryRepository.findAll()).thenReturn(List.of(
                 CustomerLedgerEntry.builder().id("C1").debitAmountInr(new BigDecimal("1000.00")).creditAmountInr(BigDecimal.ZERO).build(),
-                CustomerLedgerEntry.builder().id("C2").debitAmountInr(BigDecimal.ZERO).creditAmountInr(new BigDecimal("400.00")).build()));
+                CustomerLedgerEntry.builder().id("C2").debitAmountInr(BigDecimal.ZERO).creditAmountInr(new BigDecimal("400.00")).build(),
+                CustomerLedgerEntry.builder().id("C3").debitAmountInr(new BigDecimal("20000.00")).creditAmountInr(BigDecimal.ZERO).build(),
+                CustomerLedgerEntry.builder().id("C4").debitAmountInr(BigDecimal.ZERO).creditAmountInr(new BigDecimal("50000.00")).build()));
 
         // 2200 Accounts Payable (LIABILITY): a bill booked (credit 500) then partly paid (debit 200) -> GL 300.
         when(ledgerAccountRepository.findByCode("2200"))
@@ -146,6 +152,8 @@ class ControlAccountReconciliationServiceTest {
         when(journalLineRepository.findByAccountCode("1200")).thenReturn(List.of(
                 line("1200", new BigDecimal("1000.00"), BigDecimal.ZERO),
                 line("1200", BigDecimal.ZERO, new BigDecimal("400.00")),
+                line("1200", new BigDecimal("20000.00"), BigDecimal.ZERO),
+                line("1200", BigDecimal.ZERO, new BigDecimal("20000.00")),
                 line("1200", new BigDecimal("50.00"), BigDecimal.ZERO)));
 
         List<ControlAccountReconciliationRowResponse> rows = reconciliationService.reconcile();

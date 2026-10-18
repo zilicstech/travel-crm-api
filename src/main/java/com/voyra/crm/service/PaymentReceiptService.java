@@ -58,6 +58,7 @@ public class PaymentReceiptService {
     private final AuditService auditService;
     private final CustomerLedgerService customerLedgerService;
     private final BookingAccountingSync bookingAccountingSync;
+    private final com.voyra.crm.repository.BookingRepository bookingRepository;
     private final JournalService journalService;
     private final com.voyra.crm.repository.JournalEntryRepository journalEntryRepository;
 
@@ -142,6 +143,13 @@ public class PaymentReceiptService {
             throw new IllegalArgumentException("clientId is required when invoiceId is omitted");
         }
         Client client = clientService.findAccessibleClient(request.getClientId());
+        if (request.getBookingId() != null && !request.getBookingId().isBlank()) {
+            com.voyra.crm.entity.Booking booking = bookingRepository.findById(request.getBookingId())
+                    .orElseThrow(() -> new IllegalArgumentException("Booking not found: " + request.getBookingId()));
+            if (!client.getId().equals(booking.getClientId())) {
+                throw new IllegalArgumentException("This booking belongs to another client");
+            }
+        }
 
         LocalDate receivedOn = request.getReceivedOn();
         String number = documentNumberService.next(DocumentKind.RECEIPT, receivedOn);
@@ -154,6 +162,7 @@ public class PaymentReceiptService {
                 .direction(ReceiptDirection.RECEIPT)
                 .invoiceId(null)
                 .clientId(client.getId())
+                .bookingId(request.getBookingId() != null && !request.getBookingId().isBlank() ? request.getBookingId() : null)
                 .currencyCode("INR")
                 .fxRateToInr(BigDecimal.ONE)
                 .amount(request.getAmount())
@@ -186,6 +195,99 @@ public class PaymentReceiptService {
      * whole pooled wallet balance, same as the supplier side - a deposit is not individually
      * tracked once it is in the pool.
      */
+    /**
+     * Pays a cancelled booking's customer back out of money held as an advance (a proforma or
+     * deposit receipt, no tax invoice) - Dr Client Advances Held, Cr Bank/Cash. A booking with a
+     * tax invoice refunds through its credit note instead (CreditNoteService.refund).
+     */
+    @Transactional
+    public PaymentReceiptResponse refundAdvance(com.voyra.crm.entity.Booking booking, String proformaInvoiceId,
+                                                com.voyra.crm.dto.RefundSettlementRequest request, boolean toWallet) {
+        String number = documentNumberService.next(DocumentKind.RECEIPT, request.getPaidOn());
+        PaymentReceipt receipt = PaymentReceipt.builder()
+                .id(UniqueIdResolver.resolve(paymentReceiptRepository::existsById))
+                .receiptNumber(number)
+                .financialYear(FinancialYear.of(request.getPaidOn()))
+                .direction(ReceiptDirection.REFUND)
+                .invoiceId(proformaInvoiceId)
+                .clientId(booking.getClientId())
+                .bookingId(booking.getId())
+                .currencyCode("INR")
+                .fxRateToInr(BigDecimal.ONE)
+                .amount(request.getAmount())
+                .amountInr(request.getAmount())
+                .paymentMode(request.getPaymentMode())
+                .instrumentRef(request.getReference())
+                .receivedOn(request.getPaidOn())
+                .isAdvance(true)
+                .appliedFromAdvance(false)
+                .notes(toWallet ? "Refund on cancelled booking, credited to client account" : "Refund on cancelled booking")
+                .createdAt(LocalDateTime.now())
+                .createdBy(currentUserId())
+                .build();
+        paymentReceiptRepository.save(receipt);
+        String narration = "Refund " + number + " on cancelled booking";
+        customerLedgerService.post(new LedgerPosting(
+                receipt.getClientId(), receipt.getReceivedOn(), LedgerEntryType.REFUND_PAID,
+                LedgerSourceType.RECEIPT, receipt.getId(), number, narration, booking.getId(), "INR", BigDecimal.ONE,
+                request.getAmount(), BigDecimal.ZERO, request.getAmount(), BigDecimal.ZERO));
+        if (toWallet) {
+            // The money never leaves Client Advances Held - it only moves into the wallet pool
+            // (creditWallet), so there is no journal to post.
+            bookingAccountingSync.syncPayment(booking.getId());
+            auditService.recordCreate(AuditEntityType.PAYMENT_RECEIPT, receipt.getId(), number);
+            return toResponse(receipt);
+        }
+        String bankCode = request.getPaymentMode() == PaymentMode.CASH
+                ? com.voyra.crm.enums.SystemAccount.CASH_IN_HAND.code()
+                : com.voyra.crm.enums.SystemAccount.BANK_ACCOUNTS.code();
+        journalService.post(new com.voyra.crm.models.JournalPosting(
+                request.getPaidOn(), com.voyra.crm.enums.JournalSourceType.RECEIPT, receipt.getId(),
+                com.voyra.crm.enums.JournalPurpose.CLIENT_REFUND_PAID, narration, booking.getId(), null, List.of(
+                        com.voyra.crm.models.JournalLinePosting.debitParty(
+                                com.voyra.crm.enums.SystemAccount.CLIENT_ADVANCES_HELD.code(), "CLIENT", receipt.getClientId(),
+                                request.getAmount(), narration),
+                        com.voyra.crm.models.JournalLinePosting.credit(bankCode, request.getAmount(), narration))));
+        bookingAccountingSync.syncPayment(booking.getId());
+        auditService.recordCreate(AuditEntityType.PAYMENT_RECEIPT, receipt.getId(), number);
+        return toResponse(receipt);
+    }
+
+    /**
+     * Puts a cancelled booking's refund into the client's wallet - a deposit with no invoice, so
+     * the next invoice draws it down like any other. No journal: the refund that pairs with it
+     * already credited Client Advances Held. No bookingId either, or the booking would count it
+     * as money received.
+     */
+    @Transactional
+    public PaymentReceiptResponse creditWallet(String clientId, BigDecimal amount, LocalDate on, String narration) {
+        String number = documentNumberService.next(DocumentKind.RECEIPT, on);
+        PaymentReceipt receipt = PaymentReceipt.builder()
+                .id(UniqueIdResolver.resolve(paymentReceiptRepository::existsById))
+                .receiptNumber(number)
+                .financialYear(FinancialYear.of(on))
+                .direction(ReceiptDirection.RECEIPT)
+                .clientId(clientId)
+                .currencyCode("INR")
+                .fxRateToInr(BigDecimal.ONE)
+                .amount(amount)
+                .amountInr(amount)
+                .paymentMode(PaymentMode.ADJUSTMENT)
+                .receivedOn(on)
+                .isAdvance(true)
+                .appliedFromAdvance(false)
+                .notes(narration)
+                .createdAt(LocalDateTime.now())
+                .createdBy(currentUserId())
+                .build();
+        paymentReceiptRepository.save(receipt);
+        customerLedgerService.post(new LedgerPosting(
+                clientId, on, LedgerEntryType.PAYMENT_RECEIVED, LedgerSourceType.RECEIPT, receipt.getId(), number,
+                narration, null, "INR", BigDecimal.ONE, BigDecimal.ZERO, amount, BigDecimal.ZERO, amount));
+        auditService.recordCreate(AuditEntityType.PAYMENT_RECEIPT, receipt.getId(), number);
+        return toResponse(receipt);
+    }
+
     @Transactional
     public PaymentReceiptResponse applyAdvance(String invoiceId, PaymentReceiptApplyAdvanceRequest request) {
         Invoice invoice = invoiceRepository.findById(invoiceId)
@@ -207,6 +309,7 @@ public class PaymentReceiptService {
         }
 
         PaymentReceipt applied = applyFromWallet(invoice, request.getAmount(), "Applied from deposit " + advance.getId());
+        bookingAccountingSync.syncPayment(invoice.getBookingId());
         auditService.recordCreate(AuditEntityType.PAYMENT_RECEIPT, invoice.getId(), "Wallet applied to " + invoice.getClientName());
         log.info("Wallet applied: advanceId={}, invoiceId={}, amount={}", advance.getId(), invoiceId, request.getAmount());
         return toResponse(applied);
@@ -221,7 +324,7 @@ public class PaymentReceiptService {
      */
     @Transactional
     public void applyAvailableWallet(Invoice invoice) {
-        BigDecimal remaining = remainingWallet(invoice.getClientId());
+        BigDecimal remaining = availableWalletFor(invoice.getClientId(), invoice.getBookingId());
         if (remaining.compareTo(BigDecimal.ZERO) <= 0 || invoice.getBalanceDue().compareTo(BigDecimal.ZERO) <= 0) {
             return;
         }
@@ -258,11 +361,52 @@ public class PaymentReceiptService {
         return applied;
     }
 
+    /**
+     * What one booking's invoice may draw from the client's wallet: the whole pool, less what is
+     * still held for the client's other bookings (advances taken against a specific booking are
+     * ring-fenced for it). With no booking, only money nobody has reserved.
+     */
+    @Transactional(readOnly = true)
+    public BigDecimal availableWalletFor(String clientId, String bookingId) {
+        if (clientId == null) {
+            return BigDecimal.ZERO;
+        }
+        BigDecimal reservedElsewhere = heldPerBooking(clientId).entrySet().stream()
+                .filter(e -> !e.getKey().equals(bookingId))
+                .map(java.util.Map.Entry::getValue)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        return remainingWallet(clientId).subtract(reservedElsewhere).max(BigDecimal.ZERO);
+    }
+
+    /** Per booking: advances taken for it, less what its own invoices have already drawn from the wallet. */
+    private java.util.Map<String, BigDecimal> heldPerBooking(String clientId) {
+        java.util.Map<String, BigDecimal> held = new java.util.HashMap<>();
+        paymentReceiptRepository.findByClientIdAndInvoiceIdIsNullAndIsAdvanceTrueOrderByReceivedOnAsc(clientId).stream()
+                .filter(r -> r.getBookingId() != null && r.getReversedAt() == null)
+                .forEach(r -> held.merge(r.getBookingId(), signedAdvance(r), BigDecimal::add));
+        paymentReceiptRepository.findByClientIdAndAppliedFromAdvanceTrueOrderByReceivedOnAsc(clientId).stream()
+                .filter(r -> r.getBookingId() != null && r.getReversedAt() == null && held.containsKey(r.getBookingId()))
+                .forEach(r -> held.merge(r.getBookingId(), r.getAmountInr().negate(), BigDecimal::add));
+        held.replaceAll((k, v) -> v.max(BigDecimal.ZERO));
+        return held;
+    }
+
+    /** What is still held for one booking: its advances, less what its invoices drew and what was refunded out of them. */
+    @Transactional(readOnly = true)
+    public BigDecimal heldForBooking(String clientId, String bookingId) {
+        return clientId == null || bookingId == null ? BigDecimal.ZERO : heldPerBooking(clientId).getOrDefault(bookingId, BigDecimal.ZERO);
+    }
+
+    /** A deposit row adds to the pool; a refund paid out of a held advance (same no-invoice shape, REFUND direction) takes from it. */
+    private static BigDecimal signedAdvance(PaymentReceipt r) {
+        return r.getDirection() == ReceiptDirection.REFUND ? r.getAmountInr().negate() : r.getAmountInr();
+    }
+
     /** Total deposits for this client, minus whatever has already been drawn from them. */
     private BigDecimal remainingWallet(String clientId) {
         BigDecimal totalDeposits = paymentReceiptRepository
                 .findByClientIdAndInvoiceIdIsNullAndIsAdvanceTrueOrderByReceivedOnAsc(clientId)
-                .stream().filter(r -> r.getReversedAt() == null).map(PaymentReceipt::getAmountInr)
+                .stream().filter(r -> r.getReversedAt() == null).map(PaymentReceiptService::signedAdvance)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal totalApplied = paymentReceiptRepository
                 .findByClientIdAndAppliedFromAdvanceTrueOrderByReceivedOnAsc(clientId)

@@ -1,5 +1,6 @@
 package com.voyra.crm.entity;
 
+import com.voyra.crm.enums.CancellationType;
 import com.voyra.crm.enums.BookingStatus;
 import com.voyra.crm.enums.BookingType;
 import com.voyra.crm.enums.MarkupMode;
@@ -14,6 +15,7 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
+import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
@@ -36,6 +38,10 @@ public class Booking {
     @Id
     @Column(name = "id", length = 36)
     private String id;
+
+    /** Per-agency running number from the tenant's booking_number_seq, shown as BK-00042. */
+    @Column(name = "booking_number", nullable = false, updatable = false)
+    private Long bookingNumber;
 
     /** Null for a standalone (walk-in) booking created directly from the Bookings tab. */
     @Column(name = "lead_id", length = 36)
@@ -106,6 +112,11 @@ public class Booking {
     @Column(name = "vendor_id", length = 36)
     private String vendorId;
 
+    /** Sort key only: true when there is no travel date, so those rows sort last either way (see BookingSort). */
+    @org.hibernate.annotations.Formula("(journey_date is null)")
+    @Setter(AccessLevel.NONE)
+    private Boolean noJourneyDate;
+
     @Column(name = "journey_date")
     private LocalDate journeyDate;
 
@@ -143,6 +154,16 @@ public class Booking {
 
     @Column(name = "flight_cabin", length = 20)
     private String flightCabin;
+
+    /** Local clock times, 'HH:mm' - kept as text like transfer_time, never a timestamp. */
+    @Column(name = "flight_depart_time", length = 5)
+    private String flightDepartTime;
+
+    @Column(name = "flight_arrive_time", length = 5)
+    private String flightArriveTime;
+
+    @Column(name = "flight_arrive_date")
+    private LocalDate flightArriveDate;
 
     @Column(name = "hotel_confirmation_no", length = 100)
     private String hotelConfirmationNo;
@@ -301,6 +322,55 @@ public class Booking {
     @Column(name = "refunded_total_inr", nullable = false, precision = 19, scale = 2)
     @Builder.Default
     private BigDecimal refundedTotalInr = BigDecimal.ZERO;
+
+    @Column(name = "cancellation_supplier_charge", nullable = false, precision = 19, scale = 2)
+    @Builder.Default
+    private BigDecimal cancellationSupplierCharge = BigDecimal.ZERO;
+
+    @Column(name = "cancellation_agency_fee", nullable = false, precision = 19, scale = 2)
+    @Builder.Default
+    private BigDecimal cancellationAgencyFee = BigDecimal.ZERO;
+
+    /** What the customer is owed back after the cancellation, fixed when the booking is cancelled. */
+    @Column(name = "customer_refund_due", nullable = false, precision = 19, scale = 2)
+    @Builder.Default
+    private BigDecimal customerRefundDue = BigDecimal.ZERO;
+
+    @Column(name = "supplier_refund_expected", nullable = false, precision = 19, scale = 2)
+    @Builder.Default
+    private BigDecimal supplierRefundExpected = BigDecimal.ZERO;
+
+    @Column(name = "supplier_refund_received", nullable = false, precision = 19, scale = 2)
+    @Builder.Default
+    private BigDecimal supplierRefundReceived = BigDecimal.ZERO;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "cancellation_type", length = 20)
+    private CancellationType cancellationType;
+
+    /** Set when Accounts has cross-checked a settled cancellation; null while still to check. */
+    @Column(name = "refund_checked_at")
+    private LocalDateTime refundCheckedAt;
+
+    @Column(name = "refund_checked_by")
+    private String refundCheckedBy;
+
+    /** An agent's "the supplier refund came into our bank", waiting for the accountant to find it
+     *  on the statement. Nothing is posted until then; null when no claim is open. */
+    @Column(name = "supplier_refund_claim_amount", precision = 14, scale = 2)
+    private BigDecimal supplierRefundClaimAmount;
+
+    @Column(name = "supplier_refund_claim_on")
+    private LocalDate supplierRefundClaimOn;
+
+    @Column(name = "supplier_refund_claim_reference", length = 100)
+    private String supplierRefundClaimReference;
+
+    @Column(name = "supplier_refund_claim_by", length = 150)
+    private String supplierRefundClaimBy;
+
+    @Column(name = "supplier_refund_claim_at")
+    private LocalDateTime supplierRefundClaimAt;
 
     /** MANUAL until a tax invoice is issued against this booking, then DERIVED forever - see {@code BookingAccountingSync}. */
     @Enumerated(EnumType.STRING)

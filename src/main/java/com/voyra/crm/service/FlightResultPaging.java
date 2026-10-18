@@ -22,7 +22,7 @@ import java.util.regex.Pattern;
  * of the supplier so it is unit-testable. A supplier returns one row per fare; an agent wants one
  * row per flight with its fares underneath, so paging counts flights, never fares.
  */
-final class FlightResultPaging {
+public final class FlightResultPaging {
 
     private static final Pattern HOURS = Pattern.compile("(\\d+)\\s*h", Pattern.CASE_INSENSITIVE);
     private static final Pattern MINUTES = Pattern.compile("(\\d+)\\s*m", Pattern.CASE_INSENSITIVE);
@@ -44,6 +44,8 @@ final class FlightResultPaging {
                     .destination(o.getDestination())
                     .departTime(o.getDepartTime())
                     .arriveTime(o.getArriveTime())
+                    .departDate(o.getDepartDate())
+                    .arriveDate(o.getArriveDate())
                     .duration(o.getDuration())
                     .stops(o.getStops())
                     .fares(new ArrayList<>())
@@ -70,7 +72,8 @@ final class FlightResultPaging {
 
         List<FlightGroupResponse> filtered = new ArrayList<>();
         for (FlightGroupResponse g : all) {
-            if (req.getMaxStops() != null && g.getStops() > req.getMaxStops()) {
+            // 0 and 1 are exact ("1 stop" must not also list non-stop flights); 2 means two or more.
+            if (req.getStops() != null && (req.getStops() >= 2 ? g.getStops() < 2 : g.getStops() != req.getStops())) {
                 continue;
             }
             if (req.getAirlines() != null && !req.getAirlines().isEmpty() && !req.getAirlines().contains(g.getAirline())) {
@@ -86,6 +89,7 @@ final class FlightResultPaging {
                         .key(g.getKey()).airline(g.getAirline()).airlineCode(g.getAirlineCode()).flightNumber(g.getFlightNumber())
                         .origin(g.getOrigin()).destination(g.getDestination())
                         .departTime(g.getDepartTime()).arriveTime(g.getArriveTime())
+                        .departDate(g.getDepartDate()).arriveDate(g.getArriveDate())
                         .duration(g.getDuration()).stops(g.getStops())
                         .cheapestPrice(kept.get(0).getPrice()).fares(kept).build());
                 continue;
@@ -131,7 +135,7 @@ final class FlightResultPaging {
     }
 
     /** "140" (Tripjack, minutes), "3h 05m" (mock) or "2h" to minutes; unknown sorts last. */
-    static int durationMinutes(String duration) {
+    public static int durationMinutes(String duration) {
         if (duration == null || duration.isBlank()) {
             return Integer.MAX_VALUE;
         }

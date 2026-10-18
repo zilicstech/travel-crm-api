@@ -122,7 +122,7 @@ class FlightSearchServiceTest {
     void filtersNarrowTheResultButNotTheAirlineFacetOrTheCache() {
         loginAsTenant("t1");
         FlightSearchPageRequest r = request(1);
-        r.setMaxStops(0);
+        r.setStops(0);
         r.setAirlines(List.of("IndiGo"));
         r.setRefundableOnly(true);
         FlightSearchPageResponse res = service.searchPage(r);
@@ -140,6 +140,21 @@ class FlightSearchServiceTest {
         // The filter must not have trimmed the cached flights: an unfiltered follow-up still sees 25.
         assertThat(service.searchPage(request(1)).getTotalFlights()).isEqualTo(25);
         assertThat(supplierCalls.get()).isEqualTo(1);
+    }
+
+    @Test
+    void oneStopMeansExactlyOneStopNotUpToOne() {
+        loginAsTenant("t1");
+        FlightSearchPageRequest r = request(1);
+        r.setStops(1);
+        FlightSearchPageResponse res = service.searchPage(r);
+
+        // i%5==0 -> flights 0,5,10,15,20 have one stop; the 20 non-stop flights must not appear.
+        assertThat(res.getTotalFlights()).isEqualTo(5);
+        assertThat(res.getFlights()).allSatisfy(g -> assertThat(g.getStops()).isEqualTo(1));
+
+        r.setStops(2);
+        assertThat(service.searchPage(r).getTotalFlights()).isZero();
     }
 
     @Test

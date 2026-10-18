@@ -29,7 +29,9 @@ public class MockFlightSearchProvider implements FlightSearchProvider {
             new Template("IndiGo", "6E", LocalTime.of(6, 15), 185, 0, new BigDecimal("4200"), false, "Saver"),
             new Template("Air India", "AI", LocalTime.of(9, 30), 190, 0, new BigDecimal("5100"), true, "Flexi"),
             new Template("SpiceJet", "SG", LocalTime.of(14, 0), 240, 1, new BigDecimal("3800"), false, "Saver"),
-            new Template("Vistara", "UK", LocalTime.of(18, 0), 180, 0, new BigDecimal("5600"), true, "Flexi")
+            new Template("Vistara", "UK", LocalTime.of(18, 0), 180, 0, new BigDecimal("5600"), true, "Flexi"),
+            // A red-eye, so the overnight "+1 day" arrival shows up in demos.
+            new Template("Emirates", "EK", LocalTime.of(22, 45), 210, 0, new BigDecimal("6900"), true, "Flexi")
     );
 
     private record FareTier(String name, BigDecimal multiplier, boolean refundable, String baggage) {
@@ -56,6 +58,9 @@ public class MockFlightSearchProvider implements FlightSearchProvider {
         List<FlightOfferResponse> offers = new java.util.ArrayList<>();
         for (Template t : TEMPLATES) {
             LocalTime arrive = t.depart().plusMinutes(t.durationMinutes());
+            java.time.LocalDate departDate = query.getDepartDate();
+            java.time.LocalDate arriveDate = departDate == null ? null
+                    : departDate.atTime(t.depart()).plusMinutes(t.durationMinutes()).toLocalDate();
             BigDecimal base = t.baseFare().multiply(cabinMultiplier).multiply(BigDecimal.valueOf(pax));
             for (FareTier tier : FARE_TIERS) {
                 offers.add(FlightOfferResponse.builder()
@@ -67,6 +72,8 @@ public class MockFlightSearchProvider implements FlightSearchProvider {
                         .destination(query.getDestination())
                         .departTime(t.depart())
                         .arriveTime(arrive)
+                        .departDate(departDate)
+                        .arriveDate(arriveDate)
                         .duration(formatDuration(t.durationMinutes()))
                         .stops(t.stops())
                         .supplier("Tripjack")

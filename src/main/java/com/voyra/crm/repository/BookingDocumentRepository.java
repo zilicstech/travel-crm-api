@@ -14,5 +14,7 @@ public interface BookingDocumentRepository extends JpaRepository<BookingDocument
 
     Optional<BookingDocument> findByIdAndBookingId(String id, String bookingId);
 
+    /** A derived delete needs its own transaction - the callers sit outside one (they touch object storage). */
+    @org.springframework.transaction.annotation.Transactional
     void deleteByBookingId(String bookingId);
 }
