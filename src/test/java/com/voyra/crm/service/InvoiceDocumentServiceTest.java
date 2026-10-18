@@ -502,13 +502,17 @@ class InvoiceDocumentServiceTest {
     @Test
     void cancellingAnIssuedInvoiceWithNoReceiptsSucceeds() {
         Invoice issued = Invoice.builder().id("I1").documentType(InvoiceDocumentType.TAX_INVOICE)
-                .status(InvoiceLifecycle.ISSUED).amountReceived(BigDecimal.ZERO).build();
+                .status(InvoiceLifecycle.ISSUED).amountReceived(BigDecimal.ZERO)
+                .balanceDue(new BigDecimal("12000.00")).balanceDueInr(new BigDecimal("12000.00")).build();
         when(invoiceRepository.findById("I1")).thenReturn(Optional.of(issued));
 
         InvoiceResponse response = invoiceDocumentService.cancel("I1", "Raised in error");
 
         assertThat(response.getStatus()).isEqualTo(InvoiceLifecycle.CANCELLED);
         assertThat(response.getCancelReason()).isEqualTo("Raised in error");
+        // BUG-CRX-04: nothing is owed on a cancelled invoice.
+        assertThat(response.getBalanceDue()).isEqualByComparingTo("0");
+        assertThat(issued.getBalanceDueInr()).isEqualByComparingTo("0");
     }
 
     @Test

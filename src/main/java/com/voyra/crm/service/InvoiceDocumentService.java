@@ -466,6 +466,9 @@ public class InvoiceDocumentService {
         invoice.setCancelledAt(LocalDateTime.now());
         invoice.setCancelledBy(currentUserId());
         invoice.setCancelReason(reason);
+        // Nothing is owed on a cancelled invoice (the ledger credits it back in full just below).
+        invoice.setBalanceDue(BigDecimal.ZERO);
+        invoice.setBalanceDueInr(BigDecimal.ZERO);
         invoiceRepository.save(invoice);
         if (hadLedgerDebit) {
             postCancellationReversal(invoice);

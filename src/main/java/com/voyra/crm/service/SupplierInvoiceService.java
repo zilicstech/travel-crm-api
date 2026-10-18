@@ -430,6 +430,8 @@ public class SupplierInvoiceService {
         invoice.setCancelledAt(LocalDateTime.now());
         invoice.setCancelledBy(currentUserId());
         invoice.setCancelReason(reason);
+        invoice.setBalanceDue(BigDecimal.ZERO);
+        invoice.setBalanceDueInr(BigDecimal.ZERO);
         supplierInvoiceRepository.save(invoice);
 
         if (wasBooked) {
@@ -706,7 +708,7 @@ public class SupplierInvoiceService {
     }
 
     static SupplierInvoiceListItemResponse toListItem(SupplierInvoice i) {
-        boolean overdue = i.getDueDate() != null && i.getDueDate().isBefore(LocalDate.now())
+        boolean overdue = i.getStatus() != SupplierInvoiceStatus.CANCELLED && i.getDueDate() != null && i.getDueDate().isBefore(LocalDate.now())
                 && i.getBalanceDue().compareTo(BigDecimal.ZERO) > 0;
         return SupplierInvoiceListItemResponse.builder()
                 .id(i.getId()).vendorId(i.getVendorId()).vendorName(i.getVendorName())

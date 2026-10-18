@@ -198,12 +198,16 @@ class SupplierInvoiceServiceTest {
         CustomUserPrincipal agent = new CustomUserPrincipal("A1", "agent", UserType.AGENT, "T1");
         SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(agent, null, List.of()));
         SupplierInvoice draft = SupplierInvoice.builder().id("S1").status(SupplierInvoiceStatus.DRAFT)
-                .amountPaid(BigDecimal.ZERO).build();
+                .amountPaid(BigDecimal.ZERO).balanceDue(new BigDecimal("500.00")).balanceDueInr(new BigDecimal("500.00"))
+                .dueDate(java.time.LocalDate.now().minusDays(3)).build();
         when(supplierInvoiceRepository.findById("S1")).thenReturn(Optional.of(draft));
 
         supplierInvoiceService.cancelForBooking("S1", "Booking cancelled");
 
         assertThat(draft.getStatus()).isEqualTo(SupplierInvoiceStatus.CANCELLED);
+        // BUG-CRX-18: a cancelled bill owes nothing and is never overdue.
+        assertThat(draft.getBalanceDueInr()).isEqualByComparingTo("0");
+        assertThat(SupplierInvoiceService.toListItem(draft).getOverdue()).isFalse();
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> supplierInvoiceService.cancel("S1", "x"))
                 .isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
     }
