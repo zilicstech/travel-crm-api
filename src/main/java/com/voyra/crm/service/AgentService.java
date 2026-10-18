@@ -61,7 +61,7 @@ public class AgentService {
     public AgentCreateResponse createAgent(AgentCreateRequest request) {
         String tenantId = ownerTenantId();
         if (agentRepository.existsByEmailIgnoreCase(request.getEmail())) {
-            throw new IllegalArgumentException("An agent with this email already exists");
+            throw new IllegalArgumentException("A team member with this email already exists");
         }
         UserType role = request.getUserRole() != null ? request.getUserRole() : UserType.AGENT;
         if (role != UserType.AGENT && role != UserType.ACCOUNTANT) {
