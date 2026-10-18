@@ -194,6 +194,9 @@ public class JournalService {
     public JournalEntry reverseManual(String entryId, String reason) {
         JournalEntry original = journalEntryRepository.findById(entryId)
                 .orElseThrow(() -> new IllegalArgumentException("Journal entry not found: " + entryId));
+        if (reason != null && reason.length() > 150) {
+            throw new IllegalArgumentException("Keep the reason to 150 characters or fewer");
+        }
         if (original.getSourceType() != JournalSourceType.MANUAL) {
             throw new IllegalStateException("Only a manual journal can be reversed here - this one was posted by "
                     + "the system and is reversed by cancelling or reversing the document that posted it");
