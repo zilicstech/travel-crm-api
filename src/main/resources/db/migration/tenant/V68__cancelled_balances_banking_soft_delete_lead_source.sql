@@ -8,3 +8,7 @@ UPDATE supplier_invoice SET balance_due = 0, balance_due_inr = 0 WHERE status = 
 ALTER TABLE bank_account ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP;
 ALTER TABLE bank_match_rule ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP;
 ALTER TABLE bank_statement_profile ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP;
+
+-- A lead created with no source used to default to the raw "PHONE_CALL", which matches no lead-source
+-- option and split the source report in two (BUG-CRX-25). The default is now the seeded "Phone Call".
+UPDATE lead SET source = 'Phone Call' WHERE source = 'PHONE_CALL';
