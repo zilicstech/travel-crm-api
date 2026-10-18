@@ -78,15 +78,20 @@ public class BookingCancellationService {
         Booking booking = cancellable(bookingId);
         // The supplier side keeps the airline's charge and its own fee; both come out of its refund.
         BigDecimal charge = nz(airlineCharge).add(nz(supplierCharge));
-        BigDecimal kept = charge.add(nz(agencyFee));
-        Invoice invoice = liveTaxInvoice(bookingId);
-        BigDecimal customerPaid = invoice != null ? customerPaid(booking) : paidIncludingHeldAdvance(booking);
-        // Mirrors cancel(): a credit note on the invoice, or - before any invoice - the charges invoice (with its GST).
-        BigDecimal due = invoice != null
-                ? creditNoteService.previewRefundable(invoice, kept, charge.min(invoice.getTaxableValue()))
-                : kept.signum() > 0
-                        ? customerPaid.subtract(bookingInvoiceIssuer.cancellationChargesTotal(booking, charge, nz(agencyFee))).max(BigDecimal.ZERO)
-                        : CancellationMath.customerRefundDue(customerPaid, charge, nz(agencyFee));
+        BigDecimal fee = nz(agencyFee);
+        List<Invoice> invoices = liveTaxInvoices(bookingId);
+        BigDecimal held = held(booking);
+        BigDecimal customerPaid = customerPaid(booking).add(held);
+        // Mirrors cancel(): a credit note on every invoice, or - before any invoice - the charges invoice (with its GST).
+        BigDecimal chargesInvoice = invoices.isEmpty() && charge.add(fee).signum() > 0
+                ? bookingInvoiceIssuer.cancellationChargesTotal(booking, charge, fee) : null;
+        BigDecimal due = !invoices.isEmpty()
+                ? spread(invoices, charge, fee).stream()
+                        .map(c -> creditNoteService.previewRefundable(c.invoice(), c.cancellationFee(), c.supplierRetained()))
+                        .reduce(held, BigDecimal::add)
+                : chargesInvoice != null
+                        ? customerPaid.subtract(chargesInvoice).max(BigDecimal.ZERO)
+                        : CancellationMath.customerRefundDue(customerPaid, charge, fee);
         List<SupplierInvoice> bills = supplierInvoiceRepository.findByBookingIdAndStatusNot(bookingId, SupplierInvoiceStatus.CANCELLED);
         BigDecimal paidToSupplier = bills.stream().map(SupplierInvoice::getAmountPaid).reduce(BigDecimal.ZERO, BigDecimal::add);
         return BookingCancelPreviewResponse.builder()
@@ -95,7 +100,8 @@ public class BookingCancellationService {
                 .customerRefundDue(due)
                 .supplierRefundExpected(supplierExpected(booking, bills, charge, false))
                 .supplierChargeOwed(supplierChargeOwed(bills, charge))
-                .invoiced(invoice != null)
+                .chargesInvoiceTotal(chargesInvoice)
+                .invoiced(!invoices.isEmpty())
                 .build();
     }
 
@@ -110,28 +116,33 @@ public class BookingCancellationService {
         BigDecimal charge = nz(request.getAirlineCharge()).add(nz(request.getSupplierCharge()));
         BigDecimal fee = nz(request.getAgencyFee());
         bookingAccountingSync.syncPayment(bookingId);
-        BigDecimal customerPaid = liveTaxInvoice(bookingId) != null ? customerPaid(booking) : paidIncludingHeldAdvance(booking);
+        List<Invoice> invoices = liveTaxInvoices(bookingId);
+        BigDecimal held = held(booking);
+        BigDecimal customerPaid = customerPaid(booking).add(held);
 
         String reason = request.getReason() == null || request.getReason().isBlank()
                 ? request.getType().label() : request.getReason().trim();
-        Invoice invoice = liveTaxInvoice(bookingId);
         // Cancelled before any invoice: what the supplier and the agency kept is billed on its own
         // invoice (issued while the booking is still live), and any advance held is applied to it.
-        com.voyra.crm.dto.InvoiceResponse charges = invoice == null && charge.add(fee).signum() > 0
+        com.voyra.crm.dto.InvoiceResponse charges = invoices.isEmpty() && charge.add(fee).signum() > 0
                 ? bookingInvoiceIssuer.issueCancellationCharges(booking, charge, fee) : null;
         bookingService.markCancelled(booking, reason);
 
         BigDecimal due;
-        if (invoice != null) {
-            CreditNoteRequest note = new CreditNoteRequest();
-            note.setInvoiceId(invoice.getId());
-            note.setReason(CreditNoteReason.BOOKING_CANCELLED);
-            note.setReasonNote(reason);
-            note.setCancellationFee(charge.add(fee).min(invoice.getTaxableValue()));
-            note.setSupplierRetained(charge.min(invoice.getTaxableValue()));
-            CreditNoteResponse issued = creditNoteService.issue(creditNoteService.create(note).getId());
-            due = issued.getRefundableAmount();
-            revenueRecognitionTenantService.recognizeRetainedOnCancellation(invoice, issued.getTaxableValue(), LocalDate.now());
+        if (!invoices.isEmpty()) {
+            // Every invoice gets its own credit note (its own GST split); money still held for the booking goes back too.
+            due = held;
+            for (Credit c : spread(invoices, charge, fee)) {
+                CreditNoteRequest note = new CreditNoteRequest();
+                note.setInvoiceId(c.invoice().getId());
+                note.setReason(CreditNoteReason.BOOKING_CANCELLED);
+                note.setReasonNote(reason);
+                note.setCancellationFee(c.cancellationFee());
+                note.setSupplierRetained(c.supplierRetained());
+                CreditNoteResponse issued = creditNoteService.issue(creditNoteService.create(note).getId());
+                due = due.add(nz(issued.getRefundableAmount()));
+                revenueRecognitionTenantService.recognizeRetainedOnCancellation(c.invoice(), issued.getTaxableValue(), LocalDate.now());
+            }
         } else if (charges != null) {
             // What the client paid less the charges invoice (GST included); a shortfall is collected on that invoice.
             due = customerPaid.subtract(nz(charges.getGrandTotal())).max(BigDecimal.ZERO);
@@ -164,20 +175,32 @@ public class BookingCancellationService {
         boolean toAccount = toAccount(request);
         BigDecimal outstanding = booking.getCustomerRefundDue().subtract(booking.getRefundedTotalInr());
         assertWithin(request.getAmount(), outstanding, "customer");
-        CreditNote note = creditNoteRepository.findByBookingIdAndStatusNot(bookingId, CreditNoteStatus.CANCELLED).stream()
-                .filter(n -> n.getStatus() == CreditNoteStatus.ISSUED).findFirst().orElse(null);
-        if (note != null) {
+        // Out of each credit note's open refund in turn, then the rest out of the advance still held for the booking.
+        BigDecimal left = request.getAmount();
+        for (CreditNote note : creditNoteRepository.findByBookingIdAndStatusNot(bookingId, CreditNoteStatus.CANCELLED)) {
+            BigDecimal open = nz(note.getRefundableAmount()).subtract(nz(note.getRefundedAmount()));
+            if (note.getStatus() != CreditNoteStatus.ISSUED || left.signum() <= 0 || open.signum() <= 0) {
+                continue;
+            }
             CreditNoteRefundRequest refund = new CreditNoteRefundRequest();
-            refund.setAmount(request.getAmount());
+            refund.setAmount(left.min(open));
             refund.setPaymentMode(request.getPaymentMode());
             refund.setInstrumentRef(request.getReference());
             refund.setReceivedOn(request.getPaidOn());
             creditNoteService.refund(note.getId(), refund, toAccount);
-        } else {
+            left = left.subtract(refund.getAmount());
+        }
+        if (left.signum() > 0) {
             String proformaId = invoiceRepository.findByBookingId(bookingId).stream()
                     .filter(i -> i.getDocumentType() == InvoiceDocumentType.PROFORMA && i.getStatus() != InvoiceLifecycle.CANCELLED)
                     .map(Invoice::getId).findFirst().orElse(null);
-            paymentReceiptService.refundAdvance(booking, proformaId, request, toAccount);
+            RefundSettlementRequest rest = new RefundSettlementRequest();
+            rest.setAmount(left);
+            rest.setPaidOn(request.getPaidOn());
+            rest.setPaymentMode(request.getPaymentMode());
+            rest.setReference(request.getReference());
+            rest.setToAccount(request.getToAccount());
+            paymentReceiptService.refundAdvance(booking, proformaId, rest, toAccount);
         }
         if (toAccount) {
             paymentReceiptService.creditWallet(booking.getClientId(), request.getAmount(), request.getPaidOn(),
@@ -428,23 +451,45 @@ public class BookingCancellationService {
         return booking;
     }
 
-    private Invoice liveTaxInvoice(String bookingId) {
+    private List<Invoice> liveTaxInvoices(String bookingId) {
         return invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc(
                         bookingId, InvoiceDocumentType.TAX_INVOICE, InvoiceLifecycle.CANCELLED).stream()
                 .filter(i -> LIVE.contains(i.getStatus()))
                 // An invoice someone already credited by hand gets no second credit note - the
                 // refund then follows the money actually held, like an uninvoiced booking.
                 .filter(i -> i.getCreditNoteTotal() == null || i.getCreditNoteTotal().signum() == 0)
-                .findFirst().orElse(null);
+                .toList();
+    }
+
+    /** One invoice's share of what is kept: {@code cancellationFee} is all of it, {@code supplierRetained} the supplier's part. */
+    private record Credit(Invoice invoice, BigDecimal cancellationFee, BigDecimal supplierRetained) {
     }
 
     /**
-     * With no invoice yet, money the client paid for this booking may still sit on their account
-     * as an advance held for it (see PaymentReceiptService#availableWalletFor). That is money they
-     * paid for this booking, so it is refundable on cancellation like any other.
+     * Spreads what is kept over the invoices oldest first, each up to its taxable value: the
+     * supplier's charge first, then the agency fee. One invoice gets everything it can hold, as before.
      */
-    private BigDecimal paidIncludingHeldAdvance(Booking booking) {
-        return customerPaid(booking).add(nz(paymentReceiptService.heldForBooking(booking.getClientId(), booking.getId())));
+    private static List<Credit> spread(List<Invoice> invoices, BigDecimal charge, BigDecimal fee) {
+        BigDecimal chargeLeft = charge;
+        BigDecimal feeLeft = fee;
+        List<Credit> credits = new java.util.ArrayList<>();
+        for (Invoice invoice : invoices) {
+            BigDecimal retained = chargeLeft.min(invoice.getTaxableValue());
+            BigDecimal agency = feeLeft.min(invoice.getTaxableValue().subtract(retained));
+            chargeLeft = chargeLeft.subtract(retained);
+            feeLeft = feeLeft.subtract(agency);
+            credits.add(new Credit(invoice, retained.add(agency), retained));
+        }
+        return credits;
+    }
+
+    /**
+     * Money the client paid for this booking that still sits on their account as an advance held
+     * for it (see PaymentReceiptService#availableWalletFor) - before the invoice, or what an
+     * over-payment left after it. It is refundable on cancellation like any other.
+     */
+    private BigDecimal held(Booking booking) {
+        return nz(paymentReceiptService.heldForBooking(booking.getClientId(), booking.getId()));
     }
 
     /** What the agency would still owe its suppliers after the cancellation: the part of the charge not already paid. */
@@ -494,7 +539,8 @@ public class BookingCancellationService {
     }
 
     private static String label(Booking b) {
-        return (b.getDestination() != null ? b.getDestination() + " " : "") + "(" + b.getId() + ")";
+        String ref = BookingService.bookingRef(b.getBookingNumber());
+        return (b.getDestination() != null ? b.getDestination() + " " : "") + "(" + (ref != null ? ref : b.getId()) + ")";
     }
 
     private static void assertWithin(BigDecimal amount, BigDecimal outstanding, String side) {
