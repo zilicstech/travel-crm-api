@@ -431,6 +431,8 @@ public class BookingService {
 
     @Transactional
     public BookingResponse updateBooking(String id, BookingUpdateRequest request) {
+        // Locked first: a supplier picked on a confirmed booking drafts its bill, once.
+        bookingRepository.findByIdForUpdate(id);
         Booking booking = findAccessibleBooking(id);
         boolean alreadyConfirmed = booking.getBookingStatus() == BookingStatus.CONFIRMED;
         LocalDate oldDepartureDate = booking.getDepartureDate();
@@ -485,6 +487,10 @@ public class BookingService {
         bookingRepository.save(booking);
         if (request.getPassengers() != null) {
             replacePassengers(booking.getId(), request.getPassengers());
+        }
+        if (alreadyConfirmed) {
+            // A supplier picked only after confirming still owes their bill.
+            draftSupplierBillOnce(booking);
         }
         // Same transaction as the save - a rollback loses the booking edit and its audit row together.
         auditService.recordUpdate(AuditEntityType.BOOKING, booking.getId(), labelFor(booking), changes);
@@ -611,6 +617,8 @@ public class BookingService {
             // Cancelling works out refunds and posts accounting - see BookingCancellationService.
             throw new IllegalArgumentException("Use POST /api/bookings/{id}/cancel to cancel a booking");
         }
+        // Locked first: two confirms at once must not both draft the supplier bill.
+        bookingRepository.findByIdForUpdate(id);
         Booking booking = findAccessibleBooking(id);
         Map<String, String> before = AuditSnapshot.of(booking, AUDITED);
         boolean confirming = request.getBookingStatus() == BookingStatus.CONFIRMED

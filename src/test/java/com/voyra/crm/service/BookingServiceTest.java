@@ -456,4 +456,32 @@ class BookingServiceTest {
         assertThat(booking.getSupplier()).isEqualTo("TripJack");
         assertThat(booking.getDestination()).isEqualTo("DEL → DXB");
     }
+
+    @Test
+    void confirmingLocksTheBookingBeforeDraftingItsBill() {
+        Booking booking = pendingFlight("ABC123", "5000.00");
+        booking.setVendorId("V1");
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
+
+        bookingService.updateStatus("B1", confirm());
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(bookingRepository, supplierInvoiceService);
+        order.verify(bookingRepository).findByIdForUpdate("B1");
+        order.verify(supplierInvoiceService).createAutoDraft(booking, "V1");
+    }
+
+    @Test
+    void aSupplierPickedAfterConfirmingDraftsTheirBill() {
+        Booking booking = pendingFlight("ABC123", "5000.00");
+        booking.setBookingStatus(BookingStatus.CONFIRMED);
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
+        when(vendorRepository.findById("V1")).thenReturn(Optional.of(
+                com.voyra.crm.entity.Vendor.builder().id("V1").name("TripJack").build()));
+        BookingUpdateRequest request = new BookingUpdateRequest();
+        request.setVendorId("V1");
+
+        bookingService.updateBooking("B1", request);
+
+        org.mockito.Mockito.verify(supplierInvoiceService).createAutoDraft(booking, "V1");
+    }
 }
