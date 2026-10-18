@@ -164,6 +164,25 @@ class ClientMemberRuleTest {
     }
 
     @Test
+    void theSamePhoneInAnotherFormatIsADuplicate() {
+        authenticateAs("A1", UserType.AGENT);
+        when(clientRepository.findByPhoneSuffix("+91 98765 43210")).thenReturn(java.util.List.of(client("C1")));
+
+        ClientCreateRequest request = new ClientCreateRequest();
+        request.setIdentifier("+91 98765 43210");
+        request.setName("Ajay Sharma");
+        request.setType(ClientType.B2C);
+        request.setPrimaryMemberName("Ajay Sharma");
+        assertThatThrownBy(() -> clientService.createClient(request)).isInstanceOf(IllegalStateException.class);
+        verify(clientRepository, never()).save(any());
+
+        com.voyra.crm.dto.ClientDuplicateCheckRequest check = new com.voyra.crm.dto.ClientDuplicateCheckRequest();
+        check.setIdentifier("+91 98765 43210");
+        assertThat(clientService.checkDuplicates(check)).singleElement()
+                .extracting(com.voyra.crm.dto.ClientDuplicateCandidateResponse::getMatchReason).isEqualTo("EXACT_IDENTIFIER");
+    }
+
+    @Test
     void creatingAClientWithAnIdentifierAlreadyInUseIsRejectedAsAConflict() {
         authenticateAs("A1", UserType.AGENT);
         when(clientRepository.existsByIdentifierAndIsActiveTrue("9876543210")).thenReturn(true);
