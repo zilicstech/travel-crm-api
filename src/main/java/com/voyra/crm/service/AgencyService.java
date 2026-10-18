@@ -35,12 +35,11 @@ public class AgencyService {
     private final TenantScopedReadService tenantScopedReadService;
     private final TenantDefaultsSeeder tenantDefaultsSeeder;
     private final ChartOfAccountsSeedService chartOfAccountsSeedService;
+    private final LoginEmailService loginEmailService;
 
     @Transactional
     public AgencyCreateResponse createAgency(AgencyCreateRequest request) {
-        if (tenantRepository.existsByOwnerEmailIgnoreCase(request.getOwnerEmail())) {
-            throw new IllegalArgumentException("An agency with this owner email already exists");
-        }
+        loginEmailService.assertFree(request.getOwnerEmail());
 
         Tenant tenant = Tenant.builder()
                 .id(generateUniqueTenantId())
