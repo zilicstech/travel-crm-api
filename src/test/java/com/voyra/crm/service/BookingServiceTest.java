@@ -115,6 +115,9 @@ class BookingServiceTest {
     private com.voyra.crm.repository.SupplierPaymentRepository supplierPaymentRepository;
 
     @Mock
+    private com.voyra.crm.repository.VendorRepository vendorRepository;
+
+    @Mock
     private org.springframework.transaction.support.TransactionTemplate transactionTemplate;
 
     @InjectMocks
@@ -198,7 +201,7 @@ class BookingServiceTest {
     @Test
     void confirmingABookingWithNoCostComponentsSkipsThePriceIntegrityCheck() {
         Booking booking = Booking.builder().id("B1").agentId("A1").bookingStatus(BookingStatus.PENDING)
-                .sellingPrice(new BigDecimal("50000.00")).build();
+                .type(com.voyra.crm.enums.BookingType.FLIGHT).pnr("ABC123").sellingPrice(new BigDecimal("50000.00")).build();
         when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
         when(bookingCostComponentRepository.findByBookingIdOrderBySortOrder("B1")).thenReturn(List.of());
 
@@ -213,7 +216,7 @@ class BookingServiceTest {
     @Test
     void confirmingABookingIsRefusedWhenComponentsPlusMarkupDisagreeWithSellingPrice() {
         Booking booking = Booking.builder().id("B1").agentId("A1").bookingStatus(BookingStatus.PENDING)
-                .sellingPrice(new BigDecimal("50000.00"))
+                .type(com.voyra.crm.enums.BookingType.FLIGHT).pnr("ABC123").sellingPrice(new BigDecimal("50000.00"))
                 .markupMode(MarkupMode.FLAT).markupValue(new BigDecimal("5000.00")).build();
         when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
         when(bookingCostComponentRepository.findByBookingIdOrderBySortOrder("B1")).thenReturn(List.of(
@@ -232,7 +235,7 @@ class BookingServiceTest {
     @Test
     void confirmingABookingSucceedsWhenComponentsPlusMarkupMatchSellingPrice() {
         Booking booking = Booking.builder().id("B1").agentId("A1").bookingStatus(BookingStatus.PENDING)
-                .sellingPrice(new BigDecimal("45000.00"))
+                .type(com.voyra.crm.enums.BookingType.FLIGHT).pnr("ABC123").sellingPrice(new BigDecimal("45000.00"))
                 .markupMode(MarkupMode.FLAT).markupValue(new BigDecimal("5000.00")).build();
         when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
         when(bookingCostComponentRepository.findByBookingIdOrderBySortOrder("B1")).thenReturn(List.of(
@@ -318,7 +321,7 @@ class BookingServiceTest {
 
     @Test
     void deletingABookingCancelsItsDraftSupplierBill() {
-        Booking booking = Booking.builder().id("B1").agentId("A1").bookingStatus(BookingStatus.CONFIRMED).build();
+        Booking booking = Booking.builder().id("B1").agentId("A1").bookingStatus(BookingStatus.PENDING).build();
         when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
         com.voyra.crm.entity.SupplierInvoice draft = com.voyra.crm.entity.SupplierInvoice.builder()
                 .id("S1").status(com.voyra.crm.enums.SupplierInvoiceStatus.DRAFT).build();
@@ -333,7 +336,7 @@ class BookingServiceTest {
 
     @Test
     void aBookingWithAnApprovedSupplierBillCannotBeDeleted() {
-        Booking booking = Booking.builder().id("B1").agentId("A1").bookingStatus(BookingStatus.CONFIRMED).build();
+        Booking booking = Booking.builder().id("B1").agentId("A1").bookingStatus(BookingStatus.PENDING).build();
         when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
         com.voyra.crm.entity.SupplierInvoice approved = com.voyra.crm.entity.SupplierInvoice.builder()
                 .id("S1").status(com.voyra.crm.enums.SupplierInvoiceStatus.APPROVED).build();
@@ -347,7 +350,7 @@ class BookingServiceTest {
 
     @Test
     void voucherFilesAreDeletedOnlyAfterTheRowsAreGone() {
-        Booking booking = Booking.builder().id("B1").agentId("A1").bookingStatus(BookingStatus.CONFIRMED).build();
+        Booking booking = Booking.builder().id("B1").agentId("A1").bookingStatus(BookingStatus.PENDING).build();
         when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
         when(bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc("B1")).thenReturn(List.of(
                 com.voyra.crm.entity.BookingDocument.builder().id("D1").bookingId("B1").fileKey("vouchers/v1.pdf").build()));
@@ -356,5 +359,101 @@ class BookingServiceTest {
         assertThatThrownBy(() -> bookingService.deleteBooking("B1")).hasMessageContaining("db down");
         // The rows rolled back, so the voucher file must still be there.
         org.mockito.Mockito.verify(fileStorageService, org.mockito.Mockito.never()).delete(org.mockito.ArgumentMatchers.anyString());
+    }
+
+    @Test
+    void aBookingPastPendingCannotBeDeleted() {
+        Booking booking = Booking.builder().id("B1").agentId("A1").bookingStatus(BookingStatus.CONFIRMED).build();
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
+
+        assertThatThrownBy(() -> bookingService.deleteBooking("B1"))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("Only a pending booking can be deleted");
+        org.mockito.Mockito.verify(bookingRepository, org.mockito.Mockito.never()).delete(booking);
+    }
+
+    private static Booking pendingFlight(String pnr, String sellingPrice) {
+        return Booking.builder().id("B1").agentId("A1").bookingStatus(BookingStatus.PENDING)
+                .type(com.voyra.crm.enums.BookingType.FLIGHT).pnr(pnr)
+                .netCost(new BigDecimal("4000.00")).sellingPrice(new BigDecimal(sellingPrice)).build();
+    }
+
+    private static BookingStatusUpdateRequest confirm() {
+        BookingStatusUpdateRequest request = new BookingStatusUpdateRequest();
+        request.setBookingStatus(BookingStatus.CONFIRMED);
+        return request;
+    }
+
+    @Test
+    void confirmingNeedsTheBookingReference() {
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(pendingFlight(null, "5000.00")));
+
+        assertThatThrownBy(() -> bookingService.updateStatus("B1", confirm()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Add the booking reference and selling price before confirming");
+    }
+
+    @Test
+    void confirmingNeedsASellingPrice() {
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(pendingFlight("ABC123", "0")));
+
+        assertThatThrownBy(() -> bookingService.updateStatus("B1", confirm()))
+                .hasMessage("Add the booking reference and selling price before confirming");
+    }
+
+    @Test
+    void aHotelIsConfirmedByItsConfirmationNumber() {
+        Booking hotel = pendingFlight("ignored", "5000.00");
+        hotel.setType(com.voyra.crm.enums.BookingType.HOTEL);
+        hotel.setPnr(null);
+        hotel.setHotelConfirmationNo("HTL-1");
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(hotel));
+
+        assertThat(bookingService.updateStatus("B1", confirm()).getBookingStatus()).isEqualTo(BookingStatus.CONFIRMED);
+    }
+
+    @Test
+    void confirmingDraftsTheSupplierBillOnce() {
+        Booking booking = pendingFlight("ABC123", "5000.00");
+        booking.setVendorId("V1");
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
+        when(supplierInvoiceRepository.findByBookingIdAndStatusNot("B1", com.voyra.crm.enums.SupplierInvoiceStatus.CANCELLED))
+                .thenReturn(List.of());
+
+        bookingService.updateStatus("B1", confirm());
+
+        org.mockito.Mockito.verify(supplierInvoiceService).createAutoDraft(booking, "V1");
+    }
+
+    @Test
+    void confirmingKeepsAnExistingSupplierBill() {
+        Booking booking = pendingFlight("ABC123", "5000.00");
+        booking.setVendorId("V1");
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
+        when(supplierInvoiceRepository.findByBookingIdAndStatusNot("B1", com.voyra.crm.enums.SupplierInvoiceStatus.CANCELLED))
+                .thenReturn(List.of(com.voyra.crm.entity.SupplierInvoice.builder().id("S1").build()));
+
+        bookingService.updateStatus("B1", confirm());
+
+        org.mockito.Mockito.verify(supplierInvoiceService, org.mockito.Mockito.never())
+                .createAutoDraft(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void updateSetsTheVendorAndDescription() {
+        Booking booking = pendingFlight(null, "0");
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
+        when(vendorRepository.findById("V1")).thenReturn(Optional.of(
+                com.voyra.crm.entity.Vendor.builder().id("V1").name("TripJack").build()));
+        when(supplierInvoiceRepository.findByBookingIdAndStatusNot("B1", com.voyra.crm.enums.SupplierInvoiceStatus.CANCELLED))
+                .thenReturn(List.of());
+        BookingUpdateRequest request = new BookingUpdateRequest();
+        request.setVendorId("V1");
+        request.setDestination("DEL → DXB");
+
+        bookingService.updateBooking("B1", request);
+
+        assertThat(booking.getVendorId()).isEqualTo("V1");
+        assertThat(booking.getSupplier()).isEqualTo("TripJack");
+        assertThat(booking.getDestination()).isEqualTo("DEL → DXB");
     }
 }

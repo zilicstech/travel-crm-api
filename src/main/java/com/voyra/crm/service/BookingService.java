@@ -87,7 +87,8 @@ public class BookingService {
      *  Lead/service linkage and type are deliberately excluded - they never change after create. */
     private static final String[] AUDITED = {
             "pnr", "ticketNo", "airline", "supplier", "journeyDate", "returnDate", "tripType", "notes",
-            "flightNumber", "flightFrom", "flightTo", "flightCabin",
+            "flightNumber", "flightFrom", "flightTo", "flightCabin", "flightDepartTime", "flightArriveTime", "flightArriveDate",
+            "destination", "vendorId",
             "hotelConfirmationNo", "hotelName", "hotelCity", "hotelCountryCode", "hotelCheckIn", "hotelCheckOut",
             "hotelRoomType", "hotelBoardBasis", "hotelRooms",
             "visaApplicationNo", "visaCountry", "visaAppliedDate", "visaAppointmentDate", "visaIssuedDate",
@@ -132,6 +133,9 @@ public class BookingService {
 
     @Transactional
     public BookingResponse createBooking(BookingCreateRequest request) {
+        // A pending booking is saved before it is booked with the supplier - the fare comes later.
+        if (request.getNetCost() == null) request.setNetCost(BigDecimal.ZERO);
+        if (request.getSellingPrice() == null) request.setSellingPrice(BigDecimal.ZERO);
         AuthorResolver.AuthorInfo owner = resolveOwningAgent(request.getAgentId());
         Client client = clientRepository.findById(request.getClientId())
                 .orElseThrow(() -> new IllegalArgumentException("Client not found: " + request.getClientId()));
@@ -183,6 +187,9 @@ public class BookingService {
                 .flightFrom(request.getFlightFrom())
                 .flightTo(request.getFlightTo())
                 .flightCabin(request.getFlightCabin())
+                .flightDepartTime(request.getFlightDepartTime())
+                .flightArriveTime(request.getFlightArriveTime())
+                .flightArriveDate(request.getFlightArriveDate())
                 .hotelConfirmationNo(request.getHotelConfirmationNo())
                 .hotelName(request.getHotelName())
                 .hotelCity(request.getHotelCity())
@@ -447,6 +454,11 @@ public class BookingService {
         if (request.getFlightFrom() != null) booking.setFlightFrom(request.getFlightFrom());
         if (request.getFlightTo() != null) booking.setFlightTo(request.getFlightTo());
         if (request.getFlightCabin() != null) booking.setFlightCabin(request.getFlightCabin());
+        if (request.getFlightDepartTime() != null) booking.setFlightDepartTime(request.getFlightDepartTime());
+        if (request.getFlightArriveTime() != null) booking.setFlightArriveTime(request.getFlightArriveTime());
+        if (request.getFlightArriveDate() != null) booking.setFlightArriveDate(request.getFlightArriveDate());
+        if (request.getDestination() != null && !request.getDestination().isBlank()) booking.setDestination(request.getDestination());
+        if (request.getVendorId() != null && !request.getVendorId().equals(booking.getVendorId())) setVendor(booking, request.getVendorId());
         if (request.getHotelConfirmationNo() != null) booking.setHotelConfirmationNo(request.getHotelConfirmationNo());
         if (request.getHotelName() != null) booking.setHotelName(request.getHotelName());
         if (request.getHotelCity() != null) booking.setHotelCity(request.getHotelCity());
@@ -607,6 +619,11 @@ public class BookingService {
         }
         Booking booking = findAccessibleBooking(id);
         Map<String, String> before = AuditSnapshot.of(booking, AUDITED);
+        boolean confirming = request.getBookingStatus() == BookingStatus.CONFIRMED
+                && booking.getBookingStatus() == BookingStatus.PENDING;
+        if (confirming) {
+            assertReadyToConfirm(booking);
+        }
         if (request.getBookingStatus() == BookingStatus.CONFIRMED && booking.getBookingStatus() != BookingStatus.CONFIRMED) {
             assertPriceIntegrity(booking);
         }
@@ -615,6 +632,13 @@ public class BookingService {
         touch(booking);
         bookingRepository.save(booking);
         auditService.recordUpdate(AuditEntityType.BOOKING, booking.getId(), labelFor(booking), changes);
+        // Confirmed with the supplier = their bill is due: draft it for Accounts > Supplier Bills,
+        // once - a booking that already has a live bill (e.g. drafted at create) keeps that one.
+        if (confirming && booking.getVendorId() != null && booking.getNetCost().compareTo(BigDecimal.ZERO) > 0
+                && supplierInvoiceRepository.findByBookingIdAndStatusNot(booking.getId(),
+                        com.voyra.crm.enums.SupplierInvoiceStatus.CANCELLED).isEmpty()) {
+            supplierInvoiceService.createAutoDraft(booking, booking.getVendorId());
+        }
         log.info("Booking status updated: bookingId={}, status={}", id, request.getBookingStatus());
         return toResponse(booking);
     }
@@ -689,6 +713,9 @@ public class BookingService {
     /** @return the stored file keys of the booking's documents, for deletion once this commits */
     private List<String> deleteBookingRows(String id) {
         Booking booking = findAccessibleBooking(id);
+        if (booking.getBookingStatus() != BookingStatus.PENDING) {
+            throw new IllegalStateException("Only a pending booking can be deleted - cancel it instead");
+        }
         if (bookingHasAccountingRecords(id)) {
             throw new IllegalStateException("This booking has accounting records - cancel it instead");
         }
@@ -751,6 +778,34 @@ public class BookingService {
 
     private String labelOrType(Booking b) {
         return b.getSupplier() != null ? b.getSupplier() : b.getType().name();
+    }
+
+    /** A booking is confirmed once it is really booked: the supplier's reference and the price are on it. */
+    static void assertReadyToConfirm(Booking b) {
+        String reference = switch (b.getType()) {
+            case HOTEL -> b.getHotelConfirmationNo();
+            case VISA -> b.getVisaApplicationNo();
+            case TRANSFER -> b.getTransferVoucherNo();
+            default -> b.getPnr();
+        };
+        boolean priced = b.getSellingPrice() != null && b.getSellingPrice().compareTo(BigDecimal.ZERO) > 0;
+        if (reference == null || reference.isBlank() || !priced) {
+            throw new IllegalArgumentException("Add the booking reference and selling price before confirming");
+        }
+    }
+
+    /** Points the booking at a Vendor. Refused once a supplier bill is on the booking - that bill is
+     *  the other vendor's, so it has to be cancelled first in Accounts. */
+    private void setVendor(Booking booking, String vendorId) {
+        if (vendorId.isBlank()) return;
+        Vendor vendor = vendorRepository.findById(vendorId)
+                .orElseThrow(() -> new IllegalArgumentException("Supplier not found: " + vendorId));
+        if (!supplierInvoiceRepository.findByBookingIdAndStatusNot(booking.getId(),
+                com.voyra.crm.enums.SupplierInvoiceStatus.CANCELLED).isEmpty()) {
+            throw new IllegalStateException("This booking already has a supplier bill - cancel it in Accounts before changing the supplier");
+        }
+        booking.setVendorId(vendor.getId());
+        booking.setSupplier(vendor.getName());
     }
 
     private BigDecimal computeProfit(BigDecimal sellingPrice, BigDecimal netCost) {
@@ -817,6 +872,8 @@ public class BookingService {
                 .returnDate(b.getReturnDate()).tripType(b.getTripType()).notes(b.getNotes())
                 .flightNumber(b.getFlightNumber()).flightFrom(b.getFlightFrom()).flightTo(b.getFlightTo())
                 .flightCabin(b.getFlightCabin())
+                .flightDepartTime(b.getFlightDepartTime()).flightArriveTime(b.getFlightArriveTime())
+                .flightArriveDate(b.getFlightArriveDate())
                 .hotelConfirmationNo(b.getHotelConfirmationNo()).hotelName(b.getHotelName()).hotelCity(b.getHotelCity())
                 .hotelCountryCode(b.getHotelCountryCode())
                 .hotelCheckIn(b.getHotelCheckIn()).hotelCheckOut(b.getHotelCheckOut())

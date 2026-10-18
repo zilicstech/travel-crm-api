@@ -155,6 +155,16 @@ public class Booking {
     @Column(name = "flight_cabin", length = 20)
     private String flightCabin;
 
+    /** Local clock times, 'HH:mm' - kept as text like transfer_time, never a timestamp. */
+    @Column(name = "flight_depart_time", length = 5)
+    private String flightDepartTime;
+
+    @Column(name = "flight_arrive_time", length = 5)
+    private String flightArriveTime;
+
+    @Column(name = "flight_arrive_date")
+    private LocalDate flightArriveDate;
+
     @Column(name = "hotel_confirmation_no", length = 100)
     private String hotelConfirmationNo;
 
@@ -344,6 +354,23 @@ public class Booking {
 
     @Column(name = "refund_checked_by")
     private String refundCheckedBy;
+
+    /** An agent's "the supplier refund came into our bank", waiting for the accountant to find it
+     *  on the statement. Nothing is posted until then; null when no claim is open. */
+    @Column(name = "supplier_refund_claim_amount", precision = 14, scale = 2)
+    private BigDecimal supplierRefundClaimAmount;
+
+    @Column(name = "supplier_refund_claim_on")
+    private LocalDate supplierRefundClaimOn;
+
+    @Column(name = "supplier_refund_claim_reference", length = 100)
+    private String supplierRefundClaimReference;
+
+    @Column(name = "supplier_refund_claim_by", length = 150)
+    private String supplierRefundClaimBy;
+
+    @Column(name = "supplier_refund_claim_at")
+    private LocalDateTime supplierRefundClaimAt;
 
     /** MANUAL until a tax invoice is issued against this booking, then DERIVED forever - see {@code BookingAccountingSync}. */
     @Enumerated(EnumType.STRING)

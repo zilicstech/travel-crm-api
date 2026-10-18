@@ -110,6 +110,15 @@ public class BookingResponse {
     @Schema(example = "Economy")
     private String flightCabin;
 
+    @Schema(description = "Departure, local clock time 'HH:mm'", example = "09:40")
+    private String flightDepartTime;
+
+    @Schema(description = "Arrival, local clock time 'HH:mm'", example = "12:15")
+    private String flightArriveTime;
+
+    @Schema(description = "Arrival date, when it differs from the journey date", example = "2026-12-21")
+    private LocalDate flightArriveDate;
+
     @Schema(example = "HTL-994211")
     private String hotelConfirmationNo;
 
