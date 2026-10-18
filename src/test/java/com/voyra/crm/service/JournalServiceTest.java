@@ -236,4 +236,78 @@ class JournalServiceTest {
         assertThat(response.getStatus()).isEqualTo(JournalStatus.POSTED);
         assertThat(response.getEntryNumber()).isEqualTo("JNV/2026-27/0003");
     }
+
+    private static JournalLineRequest line(String code, String debit, String credit) {
+        JournalLineRequest l = new JournalLineRequest();
+        l.setAccountCode(code);
+        l.setDebitAmount(new BigDecimal(debit));
+        l.setCreditAmount(new BigDecimal(credit));
+        return l;
+    }
+
+    private static JournalPostRequest manualRequest(JournalLineRequest... lines) {
+        JournalPostRequest request = new JournalPostRequest();
+        request.setEntryDate(LocalDate.of(2026, 9, 30));
+        request.setNarration("Correction");
+        request.setLines(List.of(lines));
+        return request;
+    }
+
+    @Test
+    void postManualRefusesACallerSentSystemSourceType() {
+        JournalPostRequest request = manualRequest(line("1200", "500", "0"), line("1100", "0", "500"));
+        request.setSourceType(JournalSourceType.INVOICE);
+        request.setPurpose(JournalPurpose.INVOICE_RAISED_DEFERRED);
+
+        assertThatThrownBy(() -> journalService.postManual(request))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("manual");
+        org.mockito.Mockito.verify(journalEntryRepository, org.mockito.Mockito.never()).save(any());
+    }
+
+    @Test
+    void postManualWithNoSourceTypeIsPostedAsManualAndStillGuardsControlAccounts() {
+        when(ledgerAccountRepository.findByCode("1200")).thenReturn(Optional.of(controlAccount("1200")));
+        JournalPostRequest request = manualRequest(line("1200", "500", "0"), line("1100", "0", "500"));
+
+        assertThatThrownBy(() -> journalService.postManual(request))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("control account");
+    }
+
+    @Test
+    void postManualStampsManualSourceAndDropsACallerSourceId() {
+        when(ledgerAccountRepository.findByCode(any())).thenAnswer(inv -> Optional.of(nonControlAccount(inv.getArgument(0))));
+        when(documentNumberService.next(any(), any())).thenReturn("JNV/2026-27/0004");
+        JournalPostRequest request = manualRequest(line("5620", "10", "0"), line("1100", "0", "10"));
+        request.setSourceId("INV-FORGED");
+
+        JournalEntryResponse response = journalService.postManual(request);
+
+        assertThat(response.getSourceType()).isEqualTo(JournalSourceType.MANUAL);
+        assertThat(response.getPurpose()).isEqualTo(JournalPurpose.MANUAL_ENTRY);
+        assertThat(response.getSourceId()).isNull();
+    }
+
+    @Test
+    void postManualRefusesNegativeAmounts() {
+        JournalPostRequest request = manualRequest(line("5620", "-1", "0"), line("1100", "0", "-1"));
+
+        assertThatThrownBy(() -> journalService.postManual(request))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("negative");
+    }
+
+    @Test
+    void reverseManualRefusesASystemJournal() {
+        JournalEntry invoiceJournal = JournalEntry.builder().id("JE9").entryNumber("JNV/2026-27/0009")
+                .sourceType(JournalSourceType.INVOICE).sourceId("INV1")
+                .purpose(JournalPurpose.INVOICE_RAISED_DEFERRED).status(JournalStatus.POSTED).build();
+        when(journalEntryRepository.findById("JE9")).thenReturn(Optional.of(invoiceJournal));
+
+        assertThatThrownBy(() -> journalService.reverseManual("JE9", "oops"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("manual");
+        assertThat(invoiceJournal.getStatus()).isEqualTo(JournalStatus.POSTED);
+    }
 }

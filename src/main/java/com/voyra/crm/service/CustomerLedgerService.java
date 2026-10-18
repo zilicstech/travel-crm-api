@@ -228,6 +228,17 @@ public class CustomerLedgerService {
                 .toList();
     }
 
+    @Transactional(readOnly = true)
+    public byte[] exportOutstandingXlsx() {
+        List<List<String>> rows = outstanding().stream()
+                .map(r -> List.of(r.getClientName(), r.getCurrent().toPlainString(), r.getDays1To30().toPlainString(),
+                        r.getDays31To60().toPlainString(), r.getDays61To90().toPlainString(), r.getDays90Plus().toPlainString(),
+                        r.getTotalOutstandingInr().toPlainString()))
+                .toList();
+        return XlsxWriter.write("AR Ageing", new ReportTable(List.of("Client", "Current (INR)", "1-30 Days (INR)",
+                "31-60 Days (INR)", "61-90 Days (INR)", "90+ Days (INR)", "Total (INR)"), rows));
+    }
+
     /** Posts one OPENING_BALANCE row so a client onboarded mid-relationship starts with a correct balance. */
     @Transactional
     public LedgerStatementResponse openingBalance(String clientId, OpeningBalanceRequest request) {

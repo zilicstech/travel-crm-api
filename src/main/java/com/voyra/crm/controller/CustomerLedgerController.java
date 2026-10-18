@@ -67,6 +67,16 @@ public class CustomerLedgerController {
         return ResponseEntity.ok(customerLedgerService.outstanding());
     }
 
+    @GetMapping("/outstanding/export")
+    @Operation(summary = "Export AR ageing as Excel")
+    public ResponseEntity<byte[]> exportOutstanding() {
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        ContentDisposition.attachment().filename("ar-ageing.xlsx", StandardCharsets.UTF_8).build().toString())
+                .body(customerLedgerService.exportOutstandingXlsx());
+    }
+
     @PostMapping("/clients/{clientId}/opening-balance")
     @Operation(summary = "Post an opening balance", description = "Onboards a client with a pre-existing balance. Positive = client owes the agency.")
     public ResponseEntity<LedgerStatementResponse> openingBalance(

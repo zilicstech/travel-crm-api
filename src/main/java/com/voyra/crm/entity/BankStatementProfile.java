@@ -2,6 +2,8 @@ package com.voyra.crm.entity;
 
 import com.voyra.crm.enums.BankAmountConvention;
 import jakarta.persistence.Column;
+import org.hibernate.annotations.SQLDelete;
+import org.hibernate.annotations.SQLRestriction;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -25,6 +27,8 @@ import java.time.LocalDateTime;
  * in without a migration - only a {@code CSV} implementation ships now (architecture doc §9).
  */
 @Entity
+@SQLDelete(sql = "UPDATE bank_statement_profile SET deleted_at = now() WHERE id = ?")
+@SQLRestriction("deleted_at IS NULL")
 @Table(name = "bank_statement_profile")
 @Getter
 @Setter

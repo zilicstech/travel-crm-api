@@ -10,6 +10,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -37,5 +40,18 @@ public class BankMatchRuleController {
     @Operation(summary = "List active rules, in priority order")
     public ResponseEntity<List<BankMatchRuleResponse>> list() {
         return ResponseEntity.ok(bankMatchRuleService.list());
+    }
+
+    @PutMapping("/{id}")
+    @Operation(summary = "Edit a categorisation rule")
+    public ResponseEntity<BankMatchRuleResponse> update(@PathVariable String id, @Valid @RequestBody BankMatchRuleRequest request) {
+        return ResponseEntity.ok(bankMatchRuleService.update(id, request));
+    }
+
+    @DeleteMapping("/{id}")
+    @Operation(summary = "Delete a categorisation rule", description = "Soft delete.")
+    public ResponseEntity<Void> delete(@PathVariable String id) {
+        bankMatchRuleService.delete(id);
+        return ResponseEntity.noContent().build();
     }
 }

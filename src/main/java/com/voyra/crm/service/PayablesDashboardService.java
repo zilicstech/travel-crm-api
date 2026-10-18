@@ -72,11 +72,11 @@ public class PayablesDashboardService {
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
         BigDecimal advancesHeld = supplierPaymentRepository.findAll().stream()
-                .filter(p -> Boolean.TRUE.equals(p.getIsAdvance()) && p.getReversedAt() == null)
+                .filter(p -> Boolean.TRUE.equals(p.getIsAdvance()) && p.getReversedAt() == null && p.getReversesPaymentId() == null)
                 .map(SupplierPayment::getAmountInr)
                 .reduce(BigDecimal.ZERO, BigDecimal::add)
                 .subtract(supplierPaymentRepository.findAll().stream()
-                        .filter(p -> Boolean.TRUE.equals(p.getAppliedFromAdvance()) && p.getReversedAt() == null)
+                        .filter(p -> Boolean.TRUE.equals(p.getAppliedFromAdvance()) && p.getReversedAt() == null && p.getReversesPaymentId() == null)
                         .map(SupplierPayment::getAmountInr)
                         .reduce(BigDecimal.ZERO, BigDecimal::add));
 
@@ -174,6 +174,17 @@ public class PayablesDashboardService {
                     .build());
         }
         return rows;
+    }
+
+    @Transactional(readOnly = true)
+    public byte[] exportCostReconciliationXlsx() {
+        List<List<String>> rows = costReconciliation().stream()
+                .map(r -> List.of(r.getClientName() != null ? r.getClientName() : "", r.getDestination() != null ? r.getDestination() : "",
+                        str(r.getEstimatedCostInr()), str(r.getActualCostInr()), str(r.getVarianceInr()),
+                        r.getVariancePercent() != null ? str(r.getVariancePercent()) : ""))
+                .toList();
+        return XlsxWriter.write("Cost Reconciliation", new ReportTable(List.of("Client", "Destination",
+                "Estimated Cost (INR)", "Actual Cost (INR)", "Variance (INR)", "Variance %"), rows));
     }
 
     private List<SupplierInvoice> billsInRange(LocalDate from, LocalDate to) {

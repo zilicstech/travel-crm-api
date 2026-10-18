@@ -447,6 +447,8 @@ public class SupplierInvoiceService {
         invoice.setCancelledAt(LocalDateTime.now());
         invoice.setCancelledBy(currentUserId());
         invoice.setCancelReason(reason);
+        invoice.setBalanceDue(BigDecimal.ZERO);
+        invoice.setBalanceDueInr(BigDecimal.ZERO);
         supplierInvoiceRepository.save(invoice);
 
         if (wasBooked) {
@@ -643,7 +645,7 @@ public class SupplierInvoiceService {
      * {@code invoice.category} is a {@code BookingType}, not an {@code InvoiceServiceCategory},
      * so the purchase account is resolved the same way the customer-invoice side resolves its
      * sales account: via the linked booking's own type and {@code internationalTrip} flag when
-     * one exists, falling back to MISCELLANEOUS when the bill has no booking.
+     * one exists, else the bill's own category (domestic), MISCELLANEOUS only with neither.
      */
     private void postBillBookedJournal(SupplierInvoice invoice) {
         BigDecimal taxableInr = invoice.getTaxableValueInr();
@@ -687,7 +689,8 @@ public class SupplierInvoiceService {
 
     private com.voyra.crm.enums.InvoiceServiceCategory resolvePurchaseCategory(SupplierInvoice invoice) {
         if (invoice.getBookingId() == null) {
-            return com.voyra.crm.enums.InvoiceServiceCategory.MISCELLANEOUS;
+            // A hand-made bill has no booking - its own category picks the purchase account.
+            return com.voyra.crm.enums.InvoiceServiceCategory.forBooking(invoice.getCategory(), false);
         }
         return bookingRepository.findById(invoice.getBookingId())
                 .map(b -> com.voyra.crm.enums.InvoiceServiceCategory.forBooking(b.getType(), Boolean.TRUE.equals(b.getInternationalTrip())))
@@ -723,7 +726,7 @@ public class SupplierInvoiceService {
     }
 
     static SupplierInvoiceListItemResponse toListItem(SupplierInvoice i) {
-        boolean overdue = i.getDueDate() != null && i.getDueDate().isBefore(LocalDate.now())
+        boolean overdue = i.getStatus() != SupplierInvoiceStatus.CANCELLED && i.getDueDate() != null && i.getDueDate().isBefore(LocalDate.now())
                 && i.getBalanceDue().compareTo(BigDecimal.ZERO) > 0;
         return SupplierInvoiceListItemResponse.builder()
                 .id(i.getId()).vendorId(i.getVendorId()).vendorName(i.getVendorName())

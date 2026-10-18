@@ -45,6 +45,8 @@ public class AccountsDashboardService {
     private final PaymentReceiptRepository paymentReceiptRepository;
     private final CreditNoteRepository creditNoteRepository;
     private final com.voyra.crm.repository.JournalLineRepository journalLineRepository;
+    private final com.voyra.crm.repository.JournalEntryRepository journalEntryRepository;
+    private final com.voyra.crm.repository.TaxRateConfigRepository taxRateConfigRepository;
 
     @Transactional(readOnly = true)
     public AccountsDashboardSummaryResponse summary() {
@@ -112,47 +114,79 @@ public class AccountsDashboardService {
     }
 
     /**
-     * Groups by GST rate over issued, non-cancelled tax invoices in range - the input a CA
-     * needs for GSTR-1, not a filing itself. Tax is opt-in per invoice now (see {@link
-     * InvoiceTax}), so this reads the invoice's own chosen GST-kind rows rather than the old
-     * per-line GST columns, which are no longer populated. No SAC breakdown any more - a tax
-     * row carries a rate, not a service code; grouping is by rate alone.
+     * Groups by SAC and GST rate over issued, non-cancelled tax invoices in range - the input a CA
+     * needs for GSTR-1, not a filing itself. Tax is opt-in per invoice (see {@link InvoiceTax}), so
+     * this reads the invoice's own chosen GST-kind rows. The SAC is the one on the tax slab the row
+     * was picked from ("-" for a custom tax).
      */
     @Transactional(readOnly = true)
     public List<GstSummaryRowResponse> gstSummary(LocalDate from, LocalDate to) {
         Map<String, BigDecimal[]> byGroup = new LinkedHashMap<>();
-        Map<String, String> rateByKey = new LinkedHashMap<>();
+        Map<String, String[]> sacRateByKey = new LinkedHashMap<>();
 
-        for (Invoice invoice : taxInvoicesInRange(from, to)) {
+        List<Invoice> invoices = taxInvoicesInRange(from, to);
+        Map<String, List<InvoiceTax>> taxesByInvoice = new LinkedHashMap<>();
+        for (Invoice invoice : invoices) {
+            taxesByInvoice.put(invoice.getId(), invoiceTaxRepository.findByInvoiceIdOrderBySortOrderAsc(invoice.getId()));
+        }
+        Map<String, String> sacByConfig = new java.util.HashMap<>();
+        taxRateConfigRepository.findAllById(taxesByInvoice.values().stream().flatMap(List::stream)
+                        .map(InvoiceTax::getTaxRateConfigId).filter(java.util.Objects::nonNull).distinct().toList())
+                .forEach(c -> { if (c.getSacCode() != null) sacByConfig.put(c.getId(), c.getSacCode()); });
+
+        for (Invoice invoice : invoices) {
             BigDecimal fx = invoice.getFxRateToInr();
-            for (InvoiceTax tax : invoiceTaxRepository.findByInvoiceIdOrderBySortOrderAsc(invoice.getId())) {
+            BigDecimal taxableInr = null;
+            for (InvoiceTax tax : taxesByInvoice.get(invoice.getId())) {
                 if (tax.getTaxKind() != TaxKind.GST) {
                     continue;
                 }
+                if (taxableInr == null) {
+                    taxableInr = gstBaseInr(invoice);
+                }
                 String rate = (tax.getRatePercent() != null ? tax.getRatePercent() : BigDecimal.ZERO)
                         .stripTrailingZeros().toPlainString();
-                BigDecimal[] agg = byGroup.computeIfAbsent(rate, k -> zeros(4));
-                // taxableValueInr is the base GST was actually levied on: the service fee for a
-                // COMMISSION_AGENT invoice, whereas taxableValue keeps the full package amount.
-                BigDecimal taxableInr = invoice.getTaxableValueInr();
+                String sac = tax.getTaxRateConfigId() != null ? sacByConfig.getOrDefault(tax.getTaxRateConfigId(), "-") : "-";
+                String key = sac + "|" + rate;
+                BigDecimal[] agg = byGroup.computeIfAbsent(key, k -> zeros(4));
                 agg[0] = agg[0].add(taxableInr);
                 agg[1] = agg[1].add(scale(tax.getCgstAmount().multiply(fx)));
                 agg[2] = agg[2].add(scale(tax.getSgstAmount().multiply(fx)));
                 agg[3] = agg[3].add(scale(tax.getIgstAmount().multiply(fx)));
-                rateByKey.putIfAbsent(rate, rate);
+                sacRateByKey.putIfAbsent(key, new String[]{sac, rate});
             }
         }
 
         return byGroup.entrySet().stream()
                 .map(e -> {
                     BigDecimal[] a = e.getValue();
+                    String[] sacRate = sacRateByKey.get(e.getKey());
                     return GstSummaryRowResponse.builder()
-                            .sacCode("-").gstRatePercent(new BigDecimal(rateByKey.get(e.getKey())))
+                            .sacCode(sacRate[0]).gstRatePercent(new BigDecimal(sacRate[1]))
                             .taxableValueInr(a[0]).cgstAmountInr(a[1]).sgstAmountInr(a[2]).igstAmountInr(a[3])
                             .gstTotalInr(a[1].add(a[2]).add(a[3]))
                             .build();
                 })
                 .toList();
+    }
+
+    /**
+     * The value GST was levied on. {@code taxableValueInr} is the whole package for every billing
+     * model (the pass-through block and the journal are built from it); a commission-agent invoice
+     * taxes only the agency's fee, which is exactly what its own posted journal credited to 4600.
+     */
+    private BigDecimal gstBaseInr(Invoice invoice) {
+        if (invoice.getBillingModel() != com.voyra.crm.enums.InvoiceBillingModel.COMMISSION_AGENT) {
+            return invoice.getTaxableValueInr();
+        }
+        String feeAccount = com.voyra.crm.enums.SystemAccount.SERVICE_FEE_INCOME.code();
+        return journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(com.voyra.crm.enums.JournalSourceType.INVOICE,
+                        invoice.getId(), com.voyra.crm.enums.JournalPurpose.INVOICE_RAISED_COMMISSION_AGENT)
+                .map(entry -> journalLineRepository.findByJournalEntryIdOrderByLineNo(entry.getId()).stream()
+                        .filter(l -> feeAccount.equals(l.getAccountCode()))
+                        .map(l -> l.getCreditAmountInr() != null ? l.getCreditAmountInr() : BigDecimal.ZERO)
+                        .reduce(BigDecimal.ZERO, BigDecimal::add))
+                .orElse(invoice.getTaxableValueInr());
     }
 
     /** Groups by TCS section over issued, non-cancelled tax invoices in range that actually carry TCS. */
@@ -193,8 +227,10 @@ public class AccountsDashboardService {
     }
 
     private List<Invoice> taxInvoicesInRange(LocalDate from, LocalDate to) {
+        // A draft is not a supply yet - it has no number and is not in any GST return.
         return invoiceRepository.findByDocumentTypeAndStatusNotAndInvoiceDateBetween(
-                InvoiceDocumentType.TAX_INVOICE, InvoiceLifecycle.CANCELLED, from, to);
+                InvoiceDocumentType.TAX_INVOICE, InvoiceLifecycle.CANCELLED, from, to).stream()
+                .filter(i -> i.getStatus() != InvoiceLifecycle.DRAFT).toList();
     }
 
     private static <T> BigDecimal sum(List<T> items, Function<T, BigDecimal> extractor) {

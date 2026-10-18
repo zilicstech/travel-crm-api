@@ -10,6 +10,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -37,5 +40,18 @@ public class BankStatementProfileController {
     @Operation(summary = "List statement profiles")
     public ResponseEntity<List<BankStatementProfileResponse>> list() {
         return ResponseEntity.ok(bankStatementProfileService.list());
+    }
+
+    @PutMapping("/{id}")
+    @Operation(summary = "Edit a statement profile")
+    public ResponseEntity<BankStatementProfileResponse> update(@PathVariable String id, @Valid @RequestBody BankStatementProfileRequest request) {
+        return ResponseEntity.ok(bankStatementProfileService.update(id, request));
+    }
+
+    @DeleteMapping("/{id}")
+    @Operation(summary = "Delete a statement profile", description = "Soft delete; statements already imported stay imported.")
+    public ResponseEntity<Void> delete(@PathVariable String id) {
+        bankStatementProfileService.delete(id);
+        return ResponseEntity.noContent().build();
     }
 }

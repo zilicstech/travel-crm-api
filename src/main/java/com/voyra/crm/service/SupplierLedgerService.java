@@ -187,7 +187,7 @@ public class SupplierLedgerService {
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
-    /** AP ageing across every vendor with an unpaid approved bill, bucketed by days past due. */
+    /** AP ageing across every vendor with an unpaid approved bill (bucketed by days past due) or a non-zero statement balance. */
     @Transactional(readOnly = true)
     public List<ApAgeingRowResponse> outstanding() {
         List<SupplierInvoice> unpaid = supplierInvoiceRepository.findAll().stream()
@@ -213,16 +213,44 @@ public class SupplierLedgerService {
             row[bucket] = row[bucket].add(inv.getBalanceDueInr());
         }
 
+        // The statement balance nets what the ageing cannot age (refunds due back, unapplied advances) -
+        // carry it per vendor so the two reconcile on screen, including a vendor with credits only.
+        Map<String, BigDecimal> netByVendor = new LinkedHashMap<>();
+        ledgerRepository.findAll().stream().filter(e -> e.getVendorId() != null).forEach(e -> netByVendor.merge(e.getVendorId(),
+                e.getCreditAmountInr().subtract(e.getDebitAmountInr()), BigDecimal::add));
+        vendorRepository.findAll().forEach(v -> namesByVendor.putIfAbsent(v.getId(), v.getName()));
+        netByVendor.forEach((vendorId, net) -> {
+            if (net.signum() != 0) {
+                buckets.computeIfAbsent(vendorId, id -> new BigDecimal[]{
+                        BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO});
+            }
+        });
+
         return buckets.entrySet().stream()
                 .map(e -> {
                     BigDecimal[] b = e.getValue();
+                    BigDecimal due = b[0].add(b[1]).add(b[2]).add(b[3]).add(b[4]);
+                    BigDecimal net = netByVendor.getOrDefault(e.getKey(), due);
                     return ApAgeingRowResponse.builder()
                             .vendorId(e.getKey()).vendorName(namesByVendor.get(e.getKey()))
                             .current(b[0]).days1To30(b[1]).days31To60(b[2]).days61To90(b[3]).days90Plus(b[4])
-                            .totalPayableInr(b[0].add(b[1]).add(b[2]).add(b[3]).add(b[4]))
+                            .totalPayableInr(due).creditsInr(net.subtract(due)).netBalanceInr(net)
                             .build();
                 })
                 .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public byte[] exportOutstandingXlsx() {
+        List<List<String>> rows = outstanding().stream()
+                .map(r -> List.of(r.getVendorName() != null ? r.getVendorName() : "", r.getCurrent().toPlainString(),
+                        r.getDays1To30().toPlainString(), r.getDays31To60().toPlainString(), r.getDays61To90().toPlainString(),
+                        r.getDays90Plus().toPlainString(), r.getTotalPayableInr().toPlainString(),
+                        r.getCreditsInr().toPlainString(), r.getNetBalanceInr().toPlainString()))
+                .toList();
+        return XlsxWriter.write("AP Ageing", new ReportTable(List.of("Vendor", "Current (INR)", "1-30 Days (INR)",
+                "31-60 Days (INR)", "61-90 Days (INR)", "90+ Days (INR)", "Bills Due (INR)",
+                "Refunds Due & Advances (INR)", "Net Balance (INR)"), rows));
     }
 
     @Transactional

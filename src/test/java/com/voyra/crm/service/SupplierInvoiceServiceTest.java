@@ -157,6 +157,37 @@ class SupplierInvoiceServiceTest {
         assertThat(captor.getValue().lines().get(1).accountCode()).isEqualTo("2200");
     }
 
+    /** BUG-CRX-15: a hand-made bill (no booking) posts to its own category's purchase account, not Miscellaneous. */
+    @Test
+    void approvingAHandMadeHotelBillPostsToHotelPurchases() {
+        SupplierInvoice invoice = SupplierInvoice.builder()
+                .id("SI1").vendorId("V1").vendorName("Agoda").category(com.voyra.crm.enums.BookingType.HOTEL)
+                .status(SupplierInvoiceStatus.DRAFT).itcEligibility(ItcEligibility.INELIGIBLE)
+                .currencyCode("INR").fxRateToInr(BigDecimal.ONE)
+                .taxableValue(new BigDecimal("500.00")).taxableValueInr(new BigDecimal("500.00"))
+                .gstTotal(BigDecimal.ZERO).gstTotalInr(BigDecimal.ZERO)
+                .grandTotal(new BigDecimal("500.00")).grandTotalInr(new BigDecimal("500.00"))
+                .roundOff(BigDecimal.ZERO).amountPaid(BigDecimal.ZERO).creditNoteTotal(BigDecimal.ZERO)
+                .build();
+        SupplierInvoiceLineItem line = SupplierInvoiceLineItem.builder()
+                .id("L1").supplierInvoiceId("SI1").sortOrder(0).description("Hotel stay")
+                .quantity(BigDecimal.ONE).unitPrice(new BigDecimal("500.00"))
+                .taxableValue(new BigDecimal("500.00")).lineTotal(new BigDecimal("500.00"))
+                .cgstAmount(BigDecimal.ZERO).sgstAmount(BigDecimal.ZERO).igstAmount(BigDecimal.ZERO)
+                .build();
+        when(supplierInvoiceRepository.findById("SI1")).thenReturn(Optional.of(invoice));
+        when(lineItemRepository.findBySupplierInvoiceIdOrderBySortOrder("SI1")).thenReturn(List.of(line));
+        when(vendorRepository.findById("V1")).thenReturn(Optional.of(Vendor.builder().id("V1").name("Agoda").build()));
+        stubAgency();
+
+        supplierInvoiceService.approve("SI1", null);
+
+        ArgumentCaptor<JournalPosting> captor = ArgumentCaptor.forClass(JournalPosting.class);
+        org.mockito.Mockito.verify(journalService).post(captor.capture());
+        assertThat(captor.getValue().lines().get(0).accountCode()).isEqualTo("5030");
+        assertThat(captor.getValue().lines().get(1).accountCode()).isEqualTo("2200");
+    }
+
     @Test
     void approvingAnIneligibleItcBillFoldsGstIntoThePurchaseDebit() {
         SupplierInvoice invoice = SupplierInvoice.builder()
@@ -198,12 +229,16 @@ class SupplierInvoiceServiceTest {
         CustomUserPrincipal agent = new CustomUserPrincipal("A1", "agent", UserType.AGENT, "T1");
         SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(agent, null, List.of()));
         SupplierInvoice draft = SupplierInvoice.builder().id("S1").status(SupplierInvoiceStatus.DRAFT)
-                .amountPaid(BigDecimal.ZERO).build();
+                .amountPaid(BigDecimal.ZERO).balanceDue(new BigDecimal("500.00")).balanceDueInr(new BigDecimal("500.00"))
+                .dueDate(java.time.LocalDate.now().minusDays(3)).build();
         when(supplierInvoiceRepository.findById("S1")).thenReturn(Optional.of(draft));
 
         supplierInvoiceService.cancelForBooking("S1", "Booking cancelled");
 
         assertThat(draft.getStatus()).isEqualTo(SupplierInvoiceStatus.CANCELLED);
+        // BUG-CRX-18: a cancelled bill owes nothing and is never overdue.
+        assertThat(draft.getBalanceDueInr()).isEqualByComparingTo("0");
+        assertThat(SupplierInvoiceService.toListItem(draft).getOverdue()).isFalse();
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> supplierInvoiceService.cancel("S1", "x"))
                 .isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
     }

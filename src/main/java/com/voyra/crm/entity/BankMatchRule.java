@@ -2,6 +2,8 @@ package com.voyra.crm.entity;
 
 import com.voyra.crm.enums.BankMatchField;
 import jakarta.persistence.Column;
+import org.hibernate.annotations.SQLDelete;
+import org.hibernate.annotations.SQLRestriction;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -20,6 +22,8 @@ import lombok.Setter;
  * categorisation for a human to confirm.
  */
 @Entity
+@SQLDelete(sql = "UPDATE bank_match_rule SET deleted_at = now() WHERE id = ?")
+@SQLRestriction("deleted_at IS NULL")
 @Table(name = "bank_match_rule")
 @Getter
 @Setter
