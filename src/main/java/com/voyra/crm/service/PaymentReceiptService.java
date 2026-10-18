@@ -621,12 +621,12 @@ public class PaymentReceiptService {
         if (amountInr.compareTo(BigDecimal.ZERO) <= 0) {
             return;
         }
-        String narration = "Wallet applied to invoice " + invoice.getId();
+        String narration = "Wallet applied to invoice " + (invoice.getInvoiceNumber() != null ? invoice.getInvoiceNumber() : invoice.getId());
         journalService.post(new com.voyra.crm.models.JournalPosting(
                 applied.getReceivedOn(), com.voyra.crm.enums.JournalSourceType.RECEIPT, applied.getId(),
                 com.voyra.crm.enums.JournalPurpose.ADVANCE_APPLIED, narration, invoice.getBookingId(), null, List.of(
-                        com.voyra.crm.models.JournalLinePosting.debit(
-                                com.voyra.crm.enums.SystemAccount.CLIENT_ADVANCES_HELD.code(), amountInr, narration),
+                        com.voyra.crm.models.JournalLinePosting.debitParty(
+                                com.voyra.crm.enums.SystemAccount.CLIENT_ADVANCES_HELD.code(), "CLIENT", invoice.getClientId(), amountInr, narration),
                         com.voyra.crm.models.JournalLinePosting.creditParty(
                                 com.voyra.crm.enums.SystemAccount.ACCOUNTS_RECEIVABLE.code(), "CLIENT", invoice.getClientId(), amountInr, narration))));
     }

@@ -400,6 +400,9 @@ class PaymentReceiptServiceTest {
         assertThat(posting.lines()).hasSize(2);
         assertThat(posting.lines().get(0).accountCode()).isEqualTo("2110"); // CLIENT_ADVANCES_HELD
         assertThat(posting.lines().get(0).debitAmount()).isEqualByComparingTo("400.00");
+        // BUG-MO-09: the 2110 line names the client too, so a per-client 2110 balance nets the applied advance.
+        assertThat(posting.lines().get(0).partyType()).isEqualTo("CLIENT");
+        assertThat(posting.lines().get(0).partyId()).isEqualTo("K1");
         assertThat(posting.lines().get(1).accountCode()).isEqualTo("1200"); // ACCOUNTS_RECEIVABLE
         assertThat(posting.lines().get(1).partyType()).isEqualTo("CLIENT");
         assertThat(posting.lines().get(1).partyId()).isEqualTo("K1");
