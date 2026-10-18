@@ -236,7 +236,7 @@ class BookingCancellationServiceTest {
                 .grandTotal(d("24000")).amountPaid(BigDecimal.ZERO).creditNoteTotal(BigDecimal.ZERO)
                 .cgstAmount(BigDecimal.ZERO).sgstAmount(BigDecimal.ZERO).igstAmount(BigDecimal.ZERO).build();
         when(supplierInvoiceRepository.findByBookingIdAndStatusNot("B1", SupplierInvoiceStatus.CANCELLED)).thenReturn(List.of(draft));
-        when(supplierInvoiceService.approve(eq("S0"), anyString())).thenAnswer(inv -> {
+        when(supplierInvoiceService.approveForBooking(eq("S0"), anyString())).thenAnswer(inv -> {
             draft.setStatus(SupplierInvoiceStatus.APPROVED);
             return com.voyra.crm.dto.SupplierInvoiceResponse.builder().id("S0").status(SupplierInvoiceStatus.APPROVED).build();
         });

@@ -173,4 +173,20 @@ class SupplierInvoiceServiceTest {
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> supplierInvoiceService.cancel("S1", "x"))
                 .isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
     }
+
+    /** An agent cancelling with a supplier charge books the draft bill for it; the payables approve stays owner/accountant only. */
+    @Test
+    void anAgentCancellingWithAChargeCanBookTheDraftBillButNotApproveFromPayables() {
+        CustomUserPrincipal agent = new CustomUserPrincipal("A1", "agent", UserType.AGENT, "T1");
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(agent, null, List.of()));
+        SupplierInvoice draft = SupplierInvoice.builder().id("S1").status(SupplierInvoiceStatus.DRAFT)
+                .amountPaid(BigDecimal.ZERO).build();
+        when(supplierInvoiceRepository.findById("S1")).thenReturn(Optional.of(draft));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> supplierInvoiceService.approve("S1", null))
+                .isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
+        // The booking path gets past the role gate and on to the bill's own checks (this draft has no lines).
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> supplierInvoiceService.approveForBooking("S1", "charge"))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("At least one line");
+    }
 }

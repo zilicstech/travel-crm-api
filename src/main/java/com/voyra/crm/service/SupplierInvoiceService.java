@@ -296,7 +296,23 @@ public class SupplierInvoiceService {
 
     @Transactional
     public SupplierInvoiceResponse approve(String id, String overrideReason) {
-        SupplierInvoice invoice = findById(id);
+        return approve(findById(id), overrideReason);
+    }
+
+    /**
+     * Books a draft bill for the charge a supplier kept on a cancelled booking. Like
+     * {@link #cancelForBooking}, it skips the Owner/Accountant gate of the payables screens: an
+     * agent may cancel their own booking, and the booking cancellation has already authorised them.
+     */
+    @Transactional
+    public SupplierInvoiceResponse approveForBooking(String id, String reason) {
+        SupplierInvoice invoice = supplierInvoiceRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Supplier bill not found: " + id));
+        return approve(invoice, reason);
+    }
+
+    private SupplierInvoiceResponse approve(SupplierInvoice invoice, String overrideReason) {
+        String id = invoice.getId();
         SupplierInvoiceLifecyclePolicy.assertApprovable(invoice.getStatus());
         List<SupplierInvoiceLineItem> lines = lineItemRepository.findBySupplierInvoiceIdOrderBySortOrder(id);
         if (lines.isEmpty()) {

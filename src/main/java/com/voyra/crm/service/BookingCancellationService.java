@@ -342,7 +342,7 @@ public class BookingCancellationService {
                     continue;
                 }
                 if (write) {
-                    var approved = supplierInvoiceService.approve(bill.getId(), "Supplier cancellation charge on a cancelled booking");
+                    var approved = supplierInvoiceService.approveForBooking(bill.getId(), "Supplier cancellation charge on a cancelled booking");
                     if (approved.getStatus() != SupplierInvoiceStatus.APPROVED) {
                         continue;
                     }
