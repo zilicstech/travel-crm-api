@@ -602,6 +602,27 @@ class BookingCancellationServiceTest {
         assertThatThrownBy(() -> service.markChecked("B1")).hasMessageContaining("Already cross-checked");
     }
 
+    /** BUG-MO-14: refunds settled, but the client has not paid the cancellation-charges invoice yet. */
+    @Test
+    void crossCheckWaitsForTheCancellationChargesToBePaid() {
+        Booking b = booking(BookingStatus.CANCELLED);
+        b.setCustomerRefundDue(BigDecimal.ZERO);
+        b.setRefundedTotalInr(BigDecimal.ZERO);
+        Invoice charges = Invoice.builder().id("CI1").documentType(InvoiceDocumentType.TAX_INVOICE)
+                .status(InvoiceLifecycle.ISSUED).balanceDue(d("4680")).build();
+        when(invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc(
+                "B1", InvoiceDocumentType.TAX_INVOICE, InvoiceLifecycle.CANCELLED)).thenReturn(List.of(charges));
+
+        assertThatThrownBy(() -> service.markChecked("B1")).hasMessageContaining("4680");
+        assertThat(b.getRefundCheckedAt()).isNull();
+        // ...and it is not listed to cross-check yet either.
+        b.setSupplierRefundExpected(BigDecimal.ZERO);
+        b.setSupplierRefundReceived(BigDecimal.ZERO);
+        when(bookingRepository.findByBookingStatus(BookingStatus.CANCELLED)).thenReturn(List.of(b));
+        service.listOutstanding();
+        verify(bookingService, never()).toResponsePublic(b);
+    }
+
     @Test
     void settledButUncheckedCancellationsStayOnTheList() {
         Booking open = Booking.builder().id("B1").bookingStatus(BookingStatus.CANCELLED)

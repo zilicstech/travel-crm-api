@@ -286,7 +286,8 @@ public class BookingLifecycleService {
             actions.add(CONFIRM_SUPPLIER_REFUND);
             actions.add(REJECT_SUPPLIER_REFUND);
         }
-        if (accounts && cancelled && !clientRefundOpen && !supplierRefundOpen && claim == null && b.getRefundCheckedAt() == null) actions.add(CROSS_CHECK);
+        if (accounts && cancelled && !clientRefundOpen && !supplierRefundOpen && claim == null && toCollect.signum() == 0
+                && b.getRefundCheckedAt() == null) actions.add(CROSS_CHECK);
 
         return BookingLifecycleResponse.builder()
                 .bookingId(b.getId())
@@ -310,7 +311,8 @@ public class BookingLifecycleService {
             if (received.signum() == 0 && nz(wallet).signum() > 0) {
                 return step("PAYMENT", "DONE", money(wallet) + " held as an advance before cancelling");
             }
-            return step("PAYMENT", received.signum() > 0 ? "DONE" : "NA", money(received) + " received before cancelling");
+            // Not "before cancelling": cancellation charges are often paid after the cancel.
+            return step("PAYMENT", received.signum() > 0 ? "DONE" : "NA", money(received) + " received");
         }
         if (toCollect.signum() == 0 && received.signum() > 0) {
             return step("PAYMENT", "DONE", "Fully paid - " + money(received));

@@ -189,6 +189,24 @@ class BookingLifecycleServiceTest {
         assertThat(settled.getAllowedActions()).containsExactly("CROSS_CHECK");
     }
 
+    /** BUG-MO-14 / MO-13, BK-01000: cancelled before any invoice, its 4,680 "Cancellation charges" invoice is unpaid. */
+    @Test
+    void noCrossCheckWhileTheCancellationChargesAreUnpaid() {
+        Booking b = booking(BookingStatus.CANCELLED);
+        b.setInvoicedTotalInr(d("4680"));
+        BookingLifecycleResponse owed = BookingLifecycleService.build(facts(b, 1, List.of(issued("4680", "4680")), List.of(), "0"), Viewer.ACCOUNTANT);
+
+        assertThat(owed.getToCollectInr()).isEqualByComparingTo("4680");
+        assertThat(owed.getAllowedActions()).containsExactly("RECORD_PAYMENT");
+
+        // Paid after the cancel: settled, so it can be cross-checked - and it is not called money "received before cancelling".
+        b.setReceivedTotalInr(d("4680"));
+        BookingLifecycleResponse paid = BookingLifecycleService.build(facts(b, 1, List.of(issued("4680", "0")), List.of(), "0"), Viewer.ACCOUNTANT);
+        assertThat(paid.getAllowedActions()).containsExactly("CROSS_CHECK");
+        assertThat(paid.getSteps().stream().filter(x -> x.getKey().equals("PAYMENT")).findFirst().orElseThrow().getSummary())
+                .isEqualTo("₹4,680 received");
+    }
+
     // ---- roles -------------------------------------------------------------------------
 
     @Test

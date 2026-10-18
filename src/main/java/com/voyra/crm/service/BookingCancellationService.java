@@ -325,13 +325,24 @@ public class BookingCancellationService {
         booking.setSupplierRefundClaimAt(null);
     }
 
-    /** Cancelled bookings where either side still has money to move, or that Accounts has not cross-checked yet. */
+    /** Cancelled bookings where either side still has money to move, or that Accounts has not cross-checked yet (once the client has paid any charges). */
     @Transactional(readOnly = true)
     public List<BookingResponse> listOutstanding() {
         return bookingRepository.findByBookingStatus(BookingStatus.CANCELLED).stream()
                 .filter(b -> b.getRefundCheckedAt() == null || !settled(b))
+                // Settled but the client still owes cancellation charges: not ready to cross-check, it is collected on the invoice.
+                .filter(b -> !settled(b) || clientOwes(b.getId()).signum() == 0)
                 .map(bookingService::toResponsePublic)
                 .toList();
+    }
+
+    /** What the client still owes on the booking's live invoices - e.g. a cancellation-charges invoice not yet paid. */
+    private BigDecimal clientOwes(String bookingId) {
+        return invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc(
+                        bookingId, InvoiceDocumentType.TAX_INVOICE, InvoiceLifecycle.CANCELLED).stream()
+                .filter(i -> LIVE.contains(i.getStatus()))
+                .map(i -> nz(i.getBalanceDue()).max(BigDecimal.ZERO))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
     /** The accountant's cross-check ("cross checked by") once nothing is left to move on either side. */
@@ -341,6 +352,10 @@ public class BookingCancellationService {
         Booking booking = cancelled(bookingId);
         if (!settled(booking) || booking.getSupplierRefundClaimAmount() != null) {
             throw new IllegalStateException("Settle both the customer and the supplier refund before cross-checking");
+        }
+        BigDecimal owed = clientOwes(bookingId);
+        if (owed.signum() > 0) {
+            throw new IllegalStateException("The client still owes " + owed + " on this booking's invoices - collect it before cross-checking");
         }
         if (booking.getRefundCheckedAt() != null) {
             throw new IllegalStateException("Already cross-checked by " + booking.getRefundCheckedBy());
