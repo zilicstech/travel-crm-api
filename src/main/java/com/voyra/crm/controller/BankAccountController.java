@@ -10,6 +10,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -37,5 +40,18 @@ public class BankAccountController {
     @Operation(summary = "List bank accounts")
     public ResponseEntity<List<BankAccountResponse>> list() {
         return ResponseEntity.ok(bankAccountService.list());
+    }
+
+    @PutMapping("/{id}")
+    @Operation(summary = "Edit a bank account")
+    public ResponseEntity<BankAccountResponse> update(@PathVariable String id, @Valid @RequestBody BankAccountRequest request) {
+        return ResponseEntity.ok(bankAccountService.update(id, request));
+    }
+
+    @DeleteMapping("/{id}")
+    @Operation(summary = "Delete a bank account", description = "Soft delete; refused once the account has posted lines or payments.")
+    public ResponseEntity<Void> delete(@PathVariable String id) {
+        bankAccountService.delete(id);
+        return ResponseEntity.noContent().build();
     }
 }

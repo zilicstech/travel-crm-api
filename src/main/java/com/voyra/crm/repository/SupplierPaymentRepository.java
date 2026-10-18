@@ -27,4 +27,6 @@ public interface SupplierPaymentRepository extends JpaRepository<SupplierPayment
     List<SupplierPayment> findByBookingId(String bookingId);
 
     boolean existsBySupplierInvoiceId(String supplierInvoiceId);
+
+    boolean existsByBankAccountId(String bankAccountId);
 }

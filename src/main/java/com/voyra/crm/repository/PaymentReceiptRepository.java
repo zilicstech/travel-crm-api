@@ -36,4 +36,6 @@ public interface PaymentReceiptRepository extends JpaRepository<PaymentReceipt, 
 
     /** What has already been drawn down from that client's wallet. */
     List<PaymentReceipt> findByClientIdAndAppliedFromAdvanceTrueOrderByReceivedOnAsc(String clientId);
+
+    boolean existsByBankAccountId(String bankAccountId);
 }

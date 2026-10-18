@@ -1,6 +1,8 @@
 package com.voyra.crm.entity;
 
 import jakarta.persistence.Column;
+import org.hibernate.annotations.SQLDelete;
+import org.hibernate.annotations.SQLRestriction;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
@@ -19,6 +21,8 @@ import java.time.LocalDateTime;
  * account on the bank side of the entry.
  */
 @Entity
+@SQLDelete(sql = "UPDATE bank_account SET deleted_at = now() WHERE id = ?")
+@SQLRestriction("deleted_at IS NULL")
 @Table(name = "bank_account")
 @Getter
 @Setter

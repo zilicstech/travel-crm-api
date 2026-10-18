@@ -15,6 +15,8 @@ public interface BankTransactionRepository extends JpaRepository<BankTransaction
 
     List<BankTransaction> findByImportId(String importId);
 
+    boolean existsByBankAccountIdAndMatchStatusNot(String bankAccountId, BankTransactionMatchStatus matchStatus);
+
     List<BankTransaction> findByBankAccountIdAndMatchStatus(String bankAccountId, BankTransactionMatchStatus matchStatus);
 
     Optional<BankTransaction> findByBankAccountIdAndTxnDateAndAmountAndBankReference(
