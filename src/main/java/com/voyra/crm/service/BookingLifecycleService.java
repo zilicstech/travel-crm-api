@@ -129,36 +129,24 @@ public class BookingLifecycleService {
         List<Invoice> issued = liveTaxInvoices(booking.getId()).stream()
                 .filter(i -> i.getStatus() != InvoiceLifecycle.DRAFT).toList();
 
-        if (issued.isEmpty()) {
-            BigDecimal open = nz(booking.getSellingPrice()).subtract(nz(booking.getReceivedTotalInr()))
-                    .subtract(paymentReceiptService.availableWalletFor(booking.getClientId(), booking.getId()));
-            if (request.getAmount().compareTo(open) > 0) {
-                throw new IllegalArgumentException("More than the " + open + " still to collect on this booking");
-            }
-            PaymentReceiptRequest receipt = receiptRequest(request, request.getAmount());
+        // Never capped by an estimate: the client may pay the GST-inclusive total before the invoice
+        // exists, or for a voucher added after it. Open invoices are settled first, oldest first; the
+        // rest is held on the client's account for this booking and applied to its next invoice.
+        BigDecimal left = request.getAmount();
+        for (Invoice invoice : issued.stream().filter(i -> nz(i.getBalanceDue()).signum() > 0).toList()) {
+            if (left.signum() == 0) break;
+            BigDecimal part = left.min(nz(invoice.getBalanceDue()));
+            PaymentReceiptRequest r = receiptRequest(request, part);
+            r.setInvoiceId(invoice.getId());
+            paymentReceiptService.record(r);
+            left = left.subtract(part);
+        }
+        if (left.signum() > 0) {
+            PaymentReceiptRequest receipt = receiptRequest(request, left);
             receipt.setClientId(booking.getClientId());
             receipt.setBookingId(booking.getId());
             receipt.setNotes("Advance for " + BookingService.bookingRef(booking.getBookingNumber()));
             paymentReceiptService.record(receipt);
-        } else {
-            // Spread across the booking's open invoices, oldest first, so the full amount shown as due can be paid at once.
-            List<Invoice> open = issued.stream().filter(i -> nz(i.getBalanceDue()).signum() > 0).toList();
-            BigDecimal due = open.stream().map(i -> nz(i.getBalanceDue())).reduce(BigDecimal.ZERO, BigDecimal::add);
-            if (due.signum() == 0) {
-                throw new IllegalStateException("This booking's invoice is fully paid");
-            }
-            if (request.getAmount().compareTo(due) > 0) {
-                throw new IllegalArgumentException("More than the " + due + " still due on this booking's invoices");
-            }
-            BigDecimal left = request.getAmount();
-            for (Invoice invoice : open) {
-                if (left.signum() == 0) break;
-                BigDecimal part = left.min(nz(invoice.getBalanceDue()));
-                PaymentReceiptRequest r = receiptRequest(request, part);
-                r.setInvoiceId(invoice.getId());
-                paymentReceiptService.record(r);
-                left = left.subtract(part);
-            }
         }
         return build(gather(reload(booking)), currentViewer());
     }
@@ -234,8 +222,11 @@ public class BookingLifecycleService {
         BigDecimal invoicedTotal = nz(b.getInvoicedTotalInr());
         BigDecimal received = nz(b.getReceivedTotalInr());
         // Before the invoice, money already held on the client's account will be applied to it, so it is not asked for again.
+        // After the invoice, a voucher added since then is still to collect too (before its GST, which its own invoice adds).
+        BigDecimal sinceInvoice = cancelled || !invoiced ? BigDecimal.ZERO
+                : nz(b.getSellingPrice()).subtract(nz(f.invoicedPriceInr())).max(BigDecimal.ZERO);
         BigDecimal toCollect = cancelled ? BigDecimal.ZERO
-                : (invoiced ? invoicedTotal.subtract(received) : nz(b.getSellingPrice()).subtract(received).subtract(nz(f.clientWalletInr())))
+                : (invoiced ? invoicedTotal.subtract(received).add(sinceInvoice) : nz(b.getSellingPrice()).subtract(received).subtract(nz(f.clientWalletInr())))
                         .max(BigDecimal.ZERO);
 
         BigDecimal refundDue = nz(b.getCustomerRefundDue());
@@ -274,7 +265,8 @@ public class BookingLifecycleService {
         if (ops && !cancelled) actions.add(UPLOAD_VOUCHER);
         if (ops && live) actions.add(CANCEL);
         if (accounts && !cancelled && (invoiced ? uninvoiced.signum() > 0 : nz(b.getSellingPrice()).signum() > 0)) actions.add(GENERATE_INVOICE);
-        if (accounts && !cancelled && toCollect.signum() > 0) actions.add(RECORD_PAYMENT);
+        // Always open on a priced live booking: a client may pay more than the estimate (GST, an extra voucher) and it is held as an advance.
+        if (accounts && !cancelled && nz(b.getSellingPrice()).signum() > 0) actions.add(RECORD_PAYMENT);
         if (accounts && cancelled && clientRefundOpen) actions.add(REFUND_CLIENT);
         if (ops && cancelled && supplierRefundOpen && claim == null) actions.add(SUPPLIER_REFUND);
         if (accounts && cancelled && claim != null) {

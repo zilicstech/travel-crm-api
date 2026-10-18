@@ -233,6 +233,9 @@ class InvoiceDocumentServiceTest {
         assertThat(response.getCgstAmount()).isEqualByComparingTo("900.00");
         assertThat(response.getSgstAmount()).isEqualByComparingTo("900.00");
         assertThat(response.getGstTotal()).isEqualByComparingTo("1800.00");
+        // The client is still billed the whole ticket: 50000 + 1800 GST, not just the 10000 fee.
+        assertThat(response.getGrandTotal()).isEqualByComparingTo("51800.00");
+        assertThat(response.getTaxableValueInr()).isEqualByComparingTo("50000.00");
     }
 
     @Test

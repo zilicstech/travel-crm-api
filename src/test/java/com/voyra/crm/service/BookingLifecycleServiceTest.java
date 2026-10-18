@@ -295,21 +295,37 @@ class BookingLifecycleServiceTest {
         assertThat(receipt.getValue().getBookingId()).as("held for this booking, not the client's others").isEqualTo("B1");
     }
 
+    /** The client may pay the GST-inclusive total before the invoice exists: it is held for the booking, never refused. */
     @Test
-    void paymentBeforeInvoiceCannotExceedTheBookingPrice() {
+    void aPaymentAboveTheBookingPriceBeforeTheInvoiceIsHeldAsAnAdvance() {
         stubBooking(booking(BookingStatus.CONFIRMED));
+        org.mockito.Mockito.lenient().when(paymentReceiptService.availableWalletFor("C1", "B1")).thenReturn(d("4000"));
 
-        assertThatThrownBy(() -> service.recordPayment("B1", payment("10000.01"))).isInstanceOf(IllegalArgumentException.class);
-        verify(paymentReceiptService, never()).record(any());
+        service.recordPayment("B1", payment("11800"));
+
+        ArgumentCaptor<PaymentReceiptRequest> receipt = ArgumentCaptor.forClass(PaymentReceiptRequest.class);
+        verify(paymentReceiptService).record(receipt.capture());
+        assertThat(receipt.getValue().getAmount()).isEqualByComparingTo("11800");
+        assertThat(receipt.getValue().getInvoiceId()).isNull();
+        assertThat(receipt.getValue().getBookingId()).isEqualTo("B1");
     }
 
+    /** More than the invoice still owes (e.g. a voucher added after it): the invoice is settled, the rest held for the booking. */
     @Test
-    void anAdvanceAlreadyHeldCountsAgainstWhatCanStillBeCollected() {
+    void aPaymentAboveTheInvoiceBalanceSettlesItAndHoldsTheRest() {
         stubBooking(booking(BookingStatus.CONFIRMED));
-        when(paymentReceiptService.availableWalletFor("C1", "B1")).thenReturn(d("4000"));
+        when(invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc(eq("B1"), any(), any()))
+                .thenReturn(List.of(issued("10000", "6000")));
 
-        assertThatThrownBy(() -> service.recordPayment("B1", payment("6000.01"))).isInstanceOf(IllegalArgumentException.class);
-        verify(paymentReceiptService, never()).record(any());
+        service.recordPayment("B1", payment("9000"));
+
+        ArgumentCaptor<PaymentReceiptRequest> receipt = ArgumentCaptor.forClass(PaymentReceiptRequest.class);
+        verify(paymentReceiptService, org.mockito.Mockito.times(2)).record(receipt.capture());
+        assertThat(receipt.getAllValues().get(0).getInvoiceId()).isEqualTo("I1");
+        assertThat(receipt.getAllValues().get(0).getAmount()).isEqualByComparingTo("6000");
+        assertThat(receipt.getAllValues().get(1).getInvoiceId()).isNull();
+        assertThat(receipt.getAllValues().get(1).getAmount()).isEqualByComparingTo("3000");
+        assertThat(receipt.getAllValues().get(1).getBookingId()).isEqualTo("B1");
     }
 
     @Test

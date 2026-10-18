@@ -791,7 +791,10 @@ public class InvoiceDocumentService {
         }
 
         BigDecimal gstTotal = cgst.add(sgst).add(igst);
-        BigDecimal grandTotal = taxableBase.add(gstTotal).add(tcsAmount).add(otherTaxTotal);
+        // The client pays the full package; only the GST base differs by billing model (a commission-agent
+        // invoice taxes just the fee, the supplier's cost passes through untaxed but is still billed).
+        BigDecimal packageValue = invoice.getTaxableValue() != null ? invoice.getTaxableValue() : taxableBase;
+        BigDecimal grandTotal = packageValue.add(gstTotal).add(tcsAmount).add(otherTaxTotal);
         BigDecimal fx = invoice.getFxRateToInr();
 
         invoice.setPlaceOfSupplyCode(placeOfSupply);
@@ -808,7 +811,7 @@ public class InvoiceDocumentService {
         invoice.setOtherTaxTotalInr(scaleToInr(otherTaxTotal, fx));
         invoice.setRoundOff(BigDecimal.ZERO);
         invoice.setGrandTotal(grandTotal);
-        invoice.setTaxableValueInr(scaleToInr(taxableBase, fx));
+        invoice.setTaxableValueInr(scaleToInr(packageValue, fx));
         invoice.setGstTotalInr(scaleToInr(gstTotal, fx));
         invoice.setTcsAmountInr(scaleToInr(tcsAmount, fx));
         invoice.setGrandTotalInr(scaleToInr(grandTotal, fx));
