@@ -105,7 +105,7 @@ class BookingLifecycleServiceTest {
     }
 
     private static Facts facts(Booking b, int docs, List<Invoice> invoices, List<SupplierInvoice> bills, String wallet) {
-        return new Facts(b, docs, invoices, List.of(), bills, List.of(), d(wallet));
+        return new Facts(b, docs, invoices, List.of(), bills, List.of(), d(wallet), BigDecimal.ZERO);
     }
 
     private static Map<String, String> states(BookingLifecycleResponse r) {
@@ -123,7 +123,7 @@ class BookingLifecycleServiceTest {
         // Paying the supplier is Accounts' job on the supplier bill, not a booking step.
         assertThat(r.getSteps()).extracting(BookingLifecycleResponse.Step::getKey).containsExactly("CREATED", "VOUCHER", "INVOICE", "PAYMENT");
         assertThat(r.getSteps().get(0).getSummary()).startsWith("Pending");
-        assertThat(r.getAllowedActions()).containsExactlyInAnyOrder("CONFIRM", "UPLOAD_VOUCHER", "CANCEL", "GENERATE_INVOICE", "RECORD_PAYMENT");
+        assertThat(r.getAllowedActions()).containsExactlyInAnyOrder("UPLOAD_VOUCHER", "CANCEL", "GENERATE_INVOICE", "RECORD_PAYMENT");
         assertThat(r.getToCollectInr()).isEqualByComparingTo("10000");
     }
 
@@ -132,11 +132,27 @@ class BookingLifecycleServiceTest {
         Booking b = booking(BookingStatus.CONFIRMED);
         b.setInvoicedTotalInr(d("10000"));
         b.setReceivedTotalInr(d("4000"));
-        BookingLifecycleResponse r = BookingLifecycleService.build(facts(b, 1, List.of(issued("10000", "6000")), List.of(), "0"), Viewer.OWNER);
+        BookingLifecycleResponse r = BookingLifecycleService.build(new Facts(b, 1, List.of(issued("10000", "6000")), List.of(), List.of(), List.of(),
+                BigDecimal.ZERO, d("10000")), Viewer.OWNER);
 
         assertThat(states(r)).containsEntry("VOUCHER", "DONE").containsEntry("INVOICE", "DONE").containsEntry("PAYMENT", "PARTIAL");
         assertThat(r.getToCollectInr()).isEqualByComparingTo("6000");
-        assertThat(r.getAllowedActions()).doesNotContain("GENERATE_INVOICE", "CONFIRM").contains("COMPLETE", "RECORD_PAYMENT");
+        // Status moves by itself (voucher confirms, the nightly job completes) - no status buttons.
+        assertThat(r.getAllowedActions()).doesNotContain("GENERATE_INVOICE", "CONFIRM", "COMPLETE").contains("RECORD_PAYMENT");
+    }
+
+    @Test
+    void aVoucherAddedAfterTheInvoiceAsksForAnotherInvoice() {
+        Booking b = booking(BookingStatus.CONFIRMED);
+        b.setSellingPrice(d("13000"));
+        b.setInvoicedTotalInr(d("10000"));
+        BookingLifecycleResponse r = BookingLifecycleService.build(new Facts(b, 2, List.of(issued("10000", "0")), List.of(), List.of(), List.of(),
+                BigDecimal.ZERO, d("10000")), Viewer.ACCOUNTANT);
+
+        assertThat(states(r)).containsEntry("INVOICE", "PARTIAL");
+        assertThat(r.getSteps().stream().filter(x -> x.getKey().equals("INVOICE")).findFirst().orElseThrow().getSummary())
+                .contains("₹3,000 added since the last invoice");
+        assertThat(r.getAllowedActions()).contains("GENERATE_INVOICE");
     }
 
     @Test
@@ -177,10 +193,10 @@ class BookingLifecycleServiceTest {
     void agentGetsOperationalActionsAndNoSupplierMoney() {
         Facts f = new Facts(booking(BookingStatus.CONFIRMED), 0, List.of(), List.of(),
                 List.of(bill(SupplierInvoiceStatus.PARTIALLY_PAID, "8000", "3000")),
-                List.of(SupplierPayment.builder().id("P1").amountInr(d("5000")).paidOn(LocalDate.now()).build()), d("100"));
+                List.of(SupplierPayment.builder().id("P1").amountInr(d("5000")).paidOn(LocalDate.now()).build()), d("100"), BigDecimal.ZERO);
         BookingLifecycleResponse r = BookingLifecycleService.build(f, Viewer.AGENT);
 
-        assertThat(r.getAllowedActions()).containsExactlyInAnyOrder("COMPLETE", "UPLOAD_VOUCHER", "CANCEL");
+        assertThat(r.getAllowedActions()).containsExactlyInAnyOrder("UPLOAD_VOUCHER", "CANCEL");
         assertThat(r.getClientWalletInr()).isNull();
         assertThat(r.getRecords()).noneMatch(x -> x.getKind().startsWith("SUPPLIER"));
     }
@@ -227,6 +243,7 @@ class BookingLifecycleServiceTest {
         when(bookingService.findAccessibleBooking("B1")).thenReturn(b);
         when(bookingRepository.findById("B1")).thenReturn(Optional.of(b));
         when(bookingRepository.findByIdForUpdate("B1")).thenReturn(Optional.of(b));
+        org.mockito.Mockito.lenient().when(bookingService.invoicedPrice(any())).thenReturn(BigDecimal.ZERO);
         when(paymentReceiptService.availableWalletFor(any(), any())).thenReturn(BigDecimal.ZERO);
         return b;
     }
@@ -254,8 +271,9 @@ class BookingLifecycleServiceTest {
     }
 
     @Test
-    void generateInvoiceIsRefusedWhenOneIsAlreadyIssued() {
+    void generateInvoiceIsRefusedWhenFullyInvoiced() {
         stubBooking(booking(BookingStatus.CONFIRMED));
+        when(bookingService.invoicedPrice("B1")).thenReturn(d("10000"));
         when(invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc(eq("B1"), any(), any()))
                 .thenReturn(List.of(issued("10000", "10000")));
 
@@ -352,7 +370,7 @@ class BookingLifecycleServiceTest {
     void aRefundFromTheSupplierIsNotListedAsAPaymentToThem() {
         SupplierPayment refund = SupplierPayment.builder().id("P2").direction(com.voyra.crm.enums.SupplierPaymentDirection.REFUND_RECEIVED)
                 .amountInr(d("3500")).paidOn(LocalDate.now()).build();
-        Facts f = new Facts(booking(BookingStatus.CANCELLED), 0, List.of(), List.of(), List.of(), List.of(refund), BigDecimal.ZERO);
+        Facts f = new Facts(booking(BookingStatus.CANCELLED), 0, List.of(), List.of(), List.of(), List.of(refund), BigDecimal.ZERO, BigDecimal.ZERO);
 
         assertThat(BookingLifecycleService.build(f, Viewer.ACCOUNTANT).getRecords())
                 .extracting(BookingLifecycleResponse.MoneyRecord::getKind).containsExactly("SUPPLIER_REFUND");
@@ -363,11 +381,28 @@ class BookingLifecycleServiceTest {
         PaymentReceipt receipt = PaymentReceipt.builder().id("R1").direction(ReceiptDirection.RECEIPT).receiptNumber("RCPT/1")
                 .amountInr(d("4000")).paymentMode(PaymentMode.UPI).receivedOn(LocalDate.of(2026, 10, 2)).invoiceId("I1").build();
         Facts f = new Facts(booking(BookingStatus.CONFIRMED), 0, List.of(issued("10000", "6000")), List.of(receipt),
-                List.of(bill(SupplierInvoiceStatus.APPROVED, "8000", "8000")), List.of(), BigDecimal.ZERO);
+                List.of(bill(SupplierInvoiceStatus.APPROVED, "8000", "8000")), List.of(), BigDecimal.ZERO, BigDecimal.ZERO);
 
         BookingLifecycleResponse r = BookingLifecycleService.build(f, Viewer.ACCOUNTANT);
 
         assertThat(r.getRecords()).extracting(BookingLifecycleResponse.MoneyRecord::getKind)
                 .containsExactlyInAnyOrder("INVOICE", "RECEIPT", "SUPPLIER_BILL");
+    }
+
+    @Test
+    void anExtraInvoiceCoversOnlyWhatWasAddedSinceTheLastOne() {
+        Booking b = stubBooking(booking(BookingStatus.CONFIRMED));
+        b.setSellingPrice(d("13000"));
+        when(bookingService.invoicedPrice("B1")).thenReturn(d("10000"));
+        when(invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc(eq("B1"), any(), any()))
+                .thenReturn(List.of(issued("10000", "0")));
+        when(invoiceDocumentService.createDraft(any())).thenReturn(InvoiceResponse.builder().id("I9").build());
+
+        service.generateInvoice("B1", null);
+
+        ArgumentCaptor<InvoiceDraftRequest> draft = ArgumentCaptor.forClass(InvoiceDraftRequest.class);
+        verify(invoiceDocumentService).createDraft(draft.capture());
+        assertThat(draft.getValue().getLines()).singleElement()
+                .satisfies(l -> assertThat(l.getUnitPrice()).isEqualByComparingTo("3000"));
     }
 }

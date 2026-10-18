@@ -140,6 +140,18 @@ public class SupplierInvoiceService {
         return created;
     }
 
+    /** One voucher's own bill: its supplier, its cost, its reference. */
+    public SupplierInvoiceResponse draftForVoucher(Booking booking, String vendorId, BigDecimal cost, String reference) {
+        SupplierInvoiceResponse drafted = createAutoDraftSingle(booking, vendorId, cost);
+        if (reference != null && !reference.isBlank()) {
+            supplierInvoiceRepository.findById(drafted.getId()).ifPresent(bill -> {
+                bill.setNotes(bill.getNotes() + " Voucher " + reference.trim() + ".");
+                supplierInvoiceRepository.save(bill);
+            });
+        }
+        return drafted;
+    }
+
     /** The pre-Decision-7 path: one vendor, one line, at the booking's blended net cost. GST is
      *  left at zero - the agent's net cost is an estimate, not what the supplier will actually
      *  bill tax on. */

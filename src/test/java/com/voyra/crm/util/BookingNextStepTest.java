@@ -25,7 +25,7 @@ class BookingNextStepTest {
     @Test
     void walksTheLifecycleInOrder() {
         Booking b = booking(BookingStatus.PENDING);
-        assertThat(BookingNextStep.of(b, 0)).isEqualTo("Confirm with supplier");
+        assertThat(BookingNextStep.of(b, 0)).isEqualTo("Upload voucher");
 
         b.setBookingStatus(BookingStatus.CONFIRMED);
         assertThat(BookingNextStep.of(b, 0)).isEqualTo("Upload voucher");

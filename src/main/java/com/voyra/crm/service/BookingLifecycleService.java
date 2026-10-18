@@ -51,8 +51,6 @@ import java.util.Objects;
 @Slf4j
 public class BookingLifecycleService {
 
-    static final String CONFIRM = "CONFIRM";
-    static final String COMPLETE = "COMPLETE";
     static final String UPLOAD_VOUCHER = "UPLOAD_VOUCHER";
     static final String CANCEL = "CANCEL";
     static final String GENERATE_INVOICE = "GENERATE_INVOICE";
@@ -67,7 +65,8 @@ public class BookingLifecycleService {
 
     /** Everything the steps are computed from, gathered once so the computation itself stays pure. */
     record Facts(Booking booking, int documentCount, List<Invoice> invoices, List<PaymentReceipt> receipts,
-                 List<SupplierInvoice> bills, List<SupplierPayment> supplierPayments, BigDecimal clientWalletInr) {
+                 List<SupplierInvoice> bills, List<SupplierPayment> supplierPayments, BigDecimal clientWalletInr,
+                 BigDecimal invoicedPriceInr) {
     }
 
     private final BookingService bookingService;
@@ -96,10 +95,21 @@ public class BookingLifecycleService {
         Booking booking = lockAccessible(bookingId);
         List<Invoice> live = liveTaxInvoices(booking.getId());
         Invoice draft = live.stream().filter(i -> i.getStatus() == InvoiceLifecycle.DRAFT).findFirst().orElse(null);
-        if (draft == null && !live.isEmpty()) {
-            throw new IllegalStateException("This booking already has an invoice");
+        BigDecimal uninvoiced = nz(booking.getSellingPrice()).subtract(bookingService.invoicedPrice(booking.getId()));
+        if (draft == null && !live.isEmpty() && uninvoiced.signum() <= 0) {
+            throw new IllegalStateException("This booking is fully invoiced");
         }
-        String invoiceId = draft != null ? draft.getId() : invoiceDocumentService.createDraft(draftRequest(booking, request)).getId();
+        InvoiceDraftRequest draftRequest = draftRequest(booking, request);
+        if (draft == null && !live.isEmpty()) {
+            // Vouchers added after the first invoice: one more invoice for just what they added.
+            com.voyra.crm.dto.InvoiceLineItemRequest line = new com.voyra.crm.dto.InvoiceLineItemRequest();
+            line.setDescription("Additional services - " + BookingService.bookingRef(booking.getBookingNumber()));
+            line.setServiceType(booking.getServiceType());
+            line.setQuantity(BigDecimal.ONE);
+            line.setUnitPrice(uninvoiced);
+            draftRequest.setLines(List.of(line));
+        }
+        String invoiceId = draft != null ? draft.getId() : invoiceDocumentService.createDraft(draftRequest).getId();
         invoiceDocumentService.issue(invoiceId);
         log.info("Booking invoice generated: bookingId={}, invoiceId={}", booking.getId(), invoiceId);
         return build(gather(reload(booking)), currentViewer());
@@ -199,7 +209,8 @@ public class BookingLifecycleService {
         List<SupplierPayment> payments = supplierPaymentRepository.findByBookingId(id);
         return new Facts(booking, bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc(id).size(),
                 invoiceRepository.findByBookingId(id), receipts, bills, payments,
-                paymentReceiptService.availableWalletFor(booking.getClientId(), booking.getId()));
+                paymentReceiptService.availableWalletFor(booking.getClientId(), booking.getId()),
+                bookingService.invoicedPrice(id));
     }
 
     private static Viewer currentViewer() {
@@ -237,12 +248,14 @@ public class BookingLifecycleService {
 
         List<Step> steps = new ArrayList<>();
         String with = b.getSupplier() != null && !b.getSupplier().isBlank() ? " with " + b.getSupplier() : "";
-        steps.add(step("CREATED", "DONE", status == BookingStatus.PENDING ? "Pending - waiting for supplier confirmation"
+        steps.add(step("CREATED", "DONE", status == BookingStatus.PENDING ? "Pending - upload the voucher with its cost and markup to confirm"
                 : cancelled ? "Booked" + with : (status == BookingStatus.COMPLETED ? "Completed" : "Confirmed") + with));
         steps.add(step("VOUCHER", f.documentCount() > 0 ? "DONE" : cancelled ? "NA" : "OPEN",
                 f.documentCount() > 0 ? f.documentCount() + " document" + (f.documentCount() == 1 ? "" : "s") + " uploaded" : "No voucher uploaded yet"));
-        steps.add(step("INVOICE", invoiced ? "DONE" : cancelled ? "NA" : "OPEN",
-                invoiced ? "Invoiced " + money(invoicedTotal) : liveInvoices.isEmpty() ? "Not invoiced yet" : "Draft invoice not issued yet"));
+        BigDecimal uninvoiced = cancelled ? BigDecimal.ZERO : nz(b.getSellingPrice()).subtract(nz(f.invoicedPriceInr())).max(BigDecimal.ZERO);
+        steps.add(step("INVOICE", invoiced ? (uninvoiced.signum() > 0 ? "PARTIAL" : "DONE") : cancelled ? "NA" : "OPEN",
+                invoiced ? "Invoiced " + money(invoicedTotal) + (uninvoiced.signum() > 0 ? " · " + money(uninvoiced) + " added since the last invoice" : "")
+                        : liveInvoices.isEmpty() ? "Not invoiced yet" : "Draft invoice not issued yet"));
         steps.add(paymentStep(cancelled, invoiced, received, toCollect, f.clientWalletInr()));
         if (cancelled) {
             steps.add(step("CANCELLED", "DONE", "Cancelled"));
@@ -258,11 +271,9 @@ public class BookingLifecycleService {
         }
 
         List<String> actions = new ArrayList<>();
-        if (ops && status == BookingStatus.PENDING) actions.add(CONFIRM);
-        if (ops && status == BookingStatus.CONFIRMED) actions.add(COMPLETE);
         if (ops && !cancelled) actions.add(UPLOAD_VOUCHER);
         if (ops && live) actions.add(CANCEL);
-        if (accounts && !cancelled && !invoiced && nz(b.getSellingPrice()).signum() > 0) actions.add(GENERATE_INVOICE);
+        if (accounts && !cancelled && (invoiced ? uninvoiced.signum() > 0 : nz(b.getSellingPrice()).signum() > 0)) actions.add(GENERATE_INVOICE);
         if (accounts && !cancelled && toCollect.signum() > 0) actions.add(RECORD_PAYMENT);
         if (accounts && cancelled && clientRefundOpen) actions.add(REFUND_CLIENT);
         if (ops && cancelled && supplierRefundOpen && claim == null) actions.add(SUPPLIER_REFUND);

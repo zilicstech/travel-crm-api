@@ -34,6 +34,14 @@ public final class BookingLogRequestMapper {
         req.setVendorId(blankToNull(log.getVendorId()));
         req.setSupplier(vendorName);
         req.setNetCost(log.getNetCost());
+        if (log.getMarkupMode() != null) {
+            log.setSellingPrice(MarkupMath.sellingPrice(log.getNetCost(), log.getMarkupMode(), log.getMarkupValue()));
+            req.setMarkupMode(log.getMarkupMode());
+            req.setMarkupValue(log.getMarkupValue());
+        }
+        if (log.getSellingPrice() == null) {
+            throw new IllegalArgumentException("Add the markup - the selling price is worked out from the cost and markup");
+        }
         req.setSellingPrice(log.getSellingPrice());
         req.setNotes(blankToNull(log.getNotes()));
 

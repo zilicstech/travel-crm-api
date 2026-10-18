@@ -27,8 +27,7 @@ public final class BookingNextStep {
             boolean anyRefund = nz(b.getCustomerRefundDue()).signum() > 0 || nz(b.getSupplierRefundExpected()).signum() > 0;
             return anyRefund && b.getRefundCheckedAt() == null ? "Cross-check refunds" : null;
         }
-        if (b.getBookingStatus() == BookingStatus.PENDING) return "Confirm with supplier";
-        if (documentCount == 0) return "Upload voucher";
+        if (b.getBookingStatus() == BookingStatus.PENDING || documentCount == 0) return "Upload voucher";
         BigDecimal invoiced = nz(b.getInvoicedTotalInr());
         if (invoiced.signum() == 0 && nz(b.getSellingPrice()).signum() > 0) return "Generate invoice";
         BigDecimal toCollect = invoiced.subtract(nz(b.getReceivedTotalInr()));

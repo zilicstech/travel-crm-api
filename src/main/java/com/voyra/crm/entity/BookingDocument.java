@@ -59,6 +59,29 @@ public class BookingDocument {
     @Column(name = "notes", columnDefinition = "TEXT")
     private String notes;
 
+    /** What this voucher adds to the booking: its cost, and the selling price worked out from the markup. */
+    @Column(name = "net_cost", nullable = false, precision = 14, scale = 2)
+    @Builder.Default
+    private java.math.BigDecimal netCost = java.math.BigDecimal.ZERO;
+
+    @Column(name = "selling_price", nullable = false, precision = 14, scale = 2)
+    @Builder.Default
+    private java.math.BigDecimal sellingPrice = java.math.BigDecimal.ZERO;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "markup_mode", length = 10)
+    private com.voyra.crm.enums.MarkupMode markupMode;
+
+    @Column(name = "markup_value", precision = 14, scale = 2)
+    private java.math.BigDecimal markupValue;
+
+    @Column(name = "vendor_id", length = 36)
+    private String vendorId;
+
+    /** The supplier bill this voucher drafted, withdrawn with the voucher while still unposted. */
+    @Column(name = "supplier_invoice_id", length = 36)
+    private String supplierInvoiceId;
+
     @Column(name = "sort_order", nullable = false)
     @Builder.Default
     private Integer sortOrder = 0;

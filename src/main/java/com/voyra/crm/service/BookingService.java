@@ -112,6 +112,7 @@ public class BookingService {
     private final LeadRepository leadRepository;
     private final CreditNoteRepository creditNoteRepository;
     private final InvoiceRepository invoiceRepository;
+    private final com.voyra.crm.repository.InvoiceLineItemRepository invoiceLineItemRepository;
     private final PaymentReceiptRepository paymentReceiptRepository;
     private final CustomerLedgerEntryRepository customerLedgerEntryRepository;
     private final FeedbackRepository feedbackRepository;
@@ -785,16 +786,141 @@ public class BookingService {
         return vendorRepository.findById(vendorId).map(Vendor::getName).orElse(null);
     }
 
-    /** A booking is confirmed once it is really booked: the supplier's reference and the price are on it. */
-    static void assertReadyToConfirm(Booking b) {
-        String reference = switch (b.getType()) {
+    /**
+     * A voucher is how a booking gets booked and priced: its cost, and the selling price worked out
+     * from its markup, add to the booking's totals; its reference becomes the booking's when it has
+     * none; a voucher with a supplier and a cost drafts its own supplier bill; and the voucher that
+     * makes a pending booking ready (reference + price) confirms it. Called inside the document's
+     * own transaction, after the row lock.
+     */
+    void applyVoucher(Booking booking, BookingDocument voucher, String requestedVendorId) {
+        BigDecimal cost = voucher.getNetCost() != null ? voucher.getNetCost() : BigDecimal.ZERO;
+        voucher.setSellingPrice(voucher.getMarkupMode() == null ? BigDecimal.ZERO
+                : com.voyra.crm.util.MarkupMath.sellingPrice(cost, voucher.getMarkupMode(), voucher.getMarkupValue()));
+        String vendorId = requestedVendorId != null && !requestedVendorId.isBlank() ? requestedVendorId : booking.getVendorId();
+        voucher.setVendorId(vendorId);
+
+        Map<String, String> before = AuditSnapshot.of(booking, AUDITED);
+        boolean wasConfirmed = booking.getBookingStatus() == BookingStatus.CONFIRMED;
+        booking.setNetCost(booking.getNetCost().add(cost));
+        booking.setSellingPrice(booking.getSellingPrice().add(voucher.getSellingPrice()));
+        booking.setProfit(computeProfit(booking.getSellingPrice(), booking.getNetCost()));
+        if (voucher.getMarkupMode() != null) {
+            booking.setMarkupMode(voucher.getMarkupMode());
+            booking.setMarkupValue(voucher.getMarkupValue());
+        }
+        if (blank(referenceOf(booking)) && !blank(voucher.getReferenceNumber())) {
+            setReference(booking, voucher.getReferenceNumber().trim());
+        }
+        if (booking.getBookingStatus() == BookingStatus.PENDING && readyToConfirm(booking)) {
+            booking.setBookingStatus(BookingStatus.CONFIRMED);
+        }
+        if (vendorId != null && cost.signum() > 0) {
+            voucher.setSupplierInvoiceId(supplierInvoiceService.draftForVoucher(booking, vendorId, cost, voucher.getReferenceNumber()).getId());
+        }
+        List<AuditChange> changes = AuditSnapshot.diff(before, AuditSnapshot.of(booking, AUDITED));
+        touch(booking);
+        bookingRepository.save(booking);
+        auditService.recordUpdate(AuditEntityType.BOOKING, booking.getId(), labelFor(booking), changes);
+        if (wasConfirmed) {
+            raiseChangeAlerts(booking, changes);
+        }
+    }
+
+    /**
+     * Takes a voucher's amounts back off the booking and withdraws its still-unposted supplier bill.
+     * Refused once that bill is approved, or when the booking would end up priced below what is
+     * already invoiced.
+     */
+    void reverseVoucher(Booking booking, BookingDocument voucher) {
+        BigDecimal cost = voucher.getNetCost() != null ? voucher.getNetCost() : BigDecimal.ZERO;
+        BigDecimal price = voucher.getSellingPrice() != null ? voucher.getSellingPrice() : BigDecimal.ZERO;
+        if (cost.signum() == 0 && price.signum() == 0) {
+            return;
+        }
+        if (voucher.getSupplierInvoiceId() != null) {
+            com.voyra.crm.entity.SupplierInvoice bill = supplierInvoiceRepository.findById(voucher.getSupplierInvoiceId()).orElse(null);
+            if (bill != null && bill.getStatus() != com.voyra.crm.enums.SupplierInvoiceStatus.CANCELLED) {
+                if (bill.getStatus() != com.voyra.crm.enums.SupplierInvoiceStatus.DRAFT
+                        && bill.getStatus() != com.voyra.crm.enums.SupplierInvoiceStatus.PENDING_APPROVAL) {
+                    throw new IllegalStateException("This voucher's supplier bill is already approved - it can't be removed");
+                }
+                supplierInvoiceService.cancelForBooking(bill.getId(), "Voucher removed");
+            }
+        }
+        BigDecimal newPrice = booking.getSellingPrice().subtract(price);
+        if (newPrice.compareTo(invoicedPrice(booking.getId())) < 0) {
+            throw new IllegalStateException("This voucher's price is already invoiced - it can't be removed");
+        }
+        Map<String, String> before = AuditSnapshot.of(booking, AUDITED);
+        booking.setNetCost(booking.getNetCost().subtract(cost).max(BigDecimal.ZERO));
+        booking.setSellingPrice(newPrice.max(BigDecimal.ZERO));
+        booking.setProfit(computeProfit(booking.getSellingPrice(), booking.getNetCost()));
+        List<AuditChange> changes = AuditSnapshot.diff(before, AuditSnapshot.of(booking, AUDITED));
+        touch(booking);
+        bookingRepository.save(booking);
+        auditService.recordUpdate(AuditEntityType.BOOKING, booking.getId(), labelFor(booking), changes);
+        if (booking.getBookingStatus() == BookingStatus.CONFIRMED) {
+            raiseChangeAlerts(booking, changes);
+        }
+    }
+
+    /** Row lock first, then the usual access check - two vouchers saved at once must not lose either's amounts. */
+    Booking lockAccessibleBooking(String id) {
+        bookingRepository.findByIdForUpdate(id);
+        return findAccessibleBooking(id);
+    }
+
+    /** Removes a voucher and its amounts in one transaction. @return its stored file key, deleted by the caller after commit */
+    @Transactional
+    public String removeVoucher(String bookingId, String documentId) {
+        Booking booking = lockAccessibleBooking(bookingId);
+        BookingDocument document = bookingDocumentRepository.findByIdAndBookingId(documentId, bookingId)
+                .orElseThrow(() -> new IllegalArgumentException("Document not found: " + documentId));
+        reverseVoucher(booking, document);
+        bookingDocumentRepository.delete(document);
+        return document.getFileKey();
+    }
+
+    /** The selling price already on the booking's live tax invoices, before GST. */
+    public BigDecimal invoicedPrice(String bookingId) {
+        return invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc(
+                        bookingId, com.voyra.crm.enums.InvoiceDocumentType.TAX_INVOICE, com.voyra.crm.enums.InvoiceLifecycle.CANCELLED).stream()
+                .filter(i -> i.getStatus() != com.voyra.crm.enums.InvoiceLifecycle.DRAFT)
+                .flatMap(i -> invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc(i.getId()).stream())
+                .map(l -> l.getLineSubtotal() != null ? l.getLineSubtotal() : BigDecimal.ZERO)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    private static boolean blank(String s) {
+        return s == null || s.isBlank();
+    }
+
+    private static String referenceOf(Booking b) {
+        return switch (b.getType()) {
             case HOTEL -> b.getHotelConfirmationNo();
             case VISA -> b.getVisaApplicationNo();
             case TRANSFER -> b.getTransferVoucherNo();
             default -> b.getPnr();
         };
-        boolean priced = b.getSellingPrice() != null && b.getSellingPrice().compareTo(BigDecimal.ZERO) > 0;
-        if (reference == null || reference.isBlank() || !priced) {
+    }
+
+    private static void setReference(Booking b, String reference) {
+        switch (b.getType()) {
+            case HOTEL -> b.setHotelConfirmationNo(reference);
+            case VISA -> b.setVisaApplicationNo(reference);
+            case TRANSFER -> b.setTransferVoucherNo(reference);
+            default -> b.setPnr(reference.length() > 20 ? reference.substring(0, 20) : reference);
+        }
+    }
+
+    private static boolean readyToConfirm(Booking b) {
+        return !blank(referenceOf(b)) && b.getSellingPrice() != null && b.getSellingPrice().signum() > 0;
+    }
+
+    /** A booking is confirmed once it is really booked: the supplier's reference and the price are on it. */
+    static void assertReadyToConfirm(Booking b) {
+        if (!readyToConfirm(b)) {
             throw new IllegalArgumentException("Add the booking reference and selling price before confirming");
         }
     }
@@ -876,7 +1002,7 @@ public class BookingService {
 
     private BookingResponse toResponse(Booking b) {
         List<BookingDocumentResponse> documents = bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc(b.getId())
-                .stream().map(this::toDocumentResponse).toList();
+                .stream().map(BookingService::toDocumentResponse).toList();
         BigDecimal marginPercent = MarginCalculator.marginPercent(b.getNetCost(), b.getSellingPrice());
         boolean lowMargin = b.getSellingPrice() != null && b.getSellingPrice().compareTo(BigDecimal.ZERO) > 0
                 && marginPercent.compareTo(lowMarginThreshold()) < 0;
@@ -1111,12 +1237,14 @@ public class BookingService {
                 .toList();
     }
 
-    private BookingDocumentResponse toDocumentResponse(BookingDocument d) {
+    static BookingDocumentResponse toDocumentResponse(BookingDocument d) {
         return BookingDocumentResponse.builder()
                 .id(d.getId()).bookingId(d.getBookingId()).docType(d.getDocType())
                 .referenceNumber(d.getReferenceNumber()).issuedDate(d.getIssuedDate())
                 .hasFile(d.getFileKey() != null).fileName(d.getFileName())
                 .notes(d.getNotes()).createdAt(d.getCreatedAt())
+                .netCost(d.getNetCost()).sellingPrice(d.getSellingPrice())
+                .markupMode(d.getMarkupMode()).markupValue(d.getMarkupValue()).vendorId(d.getVendorId())
                 .build();
     }
 

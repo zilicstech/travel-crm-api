@@ -57,10 +57,16 @@ public class BookingLogRequest {
     @Schema(example = "42000.00")
     private BigDecimal netCost;
 
-    @NotNull(message = "Selling price is required")
     @DecimalMin(value = "0.0", message = "Selling price cannot be negative")
-    @Schema(example = "52000.00")
+    @Schema(description = "Only for API clients that price by hand - with markupMode set, the price is worked out from netCost and the markup instead", example = "52000.00")
     private BigDecimal sellingPrice;
+
+    @Schema(description = "PERCENT or FLAT: the selling price is netCost plus this markup", example = "PERCENT")
+    private com.voyra.crm.enums.MarkupMode markupMode;
+
+    @DecimalMin(value = "0.0", message = "Markup cannot be negative")
+    @Schema(example = "10.00")
+    private BigDecimal markupValue;
 
     @Schema(example = "Window seats requested")
     private String notes;

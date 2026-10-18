@@ -24,4 +24,18 @@ public class BookingDocumentCreateRequest {
 
     @Schema(example = "Reissued after the airline's schedule change")
     private String notes;
+
+    @jakarta.validation.constraints.DecimalMin(value = "0.0", message = "Net cost cannot be negative")
+    @Schema(description = "What the supplier charges for this voucher - added to the booking's net cost", example = "4000.00")
+    private java.math.BigDecimal netCost;
+
+    @Schema(description = "PERCENT or FLAT - the selling price is worked out from the cost and this markup", example = "PERCENT")
+    private com.voyra.crm.enums.MarkupMode markupMode;
+
+    @jakarta.validation.constraints.DecimalMin(value = "0.0", message = "Markup cannot be negative")
+    @Schema(example = "10.00")
+    private java.math.BigDecimal markupValue;
+
+    @Schema(description = "The supplier (Vendor) of this voucher; defaults to the booking's. With a cost, drafts its supplier bill.")
+    private String vendorId;
 }
