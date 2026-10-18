@@ -72,11 +72,11 @@ public class PayablesDashboardService {
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
         BigDecimal advancesHeld = supplierPaymentRepository.findAll().stream()
-                .filter(p -> Boolean.TRUE.equals(p.getIsAdvance()) && p.getReversedAt() == null)
+                .filter(p -> Boolean.TRUE.equals(p.getIsAdvance()) && p.getReversedAt() == null && p.getReversesPaymentId() == null)
                 .map(SupplierPayment::getAmountInr)
                 .reduce(BigDecimal.ZERO, BigDecimal::add)
                 .subtract(supplierPaymentRepository.findAll().stream()
-                        .filter(p -> Boolean.TRUE.equals(p.getAppliedFromAdvance()) && p.getReversedAt() == null)
+                        .filter(p -> Boolean.TRUE.equals(p.getAppliedFromAdvance()) && p.getReversedAt() == null && p.getReversesPaymentId() == null)
                         .map(SupplierPayment::getAmountInr)
                         .reduce(BigDecimal.ZERO, BigDecimal::add));
 

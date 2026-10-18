@@ -203,4 +203,37 @@ class ControlAccountReconciliationServiceTest {
                 .isEqualByComparingTo("300.00");
         assertThat(apRow.getVarianceInr()).isEqualByComparingTo(BigDecimal.ZERO);
     }
+
+    /** BUG-CRX-20: a reversed advance has two rows - the original (reversedAt set) and its negative reversal; neither is in the pool. */
+    @Test
+    void aReversedAdvanceAndItsReversalRowAreBothLeftOutOfTheAdvancePools() {
+        seedConsistentFixture();
+        java.time.LocalDateTime now = java.time.LocalDateTime.now();
+        // 1300: PV for 1 paid then reversed - GL nets to the same 6000.
+        when(journalLineRepository.findByAccountCode("1300")).thenReturn(List.of(
+                line("1300", new BigDecimal("10000.00"), BigDecimal.ZERO),
+                line("1300", BigDecimal.ZERO, new BigDecimal("4000.00")),
+                line("1300", new BigDecimal("1.00"), BigDecimal.ZERO),
+                line("1300", BigDecimal.ZERO, new BigDecimal("1.00"))));
+        when(supplierPaymentRepository.findAll()).thenReturn(List.of(
+                SupplierPayment.builder().id("P1").isAdvance(true).amountInr(new BigDecimal("10000.00")).build(),
+                SupplierPayment.builder().id("P2").appliedFromAdvance(true).amountInr(new BigDecimal("4000.00")).build(),
+                SupplierPayment.builder().id("P3").isAdvance(true).reversedAt(now).amountInr(new BigDecimal("1.00")).build(),
+                SupplierPayment.builder().id("P4").isAdvance(true).reversesPaymentId("P3").amountInr(new BigDecimal("-1.00")).build()));
+        // 2110: a 500 deposit taken then reversed - GL nets to the same 30000.
+        when(journalLineRepository.findByAccountCode("2110")).thenReturn(List.of(
+                line("2110", BigDecimal.ZERO, new BigDecimal("50000.00")),
+                line("2110", new BigDecimal("20000.00"), BigDecimal.ZERO),
+                line("2110", BigDecimal.ZERO, new BigDecimal("500.00")),
+                line("2110", new BigDecimal("500.00"), BigDecimal.ZERO)));
+        when(paymentReceiptRepository.findAll()).thenReturn(List.of(
+                PaymentReceipt.builder().id("R1").isAdvance(true).amountInr(new BigDecimal("50000.00")).build(),
+                PaymentReceipt.builder().id("R2").appliedFromAdvance(true).amountInr(new BigDecimal("20000.00")).build(),
+                PaymentReceipt.builder().id("R3").isAdvance(true).reversedAt(now).amountInr(new BigDecimal("500.00")).build(),
+                PaymentReceipt.builder().id("R4").isAdvance(true).reversesReceiptId("R3").amountInr(new BigDecimal("-500.00")).build()));
+
+        List<ControlAccountReconciliationRowResponse> rows = reconciliationService.reconcile();
+
+        rows.forEach(r -> assertThat(r.getVarianceInr()).as("variance on " + r.getAccountCode()).isEqualByComparingTo(BigDecimal.ZERO));
+    }
 }

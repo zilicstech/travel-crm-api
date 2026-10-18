@@ -382,10 +382,10 @@ public class PaymentReceiptService {
     private java.util.Map<String, BigDecimal> heldPerBooking(String clientId) {
         java.util.Map<String, BigDecimal> held = new java.util.HashMap<>();
         paymentReceiptRepository.findByClientIdAndInvoiceIdIsNullAndIsAdvanceTrueOrderByReceivedOnAsc(clientId).stream()
-                .filter(r -> r.getBookingId() != null && r.getReversedAt() == null)
+                .filter(r -> r.getBookingId() != null && r.getReversedAt() == null && r.getReversesReceiptId() == null)
                 .forEach(r -> held.merge(r.getBookingId(), signedAdvance(r), BigDecimal::add));
         paymentReceiptRepository.findByClientIdAndAppliedFromAdvanceTrueOrderByReceivedOnAsc(clientId).stream()
-                .filter(r -> r.getBookingId() != null && r.getReversedAt() == null && held.containsKey(r.getBookingId()))
+                .filter(r -> r.getBookingId() != null && r.getReversedAt() == null && r.getReversesReceiptId() == null && held.containsKey(r.getBookingId()))
                 .forEach(r -> held.merge(r.getBookingId(), r.getAmountInr().negate(), BigDecimal::add));
         held.replaceAll((k, v) -> v.max(BigDecimal.ZERO));
         return held;
@@ -406,11 +406,11 @@ public class PaymentReceiptService {
     private BigDecimal remainingWallet(String clientId) {
         BigDecimal totalDeposits = paymentReceiptRepository
                 .findByClientIdAndInvoiceIdIsNullAndIsAdvanceTrueOrderByReceivedOnAsc(clientId)
-                .stream().filter(r -> r.getReversedAt() == null).map(PaymentReceiptService::signedAdvance)
+                .stream().filter(r -> r.getReversedAt() == null && r.getReversesReceiptId() == null).map(PaymentReceiptService::signedAdvance)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal totalApplied = paymentReceiptRepository
                 .findByClientIdAndAppliedFromAdvanceTrueOrderByReceivedOnAsc(clientId)
-                .stream().filter(r -> r.getReversedAt() == null).map(PaymentReceipt::getAmountInr)
+                .stream().filter(r -> r.getReversedAt() == null && r.getReversesReceiptId() == null).map(PaymentReceipt::getAmountInr)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         return totalDeposits.subtract(totalApplied);
     }

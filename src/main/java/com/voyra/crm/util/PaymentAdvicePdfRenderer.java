@@ -122,7 +122,7 @@ public final class PaymentAdvicePdfRenderer {
         }
 
         BigDecimal prepaymentsDeducted = (invoicePayments == null ? List.<SupplierPayment>of() : invoicePayments).stream()
-                .filter(p -> Boolean.TRUE.equals(p.getAppliedFromAdvance()) && p.getReversedAt() == null
+                .filter(p -> Boolean.TRUE.equals(p.getAppliedFromAdvance()) && p.getReversedAt() == null && p.getReversesPaymentId() == null
                         && !p.getId().equals(payment.getId()))
                 .map(SupplierPayment::getAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);

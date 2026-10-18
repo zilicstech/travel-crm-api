@@ -111,12 +111,12 @@ public class ControlAccountReconciliationService {
     /** The customer wallet, globally: cash held with no invoice against it, minus what has already been drawn down - same shape as the supplier-side advance pool. */
     private BigDecimal clientAdvancesHeldSubsidiaryTotal() {
         BigDecimal deposited = paymentReceiptRepository.findAll().stream()
-                .filter((PaymentReceipt r) -> Boolean.TRUE.equals(r.getIsAdvance()) && r.getInvoiceId() == null && r.getReversedAt() == null)
+                .filter((PaymentReceipt r) -> Boolean.TRUE.equals(r.getIsAdvance()) && r.getInvoiceId() == null && isLive(r))
                 // A refund paid out of a held advance (no invoice) draws the pool down, it is not a deposit.
                 .map((PaymentReceipt r) -> r.getDirection() == ReceiptDirection.REFUND ? r.getAmountInr().negate() : r.getAmountInr())
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal applied = paymentReceiptRepository.findAll().stream()
-                .filter((PaymentReceipt r) -> Boolean.TRUE.equals(r.getAppliedFromAdvance()) && r.getReversedAt() == null)
+                .filter((PaymentReceipt r) -> Boolean.TRUE.equals(r.getAppliedFromAdvance()) && isLive(r))
                 .map(PaymentReceipt::getAmountInr)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         return deposited.subtract(applied);
@@ -125,13 +125,22 @@ public class ControlAccountReconciliationService {
     /** Mirrors SupplierPaymentService#applyAdvance's own "remaining pool" computation, done globally instead of per vendor. */
     private BigDecimal supplierAdvancesSubsidiaryTotal() {
         BigDecimal paid = supplierPaymentRepository.findAll().stream()
-                .filter((SupplierPayment p) -> Boolean.TRUE.equals(p.getIsAdvance()) && p.getReversedAt() == null)
+                .filter((SupplierPayment p) -> Boolean.TRUE.equals(p.getIsAdvance()) && isLive(p))
                 .map(SupplierPayment::getAmountInr)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal applied = supplierPaymentRepository.findAll().stream()
-                .filter((SupplierPayment p) -> Boolean.TRUE.equals(p.getAppliedFromAdvance()) && p.getReversedAt() == null)
+                .filter((SupplierPayment p) -> Boolean.TRUE.equals(p.getAppliedFromAdvance()) && isLive(p))
                 .map(SupplierPayment::getAmountInr)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         return paid.subtract(applied);
+    }
+
+    /** A reversed row and the negative row reversing it cancel out, so a pool counts neither - counting only the reversal subtracts it twice. */
+    private static boolean isLive(PaymentReceipt r) {
+        return r.getReversedAt() == null && r.getReversesReceiptId() == null;
+    }
+
+    private static boolean isLive(SupplierPayment p) {
+        return p.getReversedAt() == null && p.getReversesPaymentId() == null;
     }
 }

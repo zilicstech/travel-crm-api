@@ -341,7 +341,7 @@ public class SupplierPaymentService {
         Vendor vendor = findVendor(vendorId);
         List<SupplierPayment> activeAdvances = supplierPaymentRepository
                 .findByVendorIdAndIsAdvanceTrueOrderByPaidOnAsc(vendorId).stream()
-                .filter(p -> p.getReversedAt() == null)
+                .filter(p -> p.getReversedAt() == null && p.getReversesPaymentId() == null)
                 .toList();
         return SupplierUnallocatedAdvancesResponse.builder()
                 .vendorId(vendor.getId())
@@ -394,10 +394,10 @@ public class SupplierPaymentService {
 
     private BigDecimal remainingAdvancePool(String vendorId) {
         BigDecimal totalAdvance = supplierPaymentRepository.findByVendorIdAndIsAdvanceTrueOrderByPaidOnAsc(vendorId)
-                .stream().filter(p -> p.getReversedAt() == null).map(SupplierPayment::getAmount)
+                .stream().filter(p -> p.getReversedAt() == null && p.getReversesPaymentId() == null).map(SupplierPayment::getAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal totalApplied = supplierPaymentRepository.findByVendorIdAndAppliedFromAdvanceTrueOrderByPaidOnAsc(vendorId)
-                .stream().filter(p -> p.getReversedAt() == null).map(SupplierPayment::getAmount)
+                .stream().filter(p -> p.getReversedAt() == null && p.getReversesPaymentId() == null).map(SupplierPayment::getAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         return totalAdvance.subtract(totalApplied);
     }
