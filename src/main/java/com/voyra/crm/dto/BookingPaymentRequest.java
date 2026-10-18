@@ -26,6 +26,8 @@ public class BookingPaymentRequest {
     @Schema(example = "2026-10-17")
     private LocalDate receivedOn;
 
+    @jakarta.validation.constraints.Size(max = 100, message = "Reference must be 100 characters or fewer")
+
     @Schema(description = "UTR, cheque no. or similar", example = "UTR123456")
     private String reference;
 }

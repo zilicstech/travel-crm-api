@@ -22,6 +22,8 @@ public class SupplierCreditNoteRefundRequest {
     @Schema(example = "BANK_TRANSFER")
     private PaymentMode paymentMode;
 
+    @jakarta.validation.constraints.Size(max = 100, message = "Reference must be 100 characters or fewer")
+
     @Schema(example = "UTR2026092098765")
     private String instrumentRef;
 
