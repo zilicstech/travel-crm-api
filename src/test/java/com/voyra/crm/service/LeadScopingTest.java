@@ -194,7 +194,9 @@ class LeadScopingTest {
         org.mockito.ArgumentCaptor<Lead> saved = org.mockito.ArgumentCaptor.forClass(Lead.class);
         verify(leadRepository).save(saved.capture());
         assertThat(saved.getValue().getSource()).isEqualTo("Phone Call");
+    }
 
+    @Test
     void theFullListComesBackNewestFirst() {
         authenticateAs("O1", UserType.AGENCY_OWNER);
         Lead old = Lead.builder().id("OLD").createdBy("A1").status(LeadStatus.NEW)
