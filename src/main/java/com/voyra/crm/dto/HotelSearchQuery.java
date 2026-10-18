@@ -34,4 +34,10 @@ public class HotelSearchQuery {
 
     @Schema(example = "0")
     private int children;
+
+    @Schema(description = "ISO2 country of the city, to tell apart two cities with the same name", example = "TH")
+    private String countryCode;
+
+    @Schema(description = "Age of each child at check-in; a missing age is sent to the supplier as 8", example = "[6, 9]")
+    private java.util.List<Integer> childAges;
 }
