@@ -161,6 +161,9 @@ public class BookingCreateRequest {
     @Schema(description = "Price charged to the customer - may be left out on a pending booking; defaults to 0", example = "52000.00")
     private BigDecimal sellingPrice;
 
+    @Schema(description = "Owner only: save even though it takes the client over their credit limit", example = "false")
+    private Boolean overrideCreditLimit;
+
     @Schema(description = "Carried over from the winning proposal line, when this booking was logged from one", example = "PERCENT")
     private MarkupMode markupMode;
 

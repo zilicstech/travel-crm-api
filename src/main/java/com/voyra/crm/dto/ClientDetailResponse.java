@@ -61,4 +61,13 @@ public class ClientDetailResponse {
 
     @Schema(description = "Recipient is outside India")
     private Boolean isOverseas;
+
+    @Schema(description = "Credit limit in INR; null = no limit", example = "1000000.00")
+    private java.math.BigDecimal creditLimit;
+
+    @Schema(description = "How much of the credit limit is in use (see ClientCreditResponse)", example = "610000.00")
+    private java.math.BigDecimal creditUsed;
+
+    @Schema(description = "Credit limit minus used; null when there is no limit", example = "390000.00")
+    private java.math.BigDecimal creditAvailable;
 }

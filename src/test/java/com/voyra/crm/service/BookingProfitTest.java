@@ -92,6 +92,11 @@ class BookingProfitTest {
     @Mock
     private com.voyra.crm.repository.VendorRepository vendorRepository;
 
+    @org.mockito.Mock
+
+    private ClientCreditService clientCreditService;
+
+
     @InjectMocks
     private BookingService bookingService;
 

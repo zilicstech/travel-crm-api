@@ -17,4 +17,9 @@ public interface CustomerLedgerEntryRepository extends JpaRepository<CustomerLed
     List<CustomerLedgerEntry> findByClientIdAndEntryDateBetweenOrderByEntryDateAscCreatedAtAsc(String clientId, LocalDate from, LocalDate to);
 
     boolean existsByBookingId(String bookingId);
+
+    /** [clientId, Σ debit − credit in INR] - each client's running balance, for the credit limit. */
+    @org.springframework.data.jpa.repository.Query("SELECT e.clientId, SUM(e.debitAmountInr - e.creditAmountInr) FROM CustomerLedgerEntry e "
+            + "WHERE e.clientId IN :clientIds GROUP BY e.clientId")
+    List<Object[]> balanceInrByClient(@org.springframework.data.repository.query.Param("clientIds") java.util.Collection<String> clientIds);
 }

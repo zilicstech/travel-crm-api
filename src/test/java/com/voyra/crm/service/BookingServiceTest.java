@@ -122,6 +122,11 @@ class BookingServiceTest {
     @Mock
     private org.springframework.transaction.support.TransactionTemplate transactionTemplate;
 
+    @org.mockito.Mock
+
+    private ClientCreditService clientCreditService;
+
+
     @InjectMocks
     private BookingService bookingService;
 
@@ -505,7 +510,7 @@ class BookingServiceTest {
                 .thenReturn(com.voyra.crm.dto.SupplierInvoiceResponse.builder().id("S1").build());
         com.voyra.crm.entity.BookingDocument v = voucher("4000", "10", "PNR123");
 
-        bookingService.applyVoucher(booking, v, "V1");
+        bookingService.applyVoucher(booking, v, "V1", false);
 
         assertThat(v.getSellingPrice()).isEqualByComparingTo("4400");
         assertThat(booking.getNetCost()).isEqualByComparingTo("4000");
@@ -521,10 +526,34 @@ class BookingServiceTest {
         Booking booking = pendingWithoutFare();
         com.voyra.crm.entity.BookingDocument doc = com.voyra.crm.entity.BookingDocument.builder().id("D1").referenceNumber("PNR123").build();
 
-        bookingService.applyVoucher(booking, doc, null);
+        bookingService.applyVoucher(booking, doc, null, false);
 
         assertThat(booking.getBookingStatus()).isEqualTo(BookingStatus.PENDING);
         org.mockito.Mockito.verifyNoInteractions(supplierInvoiceService);
+    }
+
+    @Test
+    void aVoucherOverTheClientsCreditLimitChangesNothing() {
+        Booking booking = pendingFlight("PNR1", "5000.00");
+        booking.setClientId("C1");
+        org.mockito.Mockito.doThrow(new IllegalStateException("over their credit limit"))
+                .when(clientCreditService).assertWithinLimit(org.mockito.ArgumentMatchers.eq("C1"), org.mockito.ArgumentMatchers.argThat(v -> v.compareTo(new BigDecimal("1200")) == 0), org.mockito.ArgumentMatchers.eq(false));
+
+        assertThatThrownBy(() -> bookingService.applyVoucher(booking, voucher("1000", "20", "HTL-9"), null, false))
+                .hasMessageContaining("credit limit");
+        assertThat(booking.getSellingPrice()).isEqualByComparingTo("5000");
+        org.mockito.Mockito.verify(bookingRepository, org.mockito.Mockito.never()).save(booking);
+    }
+
+    @Test
+    void aCancelledBookingCannotBeReopened() {
+        Booking booking = Booking.builder().id("B1").agentId("A1").bookingStatus(BookingStatus.CANCELLED).build();
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
+        BookingStatusUpdateRequest request = new BookingStatusUpdateRequest();
+        request.setBookingStatus(BookingStatus.CONFIRMED);
+
+        assertThatThrownBy(() -> bookingService.updateStatus("B1", request))
+                .hasMessage("A cancelled booking can't be reopened - create a new booking instead");
     }
 
     @Test
@@ -532,7 +561,7 @@ class BookingServiceTest {
         Booking booking = pendingFlight("PNR1", "5000.00");
         booking.setBookingStatus(BookingStatus.CONFIRMED);
 
-        bookingService.applyVoucher(booking, voucher("1000", "20", "HTL-9"), null);
+        bookingService.applyVoucher(booking, voucher("1000", "20", "HTL-9"), null, false);
 
         assertThat(booking.getNetCost()).isEqualByComparingTo("5000");
         assertThat(booking.getSellingPrice()).isEqualByComparingTo("6200");

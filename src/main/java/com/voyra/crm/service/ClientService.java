@@ -2,6 +2,7 @@ package com.voyra.crm.service;
 
 import com.voyra.crm.dto.AuditChange;
 import com.voyra.crm.dto.ClientCreateRequest;
+import com.voyra.crm.dto.ClientCreditResponse;
 import com.voyra.crm.dto.ClientDetailResponse;
 import com.voyra.crm.dto.ClientDuplicateCandidateResponse;
 import com.voyra.crm.dto.ClientDuplicateCheckRequest;
@@ -43,7 +44,7 @@ import java.util.Map;
 @Slf4j
 public class ClientService {
 
-    private static final String[] AUDITED = { "identifier", "name", "type", "isActive", "gstin", "stateCode", "billingAddress", "isOverseas" };
+    private static final String[] AUDITED = { "identifier", "name", "type", "isActive", "gstin", "stateCode", "billingAddress", "isOverseas", "creditLimit" };
 
     private final ClientRepository clientRepository;
     private final MemberRepository memberRepository;
@@ -53,6 +54,7 @@ public class ClientService {
     private final ClientInvoiceRepository clientInvoiceRepository;
     private final MemberMapper memberMapper;
     private final AuditService auditService;
+    private final ClientCreditService clientCreditService;
 
     /**
      * Creates the client and its primary member together.
@@ -66,6 +68,9 @@ public class ClientService {
     public ClientDetailResponse createClient(ClientCreateRequest request) {
         if (clientRepository.existsByIdentifierAndIsActiveTrue(request.getIdentifier())) {
             throw new IllegalStateException("A client already exists with identifier " + request.getIdentifier());
+        }
+        if (request.getCreditLimit() == null && !isOwner()) {
+            throw new IllegalArgumentException("Enter the client's credit limit (0 if they pay upfront)");
         }
 
         Client client = Client.builder()
@@ -81,6 +86,7 @@ public class ClientService {
                 .stateCode(request.getStateCode())
                 .billingAddress(request.getBillingAddress())
                 .isOverseas(Boolean.TRUE.equals(request.getIsOverseas()))
+                .creditLimit(request.getCreditLimit())
                 .build();
         clientRepository.save(client);
 
@@ -111,10 +117,11 @@ public class ClientService {
 
     @Transactional(readOnly = true)
     public List<ClientResponse> listClients(ClientType typeFilter) {
-        return clientRepository.findAll().stream()
+        List<Client> clients = clientRepository.findAll().stream()
                 .filter(c -> typeFilter == null || c.getType() == typeFilter)
-                .map(this::toResponse)
                 .toList();
+        Map<String, ClientCreditResponse> credit = clientCreditService.creditFor(clients);
+        return clients.stream().map(c -> toResponse(c, credit.get(c.getId()))).toList();
     }
 
     /** Every combination resolves to an indexed derived query - never a full table read filtered in Java. */
@@ -123,7 +130,8 @@ public class ClientService {
         Page<Client> page = typeFilter == null
                 ? clientRepository.findAll(pageable)
                 : clientRepository.findByType(typeFilter, pageable);
-        return PagedResponse.from(page, this::toResponse);
+        Map<String, ClientCreditResponse> credit = clientCreditService.creditFor(page.getContent());
+        return PagedResponse.from(page, c -> toResponse(c, credit.get(c.getId())));
     }
 
     @Transactional(readOnly = true)
@@ -210,6 +218,14 @@ public class ClientService {
         if (request.getIsOverseas() != null) {
             client.setIsOverseas(request.getIsOverseas());
         }
+        boolean clearLimit = Boolean.TRUE.equals(request.getNoCreditLimit());
+        if (clearLimit || request.getCreditLimit() != null) {
+            // Agents set the limit when they create the client; raising it after a block is the owner's call.
+            if (!isOwner()) {
+                throw new org.springframework.security.access.AccessDeniedException("Only the owner can change a client's credit limit");
+            }
+            client.setCreditLimit(clearLimit ? null : request.getCreditLimit());
+        }
 
         client.setModifiedAt(LocalDateTime.now());
         client.setModifiedBy(currentUserId());
@@ -266,11 +282,21 @@ public class ClientService {
                 .orElseThrow(() -> new IllegalArgumentException("Client not found: " + id));
     }
 
+    private static boolean isOwner() {
+        return SecurityContextUtil.getCurrentUser().map(u -> u.isAgencyOwner()).orElse(false);
+    }
+
+    /** The credit position behind the booking-screen chip and the client page Credit card. */
+    @Transactional(readOnly = true)
+    public ClientCreditResponse getCredit(String id) {
+        return clientCreditService.credit(findAccessibleClient(id));
+    }
+
     private String currentUserId() {
         return SecurityContextUtil.getCurrentUserOrThrow().userId();
     }
 
-    private ClientResponse toResponse(Client client) {
+    private ClientResponse toResponse(Client client, ClientCreditResponse credit) {
         return ClientResponse.builder()
                 .id(client.getId()).identifier(client.getIdentifier()).name(client.getName())
                 .type(client.getType())
@@ -281,10 +307,14 @@ public class ClientService {
                 .possibleDuplicateOf(client.getPossibleDuplicateOf())
                 .gstin(client.getGstin()).stateCode(client.getStateCode())
                 .billingAddress(client.getBillingAddress()).isOverseas(client.getIsOverseas())
+                .creditLimit(client.getCreditLimit())
+                .creditUsed(credit == null ? null : credit.getUsed())
+                .creditAvailable(credit == null ? null : credit.getAvailable())
                 .build();
     }
 
     private ClientDetailResponse toDetailResponse(Client client) {
+        ClientCreditResponse credit = clientCreditService.credit(client);
         List<MemberResponse> members = memberMapper.toResponsesWithDocuments(
                 memberRepository.findByClientIdAndIsActiveTrue(client.getId()));
         return ClientDetailResponse.builder()
@@ -296,6 +326,9 @@ public class ClientService {
                 .possibleDuplicateOf(client.getPossibleDuplicateOf())
                 .gstin(client.getGstin()).stateCode(client.getStateCode())
                 .billingAddress(client.getBillingAddress()).isOverseas(client.getIsOverseas())
+                .creditLimit(client.getCreditLimit())
+                .creditUsed(credit == null ? null : credit.getUsed())
+                .creditAvailable(credit == null ? null : credit.getAvailable())
                 .build();
     }
 

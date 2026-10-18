@@ -160,4 +160,27 @@ public interface BookingRepository extends JpaRepository<Booking, String>, JpaSp
     List<Booking> findByReturnDateBetween(java.time.LocalDate from, java.time.LocalDate to);
 
     List<Booking> findByAgentIdAndReturnDateBetween(String agentId, java.time.LocalDate from, java.time.LocalDate to);
+
+    /** [clientId, Σ selling price] over each client's live (not cancelled) bookings. */
+    @Query("SELECT b.clientId, SUM(b.sellingPrice) FROM Booking b WHERE b.clientId IN :clientIds "
+            + "AND b.bookingStatus <> com.voyra.crm.enums.BookingStatus.CANCELLED GROUP BY b.clientId")
+    List<Object[]> liveSellingPriceByClient(@Param("clientIds") java.util.Collection<String> clientIds);
+
+    /** [clientId, Σ pre-GST INR] already on issued tax invoices of each client's live bookings. */
+    @Query("SELECT b.clientId, SUM(l.lineSubtotal * i.fxRateToInr) FROM InvoiceLineItem l, Invoice i, Booking b "
+            + "WHERE l.invoiceId = i.id AND i.bookingId = b.id AND b.clientId IN :clientIds "
+            + "AND b.bookingStatus <> com.voyra.crm.enums.BookingStatus.CANCELLED "
+            + "AND i.documentType = com.voyra.crm.enums.InvoiceDocumentType.TAX_INVOICE "
+            + "AND i.status NOT IN (com.voyra.crm.enums.InvoiceLifecycle.CANCELLED, com.voyra.crm.enums.InvoiceLifecycle.DRAFT) "
+            + "GROUP BY b.clientId")
+    List<Object[]> liveInvoicedInrByClient(@Param("clientIds") java.util.Collection<String> clientIds);
+
+    /** [clientId, Σ charges kept] on bookings cancelled before any tax invoice was issued - the ledger never saw them. */
+    @Query("SELECT b.clientId, SUM(b.cancellationSupplierCharge + b.cancellationAgencyFee) FROM Booking b "
+            + "WHERE b.clientId IN :clientIds AND b.bookingStatus = com.voyra.crm.enums.BookingStatus.CANCELLED "
+            + "AND NOT EXISTS (SELECT 1 FROM Invoice i WHERE i.bookingId = b.id "
+            + "AND i.documentType = com.voyra.crm.enums.InvoiceDocumentType.TAX_INVOICE "
+            + "AND i.status NOT IN (com.voyra.crm.enums.InvoiceLifecycle.CANCELLED, com.voyra.crm.enums.InvoiceLifecycle.DRAFT)) "
+            + "GROUP BY b.clientId")
+    List<Object[]> uninvoicedCancellationChargesByClient(@Param("clientIds") java.util.Collection<String> clientIds);
 }

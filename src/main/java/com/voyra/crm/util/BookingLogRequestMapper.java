@@ -43,6 +43,7 @@ public final class BookingLogRequestMapper {
             throw new IllegalArgumentException("Add the markup - the selling price is worked out from the cost and markup");
         }
         req.setSellingPrice(log.getSellingPrice());
+        req.setOverrideCreditLimit(log.getOverrideCreditLimit());
         req.setNotes(blankToNull(log.getNotes()));
 
         if (service == null) {

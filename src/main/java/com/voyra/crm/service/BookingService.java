@@ -121,6 +121,7 @@ public class BookingService {
     private final ServiceInstanceService serviceInstanceService;
     private final ServiceBookingStatusSync serviceBookingStatusSync;
     private final SupplierInvoiceService supplierInvoiceService;
+    private final ClientCreditService clientCreditService;
     private final org.springframework.transaction.support.TransactionTemplate transactionTemplate;
     private final com.voyra.crm.repository.SupplierInvoiceRepository supplierInvoiceRepository;
     private final com.voyra.crm.repository.SupplierPaymentRepository supplierPaymentRepository;
@@ -137,6 +138,8 @@ public class BookingService {
         if (request.getNetCost() == null) request.setNetCost(BigDecimal.ZERO);
         if (request.getSellingPrice() == null) request.setSellingPrice(BigDecimal.ZERO);
         AuthorResolver.AuthorInfo owner = resolveOwningAgent(request.getAgentId());
+        clientCreditService.assertWithinLimit(request.getClientId(), request.getSellingPrice(),
+                Boolean.TRUE.equals(request.getOverrideCreditLimit()));
         Client client = clientRepository.findById(request.getClientId())
                 .orElseThrow(() -> new IllegalArgumentException("Client not found: " + request.getClientId()));
 
@@ -476,7 +479,11 @@ public class BookingService {
         if (request.getTransferDate() != null) booking.setTransferDate(request.getTransferDate());
         if (request.getTransferTime() != null) booking.setTransferTime(request.getTransferTime());
         if (request.getNetCost() != null) booking.setNetCost(request.getNetCost());
-        if (request.getSellingPrice() != null) booking.setSellingPrice(request.getSellingPrice());
+        if (request.getSellingPrice() != null) {
+            clientCreditService.assertWithinLimit(booking.getClientId(),
+                    request.getSellingPrice().subtract(booking.getSellingPrice()), false);
+            booking.setSellingPrice(request.getSellingPrice());
+        }
         if (request.getInternationalTrip() != null) booking.setInternationalTrip(request.getInternationalTrip());
         // Profit is never client-trusted - always recomputed server-side from the current values.
         booking.setProfit(computeProfit(booking.getSellingPrice(), booking.getNetCost()));
@@ -620,6 +627,9 @@ public class BookingService {
         // Locked first: two confirms at once must not both draft the supplier bill.
         bookingRepository.findByIdForUpdate(id);
         Booking booking = findAccessibleBooking(id);
+        if (booking.getBookingStatus() == BookingStatus.CANCELLED) {
+            throw new IllegalStateException("A cancelled booking can't be reopened - create a new booking instead");
+        }
         Map<String, String> before = AuditSnapshot.of(booking, AUDITED);
         boolean confirming = request.getBookingStatus() == BookingStatus.CONFIRMED
                 && booking.getBookingStatus() == BookingStatus.PENDING;
@@ -789,10 +799,11 @@ public class BookingService {
      * makes a pending booking ready (reference + price) confirms it. Called inside the document's
      * own transaction, after the row lock.
      */
-    void applyVoucher(Booking booking, BookingDocument voucher, String requestedVendorId) {
+    void applyVoucher(Booking booking, BookingDocument voucher, String requestedVendorId, boolean overrideCreditLimit) {
         BigDecimal cost = voucher.getNetCost() != null ? voucher.getNetCost() : BigDecimal.ZERO;
         voucher.setSellingPrice(voucher.getMarkupMode() == null ? BigDecimal.ZERO
                 : com.voyra.crm.util.MarkupMath.sellingPrice(cost, voucher.getMarkupMode(), voucher.getMarkupValue()));
+        clientCreditService.assertWithinLimit(booking.getClientId(), voucher.getSellingPrice(), overrideCreditLimit);
         String vendorId = requestedVendorId != null && !requestedVendorId.isBlank() ? requestedVendorId : booking.getVendorId();
         voucher.setVendorId(vendorId);
 

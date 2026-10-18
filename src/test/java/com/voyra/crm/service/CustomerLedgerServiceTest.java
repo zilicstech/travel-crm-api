@@ -47,6 +47,11 @@ class CustomerLedgerServiceTest {
     @Mock
     private JournalService journalService;
 
+    @org.mockito.Mock
+
+    private ClientCreditService clientCreditService;
+
+
     @InjectMocks
     private CustomerLedgerService customerLedgerService;
 

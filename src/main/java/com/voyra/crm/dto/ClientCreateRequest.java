@@ -84,4 +84,8 @@ public class ClientCreateRequest {
 
     @Schema(description = "Recipient is outside India - a precondition for export-of-service tax treatment, never sufficient alone")
     private Boolean isOverseas;
+
+    @jakarta.validation.constraints.DecimalMin(value = "0", message = "Credit limit can't be negative")
+    @Schema(description = "Credit limit in INR (0 = pays upfront). Required for agents; the owner may leave it empty for no limit.", example = "1000000")
+    private java.math.BigDecimal creditLimit;
 }

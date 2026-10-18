@@ -32,4 +32,10 @@ public class ClientLedgerSummaryResponse {
 
     @Schema(description = "Negative running balance - a credit the agency owes this client", example = "0.00")
     private BigDecimal advanceInr;
+
+    @Schema(description = "Credit limit; null = no limit", example = "1000000.00")
+    private BigDecimal creditLimit;
+
+    @Schema(description = "Credit available; negative = over the limit; null = no limit", example = "390000.00")
+    private BigDecimal creditAvailable;
 }

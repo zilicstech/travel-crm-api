@@ -36,6 +36,9 @@ public class BookingDocumentCreateRequest {
     @Schema(example = "10.00")
     private java.math.BigDecimal markupValue;
 
+    @Schema(description = "Owner only: save even though it takes the client over their credit limit", example = "false")
+    private Boolean overrideCreditLimit;
+
     @Schema(description = "The supplier (Vendor) of this voucher; defaults to the booking's. With a cost, drafts its supplier bill.")
     private String vendorId;
 }

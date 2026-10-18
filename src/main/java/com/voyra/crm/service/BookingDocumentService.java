@@ -70,7 +70,7 @@ public class BookingDocumentService {
                 .createdAt(LocalDateTime.now())
                 .createdBy(currentUserId())
                 .build();
-        bookingService.applyVoucher(booking, document, request.getVendorId());
+        bookingService.applyVoucher(booking, document, request.getVendorId(), Boolean.TRUE.equals(request.getOverrideCreditLimit()));
         bookingDocumentRepository.save(document);
 
         if (booking.getLeadId() != null) {
@@ -106,7 +106,7 @@ public class BookingDocumentService {
             document.setNetCost(nz(request.getNetCost()));
             document.setMarkupMode(request.getMarkupMode());
             document.setMarkupValue(request.getMarkupValue());
-            bookingService.applyVoucher(booking, document, request.getVendorId());
+            bookingService.applyVoucher(booking, document, request.getVendorId(), Boolean.TRUE.equals(request.getOverrideCreditLimit()));
             if (booking.getSellingPrice().compareTo(bookingService.invoicedPrice(bookingId)) < 0) {
                 throw new IllegalStateException("This voucher's price is already invoiced - it can't go below that");
             }

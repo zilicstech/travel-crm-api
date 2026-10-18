@@ -62,7 +62,7 @@ class BookingDocumentServiceTest {
 
         assertThat(voucher.getReferenceNumber()).isEqualTo("PNR2");
         verify(bookingService, never()).reverseVoucher(any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
-        verify(bookingService, never()).applyVoucher(any(), any(), any());
+        verify(bookingService, never()).applyVoucher(any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
     }
 
     @Test
@@ -74,7 +74,7 @@ class BookingDocumentServiceTest {
 
         org.mockito.InOrder order = org.mockito.Mockito.inOrder(bookingService);
         order.verify(bookingService).reverseVoucher(booking, voucher, false);
-        order.verify(bookingService).applyVoucher(booking, voucher, null);
+        order.verify(bookingService).applyVoucher(booking, voucher, null, false);
         assertThat(voucher.getNetCost()).isEqualByComparingTo("5000");
     }
 

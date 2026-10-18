@@ -61,6 +61,9 @@ public class BookingLogRequest {
     @Schema(description = "Only for API clients that price by hand - with markupMode set, the price is worked out from netCost and the markup instead", example = "52000.00")
     private BigDecimal sellingPrice;
 
+    @Schema(description = "Owner only: save even though it takes the client over their credit limit", example = "false")
+    private Boolean overrideCreditLimit;
+
     @Schema(description = "PERCENT or FLAT: the selling price is netCost plus this markup", example = "PERCENT")
     private com.voyra.crm.enums.MarkupMode markupMode;
 

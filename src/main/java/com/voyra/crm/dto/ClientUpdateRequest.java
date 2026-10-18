@@ -35,4 +35,11 @@ public class ClientUpdateRequest {
 
     @Schema(description = "Recipient is outside India")
     private Boolean isOverseas;
+
+    @jakarta.validation.constraints.DecimalMin(value = "0", message = "Credit limit can't be negative")
+    @Schema(description = "Credit limit in INR (0 = pays upfront). Owner only.", example = "1000000")
+    private java.math.BigDecimal creditLimit;
+
+    @Schema(description = "Owner only: true removes the limit (no limit)", example = "false")
+    private Boolean noCreditLimit;
 }

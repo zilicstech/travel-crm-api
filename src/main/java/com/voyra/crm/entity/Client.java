@@ -14,6 +14,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
@@ -88,6 +89,10 @@ public class Client {
     @Column(name = "is_overseas", nullable = false)
     @Builder.Default
     private Boolean isOverseas = false;
+
+    /** The credit the agency extends to this client, in INR; null means no limit. */
+    @Column(name = "credit_limit", precision = 14, scale = 2)
+    private BigDecimal creditLimit;
 
     @PrePersist
     protected void onCreate() {

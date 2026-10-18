@@ -58,6 +58,7 @@ public class CustomerLedgerService {
     private final ClientService clientService;
     private final ClientRepository clientRepository;
     private final JournalService journalService;
+    private final ClientCreditService clientCreditService;
 
     @Transactional
     public void post(LedgerPosting posting) {
@@ -182,7 +183,14 @@ public class CustomerLedgerService {
      */
     @Transactional(readOnly = true)
     public List<ClientLedgerSummaryResponse> summaryForAllClients() {
-        return clientRepository.findAll().stream().map(c -> summary(c.getId())).toList();
+        List<com.voyra.crm.entity.Client> clients = clientRepository.findAll();
+        java.util.Map<String, com.voyra.crm.dto.ClientCreditResponse> credit = clientCreditService.creditFor(clients);
+        return clients.stream().map(c -> {
+            ClientLedgerSummaryResponse row = summary(c.getId());
+            row.setCreditLimit(credit.get(c.getId()).getLimit());
+            row.setCreditAvailable(credit.get(c.getId()).getAvailable());
+            return row;
+        }).toList();
     }
 
     /** AR ageing across every client with an unpaid tax invoice, bucketed by days past the due date (or invoice date, if none was set). */

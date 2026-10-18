@@ -63,6 +63,11 @@ class ClientMemberRuleTest {
     @Mock
     private AuditService auditService;
 
+    @org.mockito.Mock
+
+    private ClientCreditService clientCreditService;
+
+
     @InjectMocks
     private ClientService clientService;
 
@@ -93,6 +98,50 @@ class ClientMemberRuleTest {
      * table carries.
      */
     @Test
+    void agentMustSetACreditLimitOnCreate() {
+        authenticateAs("A1", UserType.AGENT);
+        ClientCreateRequest request = new ClientCreateRequest();
+        request.setIdentifier("9876543210");
+        request.setName("Ajay Sharma");
+        request.setType(ClientType.B2C);
+        request.setPrimaryMemberName("Ajay Sharma");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> clientService.createClient(request))
+                .hasMessage("Enter the client's credit limit (0 if they pay upfront)");
+    }
+
+    @Test
+    void ownerMayCreateAClientWithNoLimit() {
+        authenticateAs("O1", UserType.AGENCY_OWNER);
+        when(clientRepository.existsById(any())).thenReturn(false);
+        when(memberRepository.existsById(any())).thenReturn(false);
+        ClientCreateRequest request = new ClientCreateRequest();
+        request.setIdentifier("9876543210");
+        request.setName("Ajay Sharma");
+        request.setType(ClientType.B2C);
+        request.setPrimaryMemberName("Ajay Sharma");
+        org.assertj.core.api.Assertions.assertThat(clientService.createClient(request).getCreditLimit()).isNull();
+    }
+
+    @Test
+    void onlyTheOwnerCanChangeACreditLimit() {
+        Client client = Client.builder().id("C1").name("Ajay").creditLimit(new java.math.BigDecimal("1000")).build();
+        when(clientRepository.findById("C1")).thenReturn(java.util.Optional.of(client));
+        com.voyra.crm.dto.ClientUpdateRequest raise = new com.voyra.crm.dto.ClientUpdateRequest();
+        raise.setCreditLimit(new java.math.BigDecimal("5000000"));
+
+        authenticateAs("A1", UserType.AGENT);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> clientService.updateClient("C1", raise))
+                .isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
+        org.assertj.core.api.Assertions.assertThat(client.getCreditLimit()).isEqualByComparingTo("1000");
+
+        authenticateAs("O1", UserType.AGENCY_OWNER);
+        com.voyra.crm.dto.ClientUpdateRequest clear = new com.voyra.crm.dto.ClientUpdateRequest();
+        clear.setNoCreditLimit(true);
+        clientService.updateClient("C1", clear);
+        org.assertj.core.api.Assertions.assertThat(client.getCreditLimit()).isNull();
+    }
+
+    @Test
     void creatingAClientAlsoCreatesItsPrimaryMemberAsSelf() {
         authenticateAs("A1", UserType.AGENT);
         when(clientRepository.existsByIdentifierAndIsActiveTrue("9876543210")).thenReturn(false);
@@ -103,6 +152,7 @@ class ClientMemberRuleTest {
         request.setIdentifier("9876543210");
         request.setName("Ajay Sharma");
         request.setType(ClientType.B2C);
+        request.setCreditLimit(new java.math.BigDecimal("100000"));
         request.setPrimaryMemberName("Ajay Sharma");
 
         clientService.createClient(request);

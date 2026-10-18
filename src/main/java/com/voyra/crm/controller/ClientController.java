@@ -2,6 +2,7 @@ package com.voyra.crm.controller;
 
 import com.voyra.crm.dto.ActiveStatusUpdateRequest;
 import com.voyra.crm.dto.ClientCreateRequest;
+import com.voyra.crm.dto.ClientCreditResponse;
 import com.voyra.crm.dto.ClientDetailResponse;
 import com.voyra.crm.dto.ClientDuplicateCandidateResponse;
 import com.voyra.crm.dto.ClientDuplicateCheckRequest;
@@ -89,6 +90,12 @@ public class ClientController {
     @Operation(summary = "Client detail with its member roster")
     public ResponseEntity<ClientDetailResponse> getClient(@PathVariable String id) {
         return ResponseEntity.ok(clientService.getClient(id));
+    }
+
+    @GetMapping("/{id}/credit")
+    @Operation(summary = "The client's credit limit, what is in use and what is available")
+    public ResponseEntity<ClientCreditResponse> getCredit(@PathVariable String id) {
+        return ResponseEntity.ok(clientService.getCredit(id));
     }
 
     @PutMapping("/{id}")
