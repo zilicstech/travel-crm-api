@@ -67,6 +67,16 @@ public class PayablesDashboardController {
         return ResponseEntity.ok(payablesDashboardService.costReconciliation());
     }
 
+    @GetMapping("/cost-reconciliation/export")
+    @Operation(summary = "Export the cost reconciliation as Excel")
+    public ResponseEntity<byte[]> exportCostReconciliation() {
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        ContentDisposition.attachment().filename("cost-reconciliation.xlsx", StandardCharsets.UTF_8).build().toString())
+                .body(payablesDashboardService.exportCostReconciliationXlsx());
+    }
+
     private static LocalDate[] resolveRange(LocalDate from, LocalDate to) {
         LocalDate resolvedTo = to != null ? to : LocalDate.now();
         LocalDate resolvedFrom = from != null ? from : resolvedTo.minusMonths(1);

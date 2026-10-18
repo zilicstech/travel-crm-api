@@ -36,6 +36,12 @@ public class ApAgeingRowResponse {
     @Schema(example = "0.00")
     private BigDecimal days90Plus;
 
-    @Schema(example = "13020.00")
+    @Schema(description = "Bills still owed - the sum of the age buckets", example = "13020.00")
     private BigDecimal totalPayableInr;
+
+    @Schema(description = "Netted on the vendor statement but not aged: supplier refunds due and advances not yet applied (negative)", example = "-18500.00")
+    private BigDecimal creditsInr;
+
+    @Schema(description = "totalPayableInr + creditsInr - the vendor statement's balance", example = "26500.00")
+    private BigDecimal netBalanceInr;
 }

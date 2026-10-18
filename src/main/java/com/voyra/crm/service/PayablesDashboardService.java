@@ -176,6 +176,17 @@ public class PayablesDashboardService {
         return rows;
     }
 
+    @Transactional(readOnly = true)
+    public byte[] exportCostReconciliationXlsx() {
+        List<List<String>> rows = costReconciliation().stream()
+                .map(r -> List.of(r.getClientName() != null ? r.getClientName() : "", r.getDestination() != null ? r.getDestination() : "",
+                        str(r.getEstimatedCostInr()), str(r.getActualCostInr()), str(r.getVarianceInr()),
+                        r.getVariancePercent() != null ? str(r.getVariancePercent()) : ""))
+                .toList();
+        return XlsxWriter.write("Cost Reconciliation", new ReportTable(List.of("Client", "Destination",
+                "Estimated Cost (INR)", "Actual Cost (INR)", "Variance (INR)", "Variance %"), rows));
+    }
+
     private List<SupplierInvoice> billsInRange(LocalDate from, LocalDate to) {
         return supplierInvoiceRepository.findByStatusNotAndInvoiceDateBetween(SupplierInvoiceStatus.CANCELLED, from, to).stream()
                 .filter(i -> i.getStatus() != SupplierInvoiceStatus.DRAFT)

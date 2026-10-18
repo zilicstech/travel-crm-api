@@ -61,9 +61,19 @@ public class SupplierLedgerController {
     }
 
     @GetMapping("/outstanding")
-    @Operation(summary = "AP ageing", description = "Every vendor with an unpaid approved bill, bucketed 0-30/31-60/61-90/90+ days past due.")
+    @Operation(summary = "AP ageing", description = "Every vendor with an unpaid approved bill (bucketed 0-30/31-60/61-90/90+ days past due) or a statement balance; creditsInr + totalPayableInr = netBalanceInr, the vendor statement balance.")
     public ResponseEntity<List<ApAgeingRowResponse>> outstanding() {
         return ResponseEntity.ok(supplierLedgerService.outstanding());
+    }
+
+    @GetMapping("/outstanding/export")
+    @Operation(summary = "Export AP ageing as Excel")
+    public ResponseEntity<byte[]> exportOutstanding() {
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        ContentDisposition.attachment().filename("ap-ageing.xlsx", StandardCharsets.UTF_8).build().toString())
+                .body(supplierLedgerService.exportOutstandingXlsx());
     }
 
     @PostMapping("/vendors/{vendorId}/opening-balance")
