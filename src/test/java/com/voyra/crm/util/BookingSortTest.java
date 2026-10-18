@@ -23,7 +23,7 @@ class BookingSortTest {
     @Test
     void travelDateSortsBookingsWithNoDateLast() {
         assertThat(BookingSort.parse("journeyDate,desc")).isEqualTo(Sort.by(Sort.Direction.ASC, "noJourneyDate")
-                .and(Sort.by(Sort.Direction.DESC, "journeyDate")).and(Sort.by(Sort.Direction.DESC, "bookingNumber")));
+                .and(Sort.by(Sort.Direction.DESC, "departureDate")).and(Sort.by(Sort.Direction.DESC, "bookingNumber")));
     }
 
     @Test

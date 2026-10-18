@@ -12,12 +12,13 @@ public final class BookingSort {
             "clientName", "clientName",
             "sellingPrice", "sellingPrice",
             "bookingDate", "bookingDate",
-            "journeyDate", "journeyDate");
+            // "Travel date": each type's own first date (flight departure, check-in, transfer day).
+            "journeyDate", "departureDate");
 
     private BookingSort() {
     }
 
-    /** "journeyDate,asc" -> journeyDate ascending; blank -> newest booking number first. */
+    /** "journeyDate,asc" -> travel date ascending; blank -> newest booking number first. */
     public static Sort parse(String raw) {
         if (raw == null || raw.isBlank()) {
             return Sort.by(Sort.Direction.DESC, "bookingNumber");
@@ -30,7 +31,7 @@ public final class BookingSort {
         Sort.Direction dir = parts.length > 1 && parts[1].trim().equalsIgnoreCase("asc") ? Sort.Direction.ASC : Sort.Direction.DESC;
         // Ties (same date, same client) fall back to the booking number so paging is stable.
         Sort sort = Sort.by(dir, column);
-        if (column.equals("journeyDate")) {
+        if (column.equals("departureDate")) {
             // Spring Data drops nullsLast() on criteria queries; a computed "has no date" flag does the job.
             sort = Sort.by(Sort.Direction.ASC, "noJourneyDate").and(sort);
         }

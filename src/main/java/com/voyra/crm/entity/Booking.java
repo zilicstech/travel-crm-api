@@ -117,7 +117,7 @@ public class Booking {
     private String vendorId;
 
     /** Sort key only: true when there is no travel date, so those rows sort last either way (see BookingSort). */
-    @org.hibernate.annotations.Formula("(journey_date is null)")
+    @org.hibernate.annotations.Formula("(departure_date is null)")
     @Setter(AccessLevel.NONE)
     private Boolean noJourneyDate;
 

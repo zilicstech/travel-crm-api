@@ -187,8 +187,10 @@ public class BookingDocumentService {
         CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
         boolean hasReason = overrideReason != null && !overrideReason.isBlank();
         if (!principal.isAgencyOwner() || !hasReason) {
-            throw new AccessDeniedException("This booking is not fully paid (" + booking.getPaymentStatus()
-                    + ") - voucher release is blocked. An Agency Owner can override with a reason.");
+            String paid = booking.getPaymentStatus() == PaymentStatus.PARTIAL ? "part paid"
+                    : booking.getPaymentStatus() == PaymentStatus.REFUNDED ? "refunded" : "unpaid";
+            throw new AccessDeniedException("This booking is " + paid
+                    + ", so its voucher can't be released yet. An Agency Owner can release it with a reason.");
         }
         auditService.recordUpdate(AuditEntityType.BOOKING, booking.getId(),
                 booking.getClientName() != null ? booking.getClientName() : booking.getId(),
