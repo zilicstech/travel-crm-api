@@ -3,7 +3,6 @@ package com.voyra.crm.controller;
 import com.voyra.crm.dto.BookingInvoiceRequest;
 import com.voyra.crm.dto.BookingLifecycleResponse;
 import com.voyra.crm.dto.BookingPaymentRequest;
-import com.voyra.crm.dto.BookingSupplierPaymentRequest;
 import com.voyra.crm.service.BookingLifecycleService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -45,11 +44,5 @@ public class BookingLifecycleController {
     @Operation(summary = "Record a payment received", description = "Settles the invoice, or before one exists is held on the client's account.")
     public ResponseEntity<BookingLifecycleResponse> recordPayment(@PathVariable String id, @Valid @RequestBody BookingPaymentRequest request) {
         return ResponseEntity.ok(bookingLifecycleService.recordPayment(id, request));
-    }
-
-    @PostMapping("/{id}/supplier-payments")
-    @Operation(summary = "Pay the supplier", description = "Drafts and approves the supplier bill when needed, then records the payment.")
-    public ResponseEntity<BookingLifecycleResponse> paySupplier(@PathVariable String id, @Valid @RequestBody BookingSupplierPaymentRequest request) {
-        return ResponseEntity.ok(bookingLifecycleService.paySupplier(id, request));
     }
 }

@@ -2,11 +2,9 @@ package com.voyra.crm.service;
 
 import com.voyra.crm.dto.BookingLifecycleResponse;
 import com.voyra.crm.dto.BookingPaymentRequest;
-import com.voyra.crm.dto.BookingSupplierPaymentRequest;
 import com.voyra.crm.dto.InvoiceDraftRequest;
 import com.voyra.crm.dto.InvoiceResponse;
 import com.voyra.crm.dto.PaymentReceiptRequest;
-import com.voyra.crm.dto.SupplierInvoiceResponse;
 import com.voyra.crm.dto.SupplierPaymentRequest;
 import com.voyra.crm.entity.Booking;
 import com.voyra.crm.entity.Invoice;
@@ -71,8 +69,6 @@ class BookingLifecycleServiceTest {
     @Mock private SupplierPaymentRepository supplierPaymentRepository;
     @Mock private InvoiceDocumentService invoiceDocumentService;
     @Mock private PaymentReceiptService paymentReceiptService;
-    @Mock private SupplierInvoiceService supplierInvoiceService;
-    @Mock private SupplierPaymentService supplierPaymentService;
     @InjectMocks private BookingLifecycleService service;
 
     private static BigDecimal d(String v) {
@@ -119,15 +115,16 @@ class BookingLifecycleServiceTest {
     // ---- step states -------------------------------------------------------------------
 
     @Test
-    void freshDraftBookingHasEverythingAheadOfIt() {
+    void freshPendingBookingHasEverythingAheadOfIt() {
         BookingLifecycleResponse r = BookingLifecycleService.build(facts(booking(BookingStatus.PENDING), 0, List.of(), List.of(), "0"), Viewer.OWNER);
 
         assertThat(states(r)).containsEntry("CREATED", "DONE").containsEntry("VOUCHER", "OPEN").containsEntry("INVOICE", "OPEN")
-                .containsEntry("PAYMENT", "OPEN").containsEntry("SUPPLIER", "OPEN").doesNotContainKey("CANCELLED");
-        assertThat(r.getSteps().get(0).getSummary()).startsWith("Draft");
-        assertThat(r.getAllowedActions()).contains("CONFIRM", "UPLOAD_VOUCHER", "CANCEL", "GENERATE_INVOICE", "RECORD_PAYMENT", "PAY_SUPPLIER");
+                .containsEntry("PAYMENT", "OPEN").doesNotContainKey("CANCELLED");
+        // Paying the supplier is Accounts' job on the supplier bill, not a booking step.
+        assertThat(r.getSteps()).extracting(BookingLifecycleResponse.Step::getKey).containsExactly("CREATED", "VOUCHER", "INVOICE", "PAYMENT");
+        assertThat(r.getSteps().get(0).getSummary()).startsWith("Pending");
+        assertThat(r.getAllowedActions()).containsExactlyInAnyOrder("CONFIRM", "UPLOAD_VOUCHER", "CANCEL", "GENERATE_INVOICE", "RECORD_PAYMENT");
         assertThat(r.getToCollectInr()).isEqualByComparingTo("10000");
-        assertThat(r.getSupplierToPayInr()).isEqualByComparingTo("8000");
     }
 
     @Test
@@ -152,25 +149,6 @@ class BookingLifecycleServiceTest {
         assertThat(r.getToCollectInr()).isEqualByComparingTo("7000");
     }
 
-    private static SupplierPayment paid(String amount) {
-        return SupplierPayment.builder().id("P" + amount).amountInr(d(amount)).paidOn(LocalDate.now())
-                .direction(com.voyra.crm.enums.SupplierPaymentDirection.PAYMENT).build();
-    }
-
-    @Test
-    void supplierStepFollowsWhatWasActuallyPaidAgainstNetCost() {
-        Booking b = booking(BookingStatus.CONFIRMED);
-        BookingLifecycleResponse part = BookingLifecycleService.build(new Facts(b, 0, List.of(), List.of(),
-                List.of(bill(SupplierInvoiceStatus.PARTIALLY_PAID, "8000", "3000")), List.of(paid("5000")), BigDecimal.ZERO), Viewer.OWNER);
-        BookingLifecycleResponse full = BookingLifecycleService.build(new Facts(b, 0, List.of(), List.of(),
-                List.of(bill(SupplierInvoiceStatus.PAID, "8000", "0")), List.of(paid("5000"), paid("3000")), BigDecimal.ZERO), Viewer.OWNER);
-
-        assertThat(states(part)).containsEntry("SUPPLIER", "PARTIAL");
-        assertThat(part.getSupplierToPayInr()).isEqualByComparingTo("3000");
-        assertThat(states(full)).containsEntry("SUPPLIER", "DONE");
-        assertThat(full.getAllowedActions()).doesNotContain("PAY_SUPPLIER");
-    }
-
     @Test
     void cancelledBookingTracksBothRefundsThenTheCrossCheck() {
         Booking b = booking(BookingStatus.CANCELLED);
@@ -190,17 +168,6 @@ class BookingLifecycleServiceTest {
         assertThat(settled.getAllowedActions()).containsExactly("CROSS_CHECK");
     }
 
-    /** Regression run 6, M3: a supplier credit note leaves a negative bill balance - that is not money paid. */
-    @Test
-    void aSupplierCreditNoteIsNotCountedAsPayment() {
-        Booking b = booking(BookingStatus.CONFIRMED);
-        BookingLifecycleResponse r = BookingLifecycleService.build(new Facts(b, 0, List.of(), List.of(),
-                List.of(bill(SupplierInvoiceStatus.PAID, "8000", "-7000")), List.of(paid("8000")), BigDecimal.ZERO), Viewer.OWNER);
-
-        assertThat(r.getSteps().stream().filter(s -> s.getKey().equals("SUPPLIER")).findFirst().orElseThrow().getSummary())
-                .startsWith("₹8,000 paid");
-    }
-
     // ---- roles -------------------------------------------------------------------------
 
     @Test
@@ -211,11 +178,8 @@ class BookingLifecycleServiceTest {
         BookingLifecycleResponse r = BookingLifecycleService.build(f, Viewer.AGENT);
 
         assertThat(r.getAllowedActions()).containsExactlyInAnyOrder("COMPLETE", "UPLOAD_VOUCHER", "CANCEL");
-        assertThat(r.getSupplierToPayInr()).isNull();
         assertThat(r.getClientWalletInr()).isNull();
         assertThat(r.getRecords()).noneMatch(x -> x.getKind().startsWith("SUPPLIER"));
-        assertThat(r.getSteps().stream().filter(s -> s.getKey().equals("SUPPLIER")).findFirst().orElseThrow().getSummary())
-                .doesNotContain("₹");
     }
 
     /** Regression run 6, m1: agents see whether the supplier refund arrived, not how much. */
@@ -234,7 +198,7 @@ class BookingLifecycleServiceTest {
     void accountantGetsMoneyActionsButCannotConfirmOrCancel() {
         BookingLifecycleResponse r = BookingLifecycleService.build(facts(booking(BookingStatus.PENDING), 0, List.of(), List.of(), "0"), Viewer.ACCOUNTANT);
 
-        assertThat(r.getAllowedActions()).containsExactlyInAnyOrder("GENERATE_INVOICE", "RECORD_PAYMENT", "PAY_SUPPLIER");
+        assertThat(r.getAllowedActions()).containsExactlyInAnyOrder("GENERATE_INVOICE", "RECORD_PAYMENT");
     }
 
     // ---- actions -----------------------------------------------------------------------
@@ -349,73 +313,6 @@ class BookingLifecycleServiceTest {
         assertThatThrownBy(() -> service.recordPayment("B1", payment("100"))).isInstanceOf(IllegalStateException.class);
     }
 
-    private static BookingSupplierPaymentRequest supplierPay(String vendorId) {
-        BookingSupplierPaymentRequest r = new BookingSupplierPaymentRequest();
-        r.setVendorId(vendorId);
-        r.setAmount(d("8000"));
-        r.setPaymentMode(PaymentMode.BANK_TRANSFER);
-        r.setPaidOn(LocalDate.of(2026, 10, 17));
-        r.setSupplierInvoiceNumber("INV-2231");
-        return r;
-    }
-
-    @Test
-    void payingTheSupplierDraftsApprovesAndPaysTheBill() {
-        Booking b = stubBooking(booking(BookingStatus.CONFIRMED));
-        SupplierInvoice drafted = bill(SupplierInvoiceStatus.DRAFT, "8000", "8000");
-        when(supplierInvoiceService.createAutoDraft(b, "V1")).thenReturn(List.of(SupplierInvoiceResponse.builder().id("S1").vendorId("V1").build()));
-        when(supplierInvoiceRepository.findById("S1")).thenReturn(Optional.of(drafted));
-        when(supplierInvoiceService.approve("S1", null)).thenReturn(SupplierInvoiceResponse.builder().id("S1").status(SupplierInvoiceStatus.APPROVED).build());
-
-        service.paySupplier("B1", supplierPay("V1"));
-
-        assertThat(b.getVendorId()).isEqualTo("V1");
-        assertThat(drafted.getSupplierInvoiceNumber()).isEqualTo("INV-2231");
-        ArgumentCaptor<SupplierPaymentRequest> pay = ArgumentCaptor.forClass(SupplierPaymentRequest.class);
-        verify(supplierPaymentService).pay(pay.capture());
-        assertThat(pay.getValue().getSupplierInvoiceId()).isEqualTo("S1");
-        assertThat(pay.getValue().getVendorId()).isEqualTo("V1");
-    }
-
-    @Test
-    void anExistingAutoDraftIsReusedNotDuplicated() {
-        Booking b = booking(BookingStatus.CONFIRMED);
-        b.setVendorId("V1");
-        stubBooking(b);
-        when(supplierInvoiceRepository.findByBookingIdAndStatusNot("B1", SupplierInvoiceStatus.CANCELLED))
-                .thenReturn(List.of(bill(SupplierInvoiceStatus.DRAFT, "8000", "8000")));
-        when(supplierInvoiceService.approve("S1", null)).thenReturn(SupplierInvoiceResponse.builder().status(SupplierInvoiceStatus.APPROVED).build());
-
-        service.paySupplier("B1", supplierPay(null));
-
-        verify(supplierInvoiceService, never()).createAutoDraft(any(), anyString());
-        verify(supplierPaymentService).pay(any());
-    }
-
-    @Test
-    void aBillAboveTheCostCapWithoutOverrideIsRefusedAndNothingIsPaid() {
-        Booking b = booking(BookingStatus.CONFIRMED);
-        b.setVendorId("V1");
-        stubBooking(b);
-        when(supplierInvoiceRepository.findByBookingIdAndStatusNot("B1", SupplierInvoiceStatus.CANCELLED))
-                .thenReturn(List.of(bill(SupplierInvoiceStatus.DRAFT, "9000", "9000")));
-        when(supplierInvoiceService.approve("S1", null)).thenReturn(SupplierInvoiceResponse.builder().status(SupplierInvoiceStatus.PENDING_APPROVAL).build());
-
-        assertThatThrownBy(() -> service.paySupplier("B1", supplierPay(null)))
-                .isInstanceOf(IllegalStateException.class).hasMessageContaining("owner");
-        verify(supplierPaymentService, never()).pay(any());
-    }
-
-    /** Regression run 6, B4. */
-    @Test
-    void payingTheSupplierOnACancelledBookingIsRefused() {
-        stubBooking(booking(BookingStatus.CANCELLED));
-
-        assertThatThrownBy(() -> service.paySupplier("B1", supplierPay("V1"))).isInstanceOf(IllegalStateException.class);
-        verify(supplierInvoiceService, never()).createAutoDraft(any(), anyString());
-        verify(supplierPaymentService, never()).pay(any());
-    }
-
     /** Regression run 6, B2/B3: every money action takes the booking's row lock before reading anything. */
     @Test
     void moneyActionsLockTheBookingFirst() {
@@ -429,14 +326,6 @@ class BookingLifecycleServiceTest {
         order.verify(bookingRepository).findByIdForUpdate("B1");
         order.verify(bookingService).findAccessibleBooking("B1");
         verify(bookingRepository, org.mockito.Mockito.times(2)).findByIdForUpdate("B1");
-    }
-
-    @Test
-    void payingWithNoSupplierKnownAsksForOne() {
-        stubBooking(booking(BookingStatus.CONFIRMED));
-
-        assertThatThrownBy(() -> service.paySupplier("B1", supplierPay(null)))
-                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("supplier");
     }
 
     @Test

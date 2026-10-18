@@ -17,7 +17,7 @@ public final class BookingNextStep {
     private BookingNextStep() {
     }
 
-    public static String of(Booking b, int documentCount, BigDecimal supplierPaidInr) {
+    public static String of(Booking b, int documentCount) {
         if (b.getBookingStatus() == BookingStatus.CANCELLED) {
             BigDecimal refund = nz(b.getCustomerRefundDue()).subtract(nz(b.getRefundedTotalInr()));
             if (refund.signum() > 0) return "Refund client " + rupees(refund);
@@ -32,8 +32,6 @@ public final class BookingNextStep {
         if (invoiced.signum() == 0 && nz(b.getSellingPrice()).signum() > 0) return "Generate invoice";
         BigDecimal toCollect = invoiced.subtract(nz(b.getReceivedTotalInr()));
         if (toCollect.signum() > 0) return "Collect " + rupees(toCollect);
-        BigDecimal toPay = nz(b.getNetCost()).subtract(nz(supplierPaidInr));
-        if (toPay.signum() > 0) return "Pay supplier " + rupees(toPay);
         return null;
     }
 

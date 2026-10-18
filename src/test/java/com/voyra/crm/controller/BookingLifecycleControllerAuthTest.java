@@ -30,7 +30,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class BookingLifecycleControllerAuthTest {
 
     private static final String PAYMENT = "{\"amount\":100,\"paymentMode\":\"UPI\",\"receivedOn\":\"2026-10-17\"}";
-    private static final String SUPPLIER = "{\"amount\":100,\"paymentMode\":\"UPI\",\"paidOn\":\"2026-10-17\"}";
 
     @Autowired private MockMvc mockMvc;
     @MockBean private BookingLifecycleService bookingLifecycleService;
@@ -50,12 +49,6 @@ class BookingLifecycleControllerAuthTest {
     void agentCannotRecordAPayment() throws Exception {
         mockMvc.perform(post("/api/bookings/B1/payments").with(user("a").roles("AGENT"))
                 .contentType(MediaType.APPLICATION_JSON).content(PAYMENT)).andExpect(status().isForbidden());
-    }
-
-    @Test
-    void agentCannotPayTheSupplier() throws Exception {
-        mockMvc.perform(post("/api/bookings/B1/supplier-payments").with(user("a").roles("AGENT"))
-                .contentType(MediaType.APPLICATION_JSON).content(SUPPLIER)).andExpect(status().isForbidden());
     }
 
     @Test

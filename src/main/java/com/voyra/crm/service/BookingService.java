@@ -904,7 +904,7 @@ public class BookingService {
                 .cancellationType(b.getCancellationType())
                 .refundCheckedAt(b.getRefundCheckedAt()).refundCheckedBy(b.getRefundCheckedBy())
                 .documents(documents)
-                .nextStep(com.voyra.crm.util.BookingNextStep.of(b, documents.size(), supplierPaidInr(b.getId())))
+                .nextStep(com.voyra.crm.util.BookingNextStep.of(b, documents.size()))
                 .internationalTrip(b.getInternationalTrip())
                 .marginPercent(marginPercent).lowMargin(lowMargin)
                 .passengers(toPassengerResponses(b.getId()))
@@ -912,10 +912,6 @@ public class BookingService {
     }
 
     /** Paid to the booking's supplier so far. shortcut: one query per booking row, batch it if list pages grow past ~100. */
-    private BigDecimal supplierPaidInr(String bookingId) {
-        return BookingLifecycleService.supplierPaidInr(supplierPaymentRepository.findByBookingId(bookingId));
-    }
-
     /** The agency's own setting when present, else {@link #DEFAULT_LOW_MARGIN_THRESHOLD_PERCENT}. */
     private BigDecimal lowMarginThreshold() {
         String tenantId = SecurityContextUtil.getCurrentUserOrThrow().tenantId();

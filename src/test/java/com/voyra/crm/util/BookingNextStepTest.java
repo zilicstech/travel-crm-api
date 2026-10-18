@@ -25,19 +25,19 @@ class BookingNextStepTest {
     @Test
     void walksTheLifecycleInOrder() {
         Booking b = booking(BookingStatus.PENDING);
-        assertThat(BookingNextStep.of(b, 0, BigDecimal.ZERO)).isEqualTo("Confirm with supplier");
+        assertThat(BookingNextStep.of(b, 0)).isEqualTo("Confirm with supplier");
 
         b.setBookingStatus(BookingStatus.CONFIRMED);
-        assertThat(BookingNextStep.of(b, 0, BigDecimal.ZERO)).isEqualTo("Upload voucher");
-        assertThat(BookingNextStep.of(b, 1, BigDecimal.ZERO)).isEqualTo("Generate invoice");
+        assertThat(BookingNextStep.of(b, 0)).isEqualTo("Upload voucher");
+        assertThat(BookingNextStep.of(b, 1)).isEqualTo("Generate invoice");
 
         b.setInvoicedTotalInr(d("10000"));
         b.setReceivedTotalInr(d("4000"));
-        assertThat(BookingNextStep.of(b, 1, BigDecimal.ZERO)).isEqualTo("Collect ₹6,000");
+        assertThat(BookingNextStep.of(b, 1)).isEqualTo("Collect ₹6,000");
 
         b.setReceivedTotalInr(d("10000"));
-        assertThat(BookingNextStep.of(b, 1, d("3000"))).isEqualTo("Pay supplier ₹5,000");
-        assertThat(BookingNextStep.of(b, 1, d("8000"))).isNull();
+        // Paying the supplier is Accounts' job on the bill, not a booking step.
+        assertThat(BookingNextStep.of(b, 1)).isNull();
     }
 
     @Test
@@ -45,20 +45,20 @@ class BookingNextStepTest {
         Booking b = booking(BookingStatus.CANCELLED);
         b.setCustomerRefundDue(d("7500"));
         b.setSupplierRefundExpected(d("6000"));
-        assertThat(BookingNextStep.of(b, 0, BigDecimal.ZERO)).isEqualTo("Refund client ₹7,500");
+        assertThat(BookingNextStep.of(b, 0)).isEqualTo("Refund client ₹7,500");
 
         b.setRefundedTotalInr(d("7500"));
-        assertThat(BookingNextStep.of(b, 0, BigDecimal.ZERO)).isEqualTo("Collect supplier refund ₹6,000");
+        assertThat(BookingNextStep.of(b, 0)).isEqualTo("Collect supplier refund ₹6,000");
 
         b.setSupplierRefundReceived(d("6000"));
-        assertThat(BookingNextStep.of(b, 0, BigDecimal.ZERO)).isEqualTo("Cross-check refunds");
+        assertThat(BookingNextStep.of(b, 0)).isEqualTo("Cross-check refunds");
 
         b.setRefundCheckedAt(LocalDateTime.now());
-        assertThat(BookingNextStep.of(b, 0, BigDecimal.ZERO)).isNull();
+        assertThat(BookingNextStep.of(b, 0)).isNull();
     }
 
     @Test
     void aCancelledBookingWithNothingToRefundNeedsNothing() {
-        assertThat(BookingNextStep.of(booking(BookingStatus.CANCELLED), 0, BigDecimal.ZERO)).isNull();
+        assertThat(BookingNextStep.of(booking(BookingStatus.CANCELLED), 0)).isNull();
     }
 }

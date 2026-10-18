@@ -5,11 +5,8 @@ import com.voyra.crm.dto.BookingLifecycleResponse;
 import com.voyra.crm.dto.BookingLifecycleResponse.MoneyRecord;
 import com.voyra.crm.dto.BookingLifecycleResponse.Step;
 import com.voyra.crm.dto.BookingPaymentRequest;
-import com.voyra.crm.dto.BookingSupplierPaymentRequest;
 import com.voyra.crm.dto.InvoiceDraftRequest;
 import com.voyra.crm.dto.PaymentReceiptRequest;
-import com.voyra.crm.dto.SupplierInvoiceResponse;
-import com.voyra.crm.dto.SupplierPaymentRequest;
 import com.voyra.crm.entity.Booking;
 import com.voyra.crm.entity.Invoice;
 import com.voyra.crm.entity.PaymentReceipt;
@@ -42,9 +39,9 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * The booking lifecycle from the client's booking-management flow: create (draft) -> voucher ->
- * invoice -> payment received -> supplier paid, and after a cancel, refund to the client and
- * refund from the supplier. Reads every step's state from the real accounting records, and runs
+ * The booking lifecycle from the client's booking-management flow: create (pending) -> voucher ->
+ * invoice -> payment received, and after a cancel, refund to the client and refund from the
+ * supplier. Paying the supplier is Accounts' job on the supplier bill, not a booking step. Reads every step's state from the real accounting records, and runs
  * the money steps as one-click actions by orchestrating the existing accounting services - it
  * never writes a ledger or journal row itself, so the books stay exactly as those services keep
  * them.
@@ -60,7 +57,6 @@ public class BookingLifecycleService {
     static final String CANCEL = "CANCEL";
     static final String GENERATE_INVOICE = "GENERATE_INVOICE";
     static final String RECORD_PAYMENT = "RECORD_PAYMENT";
-    static final String PAY_SUPPLIER = "PAY_SUPPLIER";
     static final String REFUND_CLIENT = "REFUND_CLIENT";
     static final String SUPPLIER_REFUND = "SUPPLIER_REFUND";
     static final String CROSS_CHECK = "CROSS_CHECK";
@@ -81,8 +77,6 @@ public class BookingLifecycleService {
     private final SupplierPaymentRepository supplierPaymentRepository;
     private final InvoiceDocumentService invoiceDocumentService;
     private final PaymentReceiptService paymentReceiptService;
-    private final SupplierInvoiceService supplierInvoiceService;
-    private final SupplierPaymentService supplierPaymentService;
 
     @Transactional(readOnly = true)
     public BookingLifecycleResponse getLifecycle(String bookingId) {
@@ -157,43 +151,6 @@ public class BookingLifecycleService {
         return build(gather(reload(booking)), currentViewer());
     }
 
-    /**
-     * One-step supplier payment: picks (or drafts, from the booking's supplier and net cost) the
-     * supplier bill, approves it if still a draft, then records the payment. A bill above the
-     * booking's cost cap needs an owner's override - without one the whole call rolls back.
-     */
-    @Transactional
-    public BookingLifecycleResponse paySupplier(String bookingId, BookingSupplierPaymentRequest request) {
-        Booking booking = lockAccessible(bookingId);
-        if (booking.getBookingStatus() == BookingStatus.CANCELLED && openBills(booking.getId()).isEmpty()) {
-            throw new IllegalStateException("This booking is cancelled and nothing is owed to the supplier");
-        }
-        SupplierInvoice bill = resolveBill(booking, request);
-
-        if (request.getSupplierInvoiceNumber() != null && !request.getSupplierInvoiceNumber().isBlank()
-                && bill.getStatus() == SupplierInvoiceStatus.DRAFT) {
-            bill.setSupplierInvoiceNumber(request.getSupplierInvoiceNumber().trim());
-            supplierInvoiceRepository.save(bill);
-        }
-        if (bill.getStatus() == SupplierInvoiceStatus.DRAFT || bill.getStatus() == SupplierInvoiceStatus.PENDING_APPROVAL) {
-            SupplierInvoiceResponse approved = supplierInvoiceService.approve(bill.getId(), blankToNull(request.getOverrideReason()));
-            if (approved.getStatus() == SupplierInvoiceStatus.PENDING_APPROVAL) {
-                throw new IllegalStateException("This bill is above the booking's cost - an owner must approve it with a reason first");
-            }
-        }
-
-        SupplierPaymentRequest payment = new SupplierPaymentRequest();
-        payment.setVendorId(bill.getVendorId());
-        payment.setSupplierInvoiceId(bill.getId());
-        payment.setAmount(request.getAmount());
-        payment.setPaymentMode(request.getPaymentMode());
-        payment.setPaidOn(request.getPaidOn());
-        payment.setInstrumentRef(blankToNull(request.getReference()));
-        supplierPaymentService.pay(payment);
-        log.info("Booking supplier paid: bookingId={}, billId={}, amount={}", booking.getId(), bill.getId(), request.getAmount());
-        return build(gather(reload(booking)), currentViewer());
-    }
-
     private static PaymentReceiptRequest receiptRequest(BookingPaymentRequest request, BigDecimal amount) {
         PaymentReceiptRequest r = new PaymentReceiptRequest();
         r.setAmount(amount);
@@ -210,48 +167,6 @@ public class BookingLifecycleService {
     private Booking lockAccessible(String bookingId) {
         bookingRepository.findByIdForUpdate(bookingId);
         return bookingService.findAccessibleBooking(bookingId);
-    }
-
-    private SupplierInvoice resolveBill(Booking booking, BookingSupplierPaymentRequest request) {
-        if (request.getSupplierInvoiceId() != null && !request.getSupplierInvoiceId().isBlank()) {
-            SupplierInvoice bill = supplierInvoiceRepository.findById(request.getSupplierInvoiceId())
-                    .orElseThrow(() -> new IllegalArgumentException("Supplier bill not found"));
-            if (!booking.getId().equals(bill.getBookingId())) {
-                throw new IllegalArgumentException("This bill belongs to another booking");
-            }
-            return bill;
-        }
-        String vendorId = request.getVendorId() != null && !request.getVendorId().isBlank()
-                ? request.getVendorId() : booking.getVendorId();
-        List<SupplierInvoice> open = openBills(booking.getId()).stream()
-                .filter(b -> vendorId == null || vendorId.equals(b.getVendorId())).toList();
-        if (open.size() == 1) {
-            return open.get(0);
-        }
-        if (open.size() > 1) {
-            throw new IllegalArgumentException("This booking has several open supplier bills - choose which one to pay");
-        }
-        if (booking.getBookingStatus() == BookingStatus.CANCELLED) {
-            throw new IllegalArgumentException("Nothing is owed to this supplier on the cancelled booking");
-        }
-        if (vendorId == null) {
-            throw new IllegalArgumentException("Pick the supplier to pay");
-        }
-        if (booking.getVendorId() == null) {
-            booking.setVendorId(vendorId);
-            bookingRepository.save(booking);
-        }
-        List<SupplierInvoiceResponse> drafted = supplierInvoiceService.createAutoDraft(booking, vendorId);
-        String draftedId = drafted.stream().filter(d -> vendorId.equals(d.getVendorId())).map(SupplierInvoiceResponse::getId)
-                .findFirst().orElseThrow(() -> new IllegalArgumentException("No cost on this booking for that supplier"));
-        return supplierInvoiceRepository.findById(draftedId).orElseThrow();
-    }
-
-    /** Bills that can still take a payment, after an approval if needed. */
-    private List<SupplierInvoice> openBills(String bookingId) {
-        return supplierInvoiceRepository.findByBookingIdAndStatusNot(bookingId, SupplierInvoiceStatus.CANCELLED).stream()
-                .filter(b -> b.getStatus() != SupplierInvoiceStatus.PAID && nz(b.getBalanceDue()).signum() > 0)
-                .toList();
     }
 
     private List<Invoice> liveTaxInvoices(String bookingId) {
@@ -310,14 +225,6 @@ public class BookingLifecycleService {
                 : (invoiced ? invoicedTotal.subtract(received) : nz(b.getSellingPrice()).subtract(received).subtract(nz(f.clientWalletInr())))
                         .max(BigDecimal.ZERO);
 
-        BigDecimal netCost = nz(b.getNetCost());
-        BigDecimal billed = f.bills().stream().map(x -> nz(x.getGrandTotalInr())).reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal supplierPaid = supplierPaidInr(f.supplierPayments());
-        BigDecimal supplierToPay = cancelled
-                // After a cancel only real bills are owed (typically the supplier's cancellation charge), not the net cost.
-                ? f.bills().stream().map(x -> nz(x.getBalanceDueInr()).max(BigDecimal.ZERO)).reduce(BigDecimal.ZERO, BigDecimal::add)
-                : billed.max(netCost).subtract(supplierPaid).max(BigDecimal.ZERO);
-
         BigDecimal refundDue = nz(b.getCustomerRefundDue());
         BigDecimal refunded = nz(b.getRefundedTotalInr());
         BigDecimal refundExpected = nz(b.getSupplierRefundExpected());
@@ -327,14 +234,13 @@ public class BookingLifecycleService {
 
         List<Step> steps = new ArrayList<>();
         String with = b.getSupplier() != null && !b.getSupplier().isBlank() ? " with " + b.getSupplier() : "";
-        steps.add(step("CREATED", "DONE", status == BookingStatus.PENDING ? "Draft - waiting for supplier confirmation"
+        steps.add(step("CREATED", "DONE", status == BookingStatus.PENDING ? "Pending - waiting for supplier confirmation"
                 : cancelled ? "Booked" + with : (status == BookingStatus.COMPLETED ? "Completed" : "Confirmed") + with));
         steps.add(step("VOUCHER", f.documentCount() > 0 ? "DONE" : cancelled ? "NA" : "OPEN",
                 f.documentCount() > 0 ? f.documentCount() + " document" + (f.documentCount() == 1 ? "" : "s") + " uploaded" : "No voucher uploaded yet"));
         steps.add(step("INVOICE", invoiced ? "DONE" : cancelled ? "NA" : "OPEN",
                 invoiced ? "Invoiced " + money(invoicedTotal) : liveInvoices.isEmpty() ? "Not invoiced yet" : "Draft invoice not issued yet"));
         steps.add(paymentStep(cancelled, invoiced, received, toCollect, f.clientWalletInr()));
-        steps.add(supplierStep(viewer, cancelled, netCost, supplierPaid, supplierToPay));
         if (cancelled) {
             steps.add(step("CANCELLED", "DONE", "Cancelled"));
             steps.add(step("CLIENT_REFUND", refundDue.signum() == 0 ? "NA" : clientRefundOpen ? (refunded.signum() > 0 ? "PARTIAL" : "OPEN") : "DONE",
@@ -354,7 +260,6 @@ public class BookingLifecycleService {
         if (ops && live) actions.add(CANCEL);
         if (accounts && !cancelled && !invoiced && nz(b.getSellingPrice()).signum() > 0) actions.add(GENERATE_INVOICE);
         if (accounts && !cancelled && toCollect.signum() > 0) actions.add(RECORD_PAYMENT);
-        if (accounts && supplierToPay.signum() > 0) actions.add(PAY_SUPPLIER);
         if (accounts && cancelled && clientRefundOpen) actions.add(REFUND_CLIENT);
         if (accounts && cancelled && supplierRefundOpen) actions.add(SUPPLIER_REFUND);
         if (accounts && cancelled && !clientRefundOpen && !supplierRefundOpen && b.getRefundCheckedAt() == null) actions.add(CROSS_CHECK);
@@ -365,18 +270,8 @@ public class BookingLifecycleService {
                 .allowedActions(actions)
                 .records(records(f, accounts))
                 .toCollectInr(toCollect)
-                .supplierToPayInr(accounts ? supplierToPay : null)
                 .clientWalletInr(accounts ? f.clientWalletInr() : null)
                 .build();
-    }
-
-    /** Money actually sent to the supplier: payments net of their reversals, never a bill balance a credit note lowered. */
-    public static BigDecimal supplierPaidInr(List<SupplierPayment> payments) {
-        return payments.stream()
-                .filter(p -> p.getDirection() != SupplierPaymentDirection.REFUND_RECEIVED)
-                .filter(p -> p.getReversedAt() == null && p.getReversesPaymentId() == null)
-                .map(p -> nz(p.getAmountInr()))
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
     private static Step paymentStep(boolean cancelled, boolean invoiced, BigDecimal received, BigDecimal toCollect, BigDecimal wallet) {
@@ -392,26 +287,6 @@ public class BookingLifecycleService {
         String held = !invoiced && nz(wallet).signum() > 0 ? " · " + money(wallet) + " held on account, applied on invoice" : "";
         return step("PAYMENT", received.signum() > 0 ? "PARTIAL" : "OPEN",
                 (received.signum() > 0 ? money(received) + " received, " : "") + money(toCollect) + " to collect" + held);
-    }
-
-    private static Step supplierStep(Viewer viewer, boolean cancelled, BigDecimal netCost, BigDecimal paid, BigDecimal toPay) {
-        if (cancelled && toPay.signum() > 0) {
-            // The supplier kept a cancellation charge the agency has not paid yet.
-            return step("SUPPLIER", "OPEN", viewer == Viewer.AGENT ? "Cancellation charge still to pay"
-                    : money(toPay) + " cancellation charge still to pay" + (paid.signum() > 0 ? " (" + money(paid) + " paid)" : ""));
-        }
-        String state = netCost.signum() == 0 && paid.signum() == 0 ? "NA"
-                : toPay.signum() == 0 ? "DONE" : paid.signum() > 0 ? "PARTIAL" : cancelled ? "NA" : "OPEN";
-        if (viewer == Viewer.AGENT) {
-            return step("SUPPLIER", state, switch (state) {
-                case "DONE" -> "Supplier paid";
-                case "PARTIAL" -> "Supplier part paid";
-                case "NA" -> "Nothing to pay";
-                default -> "Not paid yet";
-            });
-        }
-        return step("SUPPLIER", state, state.equals("NA") ? "Nothing to pay"
-                : money(paid) + " paid" + (toPay.signum() > 0 ? ", " + money(toPay) + " to pay" : ""));
     }
 
     private static List<MoneyRecord> records(Facts f, boolean withSupplier) {
