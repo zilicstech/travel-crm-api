@@ -737,12 +737,23 @@ public class LeadService {
     @Transactional
     public LeadDetailResponse setProposalLocked(String id, boolean locked) {
         Lead lead = findWritableLead(id);
+        if (!locked && lead.isProposalLocked() && customerConfirmed(id)) {
+            // Re-opening what the customer committed to is the account holder's call, not any service agent's.
+            CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
+            if (principal.isAgent() && !principal.userId().equals(lead.getCreatedBy())) {
+                throw new AccessDeniedException("Only the owner or the lead's creator can reopen a proposal the customer confirmed");
+            }
+        }
         lead.setProposalLocked(locked);
         leadRepository.save(lead);
         leadTimelineService.record(id, locked ? LeadTimelineEventType.PROPOSAL_LOCKED : LeadTimelineEventType.PROPOSAL_UNLOCKED,
                 locked ? "Proposal locked" : "Proposal unlocked");
         log.info("Proposal lock changed: leadId={}, locked={}", id, locked);
         return toDetailResponse(lead);
+    }
+
+    private boolean customerConfirmed(String leadId) {
+        return leadProposalRepository.findByLeadId(leadId).stream().anyMatch(i -> "CUSTOMER".equals(i.getSelectedBy()));
     }
 
     private void touch(Lead lead) {

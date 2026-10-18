@@ -181,6 +181,9 @@ public class VisaService {
         }
         Agent agent = agentRepository.findByIdAndTenantId(requestedAgentId, principal.tenantId())
                 .orElseThrow(() -> new IllegalArgumentException("Agent not found in this agency: " + requestedAgentId));
+        if (agent.getManageableServices() == null || !agent.getManageableServices().contains(ServiceType.VISA)) {
+            throw new IllegalArgumentException(agent.getName() + " doesn't handle visas - pick an agent who does");
+        }
         return new AuthorResolver.AuthorInfo(agent.getId(), agent.getName());
     }
 

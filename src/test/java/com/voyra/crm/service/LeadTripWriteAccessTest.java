@@ -159,6 +159,22 @@ class LeadTripWriteAccessTest {
         assertThat(lead.isProposalLocked()).isFalse();
     }
 
+    /** Re-opening what the customer committed to is for the owner or the lead's creator only. */
+    @Test
+    void aServiceAgentCannotReopenAProposalTheCustomerConfirmed() {
+        lead.setProposalLocked(true);
+        when(leadProposalRepository.findByLeadId("L1")).thenReturn(List.of(
+                LeadProposal.builder().id("P2").leadId("L1").optionGroup("G").isSelected(true).selectedBy("CUSTOMER").build()));
+        as("VIKRAM", UserType.AGENT);
+
+        assertThrows(AccessDeniedException.class, () -> leadService.setProposalLocked("L1", false));
+        assertThat(lead.isProposalLocked()).isTrue();
+
+        as("CREATOR", UserType.AGENT);
+        leadService.setProposalLocked("L1", false);
+        assertThat(lead.isProposalLocked()).isFalse();
+    }
+
     @Test
     void escalatingAndClearingAreWrittenToTheTimeline() {
         as("O1", UserType.AGENCY_OWNER);

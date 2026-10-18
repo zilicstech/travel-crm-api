@@ -71,6 +71,25 @@ class VisaServiceTest {
         verify(visaRepository, never()).save(any());
     }
 
+    @Test
+    void anOwnerCannotOpenAVisaCaseForAnAgentWhoDoesNotHandleVisas() {
+        org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(
+                new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                        new com.voyra.crm.security.CustomUserPrincipal("O1", "dana", com.voyra.crm.enums.UserType.AGENCY_OWNER, "T1"),
+                        null, List.of()));
+        when(agentRepository.findByIdAndTenantId("A1", "T1")).thenReturn(Optional.of(Agent.builder().id("A1").name("Rahul")
+                .manageableServices(List.of(ServiceType.FLIGHT, ServiceType.HOTEL)).build()));
+        VisaCreateRequest request = new VisaCreateRequest();
+        request.setClientId("C1");
+        request.setAgentId("A1");
+        request.setCountry("France");
+        request.setVisaType("Tourist");
+
+        assertThatThrownBy(() -> visaService.createVisa(request))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Rahul doesn't handle visas");
+        verify(visaRepository, never()).save(any());
+    }
+
     private Visa caseFor(String agentId) {
         Visa visa = Visa.builder().id("V1").agentId(agentId).clientName("C").country("France")
                 .status(VisaStatus.DOCUMENTS_PENDING).build();

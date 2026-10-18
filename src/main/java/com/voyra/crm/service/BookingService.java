@@ -140,7 +140,7 @@ public class BookingService {
         if (request.getSellingPrice() == null) request.setSellingPrice(BigDecimal.ZERO);
         AuthorResolver.AuthorInfo owner = resolveOwningAgent(request.getAgentId());
         if (request.getServiceId() == null || request.getServiceId().isBlank()) {
-            assertAgentHandlesStandaloneType(request.getType());
+            assertAgentHandlesStandaloneType(request.getType(), owner.id());
         }
         clientCreditService.assertWithinLimit(request.getClientId(), request.getSellingPrice(),
                 Boolean.TRUE.equals(request.getOverrideCreditLimit()));
@@ -1040,17 +1040,22 @@ public class BookingService {
         return selling.subtract(cost);
     }
 
-    /** A standalone booking is gated by its own type, as a service-linked one is by its service. Owner exempt; PACKAGE has no service type. */
-    private void assertAgentHandlesStandaloneType(BookingType type) {
-        CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
+    /** A standalone booking is gated by its own type, as a service-linked one is by its service: the
+     *  agent it belongs to must handle that type, whoever creates it (an owner booking "for" an agent
+     *  included). PACKAGE has no service type. */
+    private void assertAgentHandlesStandaloneType(BookingType type, String agentId) {
         ServiceType serviceType = type != null ? ServiceBookingTypeMapper.forBooking(type) : null;
-        if (!principal.isAgent() || serviceType == null) {
+        if (serviceType == null) {
             return;
         }
-        List<ServiceType> handled = agentRepository.findById(principal.userId())
-                .map(Agent::getManageableServices).orElse(List.of());
+        Agent agent = agentRepository.findById(agentId).orElse(null);
+        List<ServiceType> handled = agent != null ? agent.getManageableServices() : null;
         if (handled == null || !handled.contains(serviceType)) {
-            throw new AccessDeniedException("You don't handle " + serviceType + " - only agents who do can create a " + serviceType + " booking");
+            if (SecurityContextUtil.getCurrentUserOrThrow().isAgent()) {
+                throw new AccessDeniedException("You don't handle " + serviceType + " - only agents who do can create a " + serviceType + " booking");
+            }
+            throw new IllegalArgumentException((agent != null ? agent.getName() : "That agent") + " doesn't handle "
+                    + serviceType + " - pick an agent who does");
         }
     }
 

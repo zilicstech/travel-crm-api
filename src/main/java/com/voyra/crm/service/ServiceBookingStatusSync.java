@@ -3,9 +3,11 @@ package com.voyra.crm.service;
 import com.voyra.crm.entity.LeadService;
 import com.voyra.crm.enums.AuditEntityType;
 import com.voyra.crm.enums.BookingStatus;
+import com.voyra.crm.enums.LeadStatus;
 import com.voyra.crm.enums.LeadTimelineEventType;
 import com.voyra.crm.enums.ServiceStatus;
 import com.voyra.crm.repository.BookingRepository;
+import com.voyra.crm.repository.LeadRepository;
 import com.voyra.crm.repository.LeadServiceRepository;
 import com.voyra.crm.util.AuditSnapshot;
 import lombok.RequiredArgsConstructor;
@@ -38,6 +40,7 @@ public class ServiceBookingStatusSync {
     private final BookingRepository bookingRepository;
     private final LeadTimelineService leadTimelineService;
     private final AuditService auditService;
+    private final LeadRepository leadRepository;
 
     /** Called after a booking is saved on a service. A cancelled service is left alone -
      *  logging a booking must never resurrect work that was called off. A service nobody had
@@ -57,6 +60,21 @@ public class ServiceBookingStatusSync {
             service.setAssignedAgentName(agentName);
         }
         transition(service, ServiceStatus.BOOKED, "Booked - a supplier booking has been logged");
+        markLeadBooked(service.getLeadId());
+    }
+
+    /** The lead's first booking converts it: it moves to Booked (agent conversion counts Booked
+     *  leads). A lead already Booked or Lost is left alone. */
+    private void markLeadBooked(String leadId) {
+        leadRepository.findById(leadId)
+                .filter(lead -> lead.getStatus() != LeadStatus.BOOKED && lead.getStatus() != LeadStatus.LOST)
+                .ifPresent(lead -> {
+                    LeadStatus from = lead.getStatus();
+                    lead.setStatus(LeadStatus.BOOKED);
+                    leadRepository.save(lead);
+                    leadTimelineService.recordTransition(leadId, LeadTimelineEventType.STATUS_CHANGED, from,
+                            LeadStatus.BOOKED, "Lead booked - its first supplier booking was logged");
+                });
     }
 
     /** Called after a booking is cancelled or removed. Reverts BOOKED -> CONFIRMED only once
