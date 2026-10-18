@@ -118,7 +118,7 @@ public class SupplierCreditNoteService {
         supplierLedgerService.post(new SupplierLedgerPosting(
                 note.getVendorId(), noteDate, SupplierLedgerEntryType.CREDIT_NOTE_RECEIVED,
                 SupplierLedgerSourceType.SUPPLIER_CREDIT_NOTE, note.getId(), note.getSupplierNoteNumber(),
-                "Supplier credit note " + labelFor(note) + " against " + invoice.getSupplierInvoiceNumber(),
+                "Supplier credit note " + labelFor(note) + " against " + billLabel(invoice),
                 note.getBookingId(), note.getCurrencyCode(), note.getFxRateToInr(),
                 note.getTotalAmount(), BigDecimal.ZERO, note.getTotalAmountInr(), BigDecimal.ZERO));
         postCreditNoteJournal(note, invoice);
@@ -286,7 +286,7 @@ public class SupplierCreditNoteService {
                         .findFirst().map(com.voyra.crm.entity.JournalLine::getAccountCode).orElse(null))
                 .orElse(com.voyra.crm.enums.SystemAccount.purchaseCode(com.voyra.crm.enums.InvoiceServiceCategory.MISCELLANEOUS));
 
-        String narration = "Supplier credit note " + labelFor(note) + " against " + invoice.getSupplierInvoiceNumber();
+        String narration = "Supplier credit note " + labelFor(note) + " against " + billLabel(invoice);
         List<com.voyra.crm.models.JournalLinePosting> lines = new java.util.ArrayList<>();
         lines.add(com.voyra.crm.models.JournalLinePosting.debitParty(
                 com.voyra.crm.enums.SystemAccount.ACCOUNTS_PAYABLE.code(), "VENDOR", note.getVendorId(), totalInr, narration));
@@ -347,7 +347,13 @@ public class SupplierCreditNoteService {
     }
 
     private static String labelFor(SupplierCreditNote n) {
-        return n.getSupplierNoteNumber() != null ? n.getSupplierNoteNumber() : n.getId();
+        return n.getSupplierNoteNumber() != null ? n.getSupplierNoteNumber() : "(no number)";
+    }
+
+    /** What a person calls the bill: its supplier number, else whose bill and of when - never a raw id or "null". */
+    private static String billLabel(com.voyra.crm.entity.SupplierInvoice i) {
+        return i.getSupplierInvoiceNumber() != null ? i.getSupplierInvoiceNumber()
+                : i.getVendorName() + " bill of " + i.getInvoiceDate();
     }
 
     private static SupplierCreditNoteResponse toResponse(SupplierCreditNote n) {

@@ -543,7 +543,9 @@ public class PaymentReceiptService {
         BigDecimal amount = receipt.getAmount().abs();
         BigDecimal amountInr = receipt.getAmountInr().abs();
         String narration = receipt.getReversesReceiptId() != null
-                ? "Receipt " + receipt.getReceiptNumber() + " reverses " + receipt.getReversesReceiptId()
+                ? "Receipt " + receipt.getReceiptNumber() + " reverses "
+                        + paymentReceiptRepository.findById(receipt.getReversesReceiptId())
+                                .map(PaymentReceipt::getReceiptNumber).orElse(receipt.getReversesReceiptId())
                 : "Receipt " + receipt.getReceiptNumber() + " recorded";
 
         customerLedgerService.post(new LedgerPosting(
@@ -621,7 +623,7 @@ public class PaymentReceiptService {
         if (amountInr.compareTo(BigDecimal.ZERO) <= 0) {
             return;
         }
-        String narration = "Wallet applied to invoice " + invoice.getId();
+        String narration = "Wallet applied to invoice " + (invoice.getInvoiceNumber() != null ? invoice.getInvoiceNumber() : invoice.getId());
         journalService.post(new com.voyra.crm.models.JournalPosting(
                 applied.getReceivedOn(), com.voyra.crm.enums.JournalSourceType.RECEIPT, applied.getId(),
                 com.voyra.crm.enums.JournalPurpose.ADVANCE_APPLIED, narration, invoice.getBookingId(), null, List.of(

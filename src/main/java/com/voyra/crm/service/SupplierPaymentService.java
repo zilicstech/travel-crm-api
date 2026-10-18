@@ -421,7 +421,9 @@ public class SupplierPaymentService {
         BigDecimal amountInr = payment.getAmountInr().abs();
         SupplierLedgerEntryType type = payment.getIsAdvance() ? SupplierLedgerEntryType.ADVANCE_PAID : SupplierLedgerEntryType.PAYMENT_MADE;
         String narration = payment.getReversesPaymentId() != null
-                ? "Payment " + orId(payment.getVoucherNumber(), payment.getId()) + " reverses " + payment.getReversesPaymentId()
+                ? "Payment " + orId(payment.getVoucherNumber(), payment.getId()) + " reverses "
+                        + supplierPaymentRepository.findById(payment.getReversesPaymentId())
+                                .map(p -> orId(p.getVoucherNumber(), p.getId())).orElse(payment.getReversesPaymentId())
                 : "Payment " + orId(payment.getVoucherNumber(), payment.getId()) + " recorded";
 
         supplierLedgerService.post(new SupplierLedgerPosting(
@@ -489,7 +491,8 @@ public class SupplierPaymentService {
         if (amountInr == null || amountInr.compareTo(BigDecimal.ZERO) <= 0) {
             return;
         }
-        String narration = "Advance applied to bill " + invoice.getId();
+        String narration = "Advance applied to bill " + (invoice.getSupplierInvoiceNumber() != null
+                ? invoice.getSupplierInvoiceNumber() : invoice.getVendorName() + " of " + invoice.getInvoiceDate());
         journalService.post(new com.voyra.crm.models.JournalPosting(
                 applied.getPaidOn(), com.voyra.crm.enums.JournalSourceType.SUPPLIER_PAYMENT, applied.getId(),
                 com.voyra.crm.enums.JournalPurpose.SUPPLIER_ADVANCE_APPLIED, narration, invoice.getBookingId(), null, List.of(
