@@ -2,6 +2,7 @@ package com.voyra.crm.dto;
 
 import com.voyra.crm.enums.FlightCabin;
 import io.swagger.v3.oas.annotations.media.Schema;
+import jakarta.validation.constraints.FutureOrPresent;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -22,6 +23,7 @@ public class FlightSearchQuery {
     private String destination;
 
     @NotNull(message = "Departure date is required")
+    @FutureOrPresent(message = "Departure date can't be in the past")
     @Schema(example = "2026-10-09")
     private LocalDate departDate;
 

@@ -64,4 +64,7 @@ public class BookingDocumentResponse {
 
     @Schema(description = "True once an issued invoice covers this voucher - it can no longer be edited or removed")
     private Boolean invoiced;
+
+    @Schema(description = "True once this voucher's supplier bill is approved - its cost, markup and supplier are locked and it can't be removed; text fields still edit")
+    private Boolean billApproved;
 }

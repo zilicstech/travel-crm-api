@@ -47,11 +47,13 @@ public interface ClientRepository extends JpaRepository<Client, String> {
             """, nativeQuery = true)
     List<Client> findByPhoneSuffix(@Param("phoneDigits") String phoneDigits);
 
-    /** pg_trgm similarity, not exact match - catches "Ajay Sharma" vs "Ajay Sharme". */
+    /** pg_trgm similarity, not exact match - catches "Ajay Sharma" vs "Ajay Sharme". Names carrying
+     *  different numbers ("CRB10 ..." vs "CRB1 ...", "Batch 2" vs "Batch 3") are different parties. */
     @Query(value = """
             SELECT * FROM client
             WHERE is_active = TRUE
               AND similarity(name, :name) > 0.4
+              AND regexp_replace(name, '[^0-9]', '', 'g') = regexp_replace(:name, '[^0-9]', '', 'g')
             ORDER BY similarity(name, :name) DESC
             LIMIT 5
             """, nativeQuery = true)

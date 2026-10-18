@@ -73,6 +73,7 @@ public class BookingDocumentService {
                 .build();
         bookingService.applyVoucher(booking, document, request.getVendorId(), Boolean.TRUE.equals(request.getOverrideCreditLimit()));
         bookingDocumentRepository.save(document);
+        bookingService.syncReference(booking, null);
 
         if (booking.getLeadId() != null) {
             leadTimelineService.record(booking.getLeadId(), booking.getServiceId(),
@@ -90,6 +91,7 @@ public class BookingDocumentService {
         BookingDocument document = bookingDocumentRepository.findByIdAndBookingId(documentId, bookingId)
                 .orElseThrow(() -> new IllegalArgumentException("Document not found: " + documentId));
         bookingService.assertNotInvoiced(document);
+        String oldReference = document.getReferenceNumber();
         document.setDocType(request.getDocType());
         document.setDetails(com.voyra.crm.util.VoucherDetails.clean(booking.getType(), request.getDetails()));
         document.setReferenceNumber(request.getReferenceNumber());
@@ -115,6 +117,7 @@ public class BookingDocumentService {
             }
         }
         bookingDocumentRepository.save(document);
+        bookingService.syncReference(booking, oldReference);
         log.info("Booking document edited: bookingId={}, documentId={}, moneyChanged={}", bookingId, documentId, moneyChanged);
         return toResponse(document);
     }
@@ -123,8 +126,9 @@ public class BookingDocumentService {
     public List<BookingDocumentResponse> listForBooking(String bookingId) {
         bookingService.findAccessibleBooking(bookingId);
         java.time.LocalDateTime invoicedAt = bookingService.lastInvoicedAt(bookingId);
-        return bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc(bookingId).stream()
-                .map(d -> BookingService.toDocumentResponse(d, invoicedAt)).toList();
+        List<BookingDocument> docs = bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc(bookingId);
+        java.util.Set<String> approvedBills = bookingService.approvedBillIds(docs);
+        return docs.stream().map(d -> BookingService.toDocumentResponse(d, invoicedAt, approvedBills)).toList();
     }
 
     /** Not {@code @Transactional} - see class javadoc. */
@@ -202,7 +206,8 @@ public class BookingDocumentService {
     }
 
     private BookingDocumentResponse toResponse(BookingDocument d) {
-        return BookingService.toDocumentResponse(d, bookingService.lastInvoicedAt(d.getBookingId()));
+        return BookingService.toDocumentResponse(d, bookingService.lastInvoicedAt(d.getBookingId()),
+                bookingService.approvedBillIds(List.of(d)));
     }
 
     private static java.math.BigDecimal nz(java.math.BigDecimal v) {

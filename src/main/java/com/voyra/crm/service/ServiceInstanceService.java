@@ -25,6 +25,7 @@ import com.voyra.crm.security.SecurityContextUtil;
 import com.voyra.crm.util.AuditSnapshot;
 import com.voyra.crm.util.ServiceDateRangeDeriver;
 import com.voyra.crm.util.ServiceLabelDeriver;
+import com.voyra.crm.util.TripRules;
 import com.voyra.crm.util.UniqueIdResolver;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -132,6 +133,7 @@ public class ServiceInstanceService {
                     .createdAt(LocalDateTime.now())
                     .createdBy(currentUserId())
                     .build();
+            checkTrip(service);
             ServiceDateRangeDeriver.derive(service);
             created.add(service);
         }
@@ -223,6 +225,7 @@ public class ServiceInstanceService {
         service.setUpdatedAt(LocalDateTime.now());
         service.setUpdatedBy(currentUserId());
 
+        checkTrip(service);
         ServiceDateRangeDeriver.derive(service);
 
         List<LeadService> siblings = leadServiceRepository.findByLeadIdOrderBySortOrderAsc(leadId);
@@ -534,5 +537,11 @@ public class ServiceInstanceService {
                 .transferTime(s.getTransferTime()).transferPassengers(s.getTransferPassengers())
                 .createdAt(s.getCreatedAt()).updatedAt(s.getUpdatedAt())
                 .build();
+    }
+
+    private static void checkTrip(LeadService service) {
+        TripRules.sectors(service.getFlightSectors());
+        TripRules.stay(service.getHotelCheckIn(), service.getHotelCheckOut(), service.getHotelRooms(), service.getHotelNights());
+        TripRules.transfer(service.getTransferTime(), service.getTransferPassengers());
     }
 }

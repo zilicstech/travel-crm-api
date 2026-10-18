@@ -272,6 +272,30 @@ class BookingServiceTest {
     }
 
     @Test
+    void aHotelCannotCheckOutBeforeItChecksIn() {
+        Booking booking = Booking.builder().id("B1").agentId("A1").bookingStatus(BookingStatus.PENDING)
+                .hotelCheckIn(java.time.LocalDate.of(2026, 12, 12)).build();
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
+        BookingUpdateRequest request = new BookingUpdateRequest();
+        request.setHotelCheckOut(java.time.LocalDate.of(2026, 12, 10));
+
+        assertThatThrownBy(() -> bookingService.updateBooking("B1", request)).hasMessage("Check-out must be after check-in");
+        org.mockito.Mockito.verify(bookingRepository, org.mockito.Mockito.never()).save(booking);
+    }
+
+    @Test
+    void emptyNotesClearTheBookingsNotes() {
+        Booking booking = Booking.builder().id("B1").agentId("A1").bookingStatus(BookingStatus.PENDING).notes("CRB2 edited").build();
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
+        BookingUpdateRequest request = new BookingUpdateRequest();
+        request.setNotes("");
+
+        bookingService.updateBooking("B1", request);
+
+        assertThat(booking.getNotes()).isNull();
+    }
+
+    @Test
     void updatingATransferBookingDerivesDepartureDateFromTransferDate() {
         Booking booking = Booking.builder().id("B1").agentId("A1").bookingStatus(BookingStatus.PENDING).build();
         when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
@@ -617,7 +641,8 @@ class BookingServiceTest {
         when(supplierInvoiceRepository.findById("S1")).thenReturn(Optional.of(com.voyra.crm.entity.SupplierInvoice.builder()
                 .id("S1").status(com.voyra.crm.enums.SupplierInvoiceStatus.APPROVED).build()));
 
-        assertThatThrownBy(() -> bookingService.reverseVoucher(booking, v)).hasMessageContaining("already approved");
+        assertThatThrownBy(() -> bookingService.reverseVoucher(booking, v)).hasMessageContaining("already approved - it can't be removed");
+        assertThatThrownBy(() -> bookingService.reverseVoucher(booking, v, false)).hasMessageContaining("can't be changed");
         assertThat(booking.getSellingPrice()).isEqualByComparingTo("4400");
     }
 
@@ -633,5 +658,55 @@ class BookingServiceTest {
                 com.voyra.crm.entity.InvoiceLineItem.builder().lineSubtotal(new BigDecimal("4400")).build()));
 
         assertThatThrownBy(() -> bookingService.reverseVoucher(booking, v)).hasMessageContaining("already invoiced");
+    }
+
+    // ---- CRB-8: the booking's reference follows its live vouchers ------------------------
+
+    private static com.voyra.crm.entity.BookingDocument live(String id, String reference, String price) {
+        return com.voyra.crm.entity.BookingDocument.builder().id(id).bookingId("B1").referenceNumber(reference)
+                .sellingPrice(new BigDecimal(price)).createdAt(java.time.LocalDateTime.now()).build();
+    }
+
+    @Test
+    void theReferenceIsThePricedVouchersNotTheFirstUnpricedOne() {
+        Booking booking = pendingFlight("NOPRICE", "4400.00");
+        when(bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc("B1")).thenReturn(List.of(
+                live("D1", "NOPRICE", "0"), live("D2", "ET2", "4400")));
+
+        bookingService.syncReference(booking, null);
+
+        assertThat(booking.getPnr()).isEqualTo("ET2");
+    }
+
+    @Test
+    void anEditedVoucherReferenceIsTheBookingsNewReference() {
+        Booking booking = pendingFlight(null, "4400.00");
+        booking.setType(com.voyra.crm.enums.BookingType.HOTEL);
+        booking.setHotelConfirmationNo("HV1");
+        when(bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc("B1")).thenReturn(List.of(live("D1", "HV1C", "4400")));
+
+        bookingService.syncReference(booking, "HV1");
+
+        assertThat(booking.getHotelConfirmationNo()).isEqualTo("HV1C");
+    }
+
+    @Test
+    void removingTheOnlyVoucherClearsTheReferenceItGave() {
+        Booking booking = pendingFlight("HV1", "0");
+        when(bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc("B1")).thenReturn(List.of());
+
+        bookingService.syncReference(booking, "HV1");
+
+        assertThat(booking.getPnr()).isNull();
+    }
+
+    @Test
+    void aReferenceTypedOnTheBookingSurvivesAVoucherWithoutOne() {
+        Booking booking = pendingFlight("TYPED", "0");
+        when(bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc("B1")).thenReturn(List.of(live("D1", null, "0")));
+
+        bookingService.syncReference(booking, null);
+
+        assertThat(booking.getPnr()).isEqualTo("TYPED");
     }
 }
