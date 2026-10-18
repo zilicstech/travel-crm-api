@@ -127,6 +127,13 @@ public class GlobalExceptionHandler {
                         HttpStatus.NOT_FOUND.value(), path));
     }
 
+    @ExceptionHandler(StoredFileNotFoundException.class)
+    public ResponseEntity<ApiErrorResponse> handleStoredFileNotFound(StoredFileNotFoundException ex,
+                                                                     HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(
+                ApiErrorResponse.of(ex.getMessage(), "Not found", null, HttpStatus.NOT_FOUND.value(), getPath(request)));
+    }
+
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<ApiErrorResponse> handleDataIntegrityViolation(DataIntegrityViolationException ex,
                                                                           HttpServletRequest request) {
