@@ -80,6 +80,9 @@ public class LeadService {
     private static final Set<LeadMemberStatus> ACTIVE_MANIFEST_STATUSES =
             Set.of(LeadMemberStatus.TENTATIVE, LeadMemberStatus.CONFIRMED);
 
+    private static final java.util.Comparator<Lead> NEWEST_FIRST = java.util.Comparator.comparing(
+            Lead::getCreatedAt, java.util.Comparator.nullsLast(java.util.Comparator.reverseOrder()));
+
     private final LeadRepository leadRepository;
     private final LeadNoteRepository leadNoteRepository;
     private final LeadProposalRepository leadProposalRepository;
@@ -144,7 +147,8 @@ public class LeadService {
 
     @Transactional(readOnly = true)
     public List<LeadResponse> listLeads(LeadStatus statusFilter) {
-        List<Lead> leads = scopedLeads(statusFilter);
+        List<Lead> leads = new ArrayList<>(scopedLeads(statusFilter));
+        leads.sort(NEWEST_FIRST);
         Map<String, Long> confirmedByLead = confirmedCounts(leads);
         return leads.stream().map(l -> toResponse(l, confirmedByLead)).toList();
     }
@@ -152,6 +156,8 @@ public class LeadService {
     @Transactional(readOnly = true)
     public PagedResponse<LeadResponse> listLeads(LeadStatus statusFilter, Pageable pageable) {
         CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
+        pageable = org.springframework.data.domain.PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(),
+                org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "createdAt"));
         Page<Lead> page;
         if (principal.isAgent()) {
             List<ServiceType> types = manageableServiceTypes(principal.userId());

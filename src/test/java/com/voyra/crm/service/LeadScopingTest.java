@@ -160,4 +160,17 @@ class LeadScopingTest {
 
         assertThat(result).extracting(com.voyra.crm.dto.LeadResponse::getId).containsExactlyInAnyOrder("L1", "L2");
     }
+
+    @Test
+    void theFullListComesBackNewestFirst() {
+        authenticateAs("O1", UserType.AGENCY_OWNER);
+        Lead old = Lead.builder().id("OLD").createdBy("A1").status(LeadStatus.NEW)
+                .createdAt(java.time.LocalDateTime.of(2026, 1, 1, 9, 0)).build();
+        Lead fresh = Lead.builder().id("NEW").createdBy("A1").status(LeadStatus.NEW)
+                .createdAt(java.time.LocalDateTime.of(2026, 10, 19, 9, 0)).build();
+        when(leadRepository.findAll()).thenReturn(new java.util.ArrayList<>(List.of(old, fresh)));
+
+        assertThat(leadService.listLeads(null)).extracting(com.voyra.crm.dto.LeadResponse::getId)
+                .containsExactly("NEW", "OLD");
+    }
 }
