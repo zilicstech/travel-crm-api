@@ -147,9 +147,10 @@ public class BookingController {
     @GetMapping("/{id}/cancel-preview")
     @Operation(summary = "What cancelling would refund", description = "Customer refund due and supplier refund expected for the given charges. Writes nothing.")
     public ResponseEntity<BookingCancelPreviewResponse> cancelPreview(@PathVariable String id,
+            @RequestParam(value = "airlineCharge", required = false) java.math.BigDecimal airlineCharge,
             @RequestParam(value = "supplierCharge", required = false) java.math.BigDecimal supplierCharge,
             @RequestParam(value = "agencyFee", required = false) java.math.BigDecimal agencyFee) {
-        return ResponseEntity.ok(bookingCancellationService.preview(id, supplierCharge, agencyFee));
+        return ResponseEntity.ok(bookingCancellationService.preview(id, airlineCharge, supplierCharge, agencyFee));
     }
 
     @PostMapping("/{id}/cancel")

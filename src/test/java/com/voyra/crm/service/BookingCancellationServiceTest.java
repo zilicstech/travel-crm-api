@@ -115,6 +115,23 @@ class BookingCancellationServiceTest {
         verify(bookingRepository, org.mockito.Mockito.times(3)).findByIdForUpdate("B1");
     }
 
+    @Test
+    void theAirlineChargeAndTheSupplierFeeBothComeOffTheRefundAndTheAirlinePartIsKept() {
+        Booking b = booking(BookingStatus.CONFIRMED);
+        b.setReceivedTotalInr(BigDecimal.ZERO);
+        when(paymentReceiptService.heldForBooking("C1", "B1")).thenReturn(d("10000"));
+
+        assertThat(service.preview("B1", d("3000"), d("500"), d("1000")).getCustomerRefundDue()).isEqualByComparingTo("5500");
+        BookingCancelRequest request = cancel("500", "1000");
+        request.setAirlineCharge(d("3000"));
+        service.cancel("B1", request);
+
+        assertThat(b.getCustomerRefundDue()).isEqualByComparingTo("5500");
+        assertThat(b.getCancellationSupplierCharge()).isEqualByComparingTo("3500");
+        assertThat(b.getCancellationAirlineCharge()).isEqualByComparingTo("3000");
+        assertThat(b.getCancellationAgencyFee()).isEqualByComparingTo("1000");
+    }
+
     /** Regression run 7, N1: an advance held on account for the booking (no invoice yet) is refundable on cancel. */
     @Test
     void anAdvanceHeldForTheBookingIsRefundableWhenItIsCancelledBeforeInvoicing() {
@@ -122,7 +139,7 @@ class BookingCancellationServiceTest {
         b.setReceivedTotalInr(BigDecimal.ZERO);
         when(paymentReceiptService.heldForBooking("C1", "B1")).thenReturn(d("2000"));
 
-        assertThat(service.preview("B1", d("500"), BigDecimal.ZERO).getCustomerRefundDue()).isEqualByComparingTo("1500");
+        assertThat(service.preview("B1", null, d("500"), BigDecimal.ZERO).getCustomerRefundDue()).isEqualByComparingTo("1500");
         service.cancel("B1", cancel("500", "0"));
 
         assertThat(b.getCustomerRefundDue()).isEqualByComparingTo("1500");
@@ -184,7 +201,7 @@ class BookingCancellationServiceTest {
         when(invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc(
                 "B1", InvoiceDocumentType.TAX_INVOICE, InvoiceLifecycle.CANCELLED)).thenReturn(List.of(invoice));
 
-        assertThat(service.preview("B1", d("5000"), d("1000")).getCustomerRefundDue()).isEqualByComparingTo("0");
+        assertThat(service.preview("B1", null, d("5000"), d("1000")).getCustomerRefundDue()).isEqualByComparingTo("0");
         service.cancel("B1", cancel("5000", "1000"));
 
         verify(creditNoteService, never()).create(any());
@@ -225,7 +242,7 @@ class BookingCancellationServiceTest {
         });
         when(supplierInvoiceRepository.findById("S0")).thenReturn(Optional.of(draft));
 
-        assertThat(service.preview("B1", d("20000"), d("4000")).getSupplierChargeOwed()).isEqualByComparingTo("20000");
+        assertThat(service.preview("B1", null, d("20000"), d("4000")).getSupplierChargeOwed()).isEqualByComparingTo("20000");
         service.cancel("B1", cancel("20000", "4000"));
 
         verify(supplierInvoiceService, never()).cancelForBooking(eq("S0"), anyString());
@@ -396,7 +413,7 @@ class BookingCancellationServiceTest {
     @Test
     void negativeChargesAreRejectedForPreviewAndCancel() {
         booking(BookingStatus.CONFIRMED);
-        assertThatThrownBy(() -> service.preview("B1", d("-5000"), BigDecimal.ZERO)).hasMessageContaining("negative");
+        assertThatThrownBy(() -> service.preview("B1", null, d("-5000"), BigDecimal.ZERO)).hasMessageContaining("negative");
         assertThatThrownBy(() -> service.cancel("B1", cancel("0", "-1"))).hasMessageContaining("negative");
         verify(bookingService, never()).markCancelled(any(), anyString());
     }

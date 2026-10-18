@@ -327,9 +327,15 @@ public class Booking {
     @Builder.Default
     private BigDecimal refundedTotalInr = BigDecimal.ZERO;
 
+    /** Everything the supplier side keeps on a cancellation: the airline's (or hotel's) charge plus the supplier's own fee. */
     @Column(name = "cancellation_supplier_charge", nullable = false, precision = 19, scale = 2)
     @Builder.Default
     private BigDecimal cancellationSupplierCharge = BigDecimal.ZERO;
+
+    /** The airline's (or hotel's) part of {@link #cancellationSupplierCharge}. */
+    @Column(name = "cancellation_airline_charge", nullable = false, precision = 19, scale = 2)
+    @Builder.Default
+    private BigDecimal cancellationAirlineCharge = BigDecimal.ZERO;
 
     @Column(name = "cancellation_agency_fee", nullable = false, precision = 19, scale = 2)
     @Builder.Default

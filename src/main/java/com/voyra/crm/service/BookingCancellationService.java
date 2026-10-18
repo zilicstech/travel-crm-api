@@ -72,10 +72,11 @@ public class BookingCancellationService {
     private final RevenueRecognitionTenantService revenueRecognitionTenantService;
 
     @Transactional(readOnly = true)
-    public BookingCancelPreviewResponse preview(String bookingId, BigDecimal supplierCharge, BigDecimal agencyFee) {
-        assertNotNegative(supplierCharge, agencyFee);
+    public BookingCancelPreviewResponse preview(String bookingId, BigDecimal airlineCharge, BigDecimal supplierCharge, BigDecimal agencyFee) {
+        assertNotNegative(airlineCharge, supplierCharge, agencyFee);
         Booking booking = cancellable(bookingId);
-        BigDecimal charge = nz(supplierCharge);
+        // The supplier side keeps the airline's charge and its own fee; both come out of its refund.
+        BigDecimal charge = nz(airlineCharge).add(nz(supplierCharge));
         BigDecimal kept = charge.add(nz(agencyFee));
         Invoice invoice = liveTaxInvoice(bookingId);
         BigDecimal customerPaid = invoice != null ? customerPaid(booking) : paidIncludingHeldAdvance(booking);
@@ -96,10 +97,10 @@ public class BookingCancellationService {
 
     @Transactional
     public BookingResponse cancel(String bookingId, BookingCancelRequest request) {
-        assertNotNegative(request.getSupplierCharge(), request.getAgencyFee());
+        assertNotNegative(request.getAirlineCharge(), request.getSupplierCharge(), request.getAgencyFee());
         lock(bookingId);
         Booking booking = cancellable(bookingId);
-        BigDecimal charge = nz(request.getSupplierCharge());
+        BigDecimal charge = nz(request.getAirlineCharge()).add(nz(request.getSupplierCharge()));
         BigDecimal fee = nz(request.getAgencyFee());
         bookingAccountingSync.syncPayment(bookingId);
         BigDecimal customerPaid = liveTaxInvoice(bookingId) != null ? customerPaid(booking) : paidIncludingHeldAdvance(booking);
@@ -128,6 +129,7 @@ public class BookingCancellationService {
 
         booking.setCancellationType(request.getType());
         booking.setCancellationSupplierCharge(charge);
+        booking.setCancellationAirlineCharge(nz(request.getAirlineCharge()));
         booking.setCancellationAgencyFee(fee);
         booking.setCustomerRefundDue(due);
         booking.setSupplierRefundExpected(expected);

@@ -19,8 +19,12 @@ public class BookingCancelRequest {
     @Schema(description = "Optional; defaults to the type's label", example = "Client changed plans")
     private String reason;
 
-    @DecimalMin(value = "0.0", message = "Supplier charge cannot be negative")
-    @Schema(description = "What the airline/hotel keeps", example = "2000.00")
+    @DecimalMin(value = "0.0", message = "Airline charge cannot be negative")
+    @Schema(description = "What the airline (or hotel) keeps", example = "1500.00")
+    private BigDecimal airlineCharge;
+
+    @DecimalMin(value = "0.0", message = "Supplier fee cannot be negative")
+    @Schema(description = "The supplier's own cancellation fee (e.g. Tripjack's), on top of the airline's charge", example = "500.00")
     private BigDecimal supplierCharge;
 
     @DecimalMin(value = "0.0", message = "Agency fee cannot be negative")

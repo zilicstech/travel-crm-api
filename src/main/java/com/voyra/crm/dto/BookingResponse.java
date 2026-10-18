@@ -248,8 +248,11 @@ public class BookingResponse {
     @Schema(description = "Sum of REFUND-direction receipts against this booking, in INR", example = "0.00")
     private BigDecimal refundedTotalInr;
 
-    @Schema(description = "Cancellation: what the supplier kept", example = "2000.00")
+    @Schema(description = "Cancellation: everything the supplier side kept - the airline's charge plus the supplier's fee", example = "2000.00")
     private BigDecimal cancellationSupplierCharge;
+
+    @Schema(description = "Cancellation: the airline's (or hotel's) part of cancellationSupplierCharge", example = "1500.00")
+    private BigDecimal cancellationAirlineCharge;
 
     @Schema(description = "Cancellation: the agency's own fee", example = "500.00")
     private BigDecimal cancellationAgencyFee;
