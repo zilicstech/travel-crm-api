@@ -316,6 +316,7 @@ public class BookingLifecycleService {
                 .allowedActions(actions)
                 .records(records(f, accounts))
                 .toCollectInr(toCollect)
+                .uninvoicedInr(invoiced ? uninvoiced : cancelled ? BigDecimal.ZERO : nz(b.getSellingPrice()))
                 .clientWalletInr(accounts ? f.clientWalletInr() : null)
                 .supplierRefundOutstandingInr(cancelled ? refundExpected.subtract(refundReceived).max(BigDecimal.ZERO) : null)
                 .supplierRefundClaim(claim == null ? null : BookingLifecycleResponse.SupplierRefundClaim.builder()

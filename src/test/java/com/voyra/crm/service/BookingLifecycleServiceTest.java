@@ -155,6 +155,8 @@ class BookingLifecycleServiceTest {
         assertThat(r.getSteps().stream().filter(x -> x.getKey().equals("INVOICE")).findFirst().orElseThrow().getSummary())
                 .contains("₹3,000 added since the last invoice");
         assertThat(r.getAllowedActions()).contains("GENERATE_INVOICE");
+        // BUG-MO-07: the Generate invoice modal shows the 3,000 being invoiced, not the 13,000 booking price.
+        assertThat(r.getUninvoicedInr()).isEqualByComparingTo("3000");
     }
 
     @Test
