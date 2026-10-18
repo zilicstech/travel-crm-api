@@ -257,4 +257,91 @@ class ClientMemberRuleTest {
         verify(memberRepository, never()).delete(any());
         assertThat(member.getIsActive()).isFalse();
     }
+    private Member primary(String name) {
+        return Member.builder().memberId("M1").clientId("C1").name(name)
+                .type(MemberType.CLIENT).relation(MemberRelation.SELF).isActive(true).build();
+    }
+
+    /** The edit form sends the primary's relation back unchanged; that is not a change and must not block the save. */
+    @Test
+    void thePrimaryMemberCanBeEditedWhenTheRelationIsSentUnchanged() {
+        authenticateAs("A1", UserType.AGENT);
+        when(clientRepository.findById("C1")).thenReturn(Optional.of(client("C1")));
+        Member member = primary("Ajay Sharma");
+        when(memberRepository.findByMemberIdAndClientId("M1", "C1")).thenReturn(Optional.of(member));
+
+        com.voyra.crm.dto.MemberUpdateRequest request = new com.voyra.crm.dto.MemberUpdateRequest();
+        request.setRelation(MemberRelation.SELF);
+        request.setDob(java.time.LocalDate.of(1980, 5, 1));
+        request.setPassportNumber("L1234567");
+        memberService().updateMember("C1", "M1", request);
+
+        verify(memberRepository).save(member);
+        assertThat(member.getDob()).isEqualTo(java.time.LocalDate.of(1980, 5, 1));
+        assertThat(member.getPassportNumber()).isEqualTo("L1234567");
+        assertThat(member.getRelation()).isEqualTo(MemberRelation.SELF);
+    }
+
+    @Test
+    void changingThePrimaryMembersRelationIsRejected() {
+        authenticateAs("A1", UserType.AGENT);
+        when(clientRepository.findById("C1")).thenReturn(Optional.of(client("C1")));
+        Member member = primary("Ajay Sharma");
+        when(memberRepository.findByMemberIdAndClientId("M1", "C1")).thenReturn(Optional.of(member));
+
+        com.voyra.crm.dto.MemberUpdateRequest request = new com.voyra.crm.dto.MemberUpdateRequest();
+        request.setRelation(MemberRelation.SPOUSE);
+        assertThatThrownBy(() -> memberService().updateMember("C1", "M1", request))
+                .isInstanceOf(IllegalStateException.class);
+        verify(memberRepository, never()).save(any());
+    }
+
+    /** For a B2C client the primary member is the person; renaming the client renames them and their manifest snapshots. */
+    @Test
+    void renamingAB2cClientRenamesItsPrimaryMember() {
+        authenticateAs("A1", UserType.AGENT);
+        when(clientRepository.findById("C1")).thenReturn(Optional.of(client("C1")));
+        Member member = primary("Ajay Sharma");
+        when(memberRepository.findByClientIdAndTypeAndIsActiveTrue("C1", MemberType.CLIENT)).thenReturn(Optional.of(member));
+
+        com.voyra.crm.dto.ClientUpdateRequest request = new com.voyra.crm.dto.ClientUpdateRequest();
+        request.setName("Ajay Kumar Sharma");
+        clientService.updateClient("C1", request);
+
+        assertThat(member.getName()).isEqualTo("Ajay Kumar Sharma");
+        verify(memberRepository).save(member);
+        verify(leadMemberRepository).updateMemberNameForMember("M1", "Ajay Kumar Sharma");
+    }
+
+    /** A primary renamed on purpose (no longer the client's name) is a different fact - keep it. */
+    @Test
+    void renamingAB2cClientKeepsAPrimaryMemberWhoseNameWasAlreadyDifferent() {
+        authenticateAs("A1", UserType.AGENT);
+        when(clientRepository.findById("C1")).thenReturn(Optional.of(client("C1")));
+        Member member = primary("Ajay K. Sharma");
+        when(memberRepository.findByClientIdAndTypeAndIsActiveTrue("C1", MemberType.CLIENT)).thenReturn(Optional.of(member));
+
+        com.voyra.crm.dto.ClientUpdateRequest request = new com.voyra.crm.dto.ClientUpdateRequest();
+        request.setName("Sharma Family");
+        clientService.updateClient("C1", request);
+
+        assertThat(member.getName()).isEqualTo("Ajay K. Sharma");
+        verify(leadMemberRepository, never()).updateMemberNameForMember(any(), any());
+    }
+
+    /** A corporate client's primary member is a contact person, not the company. */
+    @Test
+    void renamingACorporateClientLeavesItsPrimaryMemberAlone() {
+        authenticateAs("A1", UserType.AGENT);
+        Client corporate = client("C1");
+        corporate.setType(ClientType.B2B);
+        when(clientRepository.findById("C1")).thenReturn(Optional.of(corporate));
+
+        com.voyra.crm.dto.ClientUpdateRequest request = new com.voyra.crm.dto.ClientUpdateRequest();
+        request.setName("Sharma Exports Ltd");
+        clientService.updateClient("C1", request);
+
+        verify(memberRepository, never()).findByClientIdAndTypeAndIsActiveTrue(any(), any());
+        verify(leadMemberRepository, never()).updateMemberNameForMember(any(), any());
+    }
 }

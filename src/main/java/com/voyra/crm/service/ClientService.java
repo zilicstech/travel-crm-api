@@ -20,6 +20,7 @@ import com.voyra.crm.enums.MemberType;
 import com.voyra.crm.repository.BookingRepository;
 import com.voyra.crm.repository.ClientInvoiceRepository;
 import com.voyra.crm.repository.ClientRepository;
+import com.voyra.crm.repository.LeadMemberRepository;
 import com.voyra.crm.repository.LeadRepository;
 import com.voyra.crm.repository.MemberRepository;
 import com.voyra.crm.repository.VisaRepository;
@@ -49,6 +50,7 @@ public class ClientService {
     private final ClientRepository clientRepository;
     private final MemberRepository memberRepository;
     private final LeadRepository leadRepository;
+    private final LeadMemberRepository leadMemberRepository;
     private final BookingRepository bookingRepository;
     private final VisaRepository visaRepository;
     private final ClientInvoiceRepository clientInvoiceRepository;
@@ -204,6 +206,7 @@ public class ClientService {
 
         boolean renamed = request.getName() != null && !request.getName().equals(client.getName());
         if (renamed) {
+            renamePrimaryMemberOfB2c(client, request.getName());
             client.setName(request.getName());
         }
         if (request.getGstin() != null) {
@@ -245,6 +248,24 @@ public class ClientService {
 
         log.info("Client updated: clientId={}, renamed={}", id, renamed);
         return toDetailResponse(client);
+    }
+
+    /**
+     * A B2C client is a household named after its main traveller, so a rename is a rename of that
+     * person too - unless their name was already edited apart from the client's. A B2B client's
+     * primary member is a contact person, never the company, so it is left alone.
+     */
+    private void renamePrimaryMemberOfB2c(Client client, String newName) {
+        if (client.getType() != ClientType.B2C) return;
+        memberRepository.findByClientIdAndTypeAndIsActiveTrue(client.getId(), MemberType.CLIENT)
+                .filter(primary -> primary.getName().equals(client.getName()))
+                .ifPresent(primary -> {
+                    primary.setName(newName);
+                    primary.setModifiedAt(LocalDateTime.now());
+                    primary.setModifiedBy(currentUserId());
+                    memberRepository.save(primary);
+                    leadMemberRepository.updateMemberNameForMember(primary.getMemberId(), newName);
+                });
     }
 
     /**
