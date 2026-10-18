@@ -443,4 +443,30 @@ class BookingLifecycleServiceTest {
         assertThat(draft.getValue().getLines()).singleElement()
                 .satisfies(l -> assertThat(l.getUnitPrice()).isEqualByComparingTo("3000"));
     }
+
+    /** CRB-15: the extra invoice's line says what was added - the return ticket - not only "Additional services". */
+    @Test
+    void anExtraInvoiceLineNamesTheVouchersAddedSinceTheLastInvoice() {
+        Booking b = stubBooking(booking(BookingStatus.CONFIRMED));
+        b.setSellingPrice(d("13000"));
+        java.time.LocalDateTime invoicedAt = java.time.LocalDateTime.of(2026, 10, 10, 12, 0);
+        when(bookingService.invoicedPrice("B1")).thenReturn(d("10000"));
+        when(bookingService.lastInvoicedAt("B1")).thenReturn(invoicedAt);
+        when(invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc(eq("B1"), any(), any()))
+                .thenReturn(List.of(issued("10000", "0")));
+        when(bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc("B1")).thenReturn(List.of(
+                com.voyra.crm.entity.BookingDocument.builder().id("D1").referenceNumber("OUT1").sellingPrice(d("10000"))
+                        .createdAt(invoicedAt.minusDays(1)).build(),
+                com.voyra.crm.entity.BookingDocument.builder().id("D2").referenceNumber("RET1").sellingPrice(d("3000"))
+                        .details(Map.of("flightFrom", "BOM", "flightTo", "DEL", "journeyDate", "2026-12-20"))
+                        .createdAt(invoicedAt.plusDays(1)).build()));
+        when(invoiceDocumentService.createDraft(any())).thenReturn(InvoiceResponse.builder().id("I9").build());
+
+        service.generateInvoice("B1", null);
+
+        ArgumentCaptor<InvoiceDraftRequest> draft = ArgumentCaptor.forClass(InvoiceDraftRequest.class);
+        verify(invoiceDocumentService).createDraft(draft.capture());
+        assertThat(draft.getValue().getLines().get(0).getDescription())
+                .isEqualTo("Additional services - BK-00007: BOM to DEL 2026-12-20 (RET1)");
+    }
 }
