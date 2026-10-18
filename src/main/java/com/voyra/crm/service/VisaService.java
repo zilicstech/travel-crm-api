@@ -10,6 +10,7 @@ import com.voyra.crm.entity.Agent;
 import com.voyra.crm.entity.Client;
 import com.voyra.crm.entity.Visa;
 import com.voyra.crm.enums.AuditEntityType;
+import com.voyra.crm.enums.ServiceType;
 import com.voyra.crm.enums.VisaStatus;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.ClientRepository;
@@ -113,13 +114,17 @@ public class VisaService {
         if (request.getVisaValidity() != null) visa.setVisaValidity(request.getVisaValidity());
         if (request.getExpiryDate() != null) visa.setExpiryDate(request.getExpiryDate());
 
-        // Approved/Rejected are mutually exclusive outcomes.
-        if (Boolean.TRUE.equals(request.getApproved())) {
-            visa.setApproved(true);
-            visa.setRejected(false);
-        } else if (Boolean.TRUE.equals(request.getRejected())) {
-            visa.setRejected(true);
-            visa.setApproved(false);
+        // Approved/Rejected are mutually exclusive outcomes: refuse both, otherwise the one ticked clears the other.
+        if (Boolean.TRUE.equals(request.getApproved()) && Boolean.TRUE.equals(request.getRejected())) {
+            throw new IllegalArgumentException("A visa can't be both approved and rejected - tick only one");
+        }
+        if (request.getApproved() != null) visa.setApproved(request.getApproved());
+        if (request.getRejected() != null) visa.setRejected(request.getRejected());
+        if (Boolean.TRUE.equals(request.getApproved())) visa.setRejected(false);
+        if (Boolean.TRUE.equals(request.getRejected())) visa.setApproved(false);
+        if (visa.getExpiryDate() != null && visa.getAppointmentDate() != null
+                && visa.getExpiryDate().isBefore(visa.getAppointmentDate())) {
+            throw new IllegalArgumentException("Visa expiry date can't be before the appointment date");
         }
 
         visa.setStatus(VisaStatusCalculator.calculate(visa));
@@ -166,6 +171,9 @@ public class VisaService {
         if (principal.isAgent()) {
             Agent agent = agentRepository.findById(principal.userId())
                     .orElseThrow(() -> new IllegalStateException("Agent not found: " + principal.userId()));
+            if (agent.getManageableServices() == null || !agent.getManageableServices().contains(ServiceType.VISA)) {
+                throw new AccessDeniedException("You don't handle visas - only agents who do can open a visa case");
+            }
             return new AuthorResolver.AuthorInfo(agent.getId(), agent.getName());
         }
         if (requestedAgentId == null || requestedAgentId.isBlank()) {

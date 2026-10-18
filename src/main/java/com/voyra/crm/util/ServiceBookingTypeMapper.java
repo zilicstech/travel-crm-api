@@ -25,4 +25,15 @@ public final class ServiceBookingTypeMapper {
             case TRANSFER -> BookingType.TRANSFER;
         };
     }
+
+    /** The service type a standalone booking of this type falls under; null for PACKAGE, which has none. */
+    public static ServiceType forBooking(BookingType bookingType) {
+        return switch (bookingType) {
+            case FLIGHT -> ServiceType.FLIGHT;
+            case HOTEL -> ServiceType.HOTEL;
+            case VISA -> ServiceType.VISA;
+            case TRANSFER -> ServiceType.TRANSFER;
+            case PACKAGE -> null;
+        };
+    }
 }
