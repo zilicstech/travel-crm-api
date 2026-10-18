@@ -21,15 +21,13 @@ public class JournalPostRequest {
     @Schema(example = "2026-09-30")
     private LocalDate entryDate;
 
-    @NotNull(message = "Source type is required")
-    @Schema(example = "MANUAL")
+    @Schema(description = "Optional; only MANUAL is accepted", example = "MANUAL")
     private JournalSourceType sourceType;
 
-    @Schema(description = "Null only when sourceType is MANUAL", example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
+    @Schema(description = "Ignored - a manual entry has no source document", example = "null")
     private String sourceId;
 
-    @NotNull(message = "Purpose is required")
-    @Schema(example = "MANUAL_ENTRY")
+    @Schema(description = "Optional; only MANUAL_ENTRY is accepted", example = "MANUAL_ENTRY")
     private JournalPurpose purpose;
 
     @NotBlank(message = "Narration is required")

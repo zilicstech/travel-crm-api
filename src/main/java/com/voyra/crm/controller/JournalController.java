@@ -36,7 +36,7 @@ public class JournalController {
     private final JournalService journalService;
 
     @PostMapping
-    @Operation(summary = "Post a manual journal entry", description = "sourceType must be MANUAL. Debits must equal credits exactly across the lines.")
+    @Operation(summary = "Post a manual journal entry", description = "Always posted as MANUAL / MANUAL_ENTRY (any other sourceType or purpose is refused). No control account, no negative amounts; debits must equal credits exactly.")
     public ResponseEntity<JournalEntryResponse> post(@Valid @RequestBody JournalPostRequest request) {
         return ResponseEntity.ok(journalService.postManual(request));
     }
@@ -48,8 +48,8 @@ public class JournalController {
     }
 
     @PostMapping("/{id}/reverse")
-    @Operation(summary = "Reverse a posted journal entry", description = "Posts a new entry with every line's debit and credit swapped, and marks the original REVERSED. The original is never edited.")
+    @Operation(summary = "Reverse a posted manual journal entry", description = "Manual journals only - a system journal is reversed by its own document flow. Posts a new entry with every line's debit and credit swapped, and marks the original REVERSED. The original is never edited.")
     public ResponseEntity<JournalEntryResponse> reverse(@PathVariable String id, @RequestParam(required = false) String reason) {
-        return ResponseEntity.ok(journalService.toResponse(journalService.reverse(id, reason)));
+        return ResponseEntity.ok(journalService.toResponse(journalService.reverseManual(id, reason)));
     }
 }

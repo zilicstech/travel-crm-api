@@ -8,6 +8,7 @@ import com.voyra.crm.entity.JournalLine;
 import com.voyra.crm.entity.LedgerAccount;
 import com.voyra.crm.enums.AuditEntityType;
 import com.voyra.crm.enums.DocumentKind;
+import com.voyra.crm.enums.JournalPurpose;
 import com.voyra.crm.enums.JournalSourceType;
 import com.voyra.crm.enums.JournalStatus;
 import com.voyra.crm.models.JournalLinePosting;
@@ -185,6 +186,22 @@ public class JournalService {
     }
 
     /**
+     * The HTTP reverse endpoint: only a MANUAL journal. A system journal is reversed by its own
+     * business flow (cancelling the invoice, reversing the receipt...), which also updates the
+     * document and its sub-ledger - reversing just the journal would leave them out of step.
+     */
+    @Transactional
+    public JournalEntry reverseManual(String entryId, String reason) {
+        JournalEntry original = journalEntryRepository.findById(entryId)
+                .orElseThrow(() -> new IllegalArgumentException("Journal entry not found: " + entryId));
+        if (original.getSourceType() != JournalSourceType.MANUAL) {
+            throw new IllegalStateException("Only a manual journal can be reversed here - this one was posted by "
+                    + "the system and is reversed by cancelling or reversing the document that posted it");
+        }
+        return reverse(entryId, reason);
+    }
+
+    /**
      * Identical to {@link #post} except it stamps {@code reverses_entry_id} and skips the
      * MANUAL-only idempotency source id (a reversal always carries {@code source_id = null},
      * since it is not itself the direct product of a re-postable business event).
@@ -199,14 +216,30 @@ public class JournalService {
     /** The manual-journal HTTP endpoint's entry point - converts the validated request DTO into the internal posting model and reports back. */
     @Transactional
     public JournalEntryResponse postManual(JournalPostRequest request) {
+        // A manual entry is always MANUAL / MANUAL_ENTRY: a caller-chosen source type would skip
+        // the control-account guard in post() and pass the entry off as a system document.
+        if (request.getSourceType() != null && request.getSourceType() != JournalSourceType.MANUAL
+                || request.getPurpose() != null && request.getPurpose() != JournalPurpose.MANUAL_ENTRY) {
+            throw new IllegalArgumentException("A journal posted here is always a manual entry - "
+                    + "the source type must be MANUAL and the purpose MANUAL_ENTRY");
+        }
+        for (var l : request.getLines()) {
+            if (nz(l.getDebitAmount()).signum() < 0 || nz(l.getCreditAmount()).signum() < 0) {
+                throw new IllegalArgumentException("A journal line cannot carry a negative amount - "
+                        + "put the amount on the other side instead");
+            }
+            if (l.getFxRateToInr() != null && l.getFxRateToInr().signum() <= 0) {
+                throw new IllegalArgumentException("The exchange rate must be greater than zero");
+            }
+        }
         List<JournalLinePosting> lines = request.getLines().stream()
                 .map(l -> new JournalLinePosting(l.getAccountCode(), l.getPartyType(), l.getPartyId(),
                         l.getCurrencyCode() != null ? l.getCurrencyCode() : "INR",
                         l.getFxRateToInr() != null ? l.getFxRateToInr() : BigDecimal.ONE,
                         nz(l.getDebitAmount()), nz(l.getCreditAmount()), l.getNarration()))
                 .toList();
-        JournalPosting posting = new JournalPosting(request.getEntryDate(), request.getSourceType(),
-                request.getSourceId(), request.getPurpose(), request.getNarration(),
+        JournalPosting posting = new JournalPosting(request.getEntryDate(), JournalSourceType.MANUAL,
+                null, JournalPurpose.MANUAL_ENTRY, request.getNarration(),
                 request.getBookingId(), request.getBranchId(), lines);
         return toResponse(post(posting));
     }
