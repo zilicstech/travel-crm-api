@@ -104,7 +104,8 @@ public class MemberService {
         Member member = findMember(clientId, memberId);
         Map<String, String> before = AuditSnapshot.of(member, AUDITED);
 
-        if (request.getRelation() != null) {
+        // The edit form echoes the current relation back; only a real change is refused.
+        if (request.getRelation() != null && request.getRelation() != member.getRelation()) {
             if (member.getType() == MemberType.CLIENT || request.getRelation() == MemberRelation.SELF) {
                 throw new IllegalStateException(
                         "The primary member's relation is fixed for the client's life and cannot be changed");
