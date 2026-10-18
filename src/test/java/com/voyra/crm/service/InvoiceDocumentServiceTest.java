@@ -551,4 +551,21 @@ class InvoiceDocumentServiceTest {
         assertThat(cancelledProforma.getStatus()).isEqualTo(InvoiceLifecycle.CANCELLED);
         assertThat(cancelledProforma.getCancelReason()).isEqualTo("Converted to INV/2026-27/0001");
     }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void listItemCarriesMoneyReceivedAndCreditsSeparatelyInInr() {
+        Invoice invoice = Invoice.builder().id("I1").fxRateToInr(new BigDecimal("2"))
+                .grandTotal(new BigDecimal("6180.00")).grandTotalInr(new BigDecimal("12360.00"))
+                .amountReceived(new BigDecimal("6180.00")).creditNoteTotal(new BigDecimal("6030.00"))
+                .balanceDue(new BigDecimal("-6030.00")).balanceDueInr(new BigDecimal("-12060.00")).build();
+        when(invoiceRepository.findAll(any(org.springframework.data.jpa.domain.Specification.class),
+                any(org.springframework.data.domain.Sort.class))).thenReturn(List.of(invoice));
+
+        List<com.voyra.crm.dto.InvoiceListItemResponse> items = (List<com.voyra.crm.dto.InvoiceListItemResponse>)
+                invoiceDocumentService.list(null, null, null, null, null, null);
+
+        assertThat(items.get(0).getAmountReceivedInr()).isEqualByComparingTo("12360.00");
+        assertThat(items.get(0).getCreditNoteTotalInr()).isEqualByComparingTo("12060.00");
+    }
 }

@@ -160,4 +160,39 @@ class LeadScopingTest {
 
         assertThat(result).extracting(com.voyra.crm.dto.LeadResponse::getId).containsExactlyInAnyOrder("L1", "L2");
     }
+
+    @Test
+    void listLeadsCarriesEachLeadsServicesSoTheListNeverNeedsADetailFetchPerLead() {
+        authenticateAs("O1", UserType.AGENCY_OWNER);
+        Lead l1 = Lead.builder().id("L1").createdBy("A1").status(LeadStatus.NEW).build();
+        Lead l2 = Lead.builder().id("L2").createdBy("A2").status(LeadStatus.NEW).build();
+        when(leadRepository.findAll()).thenReturn(List.of(l1, l2));
+        com.voyra.crm.dto.ServiceResponse visa = com.voyra.crm.dto.ServiceResponse.builder()
+                .id("S1").leadId("L1").type(ServiceType.VISA).build();
+        when(serviceInstanceService.listForLeads(anyCollection())).thenReturn(java.util.Map.of("L1", List.of(visa)));
+
+        List<com.voyra.crm.dto.LeadResponse> result = leadService.listLeads(null);
+
+        assertThat(result).filteredOn(r -> r.getId().equals("L1")).singleElement()
+                .satisfies(r -> assertThat(r.getServices()).containsExactly(visa));
+        assertThat(result).filteredOn(r -> r.getId().equals("L2")).singleElement()
+                .satisfies(r -> assertThat(r.getServices()).isEmpty());
+    }
+
+    @Test
+    void aLeadCreatedWithoutASourceGetsTheAgencysPhoneCallLabelNotARawEnum() {
+        authenticateAs("O1", UserType.AGENCY_OWNER);
+        when(authorResolver.resolveCurrentAuthor()).thenReturn(new AuthorResolver.AuthorInfo("O1", "Owner"));
+        when(clientService.findAccessibleClient("K1")).thenReturn(
+                com.voyra.crm.entity.Client.builder().id("K1").name("Arjun").build());
+        com.voyra.crm.dto.LeadCreateRequest request = new com.voyra.crm.dto.LeadCreateRequest();
+        request.setClientId("K1");
+        request.setDestination("Goa");
+
+        leadService.createLead(request);
+
+        org.mockito.ArgumentCaptor<Lead> saved = org.mockito.ArgumentCaptor.forClass(Lead.class);
+        verify(leadRepository).save(saved.capture());
+        assertThat(saved.getValue().getSource()).isEqualTo("Phone Call");
+    }
 }

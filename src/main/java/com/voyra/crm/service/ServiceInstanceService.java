@@ -159,6 +159,17 @@ public class ServiceInstanceService {
                 .map(this::toResponse).toList();
     }
 
+    /** Every service on the given leads in one query, grouped by lead - for the lead list. */
+    @Transactional(readOnly = true)
+    public Map<String, List<ServiceResponse>> listForLeads(java.util.Collection<String> leadIds) {
+        if (leadIds.isEmpty()) {
+            return Map.of();
+        }
+        return leadServiceRepository.findByLeadIdInOrderBySortOrderAsc(leadIds).stream()
+                .map(this::toResponse)
+                .collect(Collectors.groupingBy(ServiceResponse::getLeadId));
+    }
+
     /** GET /api/services - the cross-lead board, scoped to the caller's manageable service types (owner sees all). */
     @Transactional(readOnly = true)
     public List<ServiceResponse> board(ServiceType typeFilter, ServiceStatus statusFilter) {

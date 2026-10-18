@@ -47,7 +47,7 @@ public class LeadCreateRequest {
     private LocalDate followUpDate;
 
     @Schema(description = "Validated against agency_setting rows of kind LEAD_SOURCE",
-            defaultValue = "PHONE_CALL", example = "WEBSITE")
+            defaultValue = "Phone Call", example = "WEBSITE")
     private String source;
 
     @Schema(defaultValue = "MEDIUM", example = "HIGH")
