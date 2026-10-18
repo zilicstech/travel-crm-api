@@ -33,6 +33,7 @@ class ClientCreditServiceTest {
     @Mock private ClientRepository clientRepository;
     @Mock private BookingRepository bookingRepository;
     @Mock private CustomerLedgerEntryRepository ledgerRepository;
+    @Mock private AuditService auditService;
     @InjectMocks private ClientCreditService service;
 
     private final Client client = Client.builder().id("C1").name("Sharma Family").creditLimit(new BigDecimal("100000")).build();
@@ -113,6 +114,15 @@ class ClientCreditServiceTest {
         assertThatThrownBy(() -> service.assertWithinLimit("C1", new BigDecimal("30000"), false))
                 .hasMessageContaining("over their credit limit");
         assertThatCode(() -> service.assertWithinLimit("C1", new BigDecimal("30000"), true)).doesNotThrowAnyException();
+        // The override is on the client's audit trail, not only in the app log.
+        org.mockito.Mockito.verify(auditService).recordUpdate(org.mockito.ArgumentMatchers.eq(com.voyra.crm.enums.AuditEntityType.CLIENT),
+                org.mockito.ArgumentMatchers.eq("C1"), any(), org.mockito.ArgumentMatchers.argThat(c -> c.get(0).getField().equals("creditLimitOverride")));
+    }
+
+    @Test
+    void figuresAreRoundedToPaise() {
+        given("0", "1000", "950.00000000", null);
+        assertThat(service.credit(client).getBookedNotInvoiced()).hasToString("50.00");
     }
 
     @Test

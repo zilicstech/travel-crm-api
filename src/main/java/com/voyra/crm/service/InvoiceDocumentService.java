@@ -287,10 +287,23 @@ public class InvoiceDocumentService {
         Specification<Invoice> spec = Specification.allOf(predicates);
 
         if (pageable != null) {
-            return PagedResponse.from(invoiceRepository.findAll(spec, pageable), InvoiceDocumentService::toListItem);
+            org.springframework.data.domain.Page<Invoice> page = invoiceRepository.findAll(spec, pageable);
+            Map<String, String> refs = bookingRefs(page.getContent());
+            return PagedResponse.from(page, i -> toListItem(i, refs));
         }
-        return invoiceRepository.findAll(spec, Sort.by(Sort.Direction.DESC, "createdAt"))
-                .stream().map(InvoiceDocumentService::toListItem).toList();
+        List<Invoice> invoices = invoiceRepository.findAll(spec, Sort.by(Sort.Direction.DESC, "createdAt"));
+        Map<String, String> refs = bookingRefs(invoices);
+        return invoices.stream().map(i -> toListItem(i, refs)).toList();
+    }
+
+    /** Booking id -> BK-number for one page of invoices, in one query - people search invoices by it. */
+    private Map<String, String> bookingRefs(List<Invoice> invoices) {
+        List<String> ids = invoices.stream().map(Invoice::getBookingId).filter(java.util.Objects::nonNull).distinct().toList();
+        Map<String, String> refs = new java.util.HashMap<>();
+        if (!ids.isEmpty()) {
+            bookingRepository.findAllById(ids).forEach(b -> refs.put(b.getId(), BookingService.bookingRef(b.getBookingNumber())));
+        }
+        return refs;
     }
 
     @Transactional
@@ -901,12 +914,12 @@ public class InvoiceDocumentService {
                 .build();
     }
 
-    private static InvoiceListItemResponse toListItem(Invoice i) {
+    private static InvoiceListItemResponse toListItem(Invoice i, Map<String, String> bookingRefs) {
         return InvoiceListItemResponse.builder()
                 .id(i.getId()).invoiceNumber(i.getInvoiceNumber()).financialYear(i.getFinancialYear())
                 .documentType(i.getDocumentType()).status(i.getStatus()).serviceCategory(i.getServiceCategory())
                 .clientId(i.getClientId()).clientName(i.getClientName())
-                .bookingId(i.getBookingId()).agentId(i.getAgentId())
+                .bookingId(i.getBookingId()).bookingRef(bookingRefs.get(i.getBookingId())).agentId(i.getAgentId())
                 .currencyCode(i.getCurrencyCode()).grandTotal(i.getGrandTotal()).grandTotalInr(i.getGrandTotalInr())
                 .balanceDue(i.getBalanceDue()).balanceDueInr(i.getBalanceDueInr())
                 .invoiceDate(i.getInvoiceDate()).dueDate(i.getDueDate()).issuedAt(i.getIssuedAt())

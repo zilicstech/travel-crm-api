@@ -160,6 +160,9 @@ public class BookingUpdateRequest {
     @Schema(description = "Price charged to the customer", example = "52000.00")
     private BigDecimal sellingPrice;
 
+    @Schema(description = "Owner only: save even though a higher sellingPrice takes the client over their credit limit", example = "false")
+    private Boolean overrideCreditLimit;
+
     @Schema(description = "Whether this FLIGHT booking's itinerary leaves India - decides AIR_INTERNATIONAL vs AIR_DOMESTIC on any invoice drafted against it. Ignored for non-FLIGHT bookings.")
     private Boolean internationalTrip;
 

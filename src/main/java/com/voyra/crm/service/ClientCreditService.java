@@ -33,6 +33,7 @@ public class ClientCreditService {
     private final ClientRepository clientRepository;
     private final BookingRepository bookingRepository;
     private final CustomerLedgerEntryRepository ledgerRepository;
+    private final AuditService auditService;
 
     @Transactional(readOnly = true)
     public ClientCreditResponse credit(Client client) {
@@ -85,6 +86,9 @@ public class ClientCreditService {
         if (over.signum() <= 0) return;
         if (override && SecurityContextUtil.getCurrentUser().map(u -> u.isAgencyOwner()).orElse(false)) {
             log.warn("Credit limit overridden by owner: clientId={}, over={}", clientId, over);
+            auditService.recordUpdate(com.voyra.crm.enums.AuditEntityType.CLIENT, client.getId(), client.getName(),
+                    List.of(com.voyra.crm.dto.AuditChange.builder().field("creditLimitOverride")
+                            .oldValue(available.toPlainString()).newValue(available.subtract(increase).toPlainString()).build()));
             return;
         }
         throw new IllegalStateException("This takes " + client.getName() + " " + BookingNextStep.rupees(over)
@@ -94,6 +98,6 @@ public class ClientCreditService {
 
     private static Map<String, BigDecimal> sums(List<Object[]> rows) {
         return rows.stream().filter(r -> r[1] != null).collect(Collectors.toMap(
-                r -> (String) r[0], r -> new BigDecimal(r[1].toString()), BigDecimal::add));
+                r -> (String) r[0], r -> new BigDecimal(r[1].toString()).setScale(2, java.math.RoundingMode.HALF_UP), BigDecimal::add));
     }
 }

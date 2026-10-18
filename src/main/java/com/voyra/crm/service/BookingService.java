@@ -481,7 +481,7 @@ public class BookingService {
         if (request.getNetCost() != null) booking.setNetCost(request.getNetCost());
         if (request.getSellingPrice() != null) {
             clientCreditService.assertWithinLimit(booking.getClientId(),
-                    request.getSellingPrice().subtract(booking.getSellingPrice()), false);
+                    request.getSellingPrice().subtract(booking.getSellingPrice()), Boolean.TRUE.equals(request.getOverrideCreditLimit()));
             booking.setSellingPrice(request.getSellingPrice());
         }
         if (request.getInternationalTrip() != null) booking.setInternationalTrip(request.getInternationalTrip());
