@@ -74,12 +74,14 @@ class ClientCreditServiceTest {
     }
 
     @Test
-    void advanceMakesUsedNegative() {
+    void advanceMakesUsedNegativeButNeverLiftsAvailableAboveTheLimit() {
         given("-25000", null, null, null);
         ClientCreditResponse c = service.credit(client);
         assertThat(c.getAdvanceHeld()).isEqualByComparingTo("25000");
+        // Used goes negative: the client is in credit (an advance, or a refund still to pay out)...
         assertThat(c.getUsed()).isEqualByComparingTo("-25000");
-        assertThat(c.getAvailable()).isEqualByComparingTo("125000");
+        // ...but that is money owed to them, not extra credit (BUG-MO-11: "3,43,470 of 3,00,000").
+        assertThat(c.getAvailable()).isEqualByComparingTo("100000");
     }
 
     @Test
