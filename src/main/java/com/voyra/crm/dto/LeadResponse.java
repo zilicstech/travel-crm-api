@@ -80,4 +80,7 @@ public class LeadResponse {
 
     @Schema(description = "Manually flagged by an owner/agent for senior attention", example = "false")
     private Boolean escalated;
+
+    @Schema(description = "The lead's service instances, so a list can show who handles what without a detail fetch per lead")
+    private List<ServiceResponse> services;
 }

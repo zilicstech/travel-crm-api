@@ -19,6 +19,7 @@ import com.voyra.crm.dto.ProposalItemBatchCreateRequest;
 import com.voyra.crm.dto.ProposalItemBatchLine;
 import com.voyra.crm.dto.ProposalItemCreateRequest;
 import com.voyra.crm.dto.ProposalItemResponse;
+import com.voyra.crm.dto.ServiceResponse;
 import com.voyra.crm.entity.Agent;
 import com.voyra.crm.entity.Client;
 import com.voyra.crm.entity.Lead;
@@ -146,7 +147,8 @@ public class LeadService {
     public List<LeadResponse> listLeads(LeadStatus statusFilter) {
         List<Lead> leads = scopedLeads(statusFilter);
         Map<String, Long> confirmedByLead = confirmedCounts(leads);
-        return leads.stream().map(l -> toResponse(l, confirmedByLead)).toList();
+        Map<String, List<ServiceResponse>> servicesByLead = servicesByLead(leads);
+        return leads.stream().map(l -> toResponse(l, confirmedByLead, servicesByLead)).toList();
     }
 
     @Transactional(readOnly = true)
@@ -171,7 +173,8 @@ public class LeadService {
                     : leadRepository.findByStatus(statusFilter, pageable);
         }
         Map<String, Long> confirmedByLead = confirmedCounts(page.getContent());
-        return PagedResponse.from(page, l -> toResponse(l, confirmedByLead));
+        Map<String, List<ServiceResponse>> servicesByLead = servicesByLead(page.getContent());
+        return PagedResponse.from(page, l -> toResponse(l, confirmedByLead, servicesByLead));
     }
 
     /**
@@ -202,6 +205,10 @@ public class LeadService {
     }
 
     /** One manifest query for a whole page rather than one per lead. */
+    private Map<String, List<ServiceResponse>> servicesByLead(List<Lead> leads) {
+        return serviceInstanceService.listForLeads(leads.stream().map(Lead::getId).toList());
+    }
+
     private Map<String, Long> confirmedCounts(List<Lead> leads) {
         if (leads.isEmpty()) {
             return Map.of();
@@ -788,7 +795,8 @@ public class LeadService {
         return value != null && !value.isBlank();
     }
 
-    private LeadResponse toResponse(Lead lead, Map<String, Long> confirmedByLead) {
+    private LeadResponse toResponse(Lead lead, Map<String, Long> confirmedByLead,
+                                    Map<String, List<ServiceResponse>> servicesByLead) {
         return LeadResponse.builder()
                 .id(lead.getId()).clientId(lead.getClientId()).clientName(lead.getClientName())
                 .clientType(lead.getClientType()).destination(lead.getDestination())
@@ -800,6 +808,7 @@ public class LeadService {
                 .createdBy(lead.getCreatedBy()).createdByName(lead.getCreatedByName())
                 .followUpDate(lead.getFollowUpDate()).createdAt(lead.getCreatedAt()).overdue(isOverdue(lead))
                 .escalated(lead.getEscalated())
+                .services(servicesByLead.getOrDefault(lead.getId(), List.of()))
                 .build();
     }
 
