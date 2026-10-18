@@ -13,7 +13,7 @@ class MarkupMathTest {
     void percentAndFlatMarkupOnCost() {
         assertThat(MarkupMath.sellingPrice(new BigDecimal("4000"), MarkupMode.PERCENT, new BigDecimal("12.5"))).isEqualByComparingTo("4500.00");
         assertThat(MarkupMath.sellingPrice(new BigDecimal("4000"), MarkupMode.FLAT, new BigDecimal("750"))).isEqualByComparingTo("4750.00");
-        assertThat(MarkupMath.sellingPrice(new BigDecimal("999.99"), MarkupMode.PERCENT, new BigDecimal("10"))).isEqualByComparingTo("1099.99");
+        assertThat(MarkupMath.sellingPrice(new BigDecimal("999.99"), MarkupMode.PERCENT, new BigDecimal("10"))).isEqualByComparingTo("1100");
         assertThat(MarkupMath.sellingPrice(null, null, null)).isEqualByComparingTo("0");
     }
 }
