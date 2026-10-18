@@ -61,6 +61,7 @@ import com.voyra.crm.util.AuditSnapshot;
 import com.voyra.crm.util.BookingAccessChecker;
 import com.voyra.crm.util.MarginCalculator;
 import com.voyra.crm.util.ServiceBookingTypeMapper;
+import com.voyra.crm.util.TripRules;
 import com.voyra.crm.util.UniqueIdResolver;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -242,6 +243,7 @@ public class BookingService {
         }
 
         Booking booking = builder.build();
+        checkTrip(booking);
         booking.setDepartureDate(deriveDepartureDate(booking));
         bookingRepository.save(booking);
         if (request.getPassengers() != null) {
@@ -451,7 +453,7 @@ public class BookingService {
         if (request.getJourneyDate() != null) booking.setJourneyDate(request.getJourneyDate());
         if (request.getReturnDate() != null) booking.setReturnDate(request.getReturnDate());
         if (request.getTripType() != null) booking.setTripType(request.getTripType());
-        if (request.getNotes() != null) booking.setNotes(request.getNotes());
+        if (request.getNotes() != null) booking.setNotes(request.getNotes().isBlank() ? null : request.getNotes());
         if (request.getFlightNumber() != null) booking.setFlightNumber(request.getFlightNumber());
         if (request.getFlightFrom() != null) booking.setFlightFrom(request.getFlightFrom());
         if (request.getFlightTo() != null) booking.setFlightTo(request.getFlightTo());
@@ -485,6 +487,7 @@ public class BookingService {
         if (request.getInternationalTrip() != null) booking.setInternationalTrip(request.getInternationalTrip());
         // Profit is never client-trusted - always recomputed server-side from the current values.
         booking.setProfit(computeProfit(booking.getSellingPrice(), booking.getNetCost()));
+        checkTrip(booking);
         booking.setDepartureDate(deriveDepartureDate(booking));
 
         List<AuditChange> changes = AuditSnapshot.diff(before, AuditSnapshot.of(booking, AUDITED));
@@ -512,7 +515,13 @@ public class BookingService {
      * never branches on booking type in SQL. Denormalisation by design, consistent with the
      * existing *_name snapshot columns.
      */
-    private LocalDate deriveDepartureDate(Booking booking) {
+    private static void checkTrip(Booking booking) {
+        TripRules.flight(booking.getJourneyDate(), booking.getReturnDate());
+        TripRules.stay(booking.getHotelCheckIn(), booking.getHotelCheckOut(), booking.getHotelRooms(), null);
+        TripRules.transfer(booking.getTransferTime(), null);
+    }
+
+        private LocalDate deriveDepartureDate(Booking booking) {
         if (booking.getJourneyDate() != null) {
             return booking.getJourneyDate();
         }
@@ -853,7 +862,8 @@ public class BookingService {
             if (bill != null && bill.getStatus() != com.voyra.crm.enums.SupplierInvoiceStatus.CANCELLED) {
                 if (bill.getStatus() != com.voyra.crm.enums.SupplierInvoiceStatus.DRAFT
                         && bill.getStatus() != com.voyra.crm.enums.SupplierInvoiceStatus.PENDING_APPROVAL) {
-                    throw new IllegalStateException("This voucher's supplier bill is already approved - it can't be removed");
+                    throw new IllegalStateException("This voucher's supplier bill is already approved - "
+                            + (guardInvoiced ? "it can't be removed" : "its cost, markup or supplier can't be changed"));
                 }
                 supplierInvoiceService.cancelForBooking(bill.getId(), "Voucher removed");
             }
@@ -897,6 +907,7 @@ public class BookingService {
         assertNotInvoiced(document);
         reverseVoucher(booking, document);
         bookingDocumentRepository.delete(document);
+        syncReference(booking, document.getReferenceNumber());
         return document.getFileKey();
     }
 
@@ -943,12 +954,47 @@ public class BookingService {
     }
 
     private static void setReference(Booking b, String reference) {
+        if (reference != null && reference.length() > 100) reference = reference.substring(0, 100);
         switch (b.getType()) {
             case HOTEL -> b.setHotelConfirmationNo(reference);
             case VISA -> b.setVisaApplicationNo(reference);
             case TRANSFER -> b.setTransferVoucherNo(reference);
-            default -> b.setPnr(reference.length() > 20 ? reference.substring(0, 20) : reference);
+            default -> b.setPnr(reference);
         }
+    }
+
+    /**
+     * The booking's reference follows its live vouchers, re-derived after every voucher add, edit
+     * or removal: the priced vouchers' references, else any voucher's. With no voucher reference
+     * left, a reference that only {@code staleReference} (the removed or edited voucher's old one)
+     * gave is cleared; one typed on the booking itself is kept.
+     */
+    void syncReference(Booking booking, String staleReference) {
+        List<BookingDocument> live = bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc(booking.getId()).stream()
+                .filter(d -> !blank(d.getReferenceNumber()))
+                .sorted(java.util.Comparator.comparing(BookingDocument::getCreatedAt,
+                        java.util.Comparator.nullsLast(java.util.Comparator.naturalOrder())))
+                .toList();
+        List<BookingDocument> priced = live.stream()
+                .filter(d -> d.getSellingPrice() != null && d.getSellingPrice().signum() > 0).toList();
+        List<String> refs = (priced.isEmpty() ? live : priced).stream()
+                .map(d -> d.getReferenceNumber().trim()).distinct().toList();
+        String current = referenceOf(booking);
+        String next;
+        if (!refs.isEmpty()) {
+            next = String.join(", ", refs);
+        } else if (!blank(staleReference) && !blank(current) && current.contains(staleReference.trim())) {
+            next = null;
+        } else {
+            return;
+        }
+        if (java.util.Objects.equals(current, next)) return;
+        Map<String, String> before = AuditSnapshot.of(booking, AUDITED);
+        setReference(booking, next);
+        touch(booking);
+        bookingRepository.save(booking);
+        auditService.recordUpdate(AuditEntityType.BOOKING, booking.getId(), labelFor(booking),
+                AuditSnapshot.diff(before, AuditSnapshot.of(booking, AUDITED)));
     }
 
     private static boolean readyToConfirm(Booking b) {
@@ -1050,8 +1096,9 @@ public class BookingService {
 
     private BookingResponse toResponse(Booking b) {
         LocalDateTime invoicedAt = lastInvoicedAt(b.getId());
-        List<BookingDocumentResponse> documents = bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc(b.getId())
-                .stream().map(d -> toDocumentResponse(d, invoicedAt)).toList();
+        List<BookingDocument> docs = bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc(b.getId());
+        java.util.Set<String> approvedBills = approvedBillIds(docs);
+        List<BookingDocumentResponse> documents = docs.stream().map(d -> toDocumentResponse(d, invoicedAt, approvedBills)).toList();
         BigDecimal marginPercent = MarginCalculator.marginPercent(b.getNetCost(), b.getSellingPrice());
         boolean lowMargin = b.getSellingPrice() != null && b.getSellingPrice().compareTo(BigDecimal.ZERO) > 0
                 && marginPercent.compareTo(lowMarginThreshold()) < 0;
@@ -1287,9 +1334,21 @@ public class BookingService {
                 .toList();
     }
 
-    static BookingDocumentResponse toDocumentResponse(BookingDocument d, LocalDateTime invoicedAt) {
+    /** The vouchers' supplier bills that are past approval - their money can no longer change. */
+    java.util.Set<String> approvedBillIds(List<BookingDocument> docs) {
+        List<String> ids = docs.stream().map(BookingDocument::getSupplierInvoiceId).filter(java.util.Objects::nonNull).toList();
+        if (ids.isEmpty()) return java.util.Set.of();
+        return supplierInvoiceRepository.findAllById(ids).stream()
+                .filter(i -> i.getStatus() != com.voyra.crm.enums.SupplierInvoiceStatus.DRAFT
+                        && i.getStatus() != com.voyra.crm.enums.SupplierInvoiceStatus.PENDING_APPROVAL
+                        && i.getStatus() != com.voyra.crm.enums.SupplierInvoiceStatus.CANCELLED)
+                .map(com.voyra.crm.entity.SupplierInvoice::getId).collect(java.util.stream.Collectors.toSet());
+    }
+
+    static BookingDocumentResponse toDocumentResponse(BookingDocument d, LocalDateTime invoicedAt, java.util.Set<String> approvedBills) {
         return BookingDocumentResponse.builder()
                 .details(d.getDetails()).invoiced(isInvoiced(d, invoicedAt))
+                .billApproved(d.getSupplierInvoiceId() != null && approvedBills.contains(d.getSupplierInvoiceId()))
                 .id(d.getId()).bookingId(d.getBookingId()).docType(d.getDocType())
                 .referenceNumber(d.getReferenceNumber()).issuedDate(d.getIssuedDate())
                 .hasFile(d.getFileKey() != null).fileName(d.getFileName())

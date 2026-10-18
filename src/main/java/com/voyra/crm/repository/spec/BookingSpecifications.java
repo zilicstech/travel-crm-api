@@ -101,6 +101,14 @@ public final class BookingSpecifications {
                     "visaApplicationNo", "transferVoucherNo")) {
                 or.add(cb.like(cb.lower(root.get(field)), like, '\\'));
             }
+            // Any live voucher's own reference, so an edited or second voucher's ref finds its booking too.
+            jakarta.persistence.criteria.Subquery<Long> voucher = query.subquery(Long.class);
+            jakarta.persistence.criteria.Root<com.voyra.crm.entity.BookingDocument> doc =
+                    voucher.from(com.voyra.crm.entity.BookingDocument.class);
+            voucher.select(cb.literal(1L)).where(
+                    cb.equal(doc.get("bookingId"), root.get("id")),
+                    cb.like(cb.lower(doc.get("referenceNumber")), like, '\\'));
+            or.add(cb.exists(voucher));
             return cb.or(or.toArray(new Predicate[0]));
         };
     }

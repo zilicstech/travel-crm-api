@@ -251,11 +251,18 @@ public class BookingLifecycleService {
         BigDecimal claim = b.getSupplierRefundClaimAmount();
 
         List<Step> steps = new ArrayList<>();
-        String with = b.getSupplier() != null && !b.getSupplier().isBlank() ? " with " + b.getSupplier() : "";
+        // Who it is really booked with: the vouchers' own suppliers (their bills), else the booking's default.
+        String suppliers = f.bills().stream().map(SupplierInvoice::getVendorName)
+                .filter(n -> n != null && !n.isBlank()).distinct().collect(java.util.stream.Collectors.joining(", "));
+        if (suppliers.isEmpty() && b.getSupplier() != null) suppliers = b.getSupplier().trim();
+        String with = suppliers.isEmpty() ? "" : " with " + suppliers;
         steps.add(step("CREATED", "DONE", status == BookingStatus.PENDING ? "Pending - upload the voucher with its cost and markup to confirm"
                 : cancelled ? "Booked" + with : (status == BookingStatus.COMPLETED ? "Completed" : "Confirmed") + with));
-        steps.add(step("VOUCHER", f.documentCount() > 0 ? "DONE" : cancelled ? "NA" : "OPEN",
-                f.documentCount() > 0 ? f.documentCount() + " document" + (f.documentCount() == 1 ? "" : "s") + " uploaded" : "No voucher uploaded yet"));
+        // A voucher still without its cost and markup leaves the booking pending - the step isn't done yet.
+        boolean unpriced = f.documentCount() > 0 && status == BookingStatus.PENDING;
+        steps.add(step("VOUCHER", f.documentCount() > 0 ? (unpriced ? "PARTIAL" : "DONE") : cancelled ? "NA" : "OPEN",
+                f.documentCount() > 0 ? f.documentCount() + " voucher" + (f.documentCount() == 1 ? "" : "s") + " uploaded"
+                        + (unpriced ? " - add the cost and markup to confirm" : "") : "No voucher uploaded yet"));
         BigDecimal uninvoiced = cancelled ? BigDecimal.ZERO : nz(b.getSellingPrice()).subtract(nz(f.invoicedPriceInr())).max(BigDecimal.ZERO);
         steps.add(step("INVOICE", invoiced ? (uninvoiced.signum() > 0 ? "PARTIAL" : "DONE") : cancelled ? "NA" : "OPEN",
                 invoiced ? "Invoiced " + money(invoicedTotal) + (uninvoiced.signum() > 0 ? " · " + money(uninvoiced) + " added since the last invoice" : "")

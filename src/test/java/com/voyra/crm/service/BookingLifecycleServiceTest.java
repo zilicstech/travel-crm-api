@@ -130,6 +130,25 @@ class BookingLifecycleServiceTest {
     }
 
     @Test
+    void confirmedWithTheVouchersSupplierNotTheBookingsDefault() {
+        Booking b = booking(BookingStatus.CONFIRMED);
+        b.setSupplier("Booking.com");
+
+        BookingLifecycleResponse r = BookingLifecycleService.build(facts(b, 1, List.of(),
+                List.of(bill(SupplierInvoiceStatus.DRAFT, "8000", "8000")), "0"), Viewer.OWNER);
+
+        assertThat(r.getSteps().get(0).getSummary()).isEqualTo("Confirmed with IndiGo");
+    }
+
+    @Test
+    void anUnpricedVoucherOnAPendingBookingIsNotDoneYet() {
+        BookingLifecycleResponse r = BookingLifecycleService.build(facts(booking(BookingStatus.PENDING), 1, List.of(), List.of(), "0"), Viewer.OWNER);
+
+        assertThat(states(r)).containsEntry("VOUCHER", "PARTIAL");
+        assertThat(r.getSteps().get(1).getSummary()).contains("add the cost and markup");
+    }
+
+    @Test
     void invoicedAndPartlyPaidShowsWhatIsLeftToCollect() {
         Booking b = booking(BookingStatus.CONFIRMED);
         b.setInvoicedTotalInr(d("10000"));
