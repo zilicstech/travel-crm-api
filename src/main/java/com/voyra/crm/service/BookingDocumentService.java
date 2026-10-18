@@ -82,6 +82,40 @@ public class BookingDocumentService {
         return toResponse(document);
     }
 
+    /** Text fields change in place; a changed cost, markup or supplier takes the old money back and books the new. */
+    @Transactional
+    public BookingDocumentResponse updateDocument(String bookingId, String documentId, BookingDocumentCreateRequest request) {
+        Booking booking = bookingService.lockAccessibleBooking(bookingId);
+        BookingDocument document = bookingDocumentRepository.findByIdAndBookingId(documentId, bookingId)
+                .orElseThrow(() -> new IllegalArgumentException("Document not found: " + documentId));
+        document.setDocType(request.getDocType());
+        document.setReferenceNumber(request.getReferenceNumber());
+        document.setIssuedDate(request.getIssuedDate());
+        document.setNotes(request.getNotes());
+        String vendorId = request.getVendorId() != null && !request.getVendorId().isBlank() ? request.getVendorId() : booking.getVendorId();
+        boolean moneyChanged = nz(request.getNetCost()).compareTo(nz(document.getNetCost())) != 0
+                || request.getMarkupMode() != document.getMarkupMode()
+                || nz(request.getMarkupValue()).compareTo(nz(document.getMarkupValue())) != 0
+                || !java.util.Objects.equals(vendorId, document.getVendorId());
+        if (moneyChanged) {
+            if (booking.getBookingStatus() == com.voyra.crm.enums.BookingStatus.CANCELLED) {
+                throw new IllegalStateException("This booking is cancelled - a voucher's cost or price can't change");
+            }
+            bookingService.reverseVoucher(booking, document, false);
+            document.setSupplierInvoiceId(null);
+            document.setNetCost(nz(request.getNetCost()));
+            document.setMarkupMode(request.getMarkupMode());
+            document.setMarkupValue(request.getMarkupValue());
+            bookingService.applyVoucher(booking, document, request.getVendorId());
+            if (booking.getSellingPrice().compareTo(bookingService.invoicedPrice(bookingId)) < 0) {
+                throw new IllegalStateException("This voucher's price is already invoiced - it can't go below that");
+            }
+        }
+        bookingDocumentRepository.save(document);
+        log.info("Booking document edited: bookingId={}, documentId={}, moneyChanged={}", bookingId, documentId, moneyChanged);
+        return toResponse(document);
+    }
+
     @Transactional(readOnly = true)
     public List<BookingDocumentResponse> listForBooking(String bookingId) {
         bookingService.findAccessibleBooking(bookingId);

@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -49,6 +50,13 @@ public class BookingDocumentController {
     @Operation(summary = "This booking's documents")
     public ResponseEntity<List<BookingDocumentResponse>> listDocuments(@PathVariable String bookingId) {
         return ResponseEntity.ok(bookingDocumentService.listForBooking(bookingId));
+    }
+
+    @PutMapping("/{documentId}")
+    @Operation(summary = "Edit a document", description = "Changing its cost, markup or supplier re-books its money, under the same rules as removing it.")
+    public ResponseEntity<BookingDocumentResponse> updateDocument(@PathVariable String bookingId, @PathVariable String documentId,
+                                                                   @Valid @RequestBody BookingDocumentCreateRequest request) {
+        return ResponseEntity.ok(bookingDocumentService.updateDocument(bookingId, documentId, request));
     }
 
     @DeleteMapping("/{documentId}")

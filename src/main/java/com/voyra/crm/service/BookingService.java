@@ -833,6 +833,11 @@ public class BookingService {
      * already invoiced.
      */
     void reverseVoucher(Booking booking, BookingDocument voucher) {
+        reverseVoucher(booking, voucher, true);
+    }
+
+    /** @param guardInvoiced false while editing a voucher - the caller checks the price after the new amounts are in */
+    void reverseVoucher(Booking booking, BookingDocument voucher, boolean guardInvoiced) {
         BigDecimal cost = voucher.getNetCost() != null ? voucher.getNetCost() : BigDecimal.ZERO;
         BigDecimal price = voucher.getSellingPrice() != null ? voucher.getSellingPrice() : BigDecimal.ZERO;
         if (cost.signum() == 0 && price.signum() == 0) {
@@ -849,7 +854,7 @@ public class BookingService {
             }
         }
         BigDecimal newPrice = booking.getSellingPrice().subtract(price);
-        if (newPrice.compareTo(invoicedPrice(booking.getId())) < 0) {
+        if (guardInvoiced && newPrice.compareTo(invoicedPrice(booking.getId())) < 0) {
             throw new IllegalStateException("This voucher's price is already invoiced - it can't be removed");
         }
         Map<String, String> before = AuditSnapshot.of(booking, AUDITED);
