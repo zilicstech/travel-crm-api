@@ -105,6 +105,10 @@ public class CreditNote {
     @Builder.Default
     private BigDecimal cancellationFee = BigDecimal.ZERO;
 
+    /** The supplier's share of {@link #cancellationFee} on a booking cancellation; null otherwise. */
+    @Column(name = "supplier_retained", precision = 19, scale = 2)
+    private BigDecimal supplierRetained;
+
     @Column(name = "total_amount", nullable = false, precision = 19, scale = 2)
     @Builder.Default
     private BigDecimal totalAmount = BigDecimal.ZERO;

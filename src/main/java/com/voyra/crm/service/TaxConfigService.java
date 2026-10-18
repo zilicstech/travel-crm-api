@@ -48,6 +48,7 @@ public class TaxConfigService {
 
     @Transactional
     public TaxRateConfigResponse create(TaxRateConfigCreateRequest request) {
+        assertNotFuture(request);
         TaxRateConfig config = fromRequest(request);
         taxRateConfigRepository.save(config);
         auditService.recordCreate(AuditEntityType.TAX_RATE_CONFIG, config.getId(), config.getLabel());
@@ -58,6 +59,7 @@ public class TaxConfigService {
     /** Closes the existing row and inserts the replacement as a new version. */
     @Transactional
     public TaxRateConfigResponse replace(String id, TaxRateConfigCreateRequest request) {
+        assertNotFuture(request);
         TaxRateConfig existing = findById(id);
         Map<String, String> before = AuditSnapshot.of(existing, AUDITED);
 
@@ -100,6 +102,16 @@ public class TaxConfigService {
                 AuditSnapshot.diff(before, AuditSnapshot.of(config, AUDITED)));
         log.info("Tax rate config status updated: id={}, isActive={}", id, isActive);
         return toResponse(config);
+    }
+
+    /**
+     * Invoices take the live default slab whatever its start date, so a slab dated ahead would charge
+     * its rate from today. shortcut: no date-ahead rate changes; add date-ranged lookups to allow them.
+     */
+    private static void assertNotFuture(TaxRateConfigCreateRequest request) {
+        if (request.getEffectiveFrom() != null && request.getEffectiveFrom().isAfter(LocalDate.now())) {
+            throw new IllegalArgumentException("A tax rate can't start in the future - add or replace it on the day it takes effect");
+        }
     }
 
     private TaxRateConfig fromRequest(TaxRateConfigCreateRequest request) {

@@ -295,6 +295,84 @@ class CreditNoteServiceTest {
         assertThat(lines.get(3).creditAmount()).isEqualByComparingTo("4000.00");
     }
 
+    /** A cancellation credit note on a flight: the supplier's share of what was kept stays as pass-through,
+     *  so after the supplier's own credit the pass-through nets to zero and only the agency fee is income. */
+    @Test
+    void aCancellationCreditNoteOnAFlightReversesByWhatEachSideKept() {
+        Invoice invoice = issuedInvoice();
+        invoice.setGrandTotal(new BigDecimal("12000.00"));
+        invoice.setGrandTotalInr(new BigDecimal("12000.00"));
+        CreditNote draft = CreditNote.builder().id("CN1").invoiceId("I1").clientId("K1")
+                .status(CreditNoteStatus.DRAFT).currencyCode("INR").fxRateToInr(BigDecimal.ONE)
+                .taxableValue(new BigDecimal("7500.00")).totalAmount(new BigDecimal("7500.00"))
+                .totalAmountInr(new BigDecimal("7500.00")).refundedAmount(BigDecimal.ZERO)
+                .cancellationFee(new BigDecimal("4500.00")).supplierRetained(new BigDecimal("3500.00")).build();
+        when(creditNoteRepository.findById("CN1")).thenReturn(Optional.of(draft));
+        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(invoice));
+        when(creditNoteRepository.findByInvoiceIdAndStatus("I1", CreditNoteStatus.ISSUED)).thenReturn(List.of());
+        when(documentNumberService.next(DocumentKind.CREDIT_NOTE, LocalDate.now())).thenReturn("CN/2026-27/0004");
+        when(paymentReceiptRepository.findByInvoiceIdOrderByReceivedOnAscCreatedAtAsc("I1")).thenReturn(List.of());
+        when(journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(
+                com.voyra.crm.enums.JournalSourceType.INVOICE, "I1", com.voyra.crm.enums.JournalPurpose.INVOICE_RAISED_DEFERRED))
+                .thenReturn(Optional.empty());
+        when(journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(
+                com.voyra.crm.enums.JournalSourceType.INVOICE, "I1", com.voyra.crm.enums.JournalPurpose.INVOICE_RAISED_RECOGNIZED))
+                .thenReturn(Optional.empty());
+        when(journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(
+                com.voyra.crm.enums.JournalSourceType.INVOICE, "I1", com.voyra.crm.enums.JournalPurpose.INVOICE_RAISED_COMMISSION_AGENT))
+                .thenReturn(Optional.of(com.voyra.crm.entity.JournalEntry.builder().id("JE9").build()));
+        when(journalLineRepository.findByJournalEntryIdOrderByLineNo("JE9")).thenReturn(List.of(
+                com.voyra.crm.entity.JournalLine.builder().accountCode("1200").debitAmountInr(new BigDecimal("12000.00")).creditAmountInr(BigDecimal.ZERO).narration("AR").build(),
+                com.voyra.crm.entity.JournalLine.builder().accountCode("2210").debitAmountInr(BigDecimal.ZERO).creditAmountInr(new BigDecimal("10000.00")).narration("Pass-through").build(),
+                com.voyra.crm.entity.JournalLine.builder().accountCode("4600").debitAmountInr(BigDecimal.ZERO).creditAmountInr(new BigDecimal("2000.00")).narration("Fee").build()));
+
+        creditNoteService.issue("CN1");
+
+        org.mockito.ArgumentCaptor<com.voyra.crm.models.JournalPosting> captor =
+                org.mockito.ArgumentCaptor.forClass(com.voyra.crm.models.JournalPosting.class);
+        org.mockito.Mockito.verify(journalService).post(captor.capture());
+        var lines = captor.getValue().lines();
+        assertThat(lines).extracting(com.voyra.crm.models.JournalLinePosting::accountCode).containsExactly("2210", "4600", "1200");
+        assertThat(lines.get(0).debitAmount()).isEqualByComparingTo("6500.00");
+        assertThat(lines.get(1).debitAmount()).isEqualByComparingTo("1000.00");
+        assertThat(lines.get(2).creditAmount()).isEqualByComparingTo("7500.00");
+    }
+
+    /** A flight's GST is on the agency fee only, so cancelling it gives back GST only on the fee
+     *  refunded - never the invoice's average rate spread over the kept airline charge. */
+    @Test
+    void aFlightCancellationCreditsGstOnlyOnTheFeeItRefunds() {
+        Invoice invoice = issuedInvoice();
+        invoice.setBillingModel(com.voyra.crm.enums.InvoiceBillingModel.COMMISSION_AGENT);
+        invoice.setTaxableValue(new BigDecimal("12000.00"));
+        invoice.setCgstAmount(new BigDecimal("180.00"));
+        invoice.setSgstAmount(new BigDecimal("180.00"));
+        invoice.setGrandTotal(new BigDecimal("12360.00"));
+        invoice.setGrandTotalInr(new BigDecimal("12360.00"));
+        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(invoice));
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(
+                com.voyra.crm.entity.Booking.builder().id("B1").bookingStatus(com.voyra.crm.enums.BookingStatus.CANCELLED).build()));
+        when(creditNoteRepository.existsById(any())).thenReturn(false);
+        when(creditNoteRepository.findByInvoiceIdAndStatus("I1", CreditNoteStatus.ISSUED)).thenReturn(List.of());
+        when(journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(
+                com.voyra.crm.enums.JournalSourceType.INVOICE, "I1", com.voyra.crm.enums.JournalPurpose.INVOICE_RAISED_COMMISSION_AGENT))
+                .thenReturn(Optional.of(com.voyra.crm.entity.JournalEntry.builder().id("JE9").build()));
+        when(journalLineRepository.findByJournalEntryIdOrderByLineNo("JE9")).thenReturn(List.of(
+                com.voyra.crm.entity.JournalLine.builder().accountCode("1200").debitAmountInr(new BigDecimal("12360.00")).creditAmountInr(BigDecimal.ZERO).build(),
+                com.voyra.crm.entity.JournalLine.builder().accountCode("2210").debitAmountInr(BigDecimal.ZERO).creditAmountInr(new BigDecimal("10000.00")).build(),
+                com.voyra.crm.entity.JournalLine.builder().accountCode("4600").debitAmountInr(BigDecimal.ZERO).creditAmountInr(new BigDecimal("2000.00")).build(),
+                com.voyra.crm.entity.JournalLine.builder().accountCode("2310").debitAmountInr(BigDecimal.ZERO).creditAmountInr(new BigDecimal("360.00")).build()));
+
+        // Kept: airline + supplier 3,500 (pass-through) and agency fee 1,000. Refunded: 6,500 fare + 1,000 fee + GST on that 1,000.
+        CreditNoteRequest request = request(new BigDecimal("4500.00"));
+        request.setSupplierRetained(new BigDecimal("3500.00"));
+        CreditNoteResponse response = creditNoteService.create(request);
+
+        assertThat(response.getTaxableValue()).isEqualByComparingTo("7500.00");
+        assertThat(response.getCgstAmount().add(response.getSgstAmount())).isEqualByComparingTo("180.00");
+        assertThat(response.getTotalAmount()).isEqualByComparingTo("7680.00");
+    }
+
     /** Reproduces the audit finding (F-016): a ₹9,975 invoice with only ₹5,000 ever actually
      *  receipted must not become refundable for its full ₹9,975 face value once credited. */
     @Test

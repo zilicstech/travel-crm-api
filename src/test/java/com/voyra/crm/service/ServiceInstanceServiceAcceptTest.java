@@ -127,4 +127,21 @@ class ServiceInstanceServiceAcceptTest {
         assertThat(service.getAssignedAgentId()).isEqualTo("A2");
         assertThat(service.getStatus()).isEqualTo(ServiceStatus.IN_PROGRESS);
     }
+
+    @Test
+    void theOwnerCannotAssignAServiceToAnAgentWhoDoesNotHandleItsType() {
+        authenticateAs("O1", UserType.AGENCY_OWNER);
+        when(leadRepository.findById("L1")).thenReturn(Optional.of(lead()));
+        LeadService service = LeadService.builder().id("S1").leadId("L1")
+                .type(ServiceType.VISA).status(ServiceStatus.NOT_STARTED).build();
+        when(leadServiceRepository.findById("S1")).thenReturn(Optional.of(service));
+        when(agentRepository.findByIdAndTenantId("A2", "T1")).thenReturn(Optional.of(
+                Agent.builder().id("A2").name("Rahul").manageableServices(List.of(ServiceType.FLIGHT, ServiceType.HOTEL)).build()));
+        com.voyra.crm.dto.ServiceAssignRequest request = new com.voyra.crm.dto.ServiceAssignRequest();
+        request.setAgentId("A2");
+
+        assertThatThrownBy(() -> serviceInstanceService.assignService("L1", "S1", request))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("doesn't handle VISA");
+        org.assertj.core.api.Assertions.assertThat(service.getAssignedAgentId()).isNull();
+    }
 }

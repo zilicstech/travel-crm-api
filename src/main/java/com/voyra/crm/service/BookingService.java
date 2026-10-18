@@ -478,12 +478,7 @@ public class BookingService {
         if (request.getTransferDropoff() != null) booking.setTransferDropoff(request.getTransferDropoff());
         if (request.getTransferDate() != null) booking.setTransferDate(request.getTransferDate());
         if (request.getTransferTime() != null) booking.setTransferTime(request.getTransferTime());
-        if (request.getNetCost() != null) booking.setNetCost(request.getNetCost());
-        if (request.getSellingPrice() != null) {
-            clientCreditService.assertWithinLimit(booking.getClientId(),
-                    request.getSellingPrice().subtract(booking.getSellingPrice()), Boolean.TRUE.equals(request.getOverrideCreditLimit()));
-            booking.setSellingPrice(request.getSellingPrice());
-        }
+        // Cost and price come only from the vouchers (or Log Booking); a booking edit never sets them.
         if (request.getInternationalTrip() != null) booking.setInternationalTrip(request.getInternationalTrip());
         // Profit is never client-trusted - always recomputed server-side from the current values.
         booking.setProfit(computeProfit(booking.getSellingPrice(), booking.getNetCost()));
@@ -985,10 +980,7 @@ public class BookingService {
         if (vendorId.isBlank()) return;
         Vendor vendor = vendorRepository.findById(vendorId)
                 .orElseThrow(() -> new IllegalArgumentException("Supplier not found: " + vendorId));
-        if (!supplierInvoiceRepository.findByBookingIdAndStatusNot(booking.getId(),
-                com.voyra.crm.enums.SupplierInvoiceStatus.CANCELLED).isEmpty()) {
-            throw new IllegalStateException("This booking already has a supplier bill - cancel it in Accounts before changing the supplier");
-        }
+        // Only the default for new vouchers: each voucher keeps its own supplier and bill.
         booking.setVendorId(vendor.getId());
         booking.setSupplier(vendor.getName());
     }

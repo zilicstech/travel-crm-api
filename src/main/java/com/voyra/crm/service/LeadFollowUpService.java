@@ -45,6 +45,16 @@ public class LeadFollowUpService {
     @Transactional
     public FollowUpResponse addFollowUp(String leadId, FollowUpCreateRequest request) {
         Lead lead = findAccessibleLeadForCreate(leadId);
+        // A follow-up belongs to a service type's work: an agent only sets them for the types they handle.
+        com.voyra.crm.security.CustomUserPrincipal principal = com.voyra.crm.security.SecurityContextUtil.getCurrentUserOrThrow();
+        if (principal.isAgent() && request.getServiceType() != null) {
+            Agent me = agentRepository.findById(principal.userId())
+                    .orElseThrow(() -> new IllegalStateException("Agent not found: " + principal.userId()));
+            if (me.getManageableServices() == null || !me.getManageableServices().contains(request.getServiceType())) {
+                throw new org.springframework.security.access.AccessDeniedException("Only agents who handle "
+                        + request.getServiceType() + " can set its follow-ups");
+            }
+        }
         Agent assignee = agentRepository.findById(request.getAssignedAgentId())
                 .orElseThrow(() -> new IllegalArgumentException("Agent not found: " + request.getAssignedAgentId()));
 

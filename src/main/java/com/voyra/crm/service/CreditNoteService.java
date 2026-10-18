@@ -104,7 +104,7 @@ public class CreditNoteService {
             throw new IllegalArgumentException("cancellationFee cannot exceed the invoice's taxable value");
         }
 
-        Reversal reversal = computeReversal(invoice, cancellationFee);
+        Reversal reversal = computeReversal(invoice, cancellationFee, request.getSupplierRetained());
         assertWithinInvoiceValue(invoice, reversal.totalAmount, null);
 
         LocalDate noteDate = request.getNoteDate() != null ? request.getNoteDate() : LocalDate.now();
@@ -126,6 +126,7 @@ public class CreditNoteService {
                 .igstAmount(reversal.igstAmount)
                 .tcsAmount(reversal.tcsAmount)
                 .cancellationFee(cancellationFee)
+                .supplierRetained(request.getSupplierRetained())
                 .totalAmount(reversal.totalAmount)
                 .totalAmountInr(scaleToInr(reversal.totalAmount, invoice.getFxRateToInr()))
                 .noteDate(noteDate)
@@ -340,9 +341,9 @@ public class CreditNoteService {
     /** What a cancellation credit note on this invoice would let the customer get back - the same
      *  maths {@link #create}/{@link #issue} use, without writing anything. */
     @Transactional(readOnly = true)
-    public BigDecimal previewRefundable(Invoice invoice, BigDecimal cancellationFee) {
+    public BigDecimal previewRefundable(Invoice invoice, BigDecimal cancellationFee, BigDecimal supplierRetained) {
         BigDecimal fee = cancellationFee.min(invoice.getTaxableValue()).max(BigDecimal.ZERO);
-        return refundableFor(invoice, computeReversal(invoice, fee).totalAmount, null);
+        return refundableFor(invoice, computeReversal(invoice, fee, supplierRetained).totalAmount, null);
     }
 
     // ---------------------------------------------------------------- internals
@@ -356,11 +357,15 @@ public class CreditNoteService {
      * credited to the invoice's total taxable value - there is no line-item table to apportion
      * per line, so this is the whole-invoice equivalent (see the class javadoc).
      */
-    private Reversal computeReversal(Invoice invoice, BigDecimal cancellationFee) {
+    private Reversal computeReversal(Invoice invoice, BigDecimal cancellationFee, BigDecimal supplierRetained) {
         BigDecimal creditableTaxableValue = invoice.getTaxableValue().subtract(cancellationFee);
         BigDecimal ratio = invoice.getTaxableValue().compareTo(BigDecimal.ZERO) == 0
                 ? BigDecimal.ZERO
                 : creditableTaxableValue.divide(invoice.getTaxableValue(), 10, RoundingMode.HALF_UP);
+        BigDecimal feeRatio = commissionAgentFeeRatio(invoice, creditableTaxableValue, supplierRetained);
+        if (feeRatio != null) {
+            ratio = feeRatio;
+        }
 
         BigDecimal cgst = invoice.getCgstAmount().multiply(ratio).setScale(2, RoundingMode.HALF_UP);
         BigDecimal sgst = invoice.getSgstAmount().multiply(ratio).setScale(2, RoundingMode.HALF_UP);
@@ -368,6 +373,37 @@ public class CreditNoteService {
         BigDecimal tcs = invoice.getTcsAmount().multiply(ratio).setScale(2, RoundingMode.HALF_UP);
         BigDecimal total = creditableTaxableValue.add(cgst).add(sgst).add(igst).add(tcs);
         return new Reversal(creditableTaxableValue, cgst, sgst, igst, tcs, total);
+    }
+
+    /**
+     * A commission-agent (air) invoice taxes only the agency's fee, so a cancellation gives back tax
+     * only on the fee it refunds: the fare refunded is the pass-through less what the supplier kept,
+     * and the rest of the credit is fee. Null when the invoice isn't one (pro-rate by taxable value).
+     */
+    private BigDecimal commissionAgentFeeRatio(Invoice invoice, BigDecimal creditableTaxableValue, BigDecimal supplierRetained) {
+        if (supplierRetained == null || invoice.getBillingModel() != com.voyra.crm.enums.InvoiceBillingModel.COMMISSION_AGENT) {
+            return null;
+        }
+        String passThroughCode = com.voyra.crm.enums.SystemAccount.CLIENT_PASS_THROUGH_PAYABLE.code();
+        BigDecimal passThroughInr = journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(
+                        com.voyra.crm.enums.JournalSourceType.INVOICE, invoice.getId(),
+                        com.voyra.crm.enums.JournalPurpose.INVOICE_RAISED_COMMISSION_AGENT)
+                .map(e -> journalLineRepository.findByJournalEntryIdOrderByLineNo(e.getId()).stream()
+                        .filter(l -> passThroughCode.equals(l.getAccountCode()))
+                        .map(l -> nz(l.getCreditAmountInr())).reduce(BigDecimal.ZERO, BigDecimal::add))
+                .orElse(null);
+        if (passThroughInr == null) {
+            return null;
+        }
+        BigDecimal fx = invoice.getFxRateToInr() != null && invoice.getFxRateToInr().signum() > 0 ? invoice.getFxRateToInr() : BigDecimal.ONE;
+        BigDecimal passThrough = passThroughInr.divide(fx, 2, RoundingMode.HALF_UP);
+        BigDecimal feeBase = invoice.getTaxableValue().subtract(passThrough);
+        if (feeBase.signum() <= 0) {
+            return BigDecimal.ZERO;
+        }
+        BigDecimal fareRefunded = passThrough.subtract(supplierRetained).max(BigDecimal.ZERO).min(creditableTaxableValue);
+        BigDecimal feeRefunded = creditableTaxableValue.subtract(fareRefunded).max(BigDecimal.ZERO);
+        return feeRefunded.divide(feeBase, 10, RoundingMode.HALF_UP).min(BigDecimal.ONE);
     }
 
     /** Caps total non-cancelled credit notes against one invoice at its own grand total. */
@@ -474,19 +510,48 @@ public class CreditNoteService {
         if (original.isEmpty() || invoice.getGrandTotalInr() == null || invoice.getGrandTotalInr().signum() == 0) {
             return false;
         }
-        BigDecimal ratio = note.getTotalAmountInr().divide(invoice.getGrandTotalInr(), 10, RoundingMode.HALF_UP).min(BigDecimal.ONE);
         String receivable = com.voyra.crm.enums.SystemAccount.ACCOUNTS_RECEIVABLE.code();
+        String passThrough = com.voyra.crm.enums.SystemAccount.CLIENT_PASS_THROUGH_PAYABLE.code();
+        List<com.voyra.crm.entity.JournalLine> originalLines = journalLineRepository.findByJournalEntryIdOrderByLineNo(original.get().getId())
+                .stream().filter(l -> !receivable.equals(l.getAccountCode())).toList();
+        java.util.Map<String, BigDecimal> amounts = new java.util.LinkedHashMap<>();
+        if (note.getSupplierRetained() != null) {
+            // A cancellation: the supplier's share of what was kept stays as pass-through (the client
+            // still owes it to the supplier); the rest of the refund comes off the agency's own lines
+            // (fee, then its GST) in proportion - so the agency fee kept is the only income left.
+            BigDecimal passThroughCredited = originalLines.stream().filter(l -> passThrough.equals(l.getAccountCode()))
+                    .map(l -> nz(l.getCreditAmountInr())).reduce(BigDecimal.ZERO, BigDecimal::add);
+            BigDecimal refund = note.getTotalAmountInr();
+            BigDecimal fromPassThrough = passThroughCredited.subtract(note.getSupplierRetained()).max(BigDecimal.ZERO).min(refund);
+            if (fromPassThrough.signum() > 0) amounts.put(passThrough, fromPassThrough);
+            BigDecimal rest = refund.subtract(fromPassThrough);
+            BigDecimal agencyCredited = originalLines.stream().filter(l -> !passThrough.equals(l.getAccountCode()))
+                    .map(l -> nz(l.getCreditAmountInr())).reduce(BigDecimal.ZERO, BigDecimal::add);
+            if (rest.signum() > 0 && agencyCredited.signum() > 0) {
+                BigDecimal allocated = BigDecimal.ZERO;
+                List<com.voyra.crm.entity.JournalLine> agencyLines = originalLines.stream()
+                        .filter(l -> !passThrough.equals(l.getAccountCode()) && nz(l.getCreditAmountInr()).signum() > 0).toList();
+                for (int i = 0; i < agencyLines.size(); i++) {
+                    com.voyra.crm.entity.JournalLine l = agencyLines.get(i);
+                    BigDecimal share = i == agencyLines.size() - 1 ? rest.subtract(allocated)
+                            : rest.multiply(nz(l.getCreditAmountInr())).divide(agencyCredited, 2, RoundingMode.HALF_UP);
+                    amounts.merge(l.getAccountCode(), share, BigDecimal::add);
+                    allocated = allocated.add(share);
+                }
+            }
+        } else {
+            BigDecimal ratio = note.getTotalAmountInr().divide(invoice.getGrandTotalInr(), 10, RoundingMode.HALF_UP).min(BigDecimal.ONE);
+            for (com.voyra.crm.entity.JournalLine line : originalLines) {
+                BigDecimal amount = nz(line.getCreditAmountInr()).multiply(ratio).setScale(2, RoundingMode.HALF_UP);
+                if (amount.signum() > 0) amounts.merge(line.getAccountCode(), amount, BigDecimal::add);
+            }
+        }
         List<com.voyra.crm.models.JournalLinePosting> lines = new ArrayList<>();
         BigDecimal reversed = BigDecimal.ZERO;
-        for (com.voyra.crm.entity.JournalLine line : journalLineRepository.findByJournalEntryIdOrderByLineNo(original.get().getId())) {
-            if (receivable.equals(line.getAccountCode())) {
-                continue;
-            }
-            BigDecimal credit = line.getCreditAmountInr() != null ? line.getCreditAmountInr() : BigDecimal.ZERO;
-            BigDecimal amount = credit.multiply(ratio).setScale(2, RoundingMode.HALF_UP);
-            if (amount.signum() > 0) {
-                lines.add(com.voyra.crm.models.JournalLinePosting.debit(line.getAccountCode(), amount, "Reversed: " + line.getNarration()));
-                reversed = reversed.add(amount);
+        for (var e : amounts.entrySet()) {
+            if (e.getValue().signum() > 0) {
+                lines.add(com.voyra.crm.models.JournalLinePosting.debit(e.getKey(), e.getValue(), "Reversed on credit note"));
+                reversed = reversed.add(e.getValue());
             }
         }
         if (lines.isEmpty()) {
@@ -582,5 +647,9 @@ public class CreditNoteService {
                 .noteDate(n.getNoteDate()).issuedAt(n.getIssuedAt()).issuedBy(n.getIssuedBy())
                 .cancelledAt(n.getCancelledAt()).cancelledBy(n.getCancelledBy()).cancelReason(n.getCancelReason())
                 .build();
+    }
+
+    private static BigDecimal nz(BigDecimal v) {
+        return v != null ? v : BigDecimal.ZERO;
     }
 }

@@ -320,6 +320,9 @@ public class ServiceInstanceService {
         CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
         Agent agent = agentRepository.findByIdAndTenantId(request.getAgentId(), principal.tenantId())
                 .orElseThrow(() -> new IllegalArgumentException("Agent not found in this agency: " + request.getAgentId()));
+        if (agent.getManageableServices() == null || !agent.getManageableServices().contains(service.getType())) {
+            throw new IllegalArgumentException(agent.getName() + " doesn't handle " + service.getType() + " - pick an agent who does");
+        }
         Map<String, String> before = AuditSnapshot.of(service, AUDITED);
 
         service.setAssignedAgentId(agent.getId());

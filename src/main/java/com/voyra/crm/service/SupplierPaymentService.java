@@ -519,7 +519,8 @@ public class SupplierPaymentService {
         BigDecimal balanceDue = invoice.getGrandTotal().subtract(invoice.getAmountPaid()).subtract(invoice.getCreditNoteTotal());
         invoice.setBalanceDue(balanceDue);
         invoice.setBalanceDueInr(scaleToInr(balanceDue, invoice.getFxRateToInr()));
-        invoice.setStatus(SupplierInvoiceLifecyclePolicy.deriveFromBalance(invoice.getGrandTotal(), balanceDue));
+        // Partly paid means money moved; a credit note alone only lowers what is owed.
+        invoice.setStatus(SupplierInvoiceLifecyclePolicy.deriveFromBalance(invoice.getGrandTotal().subtract(invoice.getCreditNoteTotal()), balanceDue));
         supplierInvoiceRepository.save(invoice);
     }
 

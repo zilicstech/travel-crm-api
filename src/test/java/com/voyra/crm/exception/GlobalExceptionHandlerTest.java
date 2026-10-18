@@ -39,6 +39,17 @@ class GlobalExceptionHandlerTest {
                 .andExpect(jsonPath("$.message").value("bad input"));
     }
 
+    /** A missing or unreadable query parameter is the caller's mistake - 400 with a plain message, never 500. */
+    @Test
+    void aMissingOrMalformedQueryParameterIs400() throws Exception {
+        mockMvc.perform(get("/test/query"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("The 'day' parameter is required"));
+        mockMvc.perform(get("/test/query").param("day", "not-a-date"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("The 'day' parameter has an invalid value"));
+    }
+
     @Test
     void illegalStateMapsTo409() throws Exception {
         mockMvc.perform(get("/test/illegal-state"))

@@ -64,6 +64,15 @@ class BookingCancellationServiceTest {
     @Mock private RevenueRecognitionTenantService revenueRecognitionTenantService;
     @Mock private SupplierPaymentService supplierPaymentService;
     @Mock private AuthorResolver authorResolver;
+    @Mock private BookingInvoiceIssuer bookingInvoiceIssuer;
+
+    /** GST-free by default: the charges invoice bills exactly what was kept (tests that need GST stub it). */
+    @org.junit.jupiter.api.BeforeEach
+    void chargesInvoiceBillsWhatWasKept() {
+        org.mockito.Mockito.lenient().when(bookingInvoiceIssuer.cancellationChargesTotal(any(), any(), any()))
+                .thenAnswer(i -> ((BigDecimal) i.getArgument(1)).add(i.getArgument(2)));
+    }
+
     @InjectMocks private BookingCancellationService service;
 
     private static BigDecimal d(String v) {
@@ -130,6 +139,35 @@ class BookingCancellationServiceTest {
         assertThat(b.getCancellationSupplierCharge()).isEqualByComparingTo("3500");
         assertThat(b.getCancellationAirlineCharge()).isEqualByComparingTo("3000");
         assertThat(b.getCancellationAgencyFee()).isEqualByComparingTo("1000");
+    }
+
+    /** Cancelled before any invoice: the kept charges get their own invoice (advance applied to it) and the refund is what is left. */
+    @Test
+    void keptChargesBeforeAnyInvoiceAreBilledOnTheirOwnInvoice() {
+        Booking b = booking(BookingStatus.CONFIRMED);
+        b.setReceivedTotalInr(BigDecimal.ZERO);
+        when(paymentReceiptService.heldForBooking("C1", "B1")).thenReturn(d("5000"));
+        when(bookingInvoiceIssuer.issueCancellationCharges(b, d("1200"), d("300")))
+                .thenReturn(com.voyra.crm.dto.InvoiceResponse.builder().id("CI1").grandTotal(d("1554")).build());
+        when(bookingInvoiceIssuer.cancellationChargesTotal(b, d("1200"), d("300"))).thenReturn(d("1554"));
+        com.voyra.crm.entity.Invoice chargesInvoice = com.voyra.crm.entity.Invoice.builder().id("CI1").build();
+        when(invoiceRepository.findById("CI1")).thenReturn(java.util.Optional.of(chargesInvoice));
+        BookingCancelRequest r = cancel("200", "300");
+        r.setAirlineCharge(d("1000"));
+
+        // The preview shows the refund the cancel then gives, GST on the charges included.
+        assertThat(service.preview("B1", d("1000"), d("200"), d("300")).getCustomerRefundDue()).isEqualByComparingTo("3446");
+        service.cancel("B1", r);
+
+        // Issued while the booking is still live, then the booking is cancelled.
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(bookingInvoiceIssuer, bookingService);
+        order.verify(bookingInvoiceIssuer).issueCancellationCharges(b, d("1200"), d("300"));
+        order.verify(bookingService).markCancelled(org.mockito.ArgumentMatchers.eq(b), any());
+        // 5,000 paid less the 1,554 charges invoice (GST included).
+        assertThat(b.getCustomerRefundDue()).isEqualByComparingTo("3446");
+        verify(creditNoteService, never()).create(any());
+        // The trip won't happen, so what was kept is earned now, not deferred to a departure date.
+        verify(revenueRecognitionTenantService).recognizeRetainedOnCancellation(chargesInvoice, BigDecimal.ZERO, LocalDate.now());
     }
 
     /** Regression run 7, N1: an advance held on account for the booking (no invoice yet) is refundable on cancel. */
@@ -306,8 +344,20 @@ class BookingCancellationServiceTest {
     }
 
     @Test
+    void voidIsOnlyForAirlineTickets() {
+        Booking b = booking(BookingStatus.CONFIRMED);
+        b.setType(com.voyra.crm.enums.BookingType.HOTEL);
+        BookingCancelRequest r = cancel("0", "0");
+        r.setType(CancellationType.VOID);
+
+        assertThatThrownBy(() -> service.cancel("B1", r)).hasMessageContaining("Void is only for airline tickets");
+        verify(bookingService, never()).markCancelled(any(), any());
+    }
+
+    @Test
     void typeIsStoredAndStandsInForAMissingReason() {
         Booking b = booking(BookingStatus.CONFIRMED);
+        b.setType(com.voyra.crm.enums.BookingType.FLIGHT);
         BookingCancelRequest r = cancel("500", "0");
         r.setType(CancellationType.VOID);
         r.setReason("  ");

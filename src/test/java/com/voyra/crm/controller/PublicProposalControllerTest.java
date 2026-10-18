@@ -53,7 +53,6 @@ class PublicProposalControllerTest {
                 .items(List.of(PublicProposalItemResponse.builder()
                         .type(ProposalItemType.HOTEL)
                         .description("5 nights, Deluxe Suite")
-                        .supplier("Cleartrip")
                         .sellingPrice(new BigDecimal("22000.00"))
                         .build()))
                 .grandTotal(new BigDecimal("22000.00"))
@@ -68,7 +67,7 @@ class PublicProposalControllerTest {
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
 
-        for (String forbidden : List.of("netCost", "margin", "marginPercent", "status", "priority",
+        for (String forbidden : List.of("netCost", "margin", "marginPercent", "status", "priority", "supplier",
                 "source", "createdBy", "createdByName", "selectedBy", "notes", "visaTracker", "phone", "email", "budget",
                 "lostReason", "clientId",
                 // The traveller manifest must never cross the public boundary: it carries

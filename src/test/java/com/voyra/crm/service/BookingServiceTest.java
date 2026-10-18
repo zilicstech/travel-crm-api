@@ -450,8 +450,6 @@ class BookingServiceTest {
         when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
         when(vendorRepository.findById("V1")).thenReturn(Optional.of(
                 com.voyra.crm.entity.Vendor.builder().id("V1").name("TripJack").build()));
-        when(supplierInvoiceRepository.findByBookingIdAndStatusNot("B1", com.voyra.crm.enums.SupplierInvoiceStatus.CANCELLED))
-                .thenReturn(List.of());
         BookingUpdateRequest request = new BookingUpdateRequest();
         request.setVendorId("V1");
         request.setDestination("DEL → DXB");

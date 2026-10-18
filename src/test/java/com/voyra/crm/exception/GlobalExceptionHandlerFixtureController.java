@@ -39,6 +39,11 @@ public class GlobalExceptionHandlerFixtureController {
         throw new org.springframework.web.multipart.MaxUploadSizeExceededException(10L * 1024 * 1024);
     }
 
+    @GetMapping("/test/query")
+    public String query(@org.springframework.web.bind.annotation.RequestParam("day") java.time.LocalDate day) {
+        return "ok";
+    }
+
     @PostMapping("/test/validate")
     public String validate(@Valid @RequestBody FixtureRequest request) {
         return "ok";

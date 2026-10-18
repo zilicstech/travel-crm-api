@@ -28,6 +28,7 @@ public class RefundSettlementRequest {
     @Schema(description = "Keep the money on the client's account (or in the supplier's wallet) instead of moving cash", example = "false")
     private Boolean toAccount;
 
+    @jakarta.validation.constraints.Size(max = 100, message = "Reference must be 100 characters or fewer")
     @Schema(description = "UTR, cheque no. or similar", example = "UTR123456")
     private String reference;
 }

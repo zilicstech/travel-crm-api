@@ -69,6 +69,8 @@ class BookingLifecycleServiceTest {
     @Mock private SupplierPaymentRepository supplierPaymentRepository;
     @Mock private InvoiceDocumentService invoiceDocumentService;
     @Mock private PaymentReceiptService paymentReceiptService;
+    @Mock private BookingInvoiceIssuer bookingInvoiceIssuer;
+
     @InjectMocks private BookingLifecycleService service;
 
     private static BigDecimal d(String v) {
@@ -268,6 +270,8 @@ class BookingLifecycleServiceTest {
         verify(invoiceDocumentService).createDraft(draft.capture());
         assertThat(draft.getValue().getBookingId()).isEqualTo("B1");
         verify(invoiceDocumentService).issue("I9");
+        // Taxed like a hand-raised invoice: the agency's default GST is put on the draft.
+        verify(bookingInvoiceIssuer).applyDefaultGst(org.mockito.ArgumentMatchers.same(draft.getValue()), any());
     }
 
     @Test

@@ -131,4 +131,23 @@ class LeadFollowUpServiceScopingTest {
         assertThatThrownBy(() -> leadFollowUpService.addFollowUp("L1", req))
                 .isInstanceOf(AccessDeniedException.class);
     }
+
+    /** A Visa-only agent can't set a Flight follow-up she could never see. */
+    @Test
+    void anAgentCannotSetAFollowUpForATypeTheyDoNotHandle() {
+        authenticateAs("A2", UserType.AGENT);
+        Lead lead = Lead.builder().id("L1").createdBy("A1").status(LeadStatus.NEW).clientName("Client").destination("Paris").build();
+        when(leadRepository.findById("L1")).thenReturn(Optional.of(lead));
+        LeadService visaService = LeadService.builder().id("S1").leadId("L1").type(ServiceType.VISA).build();
+        org.mockito.Mockito.lenient().when(leadServiceRepository.findByLeadIdOrderBySortOrderAsc("L1")).thenReturn(List.of(visaService));
+        when(agentRepository.findById("A2")).thenReturn(Optional.of(
+                Agent.builder().id("A2").name("Priya").manageableServices(List.of(ServiceType.VISA)).build()));
+        FollowUpCreateRequest req = new FollowUpCreateRequest();
+        req.setDueDate(LocalDate.now().plusDays(3));
+        req.setNote("Chase the airline");
+        req.setServiceType(ServiceType.FLIGHT);
+        req.setAssignedAgentId("A2");
+
+        assertThatThrownBy(() -> leadFollowUpService.addFollowUp("L1", req)).isInstanceOf(AccessDeniedException.class);
+    }
 }

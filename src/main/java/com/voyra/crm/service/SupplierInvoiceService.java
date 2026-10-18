@@ -638,11 +638,18 @@ public class SupplierInvoiceService {
 
         com.voyra.crm.enums.InvoiceServiceCategory category = resolvePurchaseCategory(invoice);
         String narration = "Supplier bill " + labelFor(invoice) + " booked";
+        // A booking billed as commission agent (air tickets) passes the supplier's cost through to the
+        // client: the bill clears the pass-through the invoice credited instead of becoming a purchase,
+        // so only the agency's fee is ever income.
+        boolean passThrough = invoice.getBookingId() != null
+                && category.defaultBillingModel() == com.voyra.crm.enums.InvoiceBillingModel.COMMISSION_AGENT;
+        String debitAccount = passThrough
+                ? com.voyra.crm.enums.SystemAccount.CLIENT_PASS_THROUGH_PAYABLE.code()
+                : com.voyra.crm.enums.SystemAccount.purchaseCode(category);
 
         List<com.voyra.crm.models.JournalLinePosting> lines = new ArrayList<>();
         if (purchaseInr.compareTo(BigDecimal.ZERO) > 0) {
-            lines.add(com.voyra.crm.models.JournalLinePosting.debit(
-                    com.voyra.crm.enums.SystemAccount.purchaseCode(category), purchaseInr, narration));
+            lines.add(com.voyra.crm.models.JournalLinePosting.debit(debitAccount, purchaseInr, narration));
         }
         if (inputGstInr.compareTo(BigDecimal.ZERO) > 0) {
             lines.add(com.voyra.crm.models.JournalLinePosting.debit(

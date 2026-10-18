@@ -16,6 +16,7 @@ public class BookingCancelRequest {
     @Schema(example = "VOID")
     private CancellationType type;
 
+    @jakarta.validation.constraints.Size(max = 255, message = "Reason must be 255 characters or fewer")
     @Schema(description = "Optional; defaults to the type's label", example = "Client changed plans")
     private String reason;
 

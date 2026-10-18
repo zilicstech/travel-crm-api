@@ -31,6 +31,11 @@ public class InvoiceDraftRequest {
             + "on update leaves the draft's current value unchanged.", example = "PRINCIPAL")
     private InvoiceBillingModel billingModel;
 
+    @jakarta.validation.constraints.DecimalMin(value = "0.0", message = "Pass-through amount cannot be negative")
+    @Schema(description = "COMMISSION_AGENT only: the supplier's share billed untaxed, the rest being the agency's fee. "
+            + "Leave empty to work it out from the booking's cost.", example = "1200.00")
+    private BigDecimal passThroughAmount;
+
     @Schema(example = "INR", defaultValue = "INR")
     private String currencyCode;
 

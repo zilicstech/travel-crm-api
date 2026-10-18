@@ -44,6 +44,7 @@ public class AccountsDashboardService {
     private final InvoiceTaxRepository invoiceTaxRepository;
     private final PaymentReceiptRepository paymentReceiptRepository;
     private final CreditNoteRepository creditNoteRepository;
+    private final com.voyra.crm.repository.JournalLineRepository journalLineRepository;
 
     @Transactional(readOnly = true)
     public AccountsDashboardSummaryResponse summary() {
@@ -72,13 +73,12 @@ public class AccountsDashboardService {
                 .map(Invoice::getBalanceDueInr)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        BigDecimal advanceHeld = BigDecimal.ZERO;
-        for (PaymentReceipt r : paymentReceiptRepository.findByDirectionAndIsAdvanceTrue(ReceiptDirection.RECEIPT)) {
-            Invoice invoice = r.getInvoiceId() != null ? invoiceRepository.findById(r.getInvoiceId()).orElse(null) : null;
-            if (invoice != null && invoice.getStatus() == InvoiceLifecycle.PROFORMA_ISSUED) {
-                advanceHeld = advanceHeld.add(r.getAmountInr());
-            }
-        }
+        // Everything held for clients - booking advances, deposits, refunds kept on account - is the
+        // balance of Client Advances Held, the same figure the GL card shows.
+        String advances = com.voyra.crm.enums.SystemAccount.CLIENT_ADVANCES_HELD.code();
+        LocalDate after = today.plusDays(1);
+        BigDecimal advanceHeld = journalLineRepository.sumCreditBefore(advances, after)
+                .subtract(journalLineRepository.sumDebitBefore(advances, after)).max(BigDecimal.ZERO);
 
         return AccountsDashboardSummaryResponse.builder()
                 .billedThisMonthInr(billedThisMonth)

@@ -193,8 +193,9 @@ class BookingProfitTest {
                 .createAutoDraft(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
     }
 
+    /** Cost and price come only from the vouchers: editing a booking's details never moves them. */
     @Test
-    void profitIsRecomputedOnUpdateWhenCostChanges() {
+    void aBookingEditNeverChangesItsCostOrPrice() {
         Booking booking = Booking.builder()
                 .id("P1").agentId("A1").clientId("K1")
                 .netCost(new BigDecimal("42000")).sellingPrice(new BigDecimal("52000"))
@@ -203,11 +204,13 @@ class BookingProfitTest {
         when(bookingRepository.findById("P1")).thenReturn(Optional.of(booking));
 
         BookingUpdateRequest request = new BookingUpdateRequest();
-        request.setNetCost(new BigDecimal("40000"));
+        request.setNotes("Window seats");
 
         BookingResponse response = bookingService.updateBooking("P1", request);
 
-        assertThat(response.getProfit()).isEqualByComparingTo("12000");
+        assertThat(response.getNetCost()).isEqualByComparingTo("42000");
+        assertThat(response.getSellingPrice()).isEqualByComparingTo("52000");
+        assertThat(response.getProfit()).isEqualByComparingTo("10000");
     }
 
     @Test

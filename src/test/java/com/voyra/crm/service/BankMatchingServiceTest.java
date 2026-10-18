@@ -211,7 +211,7 @@ class BankMatchingServiceTest {
     }
 
     @Test
-    void aNonAutoPostRuleOnlyPreFillsTheCategoryAndPostsNothing() {
+    void aSuggestOnlyRuleLeavesTheLineForReviewAndConfirmingItPosts() {
         BankTransaction txn = BankTransaction.builder()
                 .id("BT4").bankAccountId("BA1").txnDate(LocalDate.of(2026, 9, 20))
                 .description("ANNUAL MAINTENANCE CHARGE").amount(new BigDecimal("200.00"))
@@ -226,8 +226,17 @@ class BankMatchingServiceTest {
 
         int applied = bankMatchingService.applyMatchRules("BA1");
 
-        assertThat(applied).isEqualTo(1);
+        // Nothing posted and the line is still waiting in Review & Match, with the rule offered.
+        assertThat(applied).isZero();
         verify(journalService, never()).post(any());
+        assertThat(txn.getMatchStatus()).isEqualTo(BankTransactionMatchStatus.UNMATCHED);
+        assertThat(bankMatchingService.listTier2Candidates("BA1"))
+                .anySatisfy(c -> assertThat(c.getSourceId()).isEqualTo("RULE2"));
+
+        when(bankTransactionRepository.findById("BT4")).thenReturn(java.util.Optional.of(txn));
+        when(bankMatchRuleRepository.findById("RULE2")).thenReturn(java.util.Optional.of(rule));
+        bankMatchingService.confirmMatch("BT4", com.voyra.crm.enums.BankMatchedSourceType.BANK_MATCH_RULE, "RULE2");
+        verify(journalService).post(any());
         assertThat(txn.getMatchStatus()).isEqualTo(BankTransactionMatchStatus.CATEGORIZED);
         assertThat(txn.getMatchedSourceId()).isEqualTo("RULE2");
     }

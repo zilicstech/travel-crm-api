@@ -70,6 +70,7 @@ public class BookingCancellationService {
     private final SupplierPaymentService supplierPaymentService;
     private final AuthorResolver authorResolver;
     private final RevenueRecognitionTenantService revenueRecognitionTenantService;
+    private final BookingInvoiceIssuer bookingInvoiceIssuer;
 
     @Transactional(readOnly = true)
     public BookingCancelPreviewResponse preview(String bookingId, BigDecimal airlineCharge, BigDecimal supplierCharge, BigDecimal agencyFee) {
@@ -80,9 +81,12 @@ public class BookingCancellationService {
         BigDecimal kept = charge.add(nz(agencyFee));
         Invoice invoice = liveTaxInvoice(bookingId);
         BigDecimal customerPaid = invoice != null ? customerPaid(booking) : paidIncludingHeldAdvance(booking);
+        // Mirrors cancel(): a credit note on the invoice, or - before any invoice - the charges invoice (with its GST).
         BigDecimal due = invoice != null
-                ? creditNoteService.previewRefundable(invoice, kept)
-                : CancellationMath.customerRefundDue(customerPaid, charge, nz(agencyFee));
+                ? creditNoteService.previewRefundable(invoice, kept, charge.min(invoice.getTaxableValue()))
+                : kept.signum() > 0
+                        ? customerPaid.subtract(bookingInvoiceIssuer.cancellationChargesTotal(booking, charge, nz(agencyFee))).max(BigDecimal.ZERO)
+                        : CancellationMath.customerRefundDue(customerPaid, charge, nz(agencyFee));
         List<SupplierInvoice> bills = supplierInvoiceRepository.findByBookingIdAndStatusNot(bookingId, SupplierInvoiceStatus.CANCELLED);
         BigDecimal paidToSupplier = bills.stream().map(SupplierInvoice::getAmountPaid).reduce(BigDecimal.ZERO, BigDecimal::add);
         return BookingCancelPreviewResponse.builder()
@@ -100,6 +104,9 @@ public class BookingCancellationService {
         assertNotNegative(request.getAirlineCharge(), request.getSupplierCharge(), request.getAgencyFee());
         lock(bookingId);
         Booking booking = cancellable(bookingId);
+        if (request.getType() == com.voyra.crm.enums.CancellationType.VOID && booking.getType() != com.voyra.crm.enums.BookingType.FLIGHT) {
+            throw new IllegalArgumentException("Void is only for airline tickets - use Cancellation or No show");
+        }
         BigDecimal charge = nz(request.getAirlineCharge()).add(nz(request.getSupplierCharge()));
         BigDecimal fee = nz(request.getAgencyFee());
         bookingAccountingSync.syncPayment(bookingId);
@@ -107,9 +114,13 @@ public class BookingCancellationService {
 
         String reason = request.getReason() == null || request.getReason().isBlank()
                 ? request.getType().label() : request.getReason().trim();
+        Invoice invoice = liveTaxInvoice(bookingId);
+        // Cancelled before any invoice: what the supplier and the agency kept is billed on its own
+        // invoice (issued while the booking is still live), and any advance held is applied to it.
+        com.voyra.crm.dto.InvoiceResponse charges = invoice == null && charge.add(fee).signum() > 0
+                ? bookingInvoiceIssuer.issueCancellationCharges(booking, charge, fee) : null;
         bookingService.markCancelled(booking, reason);
 
-        Invoice invoice = liveTaxInvoice(bookingId);
         BigDecimal due;
         if (invoice != null) {
             CreditNoteRequest note = new CreditNoteRequest();
@@ -117,9 +128,16 @@ public class BookingCancellationService {
             note.setReason(CreditNoteReason.BOOKING_CANCELLED);
             note.setReasonNote(reason);
             note.setCancellationFee(charge.add(fee).min(invoice.getTaxableValue()));
+            note.setSupplierRetained(charge.min(invoice.getTaxableValue()));
             CreditNoteResponse issued = creditNoteService.issue(creditNoteService.create(note).getId());
             due = issued.getRefundableAmount();
             revenueRecognitionTenantService.recognizeRetainedOnCancellation(invoice, issued.getTaxableValue(), LocalDate.now());
+        } else if (charges != null) {
+            // What the client paid less the charges invoice (GST included); a shortfall is collected on that invoice.
+            due = customerPaid.subtract(nz(charges.getGrandTotal())).max(BigDecimal.ZERO);
+            // The trip won't happen: what was kept is earned now, not deferred to the departure date.
+            invoiceRepository.findById(charges.getId()).ifPresent(i ->
+                    revenueRecognitionTenantService.recognizeRetainedOnCancellation(i, BigDecimal.ZERO, LocalDate.now()));
         } else {
             due = CancellationMath.customerRefundDue(customerPaid, charge, fee);
         }

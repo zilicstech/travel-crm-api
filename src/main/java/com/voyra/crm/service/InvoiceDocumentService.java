@@ -96,6 +96,7 @@ public class InvoiceDocumentService {
     private final BookingCostComponentRepository bookingCostComponentRepository;
     private final JournalService journalService;
     private final com.voyra.crm.repository.JournalEntryRepository journalEntryRepository;
+    private final com.voyra.crm.repository.JournalLineRepository journalLineRepository;
     private final ClientService clientService;
     private final TenantRepository tenantRepository;
     private final TaxRateConfigRepository taxRateConfigRepository;
@@ -150,6 +151,7 @@ public class InvoiceDocumentService {
                 .leadId(booking.getLeadId())
                 .agentId(booking.getAgentId())
                 .billingModel(request.getBillingModel() != null ? request.getBillingModel() : category.defaultBillingModel())
+                .passThroughAmount(request.getPassThroughAmount())
                 .createdAt(LocalDateTime.now())
                 .createdBy(currentUserId())
                 .build();
@@ -686,6 +688,9 @@ public class InvoiceDocumentService {
         if (invoice.getBillingModel() != InvoiceBillingModel.COMMISSION_AGENT || invoice.getBookingId() == null) {
             return fullPackage;
         }
+        if (invoice.getPassThroughAmount() != null) {
+            return fullPackage.subtract(invoice.getPassThroughAmount()).max(BigDecimal.ZERO).min(fullPackage);
+        }
         Booking booking = bookingRepository.findById(invoice.getBookingId()).orElse(null);
         if (booking == null) {
             return fullPackage;
@@ -698,17 +703,44 @@ public class InvoiceDocumentService {
             BigDecimal fee = sellingPrice.subtract(componentTotal);
             return fee.compareTo(BigDecimal.ZERO) > 0 ? fee : BigDecimal.ZERO;
         }
-        if (booking.getMarkupMode() != null && booking.getMarkupValue() != null) {
-            BigDecimal componentTotal = booking.getNetCost() != null ? booking.getNetCost() : BigDecimal.ZERO;
-            if (booking.getMarkupMode() == MarkupMode.PERCENT) {
-                return componentTotal.multiply(booking.getMarkupValue())
-                        .divide(HUNDRED, 2, RoundingMode.HALF_UP);
-            }
-            return booking.getMarkupValue();
+        // Voucher-priced booking: the fee is what this invoice bills above the cost it covers. Cost
+        // already covered by the booking's earlier commission-agent invoices is their taxable value
+        // less the fee they posted, so an extra invoice for a later voucher carries only that
+        // voucher's markup, and several vouchers with different markups add up to the real profit.
+        BigDecimal netCost = booking.getNetCost() != null ? booking.getNetCost() : BigDecimal.ZERO;
+        if (netCost.signum() > 0) {
+            BigDecimal costHere = netCost.subtract(costCoveredByEarlierInvoices(invoice)).max(BigDecimal.ZERO);
+            return fullPackage.subtract(costHere).max(BigDecimal.ZERO).min(fullPackage);
         }
         log.info("Commission-agent invoice {} has no cost components or markup to isolate a fee from - "
                 + "taxing the full package instead", invoice.getId());
         return fullPackage;
+    }
+
+    /** Σ (taxable − posted fee) over the booking's other issued commission-agent invoices: the supplier cost they already billed. */
+    private BigDecimal costCoveredByEarlierInvoices(Invoice invoice) {
+        BigDecimal covered = BigDecimal.ZERO;
+        String fee = com.voyra.crm.enums.SystemAccount.SERVICE_FEE_INCOME.code();
+        for (Invoice other : invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc(
+                invoice.getBookingId(), InvoiceDocumentType.TAX_INVOICE, InvoiceLifecycle.CANCELLED)) {
+            if (other.getId().equals(invoice.getId()) || other.getStatus() == InvoiceLifecycle.DRAFT
+                    || other.getBillingModel() != InvoiceBillingModel.COMMISSION_AGENT) {
+                continue;
+            }
+            var posted = journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(
+                    com.voyra.crm.enums.JournalSourceType.INVOICE, other.getId(),
+                    com.voyra.crm.enums.JournalPurpose.INVOICE_RAISED_COMMISSION_AGENT);
+            if (posted.isEmpty()) {
+                continue;
+            }
+            BigDecimal postedFee = journalLineRepository.findByJournalEntryIdOrderByLineNo(posted.get().getId()).stream()
+                    .filter(l -> fee.equals(l.getAccountCode()))
+                    .map(l -> l.getCreditAmountInr() != null ? l.getCreditAmountInr() : BigDecimal.ZERO)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+            BigDecimal taxable = other.getTaxableValueInr() != null ? other.getTaxableValueInr() : BigDecimal.ZERO;
+            covered = covered.add(taxable.subtract(postedFee).max(BigDecimal.ZERO));
+        }
+        return covered;
     }
 
     /**

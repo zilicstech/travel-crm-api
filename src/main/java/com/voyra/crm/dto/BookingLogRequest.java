@@ -46,6 +46,7 @@ public class BookingLogRequest {
     private Boolean internationalTrip;
 
     @NotBlank(message = "Booking reference is required")
+    @jakarta.validation.constraints.Size(max = 100, message = "Booking reference must be 100 characters or fewer")
     @Schema(description = "PNR, hotel confirmation no., visa application no. or transfer voucher no. - stored in the column for the booking's type.", example = "ABCXYZ")
     private String reference;
 

@@ -16,6 +16,7 @@ public class BookingDocumentCreateRequest {
     @Schema(example = "E_TICKET")
     private BookingDocumentType docType;
 
+    @jakarta.validation.constraints.Size(max = 100, message = "Reference must be 100 characters or fewer")
     @Schema(example = "0987654321")
     private String referenceNumber;
 

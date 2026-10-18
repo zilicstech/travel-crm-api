@@ -96,7 +96,7 @@ public class Booking {
     @Column(name = "destination", nullable = false, length = 150)
     private String destination;
 
-    @Column(name = "pnr", length = 20)
+    @Column(name = "pnr", length = 100)
     private String pnr;
 
     @Column(name = "ticket_no", length = 50)

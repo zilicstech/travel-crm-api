@@ -43,6 +43,8 @@ class AccountsDashboardServiceTest {
     private PaymentReceiptRepository paymentReceiptRepository;
     @Mock
     private CreditNoteRepository creditNoteRepository;
+    @Mock
+    private com.voyra.crm.repository.JournalLineRepository journalLineRepository;
 
     @InjectMocks
     private AccountsDashboardService accountsDashboardService;
@@ -65,9 +67,12 @@ class AccountsDashboardServiceTest {
                 .thenReturn(List.of(PaymentReceipt.builder().amountInr(new BigDecimal("400.00")).build()));
         when(invoiceRepository.findByDocumentTypeAndStatusInAndBalanceDueInrGreaterThan(any(), any(), any()))
                 .thenReturn(List.of(invoice(new BigDecimal("1000.00"), new BigDecimal("50.00"), new BigDecimal("600.00"), today.minusDays(3))));
-        when(paymentReceiptRepository.findByDirectionAndIsAdvanceTrue(ReceiptDirection.RECEIPT)).thenReturn(List.of());
+        // Advances held is the Client Advances Held (2110) balance: 2,500 credited less 700 used.
+        when(journalLineRepository.sumCreditBefore(eq("2110"), any())).thenReturn(new BigDecimal("2500.00"));
+        when(journalLineRepository.sumDebitBefore(eq("2110"), any())).thenReturn(new BigDecimal("700.00"));
 
         AccountsDashboardSummaryResponse summary = accountsDashboardService.summary();
+        assertThat(summary.getAdvanceHeldInr()).isEqualByComparingTo("1800.00");
 
         assertThat(summary.getBilledThisMonthInr()).isEqualByComparingTo("1000.00");
         assertThat(summary.getCollectedThisMonthInr()).isEqualByComparingTo("400.00");

@@ -36,8 +36,6 @@ public class PublicProposalItemResponse {
     @Schema(example = "5 nights at Burj Al Arab, Deluxe Suite")
     private String description;
 
-    @Schema(example = "Cleartrip")
-    private String supplier;
 
     @Schema(description = "Price shown to the customer - net cost is never exposed here", example = "22000.00")
     private BigDecimal sellingPrice;

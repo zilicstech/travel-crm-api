@@ -16,7 +16,7 @@ import java.util.List;
 @Schema(description = "Request body for updating a Booking's details")
 public class BookingUpdateRequest {
 
-    @Size(max = 20, message = "PNR must be 20 characters or fewer")
+    @Size(max = 100, message = "PNR must be 100 characters or fewer")
     @Schema(example = "ABCXYZ")
     private String pnr;
 
@@ -151,17 +151,6 @@ public class BookingUpdateRequest {
     @Size(max = 5)
     @Schema(description = "Local clock time, 'HH:mm'", example = "14:30")
     private String transferTime;
-
-    @DecimalMin(value = "0.00", message = "Net cost cannot be negative")
-    @Schema(description = "Cost paid to the supplier", example = "42000.00")
-    private BigDecimal netCost;
-
-    @DecimalMin(value = "0.00", message = "Selling price cannot be negative")
-    @Schema(description = "Price charged to the customer", example = "52000.00")
-    private BigDecimal sellingPrice;
-
-    @Schema(description = "Owner only: save even though a higher sellingPrice takes the client over their credit limit", example = "false")
-    private Boolean overrideCreditLimit;
 
     @Schema(description = "Whether this FLIGHT booking's itinerary leaves India - decides AIR_INTERNATIONAL vs AIR_DOMESTIC on any invoice drafted against it. Ignored for non-FLIGHT bookings.")
     private Boolean internationalTrip;

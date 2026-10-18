@@ -131,6 +131,19 @@ public class BankMatchingService {
                     }
                 }
             }
+            // A suggest-only rule that fits the line is offered too; confirming it posts the rule's entry.
+            for (BankMatchRule rule : bankMatchRuleRepository.findByIsActiveTrueOrderByPriorityAsc()) {
+                String haystack = rule.getMatchField() == com.voyra.crm.enums.BankMatchField.BANK_REFERENCE
+                        ? txn.getBankReference() : txn.getDescription();
+                if (!Boolean.TRUE.equals(rule.getAutoPost()) && haystack != null
+                        && haystack.toUpperCase().contains(rule.getPattern().toUpperCase())) {
+                    candidates.add(TierTwoCandidateResponse.builder()
+                            .transactionId(txn.getId()).sourceType(BankMatchedSourceType.BANK_MATCH_RULE)
+                            .sourceId(rule.getId()).sourceLabel("Rule: " + rule.getName() + " → " + rule.getTargetAccountCode())
+                            .amount(txn.getAmount()).score(BigDecimal.valueOf(100)).build());
+                    break;
+                }
+            }
         }
         return candidates;
     }
@@ -157,6 +170,16 @@ public class BankMatchingService {
             postPaymentAndMarkMatched(txn, bill);
             txn.setMatchStatus(BankTransactionMatchStatus.CONFIRMED);
             bankTransactionRepository.save(txn);
+        } else if (sourceType == BankMatchedSourceType.BANK_MATCH_RULE) {
+            BankMatchRule rule = bankMatchRuleRepository.findById(sourceId)
+                    .orElseThrow(() -> new IllegalArgumentException("Rule not found: " + sourceId));
+            postBankChargeJournal(txn, rule);
+            txn.setMatchStatus(BankTransactionMatchStatus.CATEGORIZED);
+            txn.setMatchedSourceType(BankMatchedSourceType.BANK_MATCH_RULE);
+            txn.setMatchedSourceId(rule.getId());
+            txn.setMatchedAt(LocalDateTime.now());
+            txn.setMatchedBy(currentUserId());
+            bankTransactionRepository.save(txn);
         } else {
             throw new IllegalArgumentException("Cannot confirm against source type " + sourceType);
         }
@@ -175,12 +198,13 @@ public class BankMatchingService {
                 if (haystack == null || !haystack.toUpperCase().contains(rule.getPattern().toUpperCase())) {
                     continue;
                 }
-                if (Boolean.TRUE.equals(rule.getAutoPost())) {
-                    postBankChargeJournal(txn, rule);
-                    txn.setMatchStatus(BankTransactionMatchStatus.CATEGORIZED);
-                } else {
-                    txn.setMatchStatus(BankTransactionMatchStatus.CATEGORIZED);
+                if (!Boolean.TRUE.equals(rule.getAutoPost())) {
+                    // Suggest-only: the line stays in Review & Match, offered as a candidate
+                    // (listTier2Candidates) until someone confirms it - never categorised unposted.
+                    break;
                 }
+                postBankChargeJournal(txn, rule);
+                txn.setMatchStatus(BankTransactionMatchStatus.CATEGORIZED);
                 txn.setMatchedSourceType(BankMatchedSourceType.BANK_MATCH_RULE);
                 txn.setMatchedSourceId(rule.getId());
                 txn.setMatchedAt(LocalDateTime.now());

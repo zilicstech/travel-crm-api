@@ -160,7 +160,7 @@ public class PublicProposalTenantService {
                                 .id(i.getId()).type(i.getType())
                                 .serviceId(i.getServiceId()).serviceLabel(labelByServiceId.get(i.getServiceId()))
                                 .description(i.getDescription())
-                                .supplier(i.getSupplier()).sellingPrice(i.getSellingPrice())
+                                .sellingPrice(i.getSellingPrice())
                                 .optionGroup(i.getOptionGroup()).selected(i.isSelected())
                                 .build())
                         .toList())

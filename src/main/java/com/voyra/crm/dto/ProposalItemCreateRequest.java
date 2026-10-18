@@ -25,15 +25,18 @@ public class ProposalItemCreateRequest {
 
     @NotBlank(message = "Description is required")
     @Schema(example = "5 nights at Burj Al Arab, Deluxe Suite")
+    @jakarta.validation.constraints.Size(max = 255, message = "Description must be 255 characters or fewer")
     private String description;
 
     @Schema(example = "Cleartrip")
     private String supplier;
 
     @Schema(description = "Cost paid to the supplier, defaults to 0 if not supplied", example = "18000.00")
+    @jakarta.validation.constraints.DecimalMin(value = "0.0", message = "Net cost cannot be negative")
     private BigDecimal netCost;
 
     @Schema(description = "Price shown to the customer, defaults to 0 if not supplied", example = "22000.00")
+    @jakarta.validation.constraints.DecimalMin(value = "0.0", message = "Selling price cannot be negative")
     private BigDecimal sellingPrice;
 
     @Schema(description = "What the agent intended when setting sellingPrice - omit for a line typed straight in with no markup calculator", example = "PERCENT")
@@ -41,6 +44,7 @@ public class ProposalItemCreateRequest {
 
     @DecimalMin(value = "0.0", message = "markupValue cannot be negative")
     @Schema(description = "The markup value under markupMode - a percent or a flat rupee amount", example = "5.00")
+    @jakarta.validation.constraints.DecimalMin(value = "0.0", message = "Markup cannot be negative")
     private BigDecimal markupValue;
 
     @Schema(description = "Omit for a plain add-on that always counts. Set to group this line with "

@@ -80,6 +80,20 @@ public class GlobalExceptionHandler {
                         "Invalid request body", null, HttpStatus.BAD_REQUEST.value(), path));
     }
 
+    /** A query/path parameter that is missing or can't be read (a bad enum, a malformed date) is the caller's mistake. */
+    @ExceptionHandler({org.springframework.web.bind.MissingServletRequestParameterException.class,
+            org.springframework.web.method.annotation.MethodArgumentTypeMismatchException.class})
+    public ResponseEntity<ApiErrorResponse> handleBadParameter(Exception ex, HttpServletRequest request) {
+        String path = getPath(request);
+        String message = ex instanceof org.springframework.web.bind.MissingServletRequestParameterException missing
+                ? "The '" + missing.getParameterName() + "' parameter is required"
+                : "The '" + ((org.springframework.web.method.annotation.MethodArgumentTypeMismatchException) ex).getName()
+                        + "' parameter has an invalid value";
+        log.warn("Bad request parameter - path: {}, {}", path, message);
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
+                ApiErrorResponse.of(message, "Invalid request parameter", null, HttpStatus.BAD_REQUEST.value(), path));
+    }
+
     @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
     public ResponseEntity<ApiErrorResponse> handleMethodNotSupported(HttpRequestMethodNotSupportedException ex,
                                                                         HttpServletRequest request) {
@@ -124,16 +138,19 @@ public class GlobalExceptionHandler {
             String field = DuplicateConstraintMessageParser.extractFieldLabel(messageChain);
             log.warn("Duplicate value - field: {}, path: {}", field, path);
             ApiErrorResponse response = ApiErrorResponse.of(
-                    "A record with this " + field + " already exists", "Duplicate value", cause,
+                    "A record with this " + field + " already exists", "Duplicate value", null,
                     HttpStatus.CONFLICT.value(), path);
             response.setDetails(Map.of("field", field));
             return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
         }
 
         log.warn("Data integrity violation - path: {}, cause: {}", path, cause);
+        // The database's own text (SQL, column names) stays in the log, never in the response.
+        String message = messageChain != null && messageChain.contains("value too long")
+                ? "One of the values is too long - shorten it and try again"
+                : "The request could not be completed due to a data conflict";
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
-                ApiErrorResponse.of("The request could not be completed due to a data conflict",
-                        "Data integrity violation", cause, HttpStatus.BAD_REQUEST.value(), path));
+                ApiErrorResponse.of(message, "Data integrity violation", null, HttpStatus.BAD_REQUEST.value(), path));
     }
 
     @ExceptionHandler(IllegalStateException.class)

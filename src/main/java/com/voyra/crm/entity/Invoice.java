@@ -130,6 +130,10 @@ public class Invoice {
     @Column(name = "billing_model", length = 20)
     private InvoiceBillingModel billingModel;
 
+    /** Commission agent only: the supplier's share billed untaxed when set explicitly (a cancellation-charges invoice). */
+    @Column(name = "pass_through_amount", precision = 19, scale = 2)
+    private BigDecimal passThroughAmount;
+
     /** Accountant's own override input - re-supplied to TaxEngine on every draft recompute. Distinct from the resolved {@link #placeOfSupplyCode} above. */
     @Column(name = "place_of_supply_override", length = 2)
     private String placeOfSupplyOverride;

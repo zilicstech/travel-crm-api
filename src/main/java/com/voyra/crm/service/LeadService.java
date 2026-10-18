@@ -402,14 +402,10 @@ public class LeadService {
         Lead lead = findAccessibleLead(id);
         assertProposalUnlocked(lead);
         BigDecimal netCost = request.getNetCost() != null ? request.getNetCost() : BigDecimal.ZERO;
-        BigDecimal sellingPrice = request.getSellingPrice() != null ? request.getSellingPrice() : BigDecimal.ZERO;
+        BigDecimal sellingPrice = linePrice(netCost, request.getMarkupMode(), request.getMarkupValue(), request.getSellingPrice());
 
-        String serviceLabel = null;
-        if (request.getServiceId() != null) {
-            serviceLabel = leadServiceRepository.findById(request.getServiceId())
-                    .orElseThrow(() -> new IllegalArgumentException("Service not found: " + request.getServiceId()))
-                    .getLabel();
-        }
+        com.voyra.crm.entity.LeadService service = lineService(id, request.getServiceId());
+        String serviceLabel = service != null ? service.getLabel() : null;
 
         LeadProposal item = LeadProposal.builder()
                 .id(UniqueIdResolver.resolve(leadProposalRepository::existsById))
@@ -447,12 +443,8 @@ public class LeadService {
     public List<ProposalItemResponse> addProposalItemsBatch(String id, ProposalItemBatchCreateRequest request) {
         Lead lead = findAccessibleLead(id);
         assertProposalUnlocked(lead);
-        String serviceLabel = null;
-        if (request.getServiceId() != null) {
-            serviceLabel = leadServiceRepository.findById(request.getServiceId())
-                    .orElseThrow(() -> new IllegalArgumentException("Service not found: " + request.getServiceId()))
-                    .getLabel();
-        }
+        com.voyra.crm.entity.LeadService service = lineService(id, request.getServiceId());
+        String serviceLabel = service != null ? service.getLabel() : null;
         String optionGroup = request.getOptionGroup() != null ? request.getOptionGroup() : request.getServiceId();
 
         List<LeadProposal> created = new ArrayList<>();
@@ -466,7 +458,8 @@ public class LeadService {
                     .description(line.getDescription())
                     .supplier(line.getSupplier())
                     .netCost(line.getNetCost() != null ? line.getNetCost() : BigDecimal.ZERO)
-                    .sellingPrice(line.getSellingPrice() != null ? line.getSellingPrice() : BigDecimal.ZERO)
+                    .sellingPrice(linePrice(line.getNetCost() != null ? line.getNetCost() : BigDecimal.ZERO,
+                            line.getMarkupMode(), line.getMarkupValue(), line.getSellingPrice()))
                     .markupMode(line.getMarkupMode())
                     .markupValue(line.getMarkupValue())
                     .optionGroup(optionGroup)
@@ -494,6 +487,7 @@ public class LeadService {
         assertProposalUnlocked(lead);
         LeadProposal item = leadProposalRepository.findByIdAndLeadId(itemId, id)
                 .orElseThrow(() -> new IllegalArgumentException("Proposal item not found: " + itemId));
+        lineService(id, item.getServiceId());
         if (item.getOptionGroup() == null) {
             throw new IllegalArgumentException("Only an option line can be selected: " + itemId);
         }
@@ -532,6 +526,7 @@ public class LeadService {
         assertProposalUnlocked(lead);
         LeadProposal item = leadProposalRepository.findByIdAndLeadId(itemId, id)
                 .orElseThrow(() -> new IllegalArgumentException("Proposal item not found: " + itemId));
+        lineService(id, item.getServiceId());
         if (request.getDescription() != null) {
             item.setDescription(request.getDescription());
         }
@@ -550,6 +545,8 @@ public class LeadService {
         if (request.getMarkupValue() != null) {
             item.setMarkupValue(request.getMarkupValue());
         }
+        // A marked-up line's price is always cost + markup, whatever the request said.
+        item.setSellingPrice(linePrice(item.getNetCost(), item.getMarkupMode(), item.getMarkupValue(), item.getSellingPrice()));
         leadProposalRepository.save(item);
         recomputeQuotedTotals(lead);
         leadTimelineService.record(id, item.getServiceId(), LeadTimelineEventType.PROPOSAL_ITEM_ADDED,
@@ -558,12 +555,37 @@ public class LeadService {
         return toProposalItemResponse(item);
     }
 
+    /**
+     * A line on a service is that service's work: the service must be on this lead, and the caller
+     * must be able to edit it (an agent only for the service types they handle, or one assigned to
+     * them). A trip-level line (no service) is open to anyone who can see the lead.
+     */
+    private com.voyra.crm.entity.LeadService lineService(String leadId, String serviceId) {
+        if (serviceId == null) {
+            return null;
+        }
+        com.voyra.crm.entity.LeadService service = leadServiceRepository.findById(serviceId)
+                .filter(s -> leadId.equals(s.getLeadId()))
+                .orElseThrow(() -> new IllegalArgumentException("Service not found on this lead: " + serviceId));
+        serviceInstanceService.assertEditAccess(service);
+        return service;
+    }
+
+    /** With a markup the price is worked out from the cost (as on the screen); otherwise the price as given. */
+    private static BigDecimal linePrice(BigDecimal netCost, com.voyra.crm.enums.MarkupMode mode, BigDecimal markupValue, BigDecimal given) {
+        if (mode != null && markupValue != null) {
+            return com.voyra.crm.util.MarkupMath.sellingPrice(netCost != null ? netCost : BigDecimal.ZERO, mode, markupValue);
+        }
+        return given != null ? given : BigDecimal.ZERO;
+    }
+
     @Transactional
     public void removeProposalItem(String id, String itemId) {
         Lead lead = findAccessibleLead(id);
         assertProposalUnlocked(lead);
         LeadProposal item = leadProposalRepository.findByIdAndLeadId(itemId, id)
                 .orElseThrow(() -> new IllegalArgumentException("Proposal item not found: " + itemId));
+        lineService(id, item.getServiceId());
         leadProposalRepository.delete(item);
         recomputeQuotedTotals(lead);
         leadTimelineService.record(id, item.getServiceId(), LeadTimelineEventType.PROPOSAL_ITEM_REMOVED,

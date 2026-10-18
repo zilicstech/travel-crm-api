@@ -77,6 +77,7 @@ public class BookingLifecycleService {
     private final SupplierInvoiceRepository supplierInvoiceRepository;
     private final SupplierPaymentRepository supplierPaymentRepository;
     private final InvoiceDocumentService invoiceDocumentService;
+    private final BookingInvoiceIssuer bookingInvoiceIssuer;
     private final PaymentReceiptService paymentReceiptService;
 
     @Transactional(readOnly = true)
@@ -100,6 +101,8 @@ public class BookingLifecycleService {
             throw new IllegalStateException("This booking is fully invoiced");
         }
         InvoiceDraftRequest draftRequest = draftRequest(booking, request);
+        // Taxed like a hand-raised invoice: the agency's default GST for what the booking is.
+        bookingInvoiceIssuer.applyDefaultGst(draftRequest, booking);
         if (draft == null && !live.isEmpty()) {
             // Vouchers added after the first invoice: one more invoice for just what they added.
             com.voyra.crm.dto.InvoiceLineItemRequest line = new com.voyra.crm.dto.InvoiceLineItemRequest();
@@ -123,11 +126,18 @@ public class BookingLifecycleService {
     @Transactional
     public BookingLifecycleResponse recordPayment(String bookingId, BookingPaymentRequest request) {
         Booking booking = lockAccessible(bookingId);
-        if (booking.getBookingStatus() == BookingStatus.CANCELLED) {
-            throw new IllegalStateException("This booking is cancelled - record refunds instead");
-        }
         List<Invoice> issued = liveTaxInvoices(booking.getId()).stream()
                 .filter(i -> i.getStatus() != InvoiceLifecycle.DRAFT).toList();
+        if (booking.getBookingStatus() == BookingStatus.CANCELLED) {
+            // Only what its invoices still owe (cancellation charges); nothing is held for a cancelled trip.
+            BigDecimal owed = issued.stream().map(i -> nz(i.getBalanceDue()).max(BigDecimal.ZERO)).reduce(BigDecimal.ZERO, BigDecimal::add);
+            if (owed.signum() == 0) {
+                throw new IllegalStateException("This booking is cancelled - record refunds instead");
+            }
+            if (request.getAmount().compareTo(owed) > 0) {
+                throw new IllegalArgumentException("More than the " + owed + " still owed on this cancelled booking");
+            }
+        }
 
         // Never capped by an estimate: the client may pay the GST-inclusive total before the invoice
         // exists, or for a voucher added after it. Open invoices are settled first, oldest first; the
@@ -225,7 +235,10 @@ public class BookingLifecycleService {
         // After the invoice, a voucher added since then is still to collect too (before its GST, which its own invoice adds).
         BigDecimal sinceInvoice = cancelled || !invoiced ? BigDecimal.ZERO
                 : nz(b.getSellingPrice()).subtract(nz(f.invoicedPriceInr())).max(BigDecimal.ZERO);
-        BigDecimal toCollect = cancelled ? BigDecimal.ZERO
+        // A cancelled booking still owes whatever its invoices leave unpaid (e.g. cancellation charges).
+        BigDecimal toCollect = cancelled
+                ? liveInvoices.stream().filter(i -> i.getStatus() != InvoiceLifecycle.DRAFT)
+                        .map(i -> nz(i.getBalanceDueInr()).max(BigDecimal.ZERO)).reduce(BigDecimal.ZERO, BigDecimal::add)
                 : (invoiced ? invoicedTotal.subtract(received).add(sinceInvoice) : nz(b.getSellingPrice()).subtract(received).subtract(nz(f.clientWalletInr())))
                         .max(BigDecimal.ZERO);
 
@@ -266,7 +279,7 @@ public class BookingLifecycleService {
         if (ops && live) actions.add(CANCEL);
         if (accounts && !cancelled && (invoiced ? uninvoiced.signum() > 0 : nz(b.getSellingPrice()).signum() > 0)) actions.add(GENERATE_INVOICE);
         // Always open on a priced live booking: a client may pay more than the estimate (GST, an extra voucher) and it is held as an advance.
-        if (accounts && !cancelled && nz(b.getSellingPrice()).signum() > 0) actions.add(RECORD_PAYMENT);
+        if (accounts && (cancelled ? toCollect.signum() > 0 : nz(b.getSellingPrice()).signum() > 0)) actions.add(RECORD_PAYMENT);
         if (accounts && cancelled && clientRefundOpen) actions.add(REFUND_CLIENT);
         if (ops && cancelled && supplierRefundOpen && claim == null) actions.add(SUPPLIER_REFUND);
         if (accounts && cancelled && claim != null) {
@@ -291,6 +304,9 @@ public class BookingLifecycleService {
 
     private static Step paymentStep(boolean cancelled, boolean invoiced, BigDecimal received, BigDecimal toCollect, BigDecimal wallet) {
         if (cancelled) {
+            if (toCollect.signum() > 0) {
+                return step("PAYMENT", "OPEN", money(toCollect) + " cancellation charges to collect");
+            }
             if (received.signum() == 0 && nz(wallet).signum() > 0) {
                 return step("PAYMENT", "DONE", money(wallet) + " held as an advance before cancelling");
             }

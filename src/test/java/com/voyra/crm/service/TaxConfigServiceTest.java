@@ -25,6 +25,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -91,7 +92,7 @@ class TaxConfigServiceTest {
         when(taxRateConfigRepository.findById("G1")).thenReturn(Optional.of(existing));
         when(taxRateConfigRepository.existsById(any())).thenReturn(false);
 
-        LocalDate newEffectiveFrom = LocalDate.now().plusDays(1);
+        LocalDate newEffectiveFrom = LocalDate.now();
         TaxRateConfigResponse response = taxConfigService.replace("G1", request("8.000", newEffectiveFrom));
 
         ArgumentCaptor<TaxRateConfig> savedCaptor = ArgumentCaptor.forClass(TaxRateConfig.class);
@@ -103,10 +104,23 @@ class TaxConfigServiceTest {
         assertThat(closedOld.getRatePercent()).isEqualByComparingTo("5.000"); // untouched
         assertThat(closedOld.getIsActive()).isFalse();
         assertThat(closedOld.getEffectiveTo()).isEqualTo(newEffectiveFrom.minusDays(1));
+        assertThat(inserted.getIsActive()).isTrue();
 
         assertThat(inserted.getId()).isNotEqualTo("G1");
         assertThat(inserted.getRatePercent()).isEqualByComparingTo("8.000");
         assertThat(response.getRatePercent()).isEqualByComparingTo("8.000");
+    }
+
+    /** Lookups take the live default whatever its start date, so a future-dated slab would charge
+     *  its rate from today - refused until slabs are versioned by date. */
+    @Test
+    void aRateCannotStartInTheFuture() {
+        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        assertThatThrownBy(() -> taxConfigService.create(request("8.000", tomorrow)))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("can't start in the future");
+        assertThatThrownBy(() -> taxConfigService.replace("G1", request("8.000", tomorrow)))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("can't start in the future");
+        verify(taxRateConfigRepository, org.mockito.Mockito.never()).save(any());
     }
 
     @Test

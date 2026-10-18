@@ -29,6 +29,11 @@ public class CreditNoteRequest {
     @Schema(description = "Retained taxable value, not credited. Zero means the full invoice is credited.", example = "0.00")
     private BigDecimal cancellationFee;
 
+    @DecimalMin(value = "0", message = "supplierRetained cannot be negative")
+    @Schema(description = "The supplier's share of cancellationFee (airline charge + supplier fee) on a booking cancellation - "
+            + "on a commission-agent invoice it stays as pass-through, the rest of cancellationFee is the agency's fee.", example = "3500.00")
+    private BigDecimal supplierRetained;
+
     @Schema(description = "Defaults to today when omitted", example = "2026-09-19")
     private LocalDate noteDate;
 }

@@ -123,6 +123,40 @@ class SupplierInvoiceServiceTest {
         assertThat(posting.lines().get(2).creditAmount()).isEqualByComparingTo("5250.00");
     }
 
+    /** An air ticket is billed as commission agent: its cost passes through to the client, so the bill clears 2210, not a purchase. */
+    @Test
+    void approvingAFlightBookingsBillClearsThePassThroughNotPurchases() {
+        SupplierInvoice invoice = SupplierInvoice.builder()
+                .id("SI1").vendorId("V1").vendorName("IndiGo").bookingId("B1")
+                .status(SupplierInvoiceStatus.DRAFT).itcEligibility(ItcEligibility.ELIGIBLE)
+                .currencyCode("INR").fxRateToInr(BigDecimal.ONE)
+                .taxableValue(new BigDecimal("10000.00")).taxableValueInr(new BigDecimal("10000.00"))
+                .gstTotal(BigDecimal.ZERO).gstTotalInr(BigDecimal.ZERO)
+                .grandTotal(new BigDecimal("10000.00")).grandTotalInr(new BigDecimal("10000.00"))
+                .roundOff(BigDecimal.ZERO).amountPaid(BigDecimal.ZERO).creditNoteTotal(BigDecimal.ZERO)
+                .build();
+        SupplierInvoiceLineItem line = SupplierInvoiceLineItem.builder()
+                .id("L1").supplierInvoiceId("SI1").sortOrder(0).description("DEL-BOM")
+                .quantity(BigDecimal.ONE).unitPrice(new BigDecimal("10000.00"))
+                .taxableValue(new BigDecimal("10000.00")).lineTotal(new BigDecimal("10000.00"))
+                .cgstAmount(BigDecimal.ZERO).sgstAmount(BigDecimal.ZERO).igstAmount(BigDecimal.ZERO)
+                .build();
+        when(supplierInvoiceRepository.findById("SI1")).thenReturn(Optional.of(invoice));
+        when(lineItemRepository.findBySupplierInvoiceIdOrderBySortOrder("SI1")).thenReturn(List.of(line));
+        when(vendorRepository.findById("V1")).thenReturn(Optional.of(Vendor.builder().id("V1").name("IndiGo").build()));
+        org.mockito.Mockito.lenient().when(bookingRepository.findById("B1")).thenReturn(Optional.of(
+                com.voyra.crm.entity.Booking.builder().id("B1").type(com.voyra.crm.enums.BookingType.FLIGHT).internationalTrip(false).build()));
+        stubAgency();
+
+        supplierInvoiceService.approve("SI1", null);
+
+        ArgumentCaptor<JournalPosting> captor = ArgumentCaptor.forClass(JournalPosting.class);
+        org.mockito.Mockito.verify(journalService).post(captor.capture());
+        assertThat(captor.getValue().lines().get(0).accountCode()).isEqualTo("2210");
+        assertThat(captor.getValue().lines().get(0).debitAmount()).isEqualByComparingTo("10000.00");
+        assertThat(captor.getValue().lines().get(1).accountCode()).isEqualTo("2200");
+    }
+
     @Test
     void approvingAnIneligibleItcBillFoldsGstIntoThePurchaseDebit() {
         SupplierInvoice invoice = SupplierInvoice.builder()
