@@ -263,6 +263,12 @@ public class BookingResponse {
     @Schema(description = "Cancellation: supplier refund received so far", example = "0.00")
     private BigDecimal supplierRefundReceived;
 
+    @Schema(description = "Cancellation: a supplier refund recorded as come into the agency bank, waiting for Accounts' check. Null when none is open.", example = "6000.00")
+    private BigDecimal supplierRefundClaimAmount;
+
+    @Schema(description = "Who recorded the open supplier refund claim", example = "Vikram Rao")
+    private String supplierRefundClaimBy;
+
     @Schema(description = "Cancellation: how the booking was cancelled", example = "VOID")
     private CancellationType cancellationType;
 

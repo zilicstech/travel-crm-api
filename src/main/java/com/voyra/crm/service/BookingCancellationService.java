@@ -179,12 +179,13 @@ public class BookingCancellationService {
     public BookingResponse recordSupplierRefund(String bookingId, RefundSettlementRequest request) {
         lock(bookingId);
         Booking booking = cancelled(bookingId);
+        // Either way, an open bank claim is settled first - otherwise the claim could never be confirmed.
+        if (booking.getSupplierRefundClaimAmount() != null) {
+            throw new IllegalArgumentException("A bank refund is already waiting for the accountant's check");
+        }
         if (Boolean.TRUE.equals(request.getToAccount())) {
             postSupplierRefund(booking, request, toAccount(request));
             return bookingService.toResponsePublic(booking);
-        }
-        if (booking.getSupplierRefundClaimAmount() != null) {
-            throw new IllegalArgumentException("A bank refund is already waiting for the accountant's check");
         }
         assertWithin(request.getAmount(), supplierOutstanding(booking), "supplier");
         assertCoveredByCreditNotes(bookingId, request.getAmount());

@@ -176,7 +176,7 @@ public class BookingService {
                 .pnr(request.getPnr())
                 .ticketNo(request.getTicketNo())
                 .airline(request.getAirline())
-                .supplier(request.getSupplier())
+                .supplier(supplierName(request.getSupplier(), request.getVendorId()))
                 .vendorId(request.getVendorId())
                 .journeyDate(request.getJourneyDate())
                 .returnDate(request.getReturnDate())
@@ -241,13 +241,6 @@ public class BookingService {
         if (request.getPassengers() != null) {
             replacePassengers(booking.getId(), request.getPassengers());
         }
-        // A booking placed with a real Vendor (not just a free-text supplier name) drafts its
-        // own supplier bill - the accountant confirms it against the paper invoice later
-        // (Accounts ▸ Suppliers ▸ Awaiting confirmation) rather than starting one from scratch.
-        if (request.getVendorId() != null && !request.getVendorId().isBlank()
-                && request.getNetCost().compareTo(BigDecimal.ZERO) > 0) {
-            supplierInvoiceService.createAutoDraft(booking, request.getVendorId());
-        }
         auditService.recordCreate(AuditEntityType.BOOKING, booking.getId(), labelFor(booking));
 
         if (service != null) {
@@ -274,6 +267,7 @@ public class BookingService {
                 .orElseThrow(() -> new IllegalStateException("Booking vanished mid-create"));
         booking.setBookingStatus(BookingStatus.CONFIRMED);
         bookingRepository.save(booking);
+        draftSupplierBillOnce(booking);
         bookingDocumentRepository.save(BookingDocument.builder()
                 .id(documentId)
                 .bookingId(booking.getId())
@@ -632,12 +626,8 @@ public class BookingService {
         touch(booking);
         bookingRepository.save(booking);
         auditService.recordUpdate(AuditEntityType.BOOKING, booking.getId(), labelFor(booking), changes);
-        // Confirmed with the supplier = their bill is due: draft it for Accounts > Supplier Bills,
-        // once - a booking that already has a live bill (e.g. drafted at create) keeps that one.
-        if (confirming && booking.getVendorId() != null && booking.getNetCost().compareTo(BigDecimal.ZERO) > 0
-                && supplierInvoiceRepository.findByBookingIdAndStatusNot(booking.getId(),
-                        com.voyra.crm.enums.SupplierInvoiceStatus.CANCELLED).isEmpty()) {
-            supplierInvoiceService.createAutoDraft(booking, booking.getVendorId());
+        if (confirming) {
+            draftSupplierBillOnce(booking);
         }
         log.info("Booking status updated: bookingId={}, status={}", id, request.getBookingStatus());
         return toResponse(booking);
@@ -780,6 +770,13 @@ public class BookingService {
         return b.getSupplier() != null ? b.getSupplier() : b.getType().name();
     }
 
+    /** The free-text supplier as given, else the picked Vendor's name, so the booking always shows who it is with. */
+    private String supplierName(String supplier, String vendorId) {
+        if (supplier != null && !supplier.isBlank()) return supplier;
+        if (vendorId == null || vendorId.isBlank()) return supplier;
+        return vendorRepository.findById(vendorId).map(Vendor::getName).orElse(null);
+    }
+
     /** A booking is confirmed once it is really booked: the supplier's reference and the price are on it. */
     static void assertReadyToConfirm(Booking b) {
         String reference = switch (b.getType()) {
@@ -791,6 +788,21 @@ public class BookingService {
         boolean priced = b.getSellingPrice() != null && b.getSellingPrice().compareTo(BigDecimal.ZERO) > 0;
         if (reference == null || reference.isBlank() || !priced) {
             throw new IllegalArgumentException("Add the booking reference and selling price before confirming");
+        }
+    }
+
+    /**
+     * Confirmed with the supplier = their bill is due. A booking with a real Vendor (not just a
+     * free-text supplier name) and a cost drafts its supplier bill for Accounts > Supplier Bills,
+     * from the cost as it stands at confirmation - a pending booking's fare is still moving. Once:
+     * a booking that already has a live bill keeps that one.
+     */
+    private void draftSupplierBillOnce(Booking booking) {
+        if (booking.getVendorId() != null && !booking.getVendorId().isBlank()
+                && booking.getNetCost() != null && booking.getNetCost().compareTo(BigDecimal.ZERO) > 0
+                && supplierInvoiceRepository.findByBookingIdAndStatusNot(booking.getId(),
+                        com.voyra.crm.enums.SupplierInvoiceStatus.CANCELLED).isEmpty()) {
+            supplierInvoiceService.createAutoDraft(booking, booking.getVendorId());
         }
     }
 
@@ -901,6 +913,8 @@ public class BookingService {
                 .cancellationSupplierCharge(b.getCancellationSupplierCharge()).cancellationAgencyFee(b.getCancellationAgencyFee())
                 .customerRefundDue(b.getCustomerRefundDue()).supplierRefundExpected(b.getSupplierRefundExpected())
                 .supplierRefundReceived(b.getSupplierRefundReceived())
+                .supplierRefundClaimAmount(b.getSupplierRefundClaimAmount())
+                .supplierRefundClaimBy(b.getSupplierRefundClaimBy())
                 .cancellationType(b.getCancellationType())
                 .refundCheckedAt(b.getRefundCheckedAt()).refundCheckedBy(b.getRefundCheckedBy())
                 .documents(documents)

@@ -506,4 +506,16 @@ class BookingCancellationServiceTest {
 
         assertThatThrownBy(() -> service.markChecked("B1")).isInstanceOf(IllegalStateException.class);
     }
+
+    @Test
+    void aWalletRefundWaitsForAnOpenBankClaim() {
+        awaitingSupplierRefund("8000");
+        service.recordSupplierRefund("B1", bankClaim("8000"));
+        RefundSettlementRequest wallet = bankClaim("8000");
+        wallet.setToAccount(true);
+
+        assertThatThrownBy(() -> service.recordSupplierRefund("B1", wallet))
+                .hasMessage("A bank refund is already waiting for the accountant's check");
+        verify(supplierCreditNoteService, never()).receiveRefund(any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
+    }
 }
