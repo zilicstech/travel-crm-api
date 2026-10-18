@@ -40,15 +40,21 @@ public class ServiceBookingStatusSync {
     private final AuditService auditService;
 
     /** Called after a booking is saved on a service. A cancelled service is left alone -
-     *  logging a booking must never resurrect work that was called off. */
+     *  logging a booking must never resurrect work that was called off. A service nobody had
+     *  claimed becomes the booking's agent's: once booked it can't be accepted, so it would
+     *  otherwise be left with no one on it. */
     @Transactional
-    public void onBookingLogged(String serviceId) {
+    public void onBookingLogged(String serviceId, String agentId, String agentName) {
         if (serviceId == null) {
             return;
         }
         LeadService service = leadServiceRepository.findById(serviceId).orElse(null);
         if (service == null || !BOOKABLE_FROM.contains(service.getStatus())) {
             return;
+        }
+        if (service.getAssignedAgentId() == null && agentId != null) {
+            service.setAssignedAgentId(agentId);
+            service.setAssignedAgentName(agentName);
         }
         transition(service, ServiceStatus.BOOKED, "Booked - a supplier booking has been logged");
     }

@@ -249,7 +249,7 @@ public class BookingService {
         if (service != null) {
             leadTimelineService.record(service.getLeadId(), service.getId(), LeadTimelineEventType.BOOKING_LOGGED,
                     labelOrType(booking) + " booking logged" + (booking.getPnr() != null ? " (" + booking.getPnr() + ")" : ""));
-            serviceBookingStatusSync.onBookingLogged(service.getId());
+            serviceBookingStatusSync.onBookingLogged(service.getId(), owner.id(), owner.name());
         }
 
         log.info("Booking created: bookingId={}, agentId={}, serviceId={}", booking.getId(), owner.id(), request.getServiceId());
