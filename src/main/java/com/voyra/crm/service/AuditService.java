@@ -58,6 +58,12 @@ public class AuditService {
         save(type, entityId, entityLabel, AuditAction.UPDATE, changes);
     }
 
+    /** Who saw a secret, and when - the owner's answer to "who revealed our supplier key". */
+    @Transactional
+    public void recordReveal(AuditEntityType type, String entityId, String entityLabel) {
+        save(type, entityId, entityLabel, AuditAction.REVEAL, List.of());
+    }
+
     /** finalSnapshot is stored so a genuinely removed record is still reconstructable. */
     @Transactional
     public void recordDelete(AuditEntityType type, String entityId, String entityLabel, List<AuditChange> finalSnapshot) {
