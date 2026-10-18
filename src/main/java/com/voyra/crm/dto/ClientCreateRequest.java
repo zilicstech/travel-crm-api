@@ -2,6 +2,7 @@ package com.voyra.crm.dto;
 
 import com.voyra.crm.enums.ClientType;
 import io.swagger.v3.oas.annotations.media.Schema;
+import com.voyra.crm.util.ValidationPatterns;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -45,10 +46,12 @@ public class ClientCreateRequest {
     @Schema(example = "+91")
     private String primaryMemberCountryCode;
 
+    // No phone pattern here: the UI sends the identifier, which for a B2B client is a handle, not a number.
     @Size(max = 20, message = "Phone must be 20 characters or fewer")
     @Schema(example = "9876543210")
     private String primaryMemberPhone;
 
+    @jakarta.validation.constraints.PastOrPresent(message = "Date of birth can't be in the future")
     @Schema(description = "Used to derive pax type at the travel date; never stored as an age", example = "1988-04-12")
     private LocalDate primaryMemberDob;
 
@@ -71,7 +74,7 @@ public class ClientCreateRequest {
             + "the id of the existing client it might be the same as", example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String possibleDuplicateOf;
 
-    @Size(max = 20, message = "GSTIN must be 20 characters or fewer")
+    @jakarta.validation.constraints.Pattern(regexp = ValidationPatterns.GSTIN, message = ValidationPatterns.GSTIN_MESSAGE)
     @Schema(description = "This client's own GSTIN, if registered", example = "27AABCU9603R1ZM")
     private String gstin;
 

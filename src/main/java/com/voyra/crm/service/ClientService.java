@@ -82,7 +82,7 @@ public class ClientService {
                 .createdAt(LocalDateTime.now())
                 .createdBy(currentUserId())
                 .possibleDuplicateOf(request.getPossibleDuplicateOf())
-                .gstin(request.getGstin())
+                .gstin(request.getGstin() != null ? request.getGstin().trim().toUpperCase() : null)
                 .stateCode(request.getStateCode())
                 .billingAddress(request.getBillingAddress())
                 .isOverseas(Boolean.TRUE.equals(request.getIsOverseas()))
@@ -207,7 +207,7 @@ public class ClientService {
             client.setName(request.getName());
         }
         if (request.getGstin() != null) {
-            client.setGstin(request.getGstin());
+            client.setGstin(request.getGstin().trim().toUpperCase());
         }
         if (request.getStateCode() != null) {
             client.setStateCode(request.getStateCode());

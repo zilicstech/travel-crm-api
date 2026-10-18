@@ -2,6 +2,7 @@ package com.voyra.crm.dto;
 
 import com.voyra.crm.enums.ClientType;
 import io.swagger.v3.oas.annotations.media.Schema;
+import com.voyra.crm.util.ValidationPatterns;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
@@ -22,7 +23,7 @@ public class ClientUpdateRequest {
     @Schema(example = "B2B")
     private ClientType type;
 
-    @Size(max = 20, message = "GSTIN must be 20 characters or fewer")
+    @jakarta.validation.constraints.Pattern(regexp = ValidationPatterns.GSTIN, message = ValidationPatterns.GSTIN_MESSAGE)
     @Schema(example = "27AABCU9603R1ZM")
     private String gstin;
 

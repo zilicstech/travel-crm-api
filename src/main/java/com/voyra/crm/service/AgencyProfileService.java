@@ -32,7 +32,7 @@ public class AgencyProfileService {
     public AgencyProfileResponse updateProfile(AgencyProfileUpdateRequest request) {
         Tenant tenant = findOwnTenant();
         if (request.getGstNumber() != null) {
-            tenant.setGstNumber(request.getGstNumber());
+            tenant.setGstNumber(request.getGstNumber().trim().toUpperCase());
         }
         if (request.getAddress() != null) {
             tenant.setAddress(request.getAddress());
@@ -68,7 +68,7 @@ public class AgencyProfileService {
             tenant.setBankAccountNumber(request.getBankAccountNumber());
         }
         if (request.getBankIfscCode() != null) {
-            tenant.setBankIfscCode(request.getBankIfscCode());
+            tenant.setBankIfscCode(request.getBankIfscCode().trim().toUpperCase());
         }
         if (request.getBankBranch() != null) {
             tenant.setBankBranch(request.getBankBranch());
