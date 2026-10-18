@@ -45,7 +45,8 @@ import java.util.List;
  * Cancels a whole booking and settles its money. The agent states what the supplier and the
  * agency keep; everything else - credit note, supplier credit note, revenue, refund figures -
  * follows from the existing accounting services, so agents never touch accounting documents.
- * Accounts then settles both sides through {@link #payCustomer} and {@link #receiveFromSupplier}.
+ * Accounts refunds the customer through {@link #payCustomer}; the agent records the supplier's
+ * refund through {@link #recordSupplierRefund}, and Accounts confirms one that went to the bank.
  */
 @Service
 @RequiredArgsConstructor
@@ -168,22 +169,76 @@ public class BookingCancellationService {
         return bookingService.toResponsePublic(fresh);
     }
 
+    /**
+     * The agent records the supplier's refund. Kept in the supplier's wallet (e.g. a TripJack
+     * balance the agent can see in the supplier portal) it is posted now. Into the agency's bank it
+     * is only a claim: nothing reaches the books until the accountant finds it on the bank
+     * statement and confirms it - see {@link #confirmSupplierRefund}.
+     */
     @Transactional
-    public BookingResponse receiveFromSupplier(String bookingId, RefundSettlementRequest request) {
+    public BookingResponse recordSupplierRefund(String bookingId, RefundSettlementRequest request) {
         lock(bookingId);
         Booking booking = cancelled(bookingId);
-        boolean toAccount = toAccount(request);
-        BigDecimal outstanding = booking.getSupplierRefundExpected().subtract(booking.getSupplierRefundReceived());
-        assertWithin(request.getAmount(), outstanding, "supplier");
-        BigDecimal left = request.getAmount();
-        List<SupplierCreditNote> notes = supplierCreditNoteRepository.findByBookingIdAndStatus(bookingId, SupplierCreditNoteStatus.RECORDED);
-        BigDecimal open = notes.stream().map(n -> n.getRefundableAmount().subtract(n.getRefundedAmount()))
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-        if (left.compareTo(open) > 0) {
-            // Money with no credit note to post against would never reach the books.
-            throw new IllegalStateException("No supplier credit note covers this refund - record the supplier bill first");
+        if (Boolean.TRUE.equals(request.getToAccount())) {
+            postSupplierRefund(booking, request, toAccount(request));
+            return bookingService.toResponsePublic(booking);
         }
-        for (SupplierCreditNote note : notes) {
+        if (booking.getSupplierRefundClaimAmount() != null) {
+            throw new IllegalArgumentException("A bank refund is already waiting for the accountant's check");
+        }
+        assertWithin(request.getAmount(), supplierOutstanding(booking), "supplier");
+        assertCoveredByCreditNotes(bookingId, request.getAmount());
+        booking.setSupplierRefundClaimAmount(request.getAmount());
+        booking.setSupplierRefundClaimOn(request.getPaidOn());
+        booking.setSupplierRefundClaimReference(request.getReference() == null || request.getReference().isBlank()
+                ? null : request.getReference().trim());
+        booking.setSupplierRefundClaimBy(authorResolver.resolveCurrentAuthor().name());
+        booking.setSupplierRefundClaimAt(LocalDateTime.now());
+        bookingRepository.save(booking);
+        log.info("Supplier refund claimed into bank: bookingId={}, amount={}", bookingId, request.getAmount());
+        return bookingService.toResponsePublic(booking);
+    }
+
+    /** The accountant found the claimed supplier refund in the bank: post it (up to the claim) and close the claim. */
+    @Transactional
+    public BookingResponse confirmSupplierRefund(String bookingId, RefundSettlementRequest request) {
+        lock(bookingId);
+        Booking booking = cancelled(bookingId);
+        BigDecimal claim = booking.getSupplierRefundClaimAmount();
+        if (claim == null) {
+            throw new IllegalStateException("No supplier refund is waiting for a bank check");
+        }
+        if (request.getAmount().compareTo(claim) > 0) {
+            throw new IllegalArgumentException("Amount is more than the " + claim + " the agent recorded");
+        }
+        request.setToAccount(false);
+        postSupplierRefund(booking, request, toAccount(request));
+        clearClaim(booking);
+        bookingRepository.save(booking);
+        return bookingService.toResponsePublic(booking);
+    }
+
+    /** The claimed refund is not in the bank - the claim is dropped and the agent records it again. */
+    @Transactional
+    public BookingResponse rejectSupplierRefund(String bookingId) {
+        lock(bookingId);
+        Booking booking = cancelled(bookingId);
+        if (booking.getSupplierRefundClaimAmount() == null) {
+            throw new IllegalStateException("No supplier refund is waiting for a bank check");
+        }
+        log.info("Supplier refund claim rejected: bookingId={}, amount={}, claimedBy={}",
+                bookingId, booking.getSupplierRefundClaimAmount(), booking.getSupplierRefundClaimBy());
+        clearClaim(booking);
+        bookingRepository.save(booking);
+        return bookingService.toResponsePublic(booking);
+    }
+
+    private void postSupplierRefund(Booking booking, RefundSettlementRequest request, boolean toAccount) {
+        String bookingId = booking.getId();
+        assertWithin(request.getAmount(), supplierOutstanding(booking), "supplier");
+        assertCoveredByCreditNotes(bookingId, request.getAmount());
+        BigDecimal left = request.getAmount();
+        for (SupplierCreditNote note : supplierCreditNoteRepository.findByBookingIdAndStatus(bookingId, SupplierCreditNoteStatus.RECORDED)) {
             BigDecimal noteOpen = note.getRefundableAmount().subtract(note.getRefundedAmount());
             if (left.signum() <= 0 || noteOpen.signum() <= 0) {
                 continue;
@@ -202,7 +257,28 @@ public class BookingCancellationService {
         }
         booking.setSupplierRefundReceived(booking.getSupplierRefundReceived().add(request.getAmount()));
         bookingRepository.save(booking);
-        return bookingService.toResponsePublic(booking);
+    }
+
+    /** Money with no credit note to post against would never reach the books. */
+    private void assertCoveredByCreditNotes(String bookingId, BigDecimal amount) {
+        BigDecimal open = supplierCreditNoteRepository.findByBookingIdAndStatus(bookingId, SupplierCreditNoteStatus.RECORDED).stream()
+                .map(n -> n.getRefundableAmount().subtract(n.getRefundedAmount()))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        if (amount.compareTo(open) > 0) {
+            throw new IllegalStateException("No supplier credit note covers this refund - record the supplier bill first");
+        }
+    }
+
+    private static BigDecimal supplierOutstanding(Booking booking) {
+        return booking.getSupplierRefundExpected().subtract(booking.getSupplierRefundReceived());
+    }
+
+    private static void clearClaim(Booking booking) {
+        booking.setSupplierRefundClaimAmount(null);
+        booking.setSupplierRefundClaimOn(null);
+        booking.setSupplierRefundClaimReference(null);
+        booking.setSupplierRefundClaimBy(null);
+        booking.setSupplierRefundClaimAt(null);
     }
 
     /** Cancelled bookings where either side still has money to move, or that Accounts has not cross-checked yet. */
@@ -219,7 +295,7 @@ public class BookingCancellationService {
     public BookingResponse markChecked(String bookingId) {
         lock(bookingId);
         Booking booking = cancelled(bookingId);
-        if (!settled(booking)) {
+        if (!settled(booking) || booking.getSupplierRefundClaimAmount() != null) {
             throw new IllegalStateException("Settle both the customer and the supplier refund before cross-checking");
         }
         if (booking.getRefundCheckedAt() != null) {

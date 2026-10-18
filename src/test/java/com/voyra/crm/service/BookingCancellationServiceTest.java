@@ -106,7 +106,7 @@ class BookingCancellationServiceTest {
 
         service.payCustomer("B1", pay("4000"));
         // The fixture has no supplier credit note and refunds are still open, so these two are refused - after the lock.
-        assertThatThrownBy(() -> service.receiveFromSupplier("B1", pay("3000"))).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> service.recordSupplierRefund("B1", pay("3000"))).isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(() -> service.markChecked("B1")).isInstanceOf(IllegalStateException.class);
 
         org.mockito.InOrder order = org.mockito.Mockito.inOrder(bookingRepository, bookingService);
@@ -282,7 +282,7 @@ class BookingCancellationServiceTest {
         b.setSupplierRefundExpected(d("6000"));
         when(supplierCreditNoteRepository.findByBookingIdAndStatus("B1", SupplierCreditNoteStatus.RECORDED)).thenReturn(List.of());
 
-        assertThatThrownBy(() -> service.receiveFromSupplier("B1", pay("6000")))
+        assertThatThrownBy(() -> service.recordSupplierRefund("B1", pay("6000")))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("record the supplier bill first");
         assertThat(b.getSupplierRefundReceived()).isEqualByComparingTo("0");
         verify(supplierCreditNoteService, never()).receiveRefund(any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
@@ -343,7 +343,7 @@ class BookingCancellationServiceTest {
         RefundSettlementRequest r = pay("6000");
         r.setToAccount(true);
 
-        service.receiveFromSupplier("B1", r);
+        service.recordSupplierRefund("B1", r);
 
         verify(supplierCreditNoteService).receiveRefund(eq("SCN1"), any(), eq(true));
         verify(supplierPaymentService).creditWallet(eq("V1"), eq(d("6000")), any(), anyString());
@@ -399,5 +399,111 @@ class BookingCancellationServiceTest {
         assertThatThrownBy(() -> service.preview("B1", d("-5000"), BigDecimal.ZERO)).hasMessageContaining("negative");
         assertThatThrownBy(() -> service.cancel("B1", cancel("0", "-1"))).hasMessageContaining("negative");
         verify(bookingService, never()).markCancelled(any(), anyString());
+    }
+
+    // ---- supplier refund: the agent records it, Accounts confirms a bank one --------------
+
+    private Booking awaitingSupplierRefund(String expected) {
+        Booking b = booking(BookingStatus.CANCELLED);
+        b.setSupplierRefundExpected(d(expected));
+        SupplierCreditNote note = SupplierCreditNote.builder().id("SCN1").vendorId("V1")
+                .refundableAmount(d(expected)).refundedAmount(BigDecimal.ZERO).build();
+        org.mockito.Mockito.lenient().when(supplierCreditNoteRepository.findByBookingIdAndStatus("B1", SupplierCreditNoteStatus.RECORDED))
+                .thenReturn(List.of(note));
+        org.mockito.Mockito.lenient().when(authorResolver.resolveCurrentAuthor()).thenReturn(new AuthorResolver.AuthorInfo("A1", "Vikram"));
+        return b;
+    }
+
+    private static RefundSettlementRequest bankClaim(String amount) {
+        RefundSettlementRequest r = new RefundSettlementRequest();
+        r.setAmount(d(amount));
+        r.setPaidOn(LocalDate.of(2026, 10, 18));
+        r.setReference("UTR9");
+        return r;
+    }
+
+    @Test
+    void aBankRefundIsOnlyAClaimUntilAccountsConfirmsIt() {
+        Booking b = awaitingSupplierRefund("6000");
+
+        service.recordSupplierRefund("B1", bankClaim("6000"));
+
+        verify(supplierCreditNoteService, never()).receiveRefund(any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
+        assertThat(b.getSupplierRefundReceived()).isEqualByComparingTo("0");
+        assertThat(b.getSupplierRefundClaimAmount()).isEqualByComparingTo("6000");
+        assertThat(b.getSupplierRefundClaimReference()).isEqualTo("UTR9");
+        assertThat(b.getSupplierRefundClaimBy()).isEqualTo("Vikram");
+    }
+
+    @Test
+    void aClaimAboveWhatIsStillExpectedIsRejected() {
+        awaitingSupplierRefund("6000");
+
+        assertThatThrownBy(() -> service.recordSupplierRefund("B1", bankClaim("6001")))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("outstanding");
+    }
+
+    @Test
+    void aSecondClaimWhileOneIsOpenIsRejected() {
+        awaitingSupplierRefund("6000");
+        service.recordSupplierRefund("B1", bankClaim("3000"));
+
+        assertThatThrownBy(() -> service.recordSupplierRefund("B1", bankClaim("1000")))
+                .hasMessage("A bank refund is already waiting for the accountant's check");
+    }
+
+    @Test
+    void confirmingTheClaimPostsItToTheBankAndClosesIt() {
+        Booking b = awaitingSupplierRefund("6000");
+        service.recordSupplierRefund("B1", bankClaim("6000"));
+        RefundSettlementRequest confirm = bankClaim("6000");
+        confirm.setPaymentMode(PaymentMode.BANK_TRANSFER);
+
+        service.confirmSupplierRefund("B1", confirm);
+
+        verify(supplierCreditNoteService).receiveRefund(eq("SCN1"), any(), eq(false));
+        verify(supplierPaymentService, never()).creditWallet(any(), any(), any(), anyString());
+        assertThat(b.getSupplierRefundReceived()).isEqualByComparingTo("6000");
+        assertThat(b.getSupplierRefundClaimAmount()).isNull();
+    }
+
+    @Test
+    void confirmingMoreThanTheClaimIsRejected() {
+        awaitingSupplierRefund("6000");
+        service.recordSupplierRefund("B1", bankClaim("4000"));
+        RefundSettlementRequest confirm = bankClaim("5000");
+        confirm.setPaymentMode(PaymentMode.BANK_TRANSFER);
+
+        assertThatThrownBy(() -> service.confirmSupplierRefund("B1", confirm)).hasMessageContaining("the agent recorded");
+        verify(supplierCreditNoteService, never()).receiveRefund(any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
+    }
+
+    @Test
+    void confirmingWithNoClaimIsRefused() {
+        awaitingSupplierRefund("6000");
+        RefundSettlementRequest confirm = bankClaim("6000");
+        confirm.setPaymentMode(PaymentMode.BANK_TRANSFER);
+
+        assertThatThrownBy(() -> service.confirmSupplierRefund("B1", confirm)).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void rejectingTheClaimDropsItWithoutPosting() {
+        Booking b = awaitingSupplierRefund("6000");
+        service.recordSupplierRefund("B1", bankClaim("6000"));
+
+        service.rejectSupplierRefund("B1");
+
+        assertThat(b.getSupplierRefundClaimAmount()).isNull();
+        assertThat(b.getSupplierRefundReceived()).isEqualByComparingTo("0");
+        verify(supplierCreditNoteService, never()).receiveRefund(any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
+    }
+
+    @Test
+    void crossCheckWaitsForAnOpenClaim() {
+        Booking b = awaitingSupplierRefund("0");
+        b.setSupplierRefundClaimAmount(d("100"));
+
+        assertThatThrownBy(() -> service.markChecked("B1")).isInstanceOf(IllegalStateException.class);
     }
 }

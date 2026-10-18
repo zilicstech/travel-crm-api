@@ -48,7 +48,11 @@ class BookingNextStepTest {
         assertThat(BookingNextStep.of(b, 0)).isEqualTo("Refund client ₹7,500");
 
         b.setRefundedTotalInr(d("7500"));
-        assertThat(BookingNextStep.of(b, 0)).isEqualTo("Collect supplier refund ₹6,000");
+        assertThat(BookingNextStep.of(b, 0)).isEqualTo("Record supplier refund ₹6,000");
+
+        b.setSupplierRefundClaimAmount(d("6000"));
+        assertThat(BookingNextStep.of(b, 0)).isEqualTo("Check supplier refund in bank ₹6,000");
+        b.setSupplierRefundClaimAmount(null);
 
         b.setSupplierRefundReceived(d("6000"));
         assertThat(BookingNextStep.of(b, 0)).isEqualTo("Cross-check refunds");

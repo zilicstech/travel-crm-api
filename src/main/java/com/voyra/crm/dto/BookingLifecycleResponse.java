@@ -20,7 +20,7 @@ public class BookingLifecycleResponse {
     @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String bookingId;
 
-    @Schema(description = "The lifecycle steps in order: CREATED, VOUCHER, INVOICE, PAYMENT, SUPPLIER, then CANCELLED, CLIENT_REFUND, SUPPLIER_REFUND once cancelled")
+    @Schema(description = "The lifecycle steps in order: CREATED, VOUCHER, INVOICE, PAYMENT, then CANCELLED, CLIENT_REFUND, SUPPLIER_REFUND once cancelled")
     private List<Step> steps;
 
     @Schema(description = "Actions this caller may take now - the UI shows a button only for these",
@@ -35,6 +35,27 @@ public class BookingLifecycleResponse {
 
     @Schema(description = "Money on the client's account this booking's invoice may draw: its own advances plus any not reserved for another booking", example = "5000.00")
     private BigDecimal clientWalletInr;
+
+    @Schema(description = "Still to come back from the supplier on a cancelled booking", example = "6000.00")
+    private BigDecimal supplierRefundOutstandingInr;
+
+    @Schema(description = "A supplier refund the agent recorded as received in the agency bank, waiting for Accounts to find it on the statement. Null when none is open.")
+    private SupplierRefundClaim supplierRefundClaim;
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class SupplierRefundClaim {
+        @Schema(example = "6000.00")
+        private BigDecimal amountInr;
+        @Schema(example = "2026-10-18")
+        private LocalDate receivedOn;
+        @Schema(description = "UTR or similar the agent saw", example = "UTR123456")
+        private String reference;
+        @Schema(example = "Vikram Rao")
+        private String claimedBy;
+    }
 
     @Data
     @Builder

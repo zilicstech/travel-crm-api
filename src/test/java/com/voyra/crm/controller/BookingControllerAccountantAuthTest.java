@@ -140,4 +140,29 @@ class BookingControllerAccountantAuthTest {
                         .with(SecurityMockMvcRequestPostProcessors.user("accountant1").roles("ACCOUNTANT")))
                 .andExpect(status().isOk());
     }
+
+    @Test
+    void theAgentRecordsTheSupplierRefundAndTheAccountantConfirmsIt() throws Exception {
+        String body = "{\"amount\":100,\"paidOn\":\"2026-10-18\"}";
+        when(bookingCancellationService.recordSupplierRefund(any(), any())).thenReturn(BookingResponse.builder().id("B1").build());
+        when(bookingCancellationService.confirmSupplierRefund(any(), any())).thenReturn(BookingResponse.builder().id("B1").build());
+        mockMvc.perform(post("/api/bookings/B1/refunds/supplier")
+                        .with(SecurityMockMvcRequestPostProcessors.user("agent1").roles("AGENT"))
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/bookings/B1/refunds/supplier")
+                        .with(SecurityMockMvcRequestPostProcessors.user("accountant1").roles("ACCOUNTANT"))
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isForbidden());
+        for (String path : new String[]{"/confirm", "/reject"}) {
+            mockMvc.perform(post("/api/bookings/B1/refunds/supplier" + path)
+                            .with(SecurityMockMvcRequestPostProcessors.user("agent1").roles("AGENT"))
+                            .contentType(MediaType.APPLICATION_JSON).content(body))
+                    .andExpect(status().isForbidden());
+        }
+        mockMvc.perform(post("/api/bookings/B1/refunds/supplier/confirm")
+                        .with(SecurityMockMvcRequestPostProcessors.user("accountant1").roles("ACCOUNTANT"))
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk());
+    }
 }

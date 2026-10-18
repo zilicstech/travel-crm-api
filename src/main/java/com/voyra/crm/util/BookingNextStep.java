@@ -22,7 +22,8 @@ public final class BookingNextStep {
             BigDecimal refund = nz(b.getCustomerRefundDue()).subtract(nz(b.getRefundedTotalInr()));
             if (refund.signum() > 0) return "Refund client " + rupees(refund);
             BigDecimal fromSupplier = nz(b.getSupplierRefundExpected()).subtract(nz(b.getSupplierRefundReceived()));
-            if (fromSupplier.signum() > 0) return "Collect supplier refund " + rupees(fromSupplier);
+            if (b.getSupplierRefundClaimAmount() != null) return "Check supplier refund in bank " + rupees(b.getSupplierRefundClaimAmount());
+            if (fromSupplier.signum() > 0) return "Record supplier refund " + rupees(fromSupplier);
             boolean anyRefund = nz(b.getCustomerRefundDue()).signum() > 0 || nz(b.getSupplierRefundExpected()).signum() > 0;
             return anyRefund && b.getRefundCheckedAt() == null ? "Cross-check refunds" : null;
         }

@@ -59,6 +59,8 @@ public class BookingLifecycleService {
     static final String RECORD_PAYMENT = "RECORD_PAYMENT";
     static final String REFUND_CLIENT = "REFUND_CLIENT";
     static final String SUPPLIER_REFUND = "SUPPLIER_REFUND";
+    static final String CONFIRM_SUPPLIER_REFUND = "CONFIRM_SUPPLIER_REFUND";
+    static final String REJECT_SUPPLIER_REFUND = "REJECT_SUPPLIER_REFUND";
     static final String CROSS_CHECK = "CROSS_CHECK";
 
     enum Viewer { OWNER, AGENT, ACCOUNTANT }
@@ -231,6 +233,7 @@ public class BookingLifecycleService {
         BigDecimal refundReceived = nz(b.getSupplierRefundReceived());
         boolean clientRefundOpen = refunded.compareTo(refundDue) < 0;
         boolean supplierRefundOpen = refundReceived.compareTo(refundExpected) < 0;
+        BigDecimal claim = b.getSupplierRefundClaimAmount();
 
         List<Step> steps = new ArrayList<>();
         String with = b.getSupplier() != null && !b.getSupplier().isBlank() ? " with " + b.getSupplier() : "";
@@ -246,9 +249,10 @@ public class BookingLifecycleService {
             steps.add(step("CLIENT_REFUND", refundDue.signum() == 0 ? "NA" : clientRefundOpen ? (refunded.signum() > 0 ? "PARTIAL" : "OPEN") : "DONE",
                     refundDue.signum() == 0 ? "Nothing to refund" : money(refunded) + " of " + money(refundDue) + " refunded"));
             String supplierRefundState = refundExpected.signum() == 0 ? "NA" : supplierRefundOpen ? (refundReceived.signum() > 0 ? "PARTIAL" : "OPEN") : "DONE";
+            // The agent records this refund, so every role sees its amounts (never the bills or net cost behind them).
             String supplierRefundSummary = refundExpected.signum() == 0 ? "Nothing expected"
-                    : accounts ? money(refundReceived) + " of " + money(refundExpected) + " received"
-                    : supplierRefundOpen ? "Waiting for the supplier" : "Received";
+                    : money(refundReceived) + " of " + money(refundExpected) + " received"
+                    + (claim != null ? " · " + money(claim) + " claimed into bank - waiting for the accountant's check" : "");
             steps.add(step("SUPPLIER_REFUND", supplierRefundState,
                     supplierRefundSummary + (b.getRefundCheckedAt() != null ? " - cross-checked" : "")));
         }
@@ -261,8 +265,12 @@ public class BookingLifecycleService {
         if (accounts && !cancelled && !invoiced && nz(b.getSellingPrice()).signum() > 0) actions.add(GENERATE_INVOICE);
         if (accounts && !cancelled && toCollect.signum() > 0) actions.add(RECORD_PAYMENT);
         if (accounts && cancelled && clientRefundOpen) actions.add(REFUND_CLIENT);
-        if (accounts && cancelled && supplierRefundOpen) actions.add(SUPPLIER_REFUND);
-        if (accounts && cancelled && !clientRefundOpen && !supplierRefundOpen && b.getRefundCheckedAt() == null) actions.add(CROSS_CHECK);
+        if (ops && cancelled && supplierRefundOpen && claim == null) actions.add(SUPPLIER_REFUND);
+        if (accounts && cancelled && claim != null) {
+            actions.add(CONFIRM_SUPPLIER_REFUND);
+            actions.add(REJECT_SUPPLIER_REFUND);
+        }
+        if (accounts && cancelled && !clientRefundOpen && !supplierRefundOpen && claim == null && b.getRefundCheckedAt() == null) actions.add(CROSS_CHECK);
 
         return BookingLifecycleResponse.builder()
                 .bookingId(b.getId())
@@ -271,6 +279,10 @@ public class BookingLifecycleService {
                 .records(records(f, accounts))
                 .toCollectInr(toCollect)
                 .clientWalletInr(accounts ? f.clientWalletInr() : null)
+                .supplierRefundOutstandingInr(cancelled ? refundExpected.subtract(refundReceived).max(BigDecimal.ZERO) : null)
+                .supplierRefundClaim(claim == null ? null : BookingLifecycleResponse.SupplierRefundClaim.builder()
+                        .amountInr(claim).receivedOn(b.getSupplierRefundClaimOn())
+                        .reference(b.getSupplierRefundClaimReference()).claimedBy(b.getSupplierRefundClaimBy()).build())
                 .build();
     }
 

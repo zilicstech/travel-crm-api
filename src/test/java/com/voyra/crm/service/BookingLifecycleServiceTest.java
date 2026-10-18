@@ -159,7 +159,10 @@ class BookingLifecycleServiceTest {
         BookingLifecycleResponse open = BookingLifecycleService.build(facts(b, 1, List.of(), List.of(), "0"), Viewer.ACCOUNTANT);
 
         assertThat(states(open)).containsEntry("CANCELLED", "DONE").containsEntry("CLIENT_REFUND", "PARTIAL").containsEntry("SUPPLIER_REFUND", "OPEN");
-        assertThat(open.getAllowedActions()).containsExactlyInAnyOrder("REFUND_CLIENT", "SUPPLIER_REFUND");
+        // The agent records the supplier refund, not Accounts.
+        assertThat(open.getAllowedActions()).containsExactly("REFUND_CLIENT");
+        assertThat(BookingLifecycleService.build(facts(b, 1, List.of(), List.of(), "0"), Viewer.AGENT).getAllowedActions())
+                .containsExactly("SUPPLIER_REFUND");
 
         b.setRefundedTotalInr(d("7500"));
         b.setSupplierRefundReceived(d("6000"));
@@ -182,16 +185,33 @@ class BookingLifecycleServiceTest {
         assertThat(r.getRecords()).noneMatch(x -> x.getKind().startsWith("SUPPLIER"));
     }
 
-    /** Regression run 6, m1: agents see whether the supplier refund arrived, not how much. */
     @Test
-    void agentSeesNoSupplierRefundAmounts() {
+    void agentSeesTheSupplierRefundAmountsTheyRecord() {
         Booking b = booking(BookingStatus.CANCELLED);
         b.setSupplierRefundExpected(d("7000"));
-        b.setSupplierRefundReceived(d("7000"));
         BookingLifecycleResponse r = BookingLifecycleService.build(facts(b, 0, List.of(), List.of(), "0"), Viewer.AGENT);
 
         assertThat(r.getSteps().stream().filter(s -> s.getKey().equals("SUPPLIER_REFUND")).findFirst().orElseThrow().getSummary())
-                .isEqualTo("Received").doesNotContain("₹");
+                .isEqualTo("₹0 of ₹7,000 received");
+        assertThat(r.getSupplierRefundOutstandingInr()).isEqualByComparingTo("7000");
+        assertThat(r.getRecords()).noneMatch(x -> x.getKind().startsWith("SUPPLIER"));
+    }
+
+    @Test
+    void anOpenBankClaimWaitsForTheAccountant() {
+        Booking b = booking(BookingStatus.CANCELLED);
+        b.setSupplierRefundExpected(d("7000"));
+        b.setSupplierRefundClaimAmount(d("7000"));
+        b.setSupplierRefundClaimBy("Vikram");
+
+        BookingLifecycleResponse agent = BookingLifecycleService.build(facts(b, 0, List.of(), List.of(), "0"), Viewer.AGENT);
+        BookingLifecycleResponse accountant = BookingLifecycleService.build(facts(b, 0, List.of(), List.of(), "0"), Viewer.ACCOUNTANT);
+
+        assertThat(agent.getAllowedActions()).doesNotContain("SUPPLIER_REFUND");
+        assertThat(accountant.getAllowedActions()).containsExactlyInAnyOrder("CONFIRM_SUPPLIER_REFUND", "REJECT_SUPPLIER_REFUND");
+        assertThat(accountant.getSupplierRefundClaim().getClaimedBy()).isEqualTo("Vikram");
+        assertThat(accountant.getSteps().stream().filter(s -> s.getKey().equals("SUPPLIER_REFUND")).findFirst().orElseThrow().getSummary())
+                .contains("₹7,000 claimed into bank");
     }
 
     @Test

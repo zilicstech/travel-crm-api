@@ -173,10 +173,25 @@ public class BookingController {
     }
 
     @PostMapping("/{id}/refunds/supplier")
+    @PreAuthorize("hasAnyRole('AGENCY_OWNER', 'AGENT')")
+    @Operation(summary = "Record a refund received from the supplier",
+            description = "Kept in the supplier wallet it is posted now; into the agency bank it waits for Accounts to confirm it.")
+    public ResponseEntity<BookingResponse> recordSupplierRefund(@PathVariable String id, @Valid @RequestBody RefundSettlementRequest request) {
+        return ResponseEntity.ok(bookingCancellationService.recordSupplierRefund(id, request));
+    }
+
+    @PostMapping("/{id}/refunds/supplier/confirm")
     @PreAuthorize("hasAnyRole('AGENCY_OWNER', 'ACCOUNTANT')")
-    @Operation(summary = "Record a refund received from the supplier")
-    public ResponseEntity<BookingResponse> receiveFromSupplier(@PathVariable String id, @Valid @RequestBody RefundSettlementRequest request) {
-        return ResponseEntity.ok(bookingCancellationService.receiveFromSupplier(id, request));
+    @Operation(summary = "Confirm a supplier refund found in the bank", description = "Posts it to the books and closes the agent's claim.")
+    public ResponseEntity<BookingResponse> confirmSupplierRefund(@PathVariable String id, @Valid @RequestBody RefundSettlementRequest request) {
+        return ResponseEntity.ok(bookingCancellationService.confirmSupplierRefund(id, request));
+    }
+
+    @PostMapping("/{id}/refunds/supplier/reject")
+    @PreAuthorize("hasAnyRole('AGENCY_OWNER', 'ACCOUNTANT')")
+    @Operation(summary = "The claimed supplier refund is not in the bank", description = "Drops the claim; the agent records it again.")
+    public ResponseEntity<BookingResponse> rejectSupplierRefund(@PathVariable String id) {
+        return ResponseEntity.ok(bookingCancellationService.rejectSupplierRefund(id));
     }
 
     @PostMapping("/{id}/refunds/check")
