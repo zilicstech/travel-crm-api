@@ -16,6 +16,6 @@ public interface InvoiceLineItemRepository extends JpaRepository<InvoiceLineItem
 
     /** A draft's line list is replaced wholesale on every save - see InvoiceDocumentService. */
     @Modifying
-    @Query("DELETE FROM InvoiceLineItem l WHERE l.invoiceId = :invoiceId")
+    @Query(value = "UPDATE invoice_line_item SET deleted_at = now() WHERE invoice_id = :invoiceId AND deleted_at IS NULL", nativeQuery = true)
     void deleteByInvoiceId(@Param("invoiceId") String invoiceId);
 }

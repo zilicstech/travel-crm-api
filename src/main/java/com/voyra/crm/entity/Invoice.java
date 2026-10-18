@@ -1,5 +1,7 @@
 package com.voyra.crm.entity;
 
+import org.hibernate.annotations.SQLDelete;
+import org.hibernate.annotations.SQLRestriction;
 import com.voyra.crm.enums.FxRateSource;
 import com.voyra.crm.enums.InvoiceBillingModel;
 import com.voyra.crm.enums.InvoiceDocumentType;
@@ -39,6 +41,8 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder(toBuilder = true)
+@SQLDelete(sql = "UPDATE invoice SET deleted_at = now() WHERE id = ?")
+@SQLRestriction("deleted_at IS NULL")
 public class Invoice {
 
     @Id

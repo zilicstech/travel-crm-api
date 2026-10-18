@@ -15,6 +15,6 @@ public interface SupplierInvoiceLineItemRepository extends JpaRepository<Supplie
     List<SupplierInvoiceLineItem> findBySupplierInvoiceIdOrderBySortOrder(String supplierInvoiceId);
 
     @Modifying
-    @Query("DELETE FROM SupplierInvoiceLineItem l WHERE l.supplierInvoiceId = :supplierInvoiceId")
+    @Query(value = "UPDATE supplier_invoice_line_item SET deleted_at = now() WHERE supplier_invoice_id = :supplierInvoiceId AND deleted_at IS NULL", nativeQuery = true)
     void deleteBySupplierInvoiceId(@Param("supplierInvoiceId") String supplierInvoiceId);
 }

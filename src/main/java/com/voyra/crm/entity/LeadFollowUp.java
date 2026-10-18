@@ -1,5 +1,7 @@
 package com.voyra.crm.entity;
 
+import org.hibernate.annotations.SQLDelete;
+import org.hibernate.annotations.SQLRestriction;
 import com.voyra.crm.enums.FollowUpStatus;
 import com.voyra.crm.enums.ServiceType;
 import jakarta.persistence.Column;
@@ -35,6 +37,8 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder(toBuilder = true)
+@SQLDelete(sql = "UPDATE lead_follow_up SET deleted_at = now() WHERE id = ?")
+@SQLRestriction("deleted_at IS NULL")
 public class LeadFollowUp {
 
     @Id

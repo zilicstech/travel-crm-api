@@ -436,17 +436,12 @@ public class SupplierInvoiceService {
     public SupplierInvoiceResponse attachFile(String id, MultipartFile file) {
         SupplierInvoice invoice = findById(id);
         String tenantId = SecurityContextUtil.getCurrentUserOrThrow().tenantId();
-        String previousFileKey = invoice.getFileKey();
         String fileKey = fileStorageService.store(tenantId, FILE_CATEGORY, id, file);
 
         invoice.setFileKey(fileKey);
         invoice.setFileName(file.getOriginalFilename());
         invoice.setContentType(file.getContentType());
         supplierInvoiceRepository.save(invoice);
-
-        if (previousFileKey != null) {
-            fileStorageService.delete(previousFileKey);
-        }
         log.info("Supplier bill file attached: id={}", id);
         return toResponse(invoice);
     }

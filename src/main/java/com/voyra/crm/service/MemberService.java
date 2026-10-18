@@ -191,7 +191,6 @@ public class MemberService {
         findMember(clientId, memberId);
         MemberDocument doc = memberDocumentRepository.findByIdAndMemberId(documentId, memberId)
                 .orElseThrow(() -> new IllegalArgumentException("Document not found: " + documentId));
-        fileStorageService.delete(doc.getFileKey());
         memberDocumentRepository.delete(doc);
         log.info("Member document deleted: memberId={}, documentId={}", memberId, documentId);
     }

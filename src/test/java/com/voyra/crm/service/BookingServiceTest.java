@@ -351,15 +351,14 @@ class BookingServiceTest {
     }
 
     @Test
-    void voucherFilesAreDeletedOnlyAfterTheRowsAreGone() {
+    void deletingABookingKeepsItsVoucherFiles() {
         Booking booking = Booking.builder().id("B1").agentId("A1").bookingStatus(BookingStatus.PENDING).build();
         when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
-        when(bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc("B1")).thenReturn(List.of(
-                com.voyra.crm.entity.BookingDocument.builder().id("D1").bookingId("B1").fileKey("vouchers/v1.pdf").build()));
-        org.mockito.Mockito.doThrow(new IllegalStateException("db down")).when(bookingRepository).delete(booking);
 
-        assertThatThrownBy(() -> bookingService.deleteBooking("B1")).hasMessageContaining("db down");
-        // The rows rolled back, so the voucher file must still be there.
+        bookingService.deleteBooking("B1");
+
+        // Soft delete: the rows are marked, and the stored files are never removed.
+        org.mockito.Mockito.verify(bookingRepository).delete(booking);
         org.mockito.Mockito.verify(fileStorageService, org.mockito.Mockito.never()).delete(org.mockito.ArgumentMatchers.anyString());
     }
 

@@ -1,5 +1,7 @@
 package com.voyra.crm.entity;
 
+import org.hibernate.annotations.SQLDelete;
+import org.hibernate.annotations.SQLRestriction;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.voyra.crm.enums.AgentDepartment;
 import com.voyra.crm.enums.ServiceType;
@@ -35,6 +37,8 @@ import java.util.List;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder(toBuilder = true)
+@SQLDelete(sql = "UPDATE agent SET deleted_at = now() WHERE id = ?")
+@SQLRestriction("deleted_at IS NULL")
 public class Agent {
 
     @Id

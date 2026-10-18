@@ -1,5 +1,7 @@
 package com.voyra.crm.entity;
 
+import org.hibernate.annotations.SQLDelete;
+import org.hibernate.annotations.SQLRestriction;
 import com.voyra.crm.enums.BookingType;
 import com.voyra.crm.enums.ItcEligibility;
 import com.voyra.crm.enums.ServiceType;
@@ -42,6 +44,8 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder(toBuilder = true)
+@SQLDelete(sql = "UPDATE supplier_invoice SET deleted_at = now() WHERE id = ?")
+@SQLRestriction("deleted_at IS NULL")
 public class SupplierInvoice {
 
     @Id

@@ -78,9 +78,6 @@ public class CommunicationLogService {
         CommunicationLog entry = communicationLogRepository.findByIdAndClientId(id, clientId)
                 .orElseThrow(() -> new IllegalArgumentException("Communication log entry not found: " + id));
         communicationLogRepository.delete(entry);
-        if (entry.getFileKey() != null) {
-            fileStorageService.delete(entry.getFileKey());
-        }
         log.info("Communication log entry removed: clientId={}, id={}", clientId, id);
     }
 
@@ -91,17 +88,12 @@ public class CommunicationLogService {
                 .orElseThrow(() -> new IllegalArgumentException("Communication log entry not found: " + id));
 
         String tenantId = SecurityContextUtil.getCurrentUserOrThrow().tenantId();
-        String previousFileKey = entry.getFileKey();
         String fileKey = fileStorageService.store(tenantId, FILE_CATEGORY, id, file);
 
         entry.setFileKey(fileKey);
         entry.setFileName(file.getOriginalFilename());
         entry.setContentType(file.getContentType());
         communicationLogRepository.save(entry);
-
-        if (previousFileKey != null) {
-            fileStorageService.delete(previousFileKey);
-        }
         log.info("Communication log file attached: clientId={}, id={}", clientId, id);
         return toResponse(entry);
     }

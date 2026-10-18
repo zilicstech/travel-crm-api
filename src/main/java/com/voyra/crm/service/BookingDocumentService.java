@@ -125,11 +125,8 @@ public class BookingDocumentService {
 
     /** Not {@code @Transactional} - see class javadoc. */
     public void deleteDocument(String bookingId, String documentId) {
-        // The row and the voucher's amounts go together in one transaction; the file only after it commits.
-        String fileKey = bookingService.removeVoucher(bookingId, documentId);
-        if (fileKey != null) {
-            fileStorageService.delete(fileKey);
-        }
+        // Soft delete: the row is marked and the stored file is kept.
+        bookingService.removeVoucher(bookingId, documentId);
         log.info("Booking document removed: bookingId={}, documentId={}", bookingId, documentId);
     }
 
@@ -140,17 +137,12 @@ public class BookingDocumentService {
                 .orElseThrow(() -> new IllegalArgumentException("Document not found: " + documentId));
 
         String tenantId = SecurityContextUtil.getCurrentUserOrThrow().tenantId();
-        String previousFileKey = document.getFileKey();
         String fileKey = fileStorageService.store(tenantId, DOCUMENT_FILE_CATEGORY, documentId, file);
 
         document.setFileKey(fileKey);
         document.setFileName(file.getOriginalFilename());
         document.setContentType(file.getContentType());
         bookingDocumentRepository.save(document);
-
-        if (previousFileKey != null) {
-            fileStorageService.delete(previousFileKey);
-        }
         log.info("Booking document file attached: bookingId={}, documentId={}", bookingId, documentId);
         return toResponse(document);
     }

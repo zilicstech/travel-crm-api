@@ -116,7 +116,6 @@ public class BookingService {
     private final PaymentReceiptRepository paymentReceiptRepository;
     private final CustomerLedgerEntryRepository customerLedgerEntryRepository;
     private final FeedbackRepository feedbackRepository;
-    private final FileStorageService fileStorageService;
     private final AuditService auditService;
     private final LeadTimelineService leadTimelineService;
     private final ServiceInstanceService serviceInstanceService;
@@ -700,17 +699,17 @@ public class BookingService {
      * a dangling reference the way {@code shift_handover.pinned_booking_ids} (a plain array,
      * no FK) silently does.
      *
-     * <p>Every database change runs in one transaction, so a failure part-way leaves nothing
-     * half-deleted. The stored voucher files are deleted only after that commits - object storage
-     * work must stay outside a transaction (blueprint §8.6), and a file must never go before its row.
+     * <p>Every change runs in one transaction, so a failure part-way leaves nothing half-deleted.
+     * The rows are soft-deleted and the stored voucher files are kept.
      */
     public void deleteBooking(String id) {
-        List<String> fileKeys = transactionTemplate.execute(status -> deleteBookingRows(id));
-        fileKeys.forEach(fileStorageService::delete);
+        transactionTemplate.execute(status -> {
+            deleteBookingRows(id);
+            return null;
+        });
     }
 
-    /** @return the stored file keys of the booking's documents, for deletion once this commits */
-    private List<String> deleteBookingRows(String id) {
+    private void deleteBookingRows(String id) {
         Booking booking = findAccessibleBooking(id);
         if (booking.getBookingStatus() != BookingStatus.PENDING) {
             throw new IllegalStateException("Only a pending booking can be deleted - cancel it instead");
@@ -724,8 +723,6 @@ public class BookingService {
             supplierInvoiceService.cancelForBooking(bill.getId(), "Booking deleted");
         }
 
-        List<String> fileKeys = bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc(id).stream()
-                .map(BookingDocument::getFileKey).filter(java.util.Objects::nonNull).toList();
         bookingDocumentRepository.deleteByBookingId(id);
         deletePassengers(id);
         bookingRepository.delete(booking);
@@ -737,7 +734,6 @@ public class BookingService {
             serviceBookingStatusSync.onBookingRemoved(booking.getServiceId());
         }
         log.info("Booking deleted: bookingId={}", id);
-        return fileKeys;
     }
 
     private boolean bookingHasAccountingRecords(String bookingId) {
