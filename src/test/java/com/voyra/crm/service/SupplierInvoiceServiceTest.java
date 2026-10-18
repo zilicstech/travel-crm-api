@@ -223,4 +223,20 @@ class SupplierInvoiceServiceTest {
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> supplierInvoiceService.approveForBooking("S1", "charge"))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("At least one line");
     }
+
+    /** BUG-MO-02: each bill row names its booking (BK number and client), so drafted bills can be told apart. */
+    @Test
+    void billRowsNameTheirBooking() {
+        com.voyra.crm.entity.SupplierInvoice bill = com.voyra.crm.entity.SupplierInvoice.builder().id("S1").bookingId("B1")
+                .status(com.voyra.crm.enums.SupplierInvoiceStatus.DRAFT).balanceDue(java.math.BigDecimal.ZERO).build();
+        when(supplierInvoiceRepository.findAll(any(org.springframework.data.jpa.domain.Specification.class), any(org.springframework.data.domain.Sort.class)))
+                .thenReturn(java.util.List.of(bill));
+        when(bookingRepository.findAllById(any())).thenReturn(java.util.List.of(
+                com.voyra.crm.entity.Booking.builder().id("B1").bookingNumber(995L).clientName("CRM Money Client").build()));
+
+        var row = supplierInvoiceService.list(null, null, null).get(0);
+
+        assertThat(row.getBookingRef()).isEqualTo("BK-00995");
+        assertThat(row.getClientName()).isEqualTo("CRM Money Client");
+    }
 }

@@ -140,6 +140,12 @@ public class SupplierInvoiceService {
         return created;
     }
 
+    /** The booking as people know it (BK-00996); the raw id only for a booking without a number. */
+    private static String ref(Booking booking) {
+        String ref = BookingService.bookingRef(booking.getBookingNumber());
+        return ref != null ? ref : booking.getId();
+    }
+
     /** One voucher's own bill: its supplier, its cost, its reference. */
     public SupplierInvoiceResponse draftForVoucher(Booking booking, String vendorId, BigDecimal cost, String reference) {
         SupplierInvoiceResponse drafted = createAutoDraftSingle(booking, vendorId, cost);
@@ -158,11 +164,11 @@ public class SupplierInvoiceService {
     private SupplierInvoiceResponse createAutoDraftSingle(Booking booking, String vendorId, BigDecimal netCost) {
         Vendor vendor = findVendor(vendorId);
         SupplierInvoice invoice = newAutoDraftHeader(booking, vendor,
-                "Drafted automatically from booking " + booking.getId()
+                "Drafted automatically from booking " + ref(booking)
                         + " at the agent's net cost - confirm against the supplier's real invoice before approving.");
 
         SupplierInvoiceLineItemRequest line = new SupplierInvoiceLineItemRequest();
-        line.setDescription((booking.getDestination() != null ? booking.getDestination() : "Booking") + " - " + booking.getId());
+        line.setDescription((booking.getDestination() != null ? booking.getDestination() : "Booking") + " - " + ref(booking));
         line.setServiceType(booking.getServiceType());
         line.setQuantity(BigDecimal.ONE);
         line.setUnitPrice(netCost);
@@ -181,7 +187,7 @@ public class SupplierInvoiceService {
     private SupplierInvoiceResponse createAutoDraftFanned(Booking booking, String vendorId, List<BookingCostComponent> vendorComponents) {
         Vendor vendor = findVendor(vendorId);
         SupplierInvoice invoice = newAutoDraftHeader(booking, vendor,
-                "Drafted automatically from booking " + booking.getId() + "'s cost components for this vendor - "
+                "Drafted automatically from booking " + ref(booking) + "'s cost components for this vendor - "
                         + "confirm against the supplier's real invoice before approving.");
 
         List<SupplierInvoiceLineItemRequest> lines = new ArrayList<>();
@@ -189,7 +195,7 @@ public class SupplierInvoiceService {
             SupplierInvoiceLineItemRequest line = new SupplierInvoiceLineItemRequest();
             line.setDescription(component.getDescription() != null && !component.getDescription().isBlank()
                     ? component.getDescription()
-                    : component.getServiceType() + " - " + booking.getId());
+                    : component.getServiceType() + " - " + ref(booking));
             line.setServiceType(component.getServiceType());
             line.setQuantity(BigDecimal.ONE);
             line.setUnitPrice(component.getNetCost());
@@ -289,9 +295,20 @@ public class SupplierInvoiceService {
                         SupplierInvoiceSpecifications.vendorIs(vendorId),
                         SupplierInvoiceSpecifications.statusIs(status),
                         SupplierInvoiceSpecifications.bookingIs(bookingId)));
-        return supplierInvoiceRepository.findAll(spec, PAYABLES_URGENCY_SORT).stream()
-                .map(SupplierInvoiceService::toListItem)
-                .toList();
+        List<SupplierInvoice> bills = supplierInvoiceRepository.findAll(spec, PAYABLES_URGENCY_SORT);
+        // One query for every bill's booking, so each row can name it (BK number and client).
+        Map<String, Booking> bookings = bookingRepository.findAllById(bills.stream().map(SupplierInvoice::getBookingId)
+                        .filter(java.util.Objects::nonNull).distinct().toList()).stream()
+                .collect(Collectors.toMap(Booking::getId, b -> b));
+        return bills.stream().map(i -> {
+            SupplierInvoiceListItemResponse item = toListItem(i);
+            Booking booking = i.getBookingId() == null ? null : bookings.get(i.getBookingId());
+            if (booking != null) {
+                item.setBookingRef(BookingService.bookingRef(booking.getBookingNumber()));
+                item.setClientName(booking.getClientName());
+            }
+            return item;
+        }).toList();
     }
 
     @Transactional

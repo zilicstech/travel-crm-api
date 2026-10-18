@@ -43,6 +43,12 @@ public class SupplierInvoiceListItemResponse {
     @Schema(example = "8f2a1c3d-58cc-4372-a567-0e02b2c3d479")
     private String bookingId;
 
+    @Schema(description = "The booking's number, when the bill belongs to one", example = "BK-00995")
+    private String bookingRef;
+
+    @Schema(description = "The booking's client, when the bill belongs to one", example = "Sharma Family")
+    private String clientName;
+
     @Schema(example = "INR")
     private String currencyCode;
 
