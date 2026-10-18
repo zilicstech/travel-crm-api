@@ -123,7 +123,7 @@ public class LeadService {
                 .leadDescription(request.getLeadDescription())
                 .preferences(request.getPreferences())
                 .status(LeadStatus.NEW)
-                .source(request.getSource() != null ? request.getSource() : "PHONE_CALL")
+                .source(request.getSource() != null ? request.getSource() : "Phone Call")
                 .priority(request.getPriority() != null ? request.getPriority() : LeadPriority.MEDIUM)
                 .categories(request.getCategories())
                 .budget(request.getBudget())

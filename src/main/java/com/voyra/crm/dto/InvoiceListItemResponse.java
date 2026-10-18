@@ -67,6 +67,12 @@ public class InvoiceListItemResponse {
     @Schema(example = "88200.00")
     private BigDecimal balanceDueInr;
 
+    @Schema(description = "Money actually received against this invoice, in INR - credit notes excluded", example = "50000.00")
+    private BigDecimal amountReceivedInr;
+
+    @Schema(description = "Credit notes raised against this invoice, in INR", example = "0.00")
+    private BigDecimal creditNoteTotalInr;
+
     @Schema(example = "2026-09-19")
     private LocalDate invoiceDate;
 

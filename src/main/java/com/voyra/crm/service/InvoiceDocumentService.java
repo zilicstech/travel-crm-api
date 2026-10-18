@@ -957,6 +957,8 @@ public class InvoiceDocumentService {
                 .bookingId(i.getBookingId()).bookingRef(bookingRefs.get(i.getBookingId())).agentId(i.getAgentId())
                 .currencyCode(i.getCurrencyCode()).grandTotal(i.getGrandTotal()).grandTotalInr(i.getGrandTotalInr())
                 .balanceDue(i.getBalanceDue()).balanceDueInr(i.getBalanceDueInr())
+                .amountReceivedInr(scaleToInr(i.getAmountReceived(), i.getFxRateToInr()))
+                .creditNoteTotalInr(scaleToInr(i.getCreditNoteTotal(), i.getFxRateToInr()))
                 .invoiceDate(i.getInvoiceDate()).dueDate(i.getDueDate()).issuedAt(i.getIssuedAt())
                 .build();
     }

@@ -178,4 +178,21 @@ class LeadScopingTest {
         assertThat(result).filteredOn(r -> r.getId().equals("L2")).singleElement()
                 .satisfies(r -> assertThat(r.getServices()).isEmpty());
     }
+
+    @Test
+    void aLeadCreatedWithoutASourceGetsTheAgencysPhoneCallLabelNotARawEnum() {
+        authenticateAs("O1", UserType.AGENCY_OWNER);
+        when(authorResolver.resolveCurrentAuthor()).thenReturn(new AuthorResolver.AuthorInfo("O1", "Owner"));
+        when(clientService.findAccessibleClient("K1")).thenReturn(
+                com.voyra.crm.entity.Client.builder().id("K1").name("Arjun").build());
+        com.voyra.crm.dto.LeadCreateRequest request = new com.voyra.crm.dto.LeadCreateRequest();
+        request.setClientId("K1");
+        request.setDestination("Goa");
+
+        leadService.createLead(request);
+
+        org.mockito.ArgumentCaptor<Lead> saved = org.mockito.ArgumentCaptor.forClass(Lead.class);
+        verify(leadRepository).save(saved.capture());
+        assertThat(saved.getValue().getSource()).isEqualTo("Phone Call");
+    }
 }
