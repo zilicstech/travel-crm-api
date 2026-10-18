@@ -30,9 +30,9 @@ public class ClientCreditResponse {
     @Schema(description = "Money the client has paid ahead (negative ledger balance)", example = "0.00")
     private BigDecimal advanceHeld;
 
-    @Schema(description = "How much of the limit is in use", example = "610000.00")
+    @Schema(description = "How much of the limit is in use; negative when the client is in credit (advanceHeld, or a refund still to pay out)", example = "610000.00")
     private BigDecimal used;
 
-    @Schema(description = "Limit minus used; negative once the owner has allowed a booking over the limit; null when there is no limit", example = "390000.00")
+    @Schema(description = "Limit minus used, never above the limit; negative once the owner has allowed a booking over the limit; null when there is no limit", example = "390000.00")
     private BigDecimal available;
 }

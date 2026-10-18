@@ -26,6 +26,9 @@ public class BookingCancelPreviewResponse {
     @Schema(description = "What the agency would still owe the supplier: the part of their cancellation charge not already paid", example = "20000.00")
     private BigDecimal supplierChargeOwed;
 
+    @Schema(description = "Before any invoice: the \"Cancellation charges\" invoice cancelling raises for what is kept, GST included (null when nothing is kept or the booking is invoiced)", example = "4680.00")
+    private BigDecimal chargesInvoiceTotal;
+
     @Schema(description = "True when a tax invoice exists - a credit note is issued automatically")
     private boolean invoiced;
 }

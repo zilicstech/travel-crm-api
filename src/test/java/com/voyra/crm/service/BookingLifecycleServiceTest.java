@@ -174,6 +174,8 @@ class BookingLifecycleServiceTest {
         assertThat(r.getSteps().stream().filter(x -> x.getKey().equals("INVOICE")).findFirst().orElseThrow().getSummary())
                 .contains("₹3,000 added since the last invoice");
         assertThat(r.getAllowedActions()).contains("GENERATE_INVOICE");
+        // BUG-MO-07: the Generate invoice modal shows the 3,000 being invoiced, not the 13,000 booking price.
+        assertThat(r.getUninvoicedInr()).isEqualByComparingTo("3000");
     }
 
     @Test
@@ -206,6 +208,24 @@ class BookingLifecycleServiceTest {
         BookingLifecycleResponse settled = BookingLifecycleService.build(facts(b, 1, List.of(), List.of(), "0"), Viewer.ACCOUNTANT);
         assertThat(states(settled)).containsEntry("CLIENT_REFUND", "DONE").containsEntry("SUPPLIER_REFUND", "DONE");
         assertThat(settled.getAllowedActions()).containsExactly("CROSS_CHECK");
+    }
+
+    /** BUG-MO-14 / MO-13, BK-01000: cancelled before any invoice, its 4,680 "Cancellation charges" invoice is unpaid. */
+    @Test
+    void noCrossCheckWhileTheCancellationChargesAreUnpaid() {
+        Booking b = booking(BookingStatus.CANCELLED);
+        b.setInvoicedTotalInr(d("4680"));
+        BookingLifecycleResponse owed = BookingLifecycleService.build(facts(b, 1, List.of(issued("4680", "4680")), List.of(), "0"), Viewer.ACCOUNTANT);
+
+        assertThat(owed.getToCollectInr()).isEqualByComparingTo("4680");
+        assertThat(owed.getAllowedActions()).containsExactly("RECORD_PAYMENT");
+
+        // Paid after the cancel: settled, so it can be cross-checked - and it is not called money "received before cancelling".
+        b.setReceivedTotalInr(d("4680"));
+        BookingLifecycleResponse paid = BookingLifecycleService.build(facts(b, 1, List.of(issued("4680", "0")), List.of(), "0"), Viewer.ACCOUNTANT);
+        assertThat(paid.getAllowedActions()).containsExactly("CROSS_CHECK");
+        assertThat(paid.getSteps().stream().filter(x -> x.getKey().equals("PAYMENT")).findFirst().orElseThrow().getSummary())
+                .isEqualTo("₹4,680 received");
     }
 
     // ---- roles -------------------------------------------------------------------------
@@ -443,5 +463,31 @@ class BookingLifecycleServiceTest {
         verify(invoiceDocumentService).createDraft(draft.capture());
         assertThat(draft.getValue().getLines()).singleElement()
                 .satisfies(l -> assertThat(l.getUnitPrice()).isEqualByComparingTo("3000"));
+    }
+
+    /** CRB-15: the extra invoice's line says what was added - the return ticket - not only "Additional services". */
+    @Test
+    void anExtraInvoiceLineNamesTheVouchersAddedSinceTheLastInvoice() {
+        Booking b = stubBooking(booking(BookingStatus.CONFIRMED));
+        b.setSellingPrice(d("13000"));
+        java.time.LocalDateTime invoicedAt = java.time.LocalDateTime.of(2026, 10, 10, 12, 0);
+        when(bookingService.invoicedPrice("B1")).thenReturn(d("10000"));
+        when(bookingService.lastInvoicedAt("B1")).thenReturn(invoicedAt);
+        when(invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc(eq("B1"), any(), any()))
+                .thenReturn(List.of(issued("10000", "0")));
+        when(bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc("B1")).thenReturn(List.of(
+                com.voyra.crm.entity.BookingDocument.builder().id("D1").referenceNumber("OUT1").sellingPrice(d("10000"))
+                        .createdAt(invoicedAt.minusDays(1)).build(),
+                com.voyra.crm.entity.BookingDocument.builder().id("D2").referenceNumber("RET1").sellingPrice(d("3000"))
+                        .details(Map.of("flightFrom", "BOM", "flightTo", "DEL", "journeyDate", "2026-12-20"))
+                        .createdAt(invoicedAt.plusDays(1)).build()));
+        when(invoiceDocumentService.createDraft(any())).thenReturn(InvoiceResponse.builder().id("I9").build());
+
+        service.generateInvoice("B1", null);
+
+        ArgumentCaptor<InvoiceDraftRequest> draft = ArgumentCaptor.forClass(InvoiceDraftRequest.class);
+        verify(invoiceDocumentService).createDraft(draft.capture());
+        assertThat(draft.getValue().getLines().get(0).getDescription())
+                .isEqualTo("Additional services - BK-00007: BOM to DEL 2026-12-20 (RET1)");
     }
 }

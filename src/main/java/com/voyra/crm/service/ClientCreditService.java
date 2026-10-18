@@ -64,7 +64,8 @@ public class ClientCreditService {
                     .cancellationCharges(kept)
                     .advanceHeld(balance.min(BigDecimal.ZERO).negate())
                     .used(used)
-                    .available(c.getCreditLimit() == null ? null : c.getCreditLimit().subtract(used))
+                    // Money the client is owed (an advance, a refund not yet paid out) never lifts available above the limit.
+                    .available(c.getCreditLimit() == null ? null : c.getCreditLimit().subtract(used.max(BigDecimal.ZERO)))
                     .build());
         }
         return out;

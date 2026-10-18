@@ -34,6 +34,8 @@ public class SupplierPaymentRequest {
     @Schema(example = "BANK_TRANSFER")
     private PaymentMode paymentMode;
 
+    @jakarta.validation.constraints.Size(max = 100, message = "Reference must be 100 characters or fewer")
+
     @Schema(example = "UTR2026091912345")
     private String instrumentRef;
 

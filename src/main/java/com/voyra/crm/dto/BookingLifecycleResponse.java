@@ -33,6 +33,9 @@ public class BookingLifecycleResponse {
     @Schema(description = "Still to collect from the client", example = "12000.00")
     private BigDecimal toCollectInr;
 
+    @Schema(description = "Price not yet on an issued invoice, before GST - what Generate invoice bills next (0 on a cancelled booking)", example = "2500.00")
+    private BigDecimal uninvoicedInr;
+
     @Schema(description = "Money on the client's account this booking's invoice may draw: its own advances plus any not reserved for another booking", example = "5000.00")
     private BigDecimal clientWalletInr;
 

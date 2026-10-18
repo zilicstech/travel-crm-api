@@ -56,6 +56,14 @@ public class PaymentReceiptController {
         return ResponseEntity.ok(paymentReceiptService.applyAdvance(invoiceId, request));
     }
 
+    @GetMapping("/invoices/{invoiceId}/wallet")
+    @PreAuthorize("hasAnyRole('AGENCY_OWNER', 'ACCOUNTANT')")
+    @Operation(summary = "What this invoice may draw from the client's money on account",
+            description = "The client's pool less what is held for their other bookings - the most apply-advance accepts.")
+    public ResponseEntity<com.voyra.crm.dto.InvoiceWalletResponse> wallet(@PathVariable String invoiceId) {
+        return ResponseEntity.ok(paymentReceiptService.walletFor(invoiceId));
+    }
+
     @GetMapping
     @Operation(summary = "List receipts", description = "Supply ?page= for a paged envelope; omit it for the full list as a plain array. An Agent sees only their own bookings' invoices' receipts.")
     public ResponseEntity<Object> list(

@@ -106,7 +106,9 @@ public class BookingLifecycleService {
         if (draft == null && !live.isEmpty()) {
             // Vouchers added after the first invoice: one more invoice for just what they added.
             com.voyra.crm.dto.InvoiceLineItemRequest line = new com.voyra.crm.dto.InvoiceLineItemRequest();
-            line.setDescription("Additional services - " + BookingService.bookingRef(booking.getBookingNumber()));
+            String added = addedVouchers(booking.getId());
+            line.setDescription("Additional services - " + BookingService.bookingRef(booking.getBookingNumber())
+                    + (added.isEmpty() ? "" : ": " + added));
             line.setServiceType(booking.getServiceType());
             line.setQuantity(BigDecimal.ONE);
             line.setUnitPrice(uninvoiced);
@@ -159,6 +161,25 @@ public class BookingLifecycleService {
             paymentReceiptService.record(receipt);
         }
         return build(gather(reload(booking)), currentViewer());
+    }
+
+    /** The priced vouchers added since the last invoice, e.g. "BOM to DEL 2026-12-20 (RET1)". */
+    private String addedVouchers(String bookingId) {
+        java.time.LocalDateTime invoicedAt = bookingService.lastInvoicedAt(bookingId);
+        String added = bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc(bookingId).stream()
+                .filter(d -> nz(d.getSellingPrice()).signum() > 0 && !BookingService.isInvoiced(d, invoicedAt))
+                .map(BookingLifecycleService::voucherLabel).filter(l -> !l.isEmpty())
+                .collect(java.util.stream.Collectors.joining(", "));
+        return added.length() > 400 ? added.substring(0, 400) : added;
+    }
+
+    private static String voucherLabel(com.voyra.crm.entity.BookingDocument d) {
+        java.util.Map<String, String> x = d.getDetails() == null ? java.util.Map.of() : d.getDetails();
+        String what = x.get("flightFrom") != null && x.get("flightTo") != null ? x.get("flightFrom") + " to " + x.get("flightTo")
+                : x.getOrDefault("hotelName", x.getOrDefault("transferPickup", x.getOrDefault("visaCountry", "")));
+        String when = x.getOrDefault("journeyDate", x.getOrDefault("hotelCheckIn", x.getOrDefault("transferDate", "")));
+        String ref = d.getReferenceNumber() == null || d.getReferenceNumber().isBlank() ? "" : "(" + d.getReferenceNumber().trim() + ")";
+        return java.util.stream.Stream.of(what, when, ref).filter(p -> !p.isBlank()).collect(java.util.stream.Collectors.joining(" "));
     }
 
     private static PaymentReceiptRequest receiptRequest(BookingPaymentRequest request, BigDecimal amount) {
@@ -293,7 +314,8 @@ public class BookingLifecycleService {
             actions.add(CONFIRM_SUPPLIER_REFUND);
             actions.add(REJECT_SUPPLIER_REFUND);
         }
-        if (accounts && cancelled && !clientRefundOpen && !supplierRefundOpen && claim == null && b.getRefundCheckedAt() == null) actions.add(CROSS_CHECK);
+        if (accounts && cancelled && !clientRefundOpen && !supplierRefundOpen && claim == null && toCollect.signum() == 0
+                && b.getRefundCheckedAt() == null) actions.add(CROSS_CHECK);
 
         return BookingLifecycleResponse.builder()
                 .bookingId(b.getId())
@@ -301,6 +323,7 @@ public class BookingLifecycleService {
                 .allowedActions(actions)
                 .records(records(f, accounts))
                 .toCollectInr(toCollect)
+                .uninvoicedInr(invoiced ? uninvoiced : cancelled ? BigDecimal.ZERO : nz(b.getSellingPrice()))
                 .clientWalletInr(accounts ? f.clientWalletInr() : null)
                 .supplierRefundOutstandingInr(cancelled ? refundExpected.subtract(refundReceived).max(BigDecimal.ZERO) : null)
                 .supplierRefundClaim(claim == null ? null : BookingLifecycleResponse.SupplierRefundClaim.builder()
@@ -317,7 +340,8 @@ public class BookingLifecycleService {
             if (received.signum() == 0 && nz(wallet).signum() > 0) {
                 return step("PAYMENT", "DONE", money(wallet) + " held as an advance before cancelling");
             }
-            return step("PAYMENT", received.signum() > 0 ? "DONE" : "NA", money(received) + " received before cancelling");
+            // Not "before cancelling": cancellation charges are often paid after the cancel.
+            return step("PAYMENT", received.signum() > 0 ? "DONE" : "NA", money(received) + " received");
         }
         if (toCollect.signum() == 0 && received.signum() > 0) {
             return step("PAYMENT", "DONE", "Fully paid - " + money(received));
