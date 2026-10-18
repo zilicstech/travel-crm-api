@@ -303,9 +303,10 @@ public class PaymentReceiptService {
             throw new IllegalArgumentException("This deposit belongs to a different client");
         }
 
-        BigDecimal remaining = remainingWallet(invoice.getClientId());
+        // Never money held for the client's other bookings - the same limit the auto-apply on issue keeps to.
+        BigDecimal remaining = availableWalletFor(invoice.getClientId(), invoice.getBookingId());
         if (request.getAmount().compareTo(remaining) > 0) {
-            throw new IllegalStateException("Only " + remaining + " of the wallet remains unapplied for this client");
+            throw new IllegalStateException("Only " + remaining + " of the wallet is available for this invoice");
         }
 
         PaymentReceipt applied = applyFromWallet(invoice, request.getAmount(), "Applied from deposit " + advance.getId());
@@ -376,6 +377,20 @@ public class PaymentReceiptService {
                 .map(java.util.Map.Entry::getValue)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         return remainingWallet(clientId).subtract(reservedElsewhere).max(BigDecimal.ZERO);
+    }
+
+    /** What the Apply Wallet screen offers for this invoice - the same figure {@link #applyAdvance} allows. */
+    @Transactional(readOnly = true)
+    public com.voyra.crm.dto.InvoiceWalletResponse walletFor(String invoiceId) {
+        Invoice invoice = invoiceRepository.findById(invoiceId)
+                .orElseThrow(() -> new IllegalArgumentException("Invoice not found: " + invoiceId));
+        String depositId = paymentReceiptRepository.findByClientIdAndInvoiceIdIsNullAndIsAdvanceTrueOrderByReceivedOnAsc(invoice.getClientId()).stream()
+                .filter(r -> r.getReversedAt() == null && r.getDirection() != ReceiptDirection.REFUND)
+                .map(PaymentReceipt::getId).findFirst().orElse(null);
+        return com.voyra.crm.dto.InvoiceWalletResponse.builder()
+                .availableInr(availableWalletFor(invoice.getClientId(), invoice.getBookingId()))
+                .advanceReceiptId(depositId)
+                .build();
     }
 
     /** Per booking: advances taken for it, less what its own invoices have already drawn from the wallet. */

@@ -369,6 +369,38 @@ class PaymentReceiptServiceTest {
         org.mockito.Mockito.verify(customerLedgerService, org.mockito.Mockito.never()).post(any());
     }
 
+    /**
+     * BUG-MO-10: the client's pool is 8,850 on account + 640 held for another booking (B9) + a 1,000 deposit for B9
+     * less a 320 refund paid out of a held advance (also B9) = 10,170 in the pool, of which 640 + 1,000 - 320 = 1,320
+     * is ring-fenced for B9. This invoice (booking B1) may draw 10,170 - 1,320 = 8,850 - the figure the screen shows
+     * and the most the apply accepts.
+     */
+    @Test
+    void walletForAnInvoiceIsWhatItsBookingMayDrawAndTheApplyKeepsToIt() {
+        Invoice invoice = issuedInvoice(new BigDecimal("20000.00"));
+        PaymentReceipt onAccount = PaymentReceipt.builder().id("D1").clientId("K1").isAdvance(true).direction(ReceiptDirection.RECEIPT)
+                .amountInr(new BigDecimal("8850.00")).build();
+        PaymentReceipt heldElsewhere = PaymentReceipt.builder().id("D2").clientId("K1").bookingId("B9").isAdvance(true)
+                .direction(ReceiptDirection.RECEIPT).amountInr(new BigDecimal("1640.00")).build();
+        PaymentReceipt refundedOut = PaymentReceipt.builder().id("D3").clientId("K1").bookingId("B9").isAdvance(true)
+                .direction(ReceiptDirection.REFUND).amountInr(new BigDecimal("320.00")).build();
+        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(invoice));
+        when(paymentReceiptRepository.findById("D1")).thenReturn(Optional.of(onAccount));
+        when(paymentReceiptRepository.findByClientIdAndInvoiceIdIsNullAndIsAdvanceTrueOrderByReceivedOnAsc("K1"))
+                .thenReturn(List.of(onAccount, heldElsewhere, refundedOut));
+        when(paymentReceiptRepository.findByClientIdAndAppliedFromAdvanceTrueOrderByReceivedOnAsc("K1")).thenReturn(List.of());
+
+        com.voyra.crm.dto.InvoiceWalletResponse wallet = paymentReceiptService.walletFor("I1");
+        assertThat(wallet.getAvailableInr()).isEqualByComparingTo("8850.00");
+        assertThat(wallet.getAdvanceReceiptId()).isEqualTo("D1");
+
+        PaymentReceiptApplyAdvanceRequest request = new PaymentReceiptApplyAdvanceRequest();
+        request.setAdvanceReceiptId("D1");
+        request.setAmount(new BigDecimal("8850.01"));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> paymentReceiptService.applyAdvance("I1", request))
+                .hasMessageContaining("8850.00");
+    }
+
     @Test
     void applyingTheWalletPostsTheAdvanceAppliedJournal() {
         Invoice invoice = issuedInvoice(new BigDecimal("1000.00"));
