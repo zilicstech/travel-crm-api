@@ -41,4 +41,9 @@ public class BookingDocumentCreateRequest {
 
     @Schema(description = "The supplier (Vendor) of this voucher; defaults to the booking's. With a cost, drafts its supplier bill.")
     private String vendorId;
+
+    @Schema(description = "This voucher's travel details, flat keys by booking type (e.g. airline, flightNumber, flightFrom, "
+            + "flightTo, journeyDate, flightDepartTime for a flight; hotelName, hotelCheckIn, hotelCheckOut for a hotel). "
+            + "Unknown keys and blank values are dropped.", example = "{\"airline\": \"IndiGo\", \"flightNumber\": \"6E 203\"}")
+    private java.util.Map<String, String> details;
 }

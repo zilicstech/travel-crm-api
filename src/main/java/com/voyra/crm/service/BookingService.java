@@ -896,9 +896,29 @@ public class BookingService {
         Booking booking = lockAccessibleBooking(bookingId);
         BookingDocument document = bookingDocumentRepository.findByIdAndBookingId(documentId, bookingId)
                 .orElseThrow(() -> new IllegalArgumentException("Document not found: " + documentId));
+        assertNotInvoiced(document);
         reverseVoucher(booking, document);
         bookingDocumentRepository.delete(document);
         return document.getFileKey();
+    }
+
+    /** When the booking's latest live tax invoice was issued; null when nothing is invoiced. */
+    LocalDateTime lastInvoicedAt(String bookingId) {
+        return invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc(
+                        bookingId, com.voyra.crm.enums.InvoiceDocumentType.TAX_INVOICE, com.voyra.crm.enums.InvoiceLifecycle.CANCELLED).stream()
+                .filter(i -> i.getStatus() != com.voyra.crm.enums.InvoiceLifecycle.DRAFT && i.getIssuedAt() != null)
+                .map(com.voyra.crm.entity.Invoice::getIssuedAt).max(LocalDateTime::compareTo).orElse(null);
+    }
+
+    /** A voucher is invoiced once an issued invoice came after it; one added later is open until its own invoice. */
+    static boolean isInvoiced(BookingDocument d, LocalDateTime invoicedAt) {
+        return invoicedAt != null && d.getCreatedAt() != null && !d.getCreatedAt().isAfter(invoicedAt);
+    }
+
+    void assertNotInvoiced(BookingDocument document) {
+        if (isInvoiced(document, lastInvoicedAt(document.getBookingId()))) {
+            throw new IllegalStateException("This voucher is already invoiced - it can't be changed or removed");
+        }
     }
 
     /** The selling price already on the booking's live tax invoices, before GST. */
@@ -1020,8 +1040,9 @@ public class BookingService {
     }
 
     private BookingResponse toResponse(Booking b) {
+        LocalDateTime invoicedAt = lastInvoicedAt(b.getId());
         List<BookingDocumentResponse> documents = bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc(b.getId())
-                .stream().map(BookingService::toDocumentResponse).toList();
+                .stream().map(d -> toDocumentResponse(d, invoicedAt)).toList();
         BigDecimal marginPercent = MarginCalculator.marginPercent(b.getNetCost(), b.getSellingPrice());
         boolean lowMargin = b.getSellingPrice() != null && b.getSellingPrice().compareTo(BigDecimal.ZERO) > 0
                 && marginPercent.compareTo(lowMarginThreshold()) < 0;
@@ -1257,8 +1278,9 @@ public class BookingService {
                 .toList();
     }
 
-    static BookingDocumentResponse toDocumentResponse(BookingDocument d) {
+    static BookingDocumentResponse toDocumentResponse(BookingDocument d, LocalDateTime invoicedAt) {
         return BookingDocumentResponse.builder()
+                .details(d.getDetails()).invoiced(isInvoiced(d, invoicedAt))
                 .id(d.getId()).bookingId(d.getBookingId()).docType(d.getDocType())
                 .referenceNumber(d.getReferenceNumber()).issuedDate(d.getIssuedDate())
                 .hasFile(d.getFileKey() != null).fileName(d.getFileName())

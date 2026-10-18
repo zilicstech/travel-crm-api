@@ -65,6 +65,7 @@ public class BookingDocumentService {
                 .issuedDate(request.getIssuedDate())
                 .notes(request.getNotes())
                 .netCost(nz(request.getNetCost()))
+                .details(com.voyra.crm.util.VoucherDetails.clean(booking.getType(), request.getDetails()))
                 .markupMode(request.getMarkupMode())
                 .markupValue(request.getMarkupValue())
                 .createdAt(LocalDateTime.now())
@@ -88,7 +89,9 @@ public class BookingDocumentService {
         Booking booking = bookingService.lockAccessibleBooking(bookingId);
         BookingDocument document = bookingDocumentRepository.findByIdAndBookingId(documentId, bookingId)
                 .orElseThrow(() -> new IllegalArgumentException("Document not found: " + documentId));
+        bookingService.assertNotInvoiced(document);
         document.setDocType(request.getDocType());
+        document.setDetails(com.voyra.crm.util.VoucherDetails.clean(booking.getType(), request.getDetails()));
         document.setReferenceNumber(request.getReferenceNumber());
         document.setIssuedDate(request.getIssuedDate());
         document.setNotes(request.getNotes());
@@ -119,8 +122,9 @@ public class BookingDocumentService {
     @Transactional(readOnly = true)
     public List<BookingDocumentResponse> listForBooking(String bookingId) {
         bookingService.findAccessibleBooking(bookingId);
+        java.time.LocalDateTime invoicedAt = bookingService.lastInvoicedAt(bookingId);
         return bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc(bookingId).stream()
-                .map(this::toResponse).toList();
+                .map(d -> BookingService.toDocumentResponse(d, invoicedAt)).toList();
     }
 
     /** Not {@code @Transactional} - see class javadoc. */
@@ -198,7 +202,7 @@ public class BookingDocumentService {
     }
 
     private BookingDocumentResponse toResponse(BookingDocument d) {
-        return BookingService.toDocumentResponse(d);
+        return BookingService.toDocumentResponse(d, bookingService.lastInvoicedAt(d.getBookingId()));
     }
 
     private static java.math.BigDecimal nz(java.math.BigDecimal v) {

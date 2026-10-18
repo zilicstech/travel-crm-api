@@ -86,4 +86,27 @@ class BookingDocumentServiceTest {
 
         assertThatThrownBy(() -> service.updateDocument("B1", "D1", edit("3000", "10"))).hasMessageContaining("already invoiced");
     }
+
+    /** An invoiced voucher is locked before anything about it changes. */
+    @Test
+    void anInvoicedVoucherCannotBeEdited() {
+        stub();
+        org.mockito.Mockito.doThrow(new IllegalStateException("This voucher is already invoiced - it can't be changed or removed"))
+                .when(bookingService).assertNotInvoiced(voucher);
+
+        assertThatThrownBy(() -> service.updateDocument("B1", "D1", edit("4000", "10"))).hasMessageContaining("already invoiced");
+        assertThat(voucher.getReferenceNumber()).isEqualTo("PNR1");
+    }
+
+    @Test
+    void theVouchersTravelDetailsAreKeptForItsBookingType() {
+        stub();
+        booking.setType(com.voyra.crm.enums.BookingType.FLIGHT);
+        BookingDocumentCreateRequest r = edit("4000", "10");
+        r.setDetails(java.util.Map.of("airline", "IndiGo", "hotelName", "dropped"));
+
+        service.updateDocument("B1", "D1", r);
+
+        assertThat(voucher.getDetails()).containsExactly(java.util.Map.entry("airline", "IndiGo"));
+    }
 }

@@ -86,6 +86,11 @@ public class BookingDocument {
     @Column(name = "supplier_invoice_id", length = 36)
     private String supplierInvoiceId;
 
+    /** This voucher's own travel details (flight, stay, visa, transfer) - see util.VoucherDetails. */
+    @org.hibernate.annotations.JdbcTypeCode(org.hibernate.type.SqlTypes.JSON)
+    @Column(name = "details", columnDefinition = "jsonb")
+    private java.util.Map<String, String> details;
+
     @Column(name = "sort_order", nullable = false)
     @Builder.Default
     private Integer sortOrder = 0;

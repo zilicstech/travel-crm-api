@@ -21,13 +21,14 @@ import java.time.LocalDateTime;
 public class BookingCompletionService {
 
     private final BookingRepository bookingRepository;
+    private final com.voyra.crm.repository.BookingDocumentRepository bookingDocumentRepository;
 
     /** @return how many bookings were completed */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public int completeFinished(LocalDate today) {
         int completed = 0;
         for (Booking b : bookingRepository.findByBookingStatus(BookingStatus.CONFIRMED)) {
-            LocalDate end = endDate(b);
+            LocalDate end = endDate(b, bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc(b.getId()));
             if (end != null && end.isBefore(today)) {
                 b.setBookingStatus(BookingStatus.COMPLETED);
                 b.setUpdatedAt(LocalDateTime.now());
@@ -38,7 +39,17 @@ public class BookingCompletionService {
         return completed;
     }
 
-    /** The trip's last day: the return, else check-out, else the transfer, else the outbound date. */
+    /** The trip's last day: the latest of the booking's own end and every voucher's dates (a return ticket may be its own voucher). */
+    static LocalDate endDate(Booking b, java.util.List<com.voyra.crm.entity.BookingDocument> vouchers) {
+        LocalDate end = endDate(b);
+        for (com.voyra.crm.entity.BookingDocument v : vouchers) {
+            LocalDate last = com.voyra.crm.util.VoucherDetails.lastDate(v.getDetails());
+            if (last != null && (end == null || last.isAfter(end))) end = last;
+        }
+        return end;
+    }
+
+    /** The booking's own last day: the return, else check-out, else the transfer, else the outbound date. */
     static LocalDate endDate(Booking b) {
         if (b.getReturnDate() != null) return b.getReturnDate();
         if (b.getHotelCheckOut() != null) return b.getHotelCheckOut();

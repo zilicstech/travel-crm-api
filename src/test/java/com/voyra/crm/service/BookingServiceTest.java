@@ -560,6 +560,18 @@ class BookingServiceTest {
     }
 
     @Test
+    void aVoucherIsInvoicedOnlyWhenAnIssuedInvoiceCameAfterIt() {
+        java.time.LocalDateTime issued = java.time.LocalDateTime.of(2026, 10, 18, 11, 0);
+        com.voyra.crm.entity.BookingDocument before = com.voyra.crm.entity.BookingDocument.builder()
+                .createdAt(issued.minusHours(1)).build();
+        com.voyra.crm.entity.BookingDocument after = com.voyra.crm.entity.BookingDocument.builder()
+                .createdAt(issued.plusHours(1)).build();
+        assertThat(BookingService.isInvoiced(before, issued)).isTrue();
+        assertThat(BookingService.isInvoiced(after, issued)).isFalse();
+        assertThat(BookingService.isInvoiced(before, null)).isFalse();
+    }
+
+    @Test
     void aCancelledBookingCannotBeReopened() {
         Booking booking = Booking.builder().id("B1").agentId("A1").bookingStatus(BookingStatus.CANCELLED).build();
         when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));

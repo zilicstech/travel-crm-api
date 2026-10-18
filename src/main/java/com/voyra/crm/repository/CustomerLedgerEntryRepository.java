@@ -22,4 +22,6 @@ public interface CustomerLedgerEntryRepository extends JpaRepository<CustomerLed
     @org.springframework.data.jpa.repository.Query("SELECT e.clientId, SUM(e.debitAmountInr - e.creditAmountInr) FROM CustomerLedgerEntry e "
             + "WHERE e.clientId IN :clientIds GROUP BY e.clientId")
     List<Object[]> balanceInrByClient(@org.springframework.data.repository.query.Param("clientIds") java.util.Collection<String> clientIds);
+
+    List<CustomerLedgerEntry> findByEntryDateBetweenOrderByEntryDateAscCreatedAtAsc(LocalDate from, LocalDate to);
 }

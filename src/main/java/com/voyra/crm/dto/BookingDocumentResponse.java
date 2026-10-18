@@ -58,4 +58,10 @@ public class BookingDocumentResponse {
 
     @Schema(description = "The supplier (Vendor) of this voucher, when one was picked")
     private String vendorId;
+
+    @Schema(description = "This voucher's travel details, flat keys by booking type")
+    private java.util.Map<String, String> details;
+
+    @Schema(description = "True once an issued invoice covers this voucher - it can no longer be edited or removed")
+    private Boolean invoiced;
 }

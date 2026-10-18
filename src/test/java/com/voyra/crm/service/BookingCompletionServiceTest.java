@@ -19,6 +19,7 @@ import static org.mockito.Mockito.when;
 class BookingCompletionServiceTest {
 
     @Mock private BookingRepository bookingRepository;
+    @Mock private com.voyra.crm.repository.BookingDocumentRepository bookingDocumentRepository;
     @InjectMocks private BookingCompletionService service;
 
     @Test
@@ -38,5 +39,15 @@ class BookingCompletionServiceTest {
         assertThat(stillAway.getBookingStatus()).isEqualTo(BookingStatus.CONFIRMED);
         assertThat(checkoutToday.getBookingStatus()).isEqualTo(BookingStatus.CONFIRMED);
         assertThat(noDates.getBookingStatus()).isEqualTo(BookingStatus.CONFIRMED);
+    }
+
+    /** A return flight on its own voucher keeps the booking open until it has flown. */
+    @Test
+    void aLaterVoucherDateKeepsTheBookingOpen() {
+        Booking b = Booking.builder().id("B9").bookingStatus(BookingStatus.CONFIRMED).journeyDate(java.time.LocalDate.of(2026, 10, 1)).build();
+        com.voyra.crm.entity.BookingDocument ret = com.voyra.crm.entity.BookingDocument.builder().id("D1").bookingId("B9")
+                .details(java.util.Map.of("journeyDate", "2026-10-20")).build();
+        assertThat(BookingCompletionService.endDate(b, java.util.List.of(ret))).isEqualTo(java.time.LocalDate.of(2026, 10, 20));
+        assertThat(BookingCompletionService.endDate(b, java.util.List.of())).isEqualTo(java.time.LocalDate.of(2026, 10, 1));
     }
 }

@@ -17,4 +17,6 @@ public interface SupplierLedgerEntryRepository extends JpaRepository<SupplierLed
     List<SupplierLedgerEntry> findByVendorIdAndEntryDateBetweenOrderByEntryDateAscCreatedAtAsc(String vendorId, LocalDate from, LocalDate to);
 
     boolean existsByBookingId(String bookingId);
+
+    List<SupplierLedgerEntry> findByEntryDateBetweenOrderByEntryDateAscCreatedAtAsc(LocalDate from, LocalDate to);
 }
