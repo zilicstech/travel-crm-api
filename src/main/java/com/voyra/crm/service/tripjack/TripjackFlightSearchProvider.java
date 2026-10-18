@@ -89,7 +89,7 @@ public class TripjackFlightSearchProvider implements FlightSearchProvider {
 
         long startedAt = System.currentTimeMillis();
         JsonNode response = callSearch(credential, buildRequestBody(query, originCode, destinationCode));
-        List<FlightOfferResponse> offers = toOffers(response, originCode, destinationCode, query.getDepartDate());
+        List<FlightOfferResponse> offers = toOffers(response, originCode, destinationCode, query);
         log.info("Tripjack flight search ok: {} offers in {} ms", offers.size(), System.currentTimeMillis() - startedAt);
         return offers;
     }
@@ -183,7 +183,8 @@ public class TripjackFlightSearchProvider implements FlightSearchProvider {
     }
 
     private List<FlightOfferResponse> toOffers(JsonNode response, String originCode, String destinationCode,
-                                             java.time.LocalDate searchDate) {
+                                             FlightSearchQuery query) {
+        java.time.LocalDate searchDate = query.getDepartDate();
         List<FlightOfferResponse> offers = new ArrayList<>();
         for (JsonNode trip : response.path("searchResult").path("tripInfos").path("ONWARD")) {
             JsonNode segments = trip.path("sI");
@@ -220,6 +221,8 @@ public class TripjackFlightSearchProvider implements FlightSearchProvider {
 
             for (JsonNode fare : trip.path("totalPriceList")) {
                 JsonNode adultFare = fare.path("fd").path("ADULT");
+                // fd.<TYPE>.fC.TF is the fare for ONE passenger of that type, not the party.
+                BigDecimal adultPrice = new BigDecimal(adultFare.path("fC").path("TF").asText("0"));
                 offers.add(FlightOfferResponse.builder()
                         .offerId(fare.path("id").asText())
                         .airline(airline)
@@ -234,7 +237,10 @@ public class TripjackFlightSearchProvider implements FlightSearchProvider {
                         .duration(duration)
                         .stops(stops)
                         .supplier("Tripjack")
-                        .price(new BigDecimal(adultFare.path("fC").path("TF").asText("0")))
+                        .price(adultPrice)
+                        .totalPrice(FlightSearchProvider.partyTotal(query, adultPrice,
+                                paxFare(fare, "CHILD"), paxFare(fare, "INFANT")))
+                        .passengers(FlightSearchProvider.passengers(query))
                         .currency("INR")
                         .refundable("REFUNDABLE".equalsIgnoreCase(adultFare.path("rT").asText("")))
                         .baggage(adultFare.path("bI").path("iB").asText(""))
@@ -243,6 +249,11 @@ public class TripjackFlightSearchProvider implements FlightSearchProvider {
             }
         }
         return offers;
+    }
+
+    private static BigDecimal paxFare(JsonNode fare, String paxType) {
+        JsonNode tf = fare.path("fd").path(paxType).path("fC").path("TF");
+        return tf.isMissingNode() || tf.asText().isBlank() ? null : new BigDecimal(tf.asText());
     }
 
     private static Long minutesBetween(String from, String to) {

@@ -44,6 +44,8 @@ public class MockFlightSearchProvider implements FlightSearchProvider {
             new FareTier("SME", new BigDecimal("1.30"), true, "25kg check-in + 7kg cabin")
     );
 
+    private static final BigDecimal CHILD_SHARE = new BigDecimal("0.75");
+    private static final BigDecimal INFANT_SHARE = new BigDecimal("0.10");
     private static final BigDecimal CABIN_MULTIPLIER_BUSINESS = new BigDecimal("3.2");
     private static final BigDecimal CABIN_MULTIPLIER_PREMIUM = new BigDecimal("1.6");
     private static final BigDecimal CABIN_MULTIPLIER_FIRST = new BigDecimal("5.0");
@@ -51,7 +53,6 @@ public class MockFlightSearchProvider implements FlightSearchProvider {
     @Override
     public List<FlightOfferResponse> search(FlightSearchQuery query) {
         log.warn("Flight search served by MOCK provider ({} -> {}); Tripjack was NOT called", query.getOrigin(), query.getDestination());
-        int pax = Math.max(1, query.getAdults() + query.getChildren());
         BigDecimal cabinMultiplier = cabinMultiplier(query.getCabin());
 
         // Like the real supplier: one row per fare, several fares per flight.
@@ -61,8 +62,12 @@ public class MockFlightSearchProvider implements FlightSearchProvider {
             java.time.LocalDate departDate = query.getDepartDate();
             java.time.LocalDate arriveDate = departDate == null ? null
                     : departDate.atTime(t.depart()).plusMinutes(t.durationMinutes()).toLocalDate();
-            BigDecimal base = t.baseFare().multiply(cabinMultiplier).multiply(BigDecimal.valueOf(pax));
+            BigDecimal base = t.baseFare().multiply(cabinMultiplier);
             for (FareTier tier : FARE_TIERS) {
+                // Like Tripjack: a per-adult fare, plus child and infant fares, totalled for the party.
+                BigDecimal adult = base.multiply(tier.multiplier()).setScale(2, java.math.RoundingMode.HALF_UP);
+                BigDecimal child = adult.multiply(CHILD_SHARE).setScale(2, java.math.RoundingMode.HALF_UP);
+                BigDecimal infant = adult.multiply(INFANT_SHARE).setScale(2, java.math.RoundingMode.HALF_UP);
                 offers.add(FlightOfferResponse.builder()
                         .offerId("mock-" + t.airline().toLowerCase().replace(" ", "") + "-" + t.depart() + "-" + tier.name())
                         .airline(t.airline())
@@ -77,7 +82,9 @@ public class MockFlightSearchProvider implements FlightSearchProvider {
                         .duration(formatDuration(t.durationMinutes()))
                         .stops(t.stops())
                         .supplier("Tripjack")
-                        .price(base.multiply(tier.multiplier()).setScale(2, java.math.RoundingMode.HALF_UP))
+                        .price(adult)
+                        .totalPrice(FlightSearchProvider.partyTotal(query, adult, child, infant))
+                        .passengers(FlightSearchProvider.passengers(query))
                         .currency("INR")
                         .refundable(tier.refundable())
                         .baggage(tier.baggage())

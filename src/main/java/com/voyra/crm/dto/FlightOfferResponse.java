@@ -57,8 +57,16 @@ public class FlightOfferResponse {
     @Schema(example = "Tripjack")
     private String supplier;
 
-    @Schema(example = "18000.00")
+    @Schema(description = "Fare for ONE adult", example = "18000.00")
     private BigDecimal price;
+
+    @Schema(description = "Fare for every searched passenger (adults, children and infants, each at "
+            + "their own fare where the supplier quotes one) - what a proposal line or booking should cost",
+            example = "45000.00")
+    private BigDecimal totalPrice;
+
+    @Schema(description = "How many passengers totalPrice covers", example = "3")
+    private int passengers;
 
     @Schema(example = "INR")
     private String currency;

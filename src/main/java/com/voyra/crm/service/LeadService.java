@@ -218,7 +218,7 @@ public class LeadService {
 
     @Transactional
     public LeadDetailResponse updateStatus(String id, LeadStatusUpdateRequest request) {
-        Lead lead = findAccessibleLead(id);
+        Lead lead = findWritableLead(id);
         // Business rule (BRD): lost leads require a mandatory reason.
         if (request.getStatus() == LeadStatus.LOST
                 && (request.getLostReason() == null || request.getLostReason().isBlank())) {
@@ -232,7 +232,8 @@ public class LeadService {
         leadRepository.save(lead);
 
         leadTimelineService.recordTransition(id, LeadTimelineEventType.STATUS_CHANGED, previous,
-                request.getStatus(), "Status changed from " + previous + " to " + request.getStatus());
+                request.getStatus(), "Status changed from " + previous + " to " + request.getStatus()
+                        + (lead.getLostReason() != null ? ": " + lead.getLostReason() : ""));
         auditService.recordUpdate(AuditEntityType.LEAD, lead.getId(), lead.getClientName() + " / " + lead.getDestination(),
                 AuditSnapshot.diff(before, AuditSnapshot.of(lead, AUDITED)));
 
@@ -243,7 +244,7 @@ public class LeadService {
     /** Edits the trip-level facts captured at Add Lead time - destination, budget, special remarks. */
     @Transactional
     public LeadDetailResponse updateDetails(String id, LeadDetailUpdateRequest request) {
-        Lead lead = findAccessibleLead(id);
+        Lead lead = findWritableLead(id);
         Map<String, String> before = AuditSnapshot.of(lead, AUDITED);
         if (request.getDestination() != null) {
             lead.setDestination(request.getDestination());
@@ -404,7 +405,7 @@ public class LeadService {
         BigDecimal netCost = request.getNetCost() != null ? request.getNetCost() : BigDecimal.ZERO;
         BigDecimal sellingPrice = linePrice(netCost, request.getMarkupMode(), request.getMarkupValue(), request.getSellingPrice());
 
-        com.voyra.crm.entity.LeadService service = lineService(id, request.getServiceId());
+        com.voyra.crm.entity.LeadService service = lineService(lead, request.getServiceId());
         String serviceLabel = service != null ? service.getLabel() : null;
 
         LeadProposal item = LeadProposal.builder()
@@ -443,7 +444,7 @@ public class LeadService {
     public List<ProposalItemResponse> addProposalItemsBatch(String id, ProposalItemBatchCreateRequest request) {
         Lead lead = findAccessibleLead(id);
         assertProposalUnlocked(lead);
-        com.voyra.crm.entity.LeadService service = lineService(id, request.getServiceId());
+        com.voyra.crm.entity.LeadService service = lineService(lead, request.getServiceId());
         String serviceLabel = service != null ? service.getLabel() : null;
         String optionGroup = request.getOptionGroup() != null ? request.getOptionGroup() : request.getServiceId();
 
@@ -487,7 +488,7 @@ public class LeadService {
         assertProposalUnlocked(lead);
         LeadProposal item = leadProposalRepository.findByIdAndLeadId(itemId, id)
                 .orElseThrow(() -> new IllegalArgumentException("Proposal item not found: " + itemId));
-        lineService(id, item.getServiceId());
+        lineService(lead, item.getServiceId());
         if (item.getOptionGroup() == null) {
             throw new IllegalArgumentException("Only an option line can be selected: " + itemId);
         }
@@ -526,7 +527,7 @@ public class LeadService {
         assertProposalUnlocked(lead);
         LeadProposal item = leadProposalRepository.findByIdAndLeadId(itemId, id)
                 .orElseThrow(() -> new IllegalArgumentException("Proposal item not found: " + itemId));
-        lineService(id, item.getServiceId());
+        lineService(lead, item.getServiceId());
         if (request.getDescription() != null) {
             item.setDescription(request.getDescription());
         }
@@ -558,10 +559,12 @@ public class LeadService {
     /**
      * A line on a service is that service's work: the service must be on this lead, and the caller
      * must be able to edit it (an agent only for the service types they handle, or one assigned to
-     * them). A trip-level line (no service) is open to anyone who can see the lead.
+     * them). A trip-level line (no service) is a trip-level write - see {@link #assertTripWriteAccess}.
      */
-    private com.voyra.crm.entity.LeadService lineService(String leadId, String serviceId) {
+    private com.voyra.crm.entity.LeadService lineService(Lead lead, String serviceId) {
+        String leadId = lead.getId();
         if (serviceId == null) {
+            assertTripWriteAccess(lead);
             return null;
         }
         com.voyra.crm.entity.LeadService service = leadServiceRepository.findById(serviceId)
@@ -585,7 +588,7 @@ public class LeadService {
         assertProposalUnlocked(lead);
         LeadProposal item = leadProposalRepository.findByIdAndLeadId(itemId, id)
                 .orElseThrow(() -> new IllegalArgumentException("Proposal item not found: " + itemId));
-        lineService(id, item.getServiceId());
+        lineService(lead, item.getServiceId());
         leadProposalRepository.delete(item);
         recomputeQuotedTotals(lead);
         leadTimelineService.record(id, item.getServiceId(), LeadTimelineEventType.PROPOSAL_ITEM_REMOVED,
@@ -658,6 +661,30 @@ public class LeadService {
         return lead;
     }
 
+    /**
+     * Trip-level writes (details, status, escalation, proposal lock, trip-level lines) need more
+     * than read access: managing a service type lets an agent read any lead with that service, but
+     * only the owner, the lead's creator, or an agent assigned to a service on it may change the trip.
+     */
+    private Lead findWritableLead(String id) {
+        Lead lead = findAccessibleLead(id);
+        assertTripWriteAccess(lead);
+        return lead;
+    }
+
+    private void assertTripWriteAccess(Lead lead) {
+        CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
+        if (!principal.isAgent() || principal.userId().equals(lead.getCreatedBy())) {
+            return;
+        }
+        boolean assigned = leadServiceRepository.findByLeadIdOrderBySortOrderAsc(lead.getId()).stream()
+                .anyMatch(s -> principal.userId().equals(s.getAssignedAgentId()));
+        if (!assigned) {
+            throw new AccessDeniedException(
+                    "Only the owner, the lead's creator or an agent working a service on it can change this trip");
+        }
+    }
+
     private boolean hasServiceAccess(String leadId, String agentId) {
         return com.voyra.crm.util.LeadAccessChecker.hasServiceAccess(leadServiceRepository, agentRepository, leadId, agentId);
     }
@@ -680,13 +707,15 @@ public class LeadService {
         if (escalated && (reason == null || reason.isBlank())) {
             throw new IllegalArgumentException("A reason is required when escalating a lead");
         }
-        Lead lead = findAccessibleLead(id);
+        Lead lead = findWritableLead(id);
         Map<String, String> before = AuditSnapshot.of(lead, AUDITED);
         lead.setEscalated(escalated);
         lead.setEscalationReason(escalated ? reason : null);
         lead.setEscalatedAt(escalated ? LocalDateTime.now() : null);
         List<AuditChange> changes = AuditSnapshot.diff(before, AuditSnapshot.of(lead, AUDITED));
         leadRepository.save(lead);
+        leadTimelineService.record(id, escalated ? LeadTimelineEventType.ESCALATED : LeadTimelineEventType.ESCALATION_CLEARED,
+                escalated ? "Escalated: " + reason : "Escalation cleared");
         auditService.recordUpdate(AuditEntityType.LEAD, lead.getId(), lead.getClientName() + " / " + lead.getDestination(), changes);
         log.info("Lead escalation changed: leadId={}, escalated={}", id, escalated);
         return toDetailResponse(lead);
@@ -694,7 +723,7 @@ public class LeadService {
 
     @Transactional
     public LeadDetailResponse setProposalLocked(String id, boolean locked) {
-        Lead lead = findAccessibleLead(id);
+        Lead lead = findWritableLead(id);
         lead.setProposalLocked(locked);
         leadRepository.save(lead);
         leadTimelineService.record(id, locked ? LeadTimelineEventType.PROPOSAL_LOCKED : LeadTimelineEventType.PROPOSAL_UNLOCKED,
