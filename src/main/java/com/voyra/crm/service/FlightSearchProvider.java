@@ -3,6 +3,7 @@ package com.voyra.crm.service;
 import com.voyra.crm.dto.FlightOfferResponse;
 import com.voyra.crm.dto.FlightSearchQuery;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 /**
@@ -14,4 +15,19 @@ import java.util.List;
 public interface FlightSearchProvider {
 
     List<FlightOfferResponse> search(FlightSearchQuery query);
+
+    /**
+     * The fare for the whole searched party. A passenger type the supplier did not price is
+     * charged the adult fare - over-quoting a child is recoverable, under-quoting a family is not.
+     */
+    static BigDecimal partyTotal(FlightSearchQuery query, BigDecimal adultFare, BigDecimal childFare, BigDecimal infantFare) {
+        BigDecimal total = adultFare.multiply(BigDecimal.valueOf(Math.max(1, query.getAdults())));
+        total = total.add((childFare != null ? childFare : adultFare).multiply(BigDecimal.valueOf(query.getChildren())));
+        total = total.add((infantFare != null ? infantFare : adultFare).multiply(BigDecimal.valueOf(query.getInfants())));
+        return total;
+    }
+
+    static int passengers(FlightSearchQuery query) {
+        return Math.max(1, query.getAdults()) + query.getChildren() + query.getInfants();
+    }
 }

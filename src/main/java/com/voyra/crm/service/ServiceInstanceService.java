@@ -337,7 +337,14 @@ public class ServiceInstanceService {
         if (agent.getManageableServices() == null || !agent.getManageableServices().contains(service.getType())) {
             throw new IllegalArgumentException(agent.getName() + " doesn't handle " + service.getType() + " - pick an agent who does");
         }
+        if (!Boolean.TRUE.equals(agent.getIsActive())) {
+            throw new IllegalArgumentException(agent.getName() + " is inactive - pick an active agent");
+        }
+        if (agent.getId().equals(service.getAssignedAgentId())) {
+            throw new IllegalStateException(agent.getName() + " already has this service");
+        }
         Map<String, String> before = AuditSnapshot.of(service, AUDITED);
+        String previousName = service.getAssignedAgentId() != null ? service.getAssignedAgentName() : null;
 
         service.setAssignedAgentId(agent.getId());
         service.setAssignedAgentName(agent.getName());
@@ -345,11 +352,51 @@ public class ServiceInstanceService {
         service.setUpdatedBy(currentUserId());
         leadServiceRepository.save(service);
 
-        leadTimelineService.record(leadId, serviceId, LeadTimelineEventType.SERVICE_UPDATED,
-                service.getLabel() + " assigned to " + agent.getName());
+        if (previousName != null) {
+            leadTimelineService.record(leadId, serviceId, LeadTimelineEventType.SERVICE_REASSIGNED,
+                    service.getLabel() + " reassigned from " + previousName + " to " + agent.getName());
+        } else {
+            leadTimelineService.record(leadId, serviceId, LeadTimelineEventType.SERVICE_UPDATED,
+                    service.getLabel() + " assigned to " + agent.getName());
+        }
         auditService.recordUpdate(AuditEntityType.LEAD_SERVICE, service.getId(), service.getLabel(),
                 AuditSnapshot.diff(before, AuditSnapshot.of(service, AUDITED)));
         log.info("Service reassigned: leadId={}, serviceId={}, agentId={}", leadId, serviceId, agent.getId());
+        return toResponse(service);
+    }
+
+    /**
+     * The assigned agent hands a service back to unclaimed, so another agent can accept it or the
+     * owner can assign it. Not once it is Confirmed / Booked / Cancelled - by then the work is done
+     * or settled and someone has to stay answerable for it. Status goes back to Not Started, since
+     * status is only ever set by whoever holds the service.
+     */
+    @Transactional
+    public ServiceResponse releaseService(String leadId, String serviceId) {
+        findAccessibleLead(leadId);
+        LeadService service = findServiceOnLead(leadId, serviceId);
+        CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
+        if (!principal.isAgent() || !principal.userId().equals(service.getAssignedAgentId())) {
+            throw new AccessDeniedException("Only the agent on this service can release it");
+        }
+        if (CLAIMABLE_BLOCKING_STATUSES.contains(service.getStatus())) {
+            throw new IllegalStateException("A " + service.getStatus() + " service can't be released");
+        }
+        Map<String, String> before = AuditSnapshot.of(service, AUDITED);
+        String agentName = service.getAssignedAgentName();
+
+        service.setAssignedAgentId(null);
+        service.setAssignedAgentName(null);
+        service.setStatus(ServiceStatus.NOT_STARTED);
+        service.setUpdatedAt(LocalDateTime.now());
+        service.setUpdatedBy(currentUserId());
+        leadServiceRepository.save(service);
+
+        leadTimelineService.record(leadId, serviceId, LeadTimelineEventType.SERVICE_RELEASED,
+                agentName + " released " + service.getLabel());
+        auditService.recordUpdate(AuditEntityType.LEAD_SERVICE, service.getId(), service.getLabel(),
+                AuditSnapshot.diff(before, AuditSnapshot.of(service, AUDITED)));
+        log.info("Service released: leadId={}, serviceId={}, agentId={}", leadId, serviceId, principal.userId());
         return toResponse(service);
     }
 

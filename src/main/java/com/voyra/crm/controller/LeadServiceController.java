@@ -87,6 +87,14 @@ public class LeadServiceController {
         return ResponseEntity.ok(serviceInstanceService.assignService(leadId, serviceId, request));
     }
 
+    @PostMapping("/{serviceId}/release")
+    @Operation(summary = "Hand a service back to unclaimed",
+            description = "Only the assigned agent, and not once it is Confirmed, Booked or Cancelled. "
+                    + "Status goes back to NOT_STARTED.")
+    public ResponseEntity<ServiceResponse> releaseService(@PathVariable String leadId, @PathVariable String serviceId) {
+        return ResponseEntity.ok(serviceInstanceService.releaseService(leadId, serviceId));
+    }
+
     @PatchMapping("/{serviceId}/preferences")
     @Operation(summary = "Toggle one standing preference", description = "Writes immediately, no edit-mode round trip.")
     public ResponseEntity<ServiceResponse> togglePreference(@PathVariable String leadId, @PathVariable String serviceId,

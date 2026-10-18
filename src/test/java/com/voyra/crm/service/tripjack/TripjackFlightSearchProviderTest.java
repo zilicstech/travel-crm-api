@@ -111,6 +111,27 @@ class TripjackFlightSearchProviderTest {
     }
 
     @Test
+    void search_totalCoversEveryPassengerAtTheirOwnFare() throws Exception {
+        when(supplierCredentialService.resolveActive(SupplierProvider.TRIPJACK)).thenReturn(credential());
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo("https://apitest.tripjack.com/fms/v1/air-search-all"))
+                .andRespond(withSuccess(fixture("tripjack/flight-search-response.json"), MediaType.APPLICATION_JSON));
+        FlightSearchQuery family = query();
+        family.setChildren(1);
+        family.setInfants(1);
+
+        List<FlightOfferResponse> offers = new TripjackFlightSearchProvider(supplierCredentialService, builder).search(family);
+
+        // Saver quotes all three passenger types: 2 x 8,400 + 6,300 + 1,000.
+        assertThat(offers.get(0).getPrice()).isEqualByComparingTo("8400.00");
+        assertThat(offers.get(0).getTotalPrice()).isEqualByComparingTo("24100.00");
+        assertThat(offers.get(0).getPassengers()).isEqualTo(4);
+        // Flexi only quotes the adult fare, so every passenger is priced at it rather than under-quoted.
+        assertThat(offers.get(1).getTotalPrice()).isEqualByComparingTo("40800.00");
+    }
+
+    @Test
     void search_connectingFlightCountsEveryStopAndTheWholeJourneyTime() throws Exception {
         when(supplierCredentialService.resolveActive(SupplierProvider.TRIPJACK)).thenReturn(credential());
         RestClient.Builder builder = RestClient.builder();
