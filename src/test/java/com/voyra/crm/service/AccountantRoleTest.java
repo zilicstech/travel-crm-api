@@ -49,6 +49,8 @@ class AccountantRoleTest {
     private VisaRepository visaRepository;
     @Mock
     private AesPasswordEncoder passwordEncoder;
+    @Mock
+    private LoginEmailService loginEmailService;
 
     @InjectMocks
     private AgentService agentService;
@@ -73,7 +75,6 @@ class AccountantRoleTest {
         request.setPassword("SecurePass123");
         request.setUserRole(UserType.ACCOUNTANT);
 
-        when(agentRepository.existsByEmailIgnoreCase(request.getEmail())).thenReturn(false);
         when(passwordEncoder.encode(request.getPassword())).thenReturn("encoded");
 
         agentService.createAgent(request);
@@ -93,7 +94,6 @@ class AccountantRoleTest {
         request.setUserRole(UserType.AGENT);
         request.setManageableServices(List.of());
 
-        when(agentRepository.existsByEmailIgnoreCase(request.getEmail())).thenReturn(false);
 
         assertThatThrownBy(() -> agentService.createAgent(request))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -108,7 +108,6 @@ class AccountantRoleTest {
         request.setPassword("SecurePass123");
         request.setUserRole(UserType.AGENCY_OWNER);
 
-        when(agentRepository.existsByEmailIgnoreCase(request.getEmail())).thenReturn(false);
 
         assertThatThrownBy(() -> agentService.createAgent(request))
                 .isInstanceOf(IllegalArgumentException.class);

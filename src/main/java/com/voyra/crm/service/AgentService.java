@@ -56,13 +56,12 @@ public class AgentService {
     private final BookingRepository bookingRepository;
     private final VisaRepository visaRepository;
     private final AesPasswordEncoder passwordEncoder;
+    private final LoginEmailService loginEmailService;
 
     @Transactional
     public AgentCreateResponse createAgent(AgentCreateRequest request) {
         String tenantId = ownerTenantId();
-        if (agentRepository.existsByEmailIgnoreCase(request.getEmail())) {
-            throw new IllegalArgumentException("A team member with this email already exists");
-        }
+        loginEmailService.assertFree(request.getEmail());
         UserType role = request.getUserRole() != null ? request.getUserRole() : UserType.AGENT;
         if (role != UserType.AGENT && role != UserType.ACCOUNTANT) {
             throw new IllegalArgumentException("userRole must be AGENT or ACCOUNTANT");

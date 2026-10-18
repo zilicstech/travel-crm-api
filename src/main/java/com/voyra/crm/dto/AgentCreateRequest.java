@@ -3,6 +3,7 @@ package com.voyra.crm.dto;
 import com.voyra.crm.enums.ServiceType;
 import com.voyra.crm.enums.UserType;
 import io.swagger.v3.oas.annotations.media.Schema;
+import com.voyra.crm.util.ValidationPatterns;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
@@ -23,6 +24,7 @@ public class AgentCreateRequest {
     @Schema(example = "liam@globalexplorer.com")
     private String email;
 
+    @jakarta.validation.constraints.Pattern(regexp = ValidationPatterns.PHONE, message = ValidationPatterns.PHONE_MESSAGE)
     @Schema(example = "+1 555 123 4567")
     private String phone;
 

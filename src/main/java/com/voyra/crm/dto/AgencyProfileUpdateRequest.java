@@ -1,6 +1,7 @@
 package com.voyra.crm.dto;
 
 import io.swagger.v3.oas.annotations.media.Schema;
+import com.voyra.crm.util.ValidationPatterns;
 import lombok.Data;
 
 import java.math.BigDecimal;
@@ -10,6 +11,7 @@ import java.math.BigDecimal;
         + "ownerEmail are not editable here - they are set at onboarding by the platform.")
 public class AgencyProfileUpdateRequest {
 
+    @jakarta.validation.constraints.Pattern(regexp = ValidationPatterns.GSTIN, message = ValidationPatterns.GSTIN_MESSAGE)
     @Schema(example = "27AABCU9603R1ZM")
     private String gstNumber;
 
@@ -19,6 +21,8 @@ public class AgencyProfileUpdateRequest {
     @Schema(example = "₹ (INR)")
     private String currency;
 
+    @jakarta.validation.constraints.DecimalMin(value = "0", message = "Default commission can't be negative")
+    @jakarta.validation.constraints.DecimalMax(value = "100", message = "Default commission can't be over 100%")
     @Schema(example = "2.00")
     private BigDecimal defaultCommission;
 
@@ -46,6 +50,7 @@ public class AgencyProfileUpdateRequest {
     @Schema(example = "005505015417")
     private String bankAccountNumber;
 
+    @jakarta.validation.constraints.Pattern(regexp = ValidationPatterns.IFSC, message = ValidationPatterns.IFSC_MESSAGE)
     @Schema(example = "ICIC0000055")
     private String bankIfscCode;
 

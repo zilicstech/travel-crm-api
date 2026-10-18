@@ -150,6 +150,22 @@ class BookingServiceTest {
     }
 
     @Test
+    void anAgentCannotCreateAStandaloneBookingOfATypeTheyDoNotHandle() {
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+                new CustomUserPrincipal("A1", "priya", UserType.AGENT, "T1"), null, java.util.List.of()));
+        when(agentRepository.findById("A1")).thenReturn(Optional.of(com.voyra.crm.entity.Agent.builder().id("A1").name("Priya")
+                .manageableServices(java.util.List.of(com.voyra.crm.enums.ServiceType.VISA, com.voyra.crm.enums.ServiceType.TRANSFER)).build()));
+        com.voyra.crm.dto.BookingCreateRequest request = new com.voyra.crm.dto.BookingCreateRequest();
+        request.setClientId("C1");
+        request.setType(com.voyra.crm.enums.BookingType.FLIGHT);
+
+        assertThatThrownBy(() -> bookingService.createBooking(request))
+                .isInstanceOf(org.springframework.security.access.AccessDeniedException.class)
+                .hasMessageContaining("FLIGHT");
+        org.mockito.Mockito.verify(bookingRepository, org.mockito.Mockito.never()).save(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
     void manualPaymentStatusPatchSucceedsWhileStillManual() {
         Booking booking = Booking.builder().id("B1").agentId("A1").paymentStatusSource(PaymentStatusSource.MANUAL).build();
         when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));

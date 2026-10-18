@@ -4,6 +4,7 @@ import com.voyra.crm.dto.SupplierCredentialResponse;
 import com.voyra.crm.dto.SupplierCredentialRevealResponse;
 import com.voyra.crm.dto.SupplierCredentialUpsertRequest;
 import com.voyra.crm.entity.SupplierCredential;
+import com.voyra.crm.enums.AuditEntityType;
 import com.voyra.crm.enums.SupplierProvider;
 import com.voyra.crm.repository.SupplierCredentialRepository;
 import com.voyra.crm.security.SecurityContextUtil;
@@ -31,6 +32,7 @@ import java.time.LocalDateTime;
 public class SupplierCredentialService {
 
     private final SupplierCredentialRepository supplierCredentialRepository;
+    private final AuditService auditService;
 
     @Value("${app.security.password-encryption-key}")
     private String encryptionKey;
@@ -71,8 +73,8 @@ public class SupplierCredentialService {
         return toResponse(credential);
     }
 
-    /** Owner-only retrieval path - callers must already be behind an AGENCY_OWNER-role guard and every call is logged. */
-    @Transactional(readOnly = true)
+    /** Owner-only retrieval path - callers must already be behind an AGENCY_OWNER-role guard and every call is logged and audited. */
+    @Transactional
     public SupplierCredentialRevealResponse reveal(SupplierProvider provider) {
         var principal = SecurityContextUtil.getCurrentUserOrThrow();
         if (!principal.isAgencyOwner()) {
@@ -80,6 +82,7 @@ public class SupplierCredentialService {
         }
         SupplierCredential credential = findByProvider(provider);
         log.info("Supplier credential revealed: provider={}, by={}", provider, SecurityContextUtil.getAuditInfo());
+        auditService.recordReveal(AuditEntityType.SUPPLIER_CREDENTIAL, credential.getId(), provider.name());
         return SupplierCredentialRevealResponse.builder()
                 .provider(credential.getProvider())
                 .environment(credential.getEnvironment())

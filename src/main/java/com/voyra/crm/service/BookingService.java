@@ -138,6 +138,9 @@ public class BookingService {
         if (request.getNetCost() == null) request.setNetCost(BigDecimal.ZERO);
         if (request.getSellingPrice() == null) request.setSellingPrice(BigDecimal.ZERO);
         AuthorResolver.AuthorInfo owner = resolveOwningAgent(request.getAgentId());
+        if (request.getServiceId() == null || request.getServiceId().isBlank()) {
+            assertAgentHandlesStandaloneType(request.getType());
+        }
         clientCreditService.assertWithinLimit(request.getClientId(), request.getSellingPrice(),
                 Boolean.TRUE.equals(request.getOverrideCreditLimit()));
         Client client = clientRepository.findById(request.getClientId())
@@ -989,6 +992,20 @@ public class BookingService {
         BigDecimal selling = sellingPrice != null ? sellingPrice : BigDecimal.ZERO;
         BigDecimal cost = netCost != null ? netCost : BigDecimal.ZERO;
         return selling.subtract(cost);
+    }
+
+    /** A standalone booking is gated by its own type, as a service-linked one is by its service. Owner exempt; PACKAGE has no service type. */
+    private void assertAgentHandlesStandaloneType(BookingType type) {
+        CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
+        ServiceType serviceType = type != null ? ServiceBookingTypeMapper.forBooking(type) : null;
+        if (!principal.isAgent() || serviceType == null) {
+            return;
+        }
+        List<ServiceType> handled = agentRepository.findById(principal.userId())
+                .map(Agent::getManageableServices).orElse(List.of());
+        if (handled == null || !handled.contains(serviceType)) {
+            throw new AccessDeniedException("You don't handle " + serviceType + " - only agents who do can create a " + serviceType + " booking");
+        }
     }
 
     private AuthorResolver.AuthorInfo resolveOwningAgent(String requestedAgentId) {

@@ -37,19 +37,14 @@ public class AgencySettingService {
         if (requiresServiceType && request.getServiceType() == null) {
             throw new IllegalArgumentException("serviceType is required for a " + request.getKind() + " setting");
         }
-        boolean duplicate = request.getServiceType() != null
-                ? agencySettingRepository.existsByKindAndServiceTypeAndNameIgnoreCase(
-                        request.getKind(), request.getServiceType(), request.getName())
-                : agencySettingRepository.existsByKindAndNameIgnoreCase(request.getKind(), request.getName());
-        if (duplicate) {
-            throw new IllegalStateException("\"" + request.getName() + "\" already exists");
-        }
+        String name = request.getName().trim();
+        rejectDuplicate(request.getKind(), request.getServiceType(), name);
 
         AgencySetting setting = AgencySetting.builder()
                 .id(UniqueIdResolver.resolve(agencySettingRepository::existsById))
                 .kind(request.getKind())
                 .serviceType(request.getServiceType())
-                .name(request.getName())
+                .name(name)
                 .isActive(true)
                 .isDefault(false)
                 .sortOrder(nextSortOrder(request.getKind(), request.getServiceType()))
@@ -77,7 +72,17 @@ public class AgencySettingService {
                 .orElseThrow(() -> new IllegalArgumentException("Setting not found: " + id));
         rejectSupplierWrite(setting.getKind());
         if (request.getName() != null) {
-            setting.setName(request.getName());
+            String name = request.getName().trim();
+            if (name.isEmpty()) {
+                throw new IllegalArgumentException("Name is required");
+            }
+            if (!name.equals(setting.getName()) && Boolean.TRUE.equals(setting.getIsDefault())) {
+                throw new IllegalStateException("A system default option can't be renamed");
+            }
+            if (!name.equalsIgnoreCase(setting.getName())) {
+                rejectDuplicate(setting.getKind(), setting.getServiceType(), name);
+            }
+            setting.setName(name);
         }
         if (request.getIsActive() != null) {
             setting.setIsActive(request.getIsActive());
@@ -94,8 +99,21 @@ public class AgencySettingService {
         AgencySetting setting = agencySettingRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Setting not found: " + id));
         rejectSupplierWrite(setting.getKind());
+        if (Boolean.TRUE.equals(setting.getIsDefault())) {
+            throw new IllegalStateException("A system default option can't be removed - hide it instead");
+        }
         agencySettingRepository.delete(setting);
         log.info("Agency setting removed: id={}", id);
+    }
+
+    /** Case-insensitive, among the live rows of the same list (soft-deleted rows are filtered out by the entity). */
+    private void rejectDuplicate(AgencySettingKind kind, ServiceType serviceType, String name) {
+        boolean duplicate = serviceType != null
+                ? agencySettingRepository.existsByKindAndServiceTypeAndNameIgnoreCase(kind, serviceType, name)
+                : agencySettingRepository.existsByKindAndNameIgnoreCase(kind, name);
+        if (duplicate) {
+            throw new IllegalStateException("\"" + name + "\" already exists");
+        }
     }
 
     /** Suppliers moved to /api/vendors - see AgencySettingKind.SUPPLIER's javadoc. */

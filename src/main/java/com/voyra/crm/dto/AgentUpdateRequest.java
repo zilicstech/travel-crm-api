@@ -2,6 +2,7 @@ package com.voyra.crm.dto;
 
 import com.voyra.crm.enums.ServiceType;
 import io.swagger.v3.oas.annotations.media.Schema;
+import com.voyra.crm.util.ValidationPatterns;
 import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Size;
@@ -19,7 +20,7 @@ public class AgentUpdateRequest {
     @Schema(example = "Liam Smith")
     private String name;
 
-    @Size(max = 20, message = "Phone must be 20 characters or fewer")
+    @jakarta.validation.constraints.Pattern(regexp = ValidationPatterns.PHONE, message = ValidationPatterns.PHONE_MESSAGE)
     @Schema(example = "+1 555 123 4567")
     private String phone;
 

@@ -114,7 +114,7 @@ class BookingProfitTest {
 
     @Test
     void profitIsSellingPriceMinusNetCostOnCreate() {
-        when(agentRepository.findById("A1")).thenReturn(Optional.of(Agent.builder().id("A1").name("Liam").build()));
+        when(agentRepository.findById("A1")).thenReturn(Optional.of(Agent.builder().id("A1").name("Liam").manageableServices(java.util.List.of(com.voyra.crm.enums.ServiceType.FLIGHT)).build()));
         when(clientRepository.findById("K1")).thenReturn(Optional.of(Client.builder().id("K1").name("Jane").build()));
         when(bookingRepository.existsById(anyString())).thenReturn(false);
 
@@ -133,7 +133,7 @@ class BookingProfitTest {
 
     @Test
     void aStandaloneBookingCanStillNameTheLeadItCameFrom() {
-        when(agentRepository.findById("A1")).thenReturn(Optional.of(Agent.builder().id("A1").name("Liam").build()));
+        when(agentRepository.findById("A1")).thenReturn(Optional.of(Agent.builder().id("A1").name("Liam").manageableServices(java.util.List.of(com.voyra.crm.enums.ServiceType.FLIGHT)).build()));
         when(clientRepository.findById("K1")).thenReturn(Optional.of(Client.builder().id("K1").name("Jane").build()));
         when(bookingRepository.existsById(anyString())).thenReturn(false);
         when(leadRepository.findById("L1")).thenReturn(Optional.of(com.voyra.crm.entity.Lead.builder().id("L1").build()));
@@ -154,7 +154,7 @@ class BookingProfitTest {
 
     @Test
     void bookingWithNoVendorNeverAutoDraftsASupplierBill() {
-        when(agentRepository.findById("A1")).thenReturn(Optional.of(Agent.builder().id("A1").name("Liam").build()));
+        when(agentRepository.findById("A1")).thenReturn(Optional.of(Agent.builder().id("A1").name("Liam").manageableServices(java.util.List.of(com.voyra.crm.enums.ServiceType.FLIGHT)).build()));
         when(clientRepository.findById("K1")).thenReturn(Optional.of(Client.builder().id("K1").name("Jane").build()));
         when(bookingRepository.existsById(anyString())).thenReturn(false);
 
@@ -174,7 +174,7 @@ class BookingProfitTest {
 
     @Test
     void aPendingBookingDraftsNoSupplierBillUntilItIsConfirmed() {
-        when(agentRepository.findById("A1")).thenReturn(Optional.of(Agent.builder().id("A1").name("Liam").build()));
+        when(agentRepository.findById("A1")).thenReturn(Optional.of(Agent.builder().id("A1").name("Liam").manageableServices(java.util.List.of(com.voyra.crm.enums.ServiceType.FLIGHT)).build()));
         when(clientRepository.findById("K1")).thenReturn(Optional.of(Client.builder().id("K1").name("Jane").build()));
         when(bookingRepository.existsById(anyString())).thenReturn(false);
 

@@ -2,6 +2,7 @@ package com.voyra.crm.dto;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 import java.time.LocalDate;
@@ -21,13 +22,16 @@ public class VisaCreateRequest {
     private String leadId;
 
     @NotBlank(message = "Country is required")
+    @Size(max = 100, message = "Country must be 100 characters or fewer")
     @Schema(example = "United Arab Emirates")
     private String country;
 
     @NotBlank(message = "Visa type is required")
+    @Size(max = 50, message = "Visa type must be 50 characters or fewer")
     @Schema(example = "Tourist")
     private String visaType;
 
+    @Size(max = 20, message = "Passport number must be 20 characters or fewer")
     @Schema(example = "M1234567")
     private String passportNumber;
 

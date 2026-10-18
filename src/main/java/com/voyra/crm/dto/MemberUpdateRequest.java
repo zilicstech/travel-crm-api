@@ -2,6 +2,7 @@ package com.voyra.crm.dto;
 
 import com.voyra.crm.enums.MemberRelation;
 import io.swagger.v3.oas.annotations.media.Schema;
+import com.voyra.crm.util.ValidationPatterns;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
@@ -31,10 +32,11 @@ public class MemberUpdateRequest {
     @Schema(example = "+91")
     private String countryCode;
 
-    @Size(max = 20, message = "Phone must be 20 characters or fewer")
+    @jakarta.validation.constraints.Pattern(regexp = ValidationPatterns.PHONE, message = ValidationPatterns.PHONE_MESSAGE)
     @Schema(example = "9876543211")
     private String phone;
 
+    @jakarta.validation.constraints.PastOrPresent(message = "Date of birth can't be in the future")
     @Schema(example = "1991-11-03")
     private LocalDate dob;
 

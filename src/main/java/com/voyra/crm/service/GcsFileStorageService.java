@@ -121,7 +121,8 @@ public class GcsFileStorageService implements FileStorageService {
     public Resource retrieve(String fileKey) {
         Blob blob = storage.get(BlobId.of(bucket, objectName(fileKey)));
         if (blob == null || !blob.exists()) {
-            throw new IllegalArgumentException("File not found: " + fileKey);
+            log.warn("Stored file missing: {}", fileKey);
+            throw new com.voyra.crm.exception.StoredFileNotFoundException();
         }
         return new ByteArrayResource(blob.getContent()) {
             @Override

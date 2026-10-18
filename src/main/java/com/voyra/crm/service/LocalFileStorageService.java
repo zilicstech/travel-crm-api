@@ -62,7 +62,8 @@ public class LocalFileStorageService implements FileStorageService {
     public Resource retrieve(String fileKey) {
         Path target = resolveWithinBaseDir(fileKey);
         if (!Files.exists(target)) {
-            throw new IllegalArgumentException("File not found: " + fileKey);
+            log.warn("Stored file missing: {}", fileKey);
+            throw new com.voyra.crm.exception.StoredFileNotFoundException();
         }
         try {
             return new UrlResource(target.toUri());

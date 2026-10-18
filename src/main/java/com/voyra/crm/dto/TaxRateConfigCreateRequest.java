@@ -33,9 +33,12 @@ public class TaxRateConfigCreateRequest {
 
     @NotNull(message = "ratePercent is required")
     @DecimalMin(value = "0.0", message = "ratePercent cannot be negative")
+    @jakarta.validation.constraints.DecimalMax(value = "100", message = "ratePercent can't be over 100%")
     @Schema(example = "5.000")
     private BigDecimal ratePercent;
 
+    @DecimalMin(value = "0.0", message = "taxablePercent cannot be negative")
+    @jakarta.validation.constraints.DecimalMax(value = "100", message = "taxablePercent can't be over 100%")
     @Schema(description = "Tour-operator abatement - the % of the line actually taxable. 100 unless a scheme applies.", example = "100.000")
     private BigDecimal taxablePercent;
 

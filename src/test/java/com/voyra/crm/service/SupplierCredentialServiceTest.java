@@ -43,6 +43,8 @@ class SupplierCredentialServiceTest {
 
     @Mock
     private SupplierCredentialRepository supplierCredentialRepository;
+    @Mock
+    private AuditService auditService;
 
     @InjectMocks
     private SupplierCredentialService supplierCredentialService;
@@ -102,6 +104,9 @@ class SupplierCredentialServiceTest {
 
         SupplierCredentialRevealResponse revealed = supplierCredentialService.reveal(SupplierProvider.TRIPJACK);
         assertThat(revealed.getApiKey()).isEqualTo("tj_real_key_9999");
+        // CRD-13: the owner can see who revealed it, not only the server log.
+        org.mockito.Mockito.verify(auditService).recordReveal(com.voyra.crm.enums.AuditEntityType.SUPPLIER_CREDENTIAL,
+                saved.getId(), "TRIPJACK");
     }
 
     @Test

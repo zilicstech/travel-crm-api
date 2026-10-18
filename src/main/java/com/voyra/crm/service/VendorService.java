@@ -81,7 +81,7 @@ public class VendorService {
                 .tdsRatePercent(request.getTdsRatePercent())
                 .bankAccountName(request.getBankAccountName())
                 .bankAccountNumber(request.getBankAccountNumber())
-                .bankIfsc(request.getBankIfsc())
+                .bankIfsc(request.getBankIfsc() != null ? request.getBankIfsc().toUpperCase() : null)
                 .createdBy(SecurityContextUtil.getCurrentUserOrThrow().userId())
                 .createdAt(LocalDateTime.now())
                 .build();
@@ -146,7 +146,7 @@ public class VendorService {
         if (request.getTdsRatePercent() != null) vendor.setTdsRatePercent(request.getTdsRatePercent());
         if (request.getBankAccountName() != null) vendor.setBankAccountName(request.getBankAccountName());
         if (request.getBankAccountNumber() != null) vendor.setBankAccountNumber(request.getBankAccountNumber());
-        if (request.getBankIfsc() != null) vendor.setBankIfsc(request.getBankIfsc());
+        if (request.getBankIfsc() != null) vendor.setBankIfsc(request.getBankIfsc().toUpperCase());
 
         List<AuditChange> changes = AuditSnapshot.diff(before, AuditSnapshot.of(vendor, AUDITED));
         touch(vendor);

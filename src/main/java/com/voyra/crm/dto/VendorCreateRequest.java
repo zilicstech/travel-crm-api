@@ -2,6 +2,7 @@ package com.voyra.crm.dto;
 
 import com.voyra.crm.enums.ServiceType;
 import io.swagger.v3.oas.annotations.media.Schema;
+import com.voyra.crm.util.ValidationPatterns;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
@@ -58,9 +59,11 @@ public class VendorCreateRequest {
     @Schema(example = "false")
     private Boolean isPrepaid;
 
+    @jakarta.validation.constraints.PositiveOrZero(message = "Payment terms can't be negative")
     @Schema(example = "15")
     private Integer paymentTermsDays;
 
+    @jakarta.validation.constraints.PositiveOrZero(message = "Credit limit can't be negative")
     @Schema(example = "500000.00")
     private BigDecimal creditLimitInr;
 
@@ -70,6 +73,8 @@ public class VendorCreateRequest {
     @Schema(example = "194C")
     private String tdsSection;
 
+    @jakarta.validation.constraints.DecimalMin(value = "0", message = "TDS rate can't be negative")
+    @jakarta.validation.constraints.DecimalMax(value = "100", message = "TDS rate can't be over 100%")
     @Schema(example = "2.000")
     private BigDecimal tdsRatePercent;
 
@@ -79,6 +84,7 @@ public class VendorCreateRequest {
     @Schema(example = "000123456789")
     private String bankAccountNumber;
 
+    @Pattern(regexp = ValidationPatterns.IFSC, message = ValidationPatterns.IFSC_MESSAGE)
     @Schema(example = "HDFC0000123")
     private String bankIfsc;
 }

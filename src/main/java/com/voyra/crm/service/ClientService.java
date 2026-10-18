@@ -71,6 +71,7 @@ public class ClientService {
         if (clientRepository.existsByIdentifierAndIsActiveTrue(request.getIdentifier())) {
             throw new IllegalStateException("A client already exists with identifier " + request.getIdentifier());
         }
+        rejectSamePhone(request.getIdentifier(), request.getType(), null);
         if (request.getCreditLimit() == null && !isOwner()) {
             throw new IllegalArgumentException("Enter the client's credit limit (0 if they pay upfront)");
         }
@@ -84,7 +85,7 @@ public class ClientService {
                 .createdAt(LocalDateTime.now())
                 .createdBy(currentUserId())
                 .possibleDuplicateOf(request.getPossibleDuplicateOf())
-                .gstin(request.getGstin())
+                .gstin(request.getGstin() != null ? request.getGstin().trim().toUpperCase() : null)
                 .stateCode(request.getStateCode())
                 .billingAddress(request.getBillingAddress())
                 .isOverseas(Boolean.TRUE.equals(request.getIsOverseas()))
@@ -172,8 +173,11 @@ public class ClientService {
         if (request.getIdentifier() != null && !request.getIdentifier().isBlank()) {
             clientRepository.findByIdentifierAndIsActiveTrue(request.getIdentifier())
                     .ifPresent(c -> byId.put(c.getId(), toDuplicateCandidate(c, "EXACT_IDENTIFIER")));
+            // A phone in another format is the same phone, so it blocks like the exact match; a B2B
+            // handle that merely contains digits stays an advisory match.
+            String reason = looksLikePhone(request.getIdentifier()) ? "EXACT_IDENTIFIER" : "PHONE_SUFFIX";
             for (Client c : clientRepository.findByPhoneSuffix(request.getIdentifier())) {
-                byId.putIfAbsent(c.getId(), toDuplicateCandidate(c, "PHONE_SUFFIX"));
+                byId.putIfAbsent(c.getId(), toDuplicateCandidate(c, reason));
             }
         }
         if (request.getName() != null && !request.getName().isBlank()) {
@@ -198,6 +202,7 @@ public class ClientService {
             if (clientRepository.existsByIdentifierAndIsActiveTrue(request.getIdentifier())) {
                 throw new IllegalStateException("A client already exists with identifier " + request.getIdentifier());
             }
+            rejectSamePhone(request.getIdentifier(), request.getType() != null ? request.getType() : client.getType(), client.getId());
             client.setIdentifier(request.getIdentifier());
         }
         if (request.getType() != null) {
@@ -210,7 +215,7 @@ public class ClientService {
             client.setName(request.getName());
         }
         if (request.getGstin() != null) {
-            client.setGstin(request.getGstin());
+            client.setGstin(request.getGstin().trim().toUpperCase());
         }
         if (request.getStateCode() != null) {
             client.setStateCode(request.getStateCode());
@@ -351,6 +356,22 @@ public class ClientService {
                 .creditUsed(credit == null ? null : credit.getUsed())
                 .creditAvailable(credit == null ? null : credit.getAvailable())
                 .build();
+    }
+
+    /** Only phone characters - so "+91 91000 00101" and "9100000101" are the same number, compared on the last 10 digits. */
+    private static boolean looksLikePhone(String identifier) {
+        return identifier != null && identifier.matches("[0-9+()\\- ]+");
+    }
+
+    private void rejectSamePhone(String identifier, ClientType type, String exceptClientId) {
+        if (type != ClientType.B2C || !looksLikePhone(identifier)) {
+            return;
+        }
+        boolean taken = clientRepository.findByPhoneSuffix(identifier).stream()
+                .anyMatch(c -> !c.getId().equals(exceptClientId));
+        if (taken) {
+            throw new IllegalStateException("A client already exists with this phone number (" + identifier + ")");
+        }
     }
 
     private ClientDuplicateCandidateResponse toDuplicateCandidate(Client c, String reason) {
