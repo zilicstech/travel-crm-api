@@ -274,4 +274,24 @@ class SupplierInvoiceServiceTest {
         assertThat(row.getBookingRef()).isEqualTo("BK-00995");
         assertThat(row.getClientName()).isEqualTo("CRM Money Client");
     }
+
+    /** Round 2 decision: the due date typed on New Bill / Confirm Bill is kept; one before the bill date is refused. */
+    @Test
+    void aDraftKeepsTheTypedDueDateButNeverOneBeforeTheBillDate() {
+        SupplierInvoice invoice = SupplierInvoice.builder().id("SI1").status(SupplierInvoiceStatus.DRAFT).build();
+        when(supplierInvoiceRepository.findById("SI1")).thenReturn(Optional.of(invoice));
+        when(vendorRepository.findById("V1")).thenReturn(Optional.of(Vendor.builder().id("V1").name("Agoda").paymentTermsDays(15).build()));
+        com.voyra.crm.dto.SupplierInvoiceDraftRequest request = new com.voyra.crm.dto.SupplierInvoiceDraftRequest();
+        request.setVendorId("V1");
+        request.setInvoiceDate(java.time.LocalDate.of(2026, 10, 19));
+        request.setDueDate(java.time.LocalDate.of(2026, 11, 30));
+        request.setLines(List.of());
+
+        supplierInvoiceService.updateDraft("SI1", request);
+        assertThat(invoice.getDueDate()).isEqualTo(java.time.LocalDate.of(2026, 11, 30));
+
+        request.setDueDate(java.time.LocalDate.of(2026, 10, 18));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> supplierInvoiceService.updateDraft("SI1", request))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("due date");
+    }
 }

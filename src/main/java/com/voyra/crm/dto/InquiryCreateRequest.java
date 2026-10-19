@@ -1,5 +1,6 @@
 package com.voyra.crm.dto;
 
+import com.voyra.crm.util.ValidationPatterns;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
@@ -28,6 +29,7 @@ public class InquiryCreateRequest {
     private String email;
 
     @Size(max = 30, message = "Phone must be 30 characters or fewer")
+    @Pattern(regexp = ValidationPatterns.PHONE, message = ValidationPatterns.PHONE_MESSAGE)
     @Schema(description = "Email or phone is required", example = "+91 98765 43210")
     private String phone;
 

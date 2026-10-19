@@ -40,6 +40,9 @@ class InquiryControllerTest {
     @MockBean
     private InquiryService inquiryService;
 
+    @MockBean
+    private com.voyra.crm.security.InquiryRateLimiter inquiryRateLimiter;
+
     private void postJson(String json, org.springframework.test.web.servlet.ResultMatcher expected) throws Exception {
         mockMvc.perform(post("/api/public/inquiries").contentType(MediaType.APPLICATION_JSON).content(json))
                 .andExpect(expected);
@@ -58,6 +61,26 @@ class InquiryControllerTest {
         postJson("{\"source\":\"Contact Page!\",\"email\":\"john@acme.com\"}", status().isBadRequest());
         postJson("{\"source\":\"contact\",\"email\":\"john@acme.com\",\"message\":\"" + "x".repeat(2001) + "\"}",
                 status().isBadRequest());
+        verify(inquiryService, never()).submit(any());
+    }
+
+    /** Round 2, R2-1: the inquiry phone follows the same rule as every other phone field. */
+    @Test
+    void publicSubmitRejectsAPhoneWithLetters() throws Exception {
+        postJson("{\"source\":\"contact\",\"phone\":\"call me maybe\"}", status().isBadRequest());
+        verify(inquiryService, never()).submit(any());
+    }
+
+    /** Round 2, R2-8: over the per-connection limit the form gets a 429 with a message it can show. */
+    @Test
+    void publicSubmitOverTheRateLimitIs429WithAFriendlyMessage() throws Exception {
+        org.mockito.Mockito.doThrow(new com.voyra.crm.security.InquiryRateLimiter.TooManyInquiriesException())
+                .when(inquiryRateLimiter).check(any());
+        mockMvc.perform(post("/api/public/inquiries").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"source\":\"contact\",\"email\":\"john@acme.com\"}"))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.message")
+                        .value(org.hamcrest.Matchers.containsString("wait a minute")));
         verify(inquiryService, never()).submit(any());
     }
 

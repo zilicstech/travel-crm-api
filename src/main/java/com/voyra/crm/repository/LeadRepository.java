@@ -19,6 +19,11 @@ import java.util.Optional;
 @Repository
 public interface LeadRepository extends JpaRepository<Lead, String> {
 
+    /** Row lock for the public proposal's select / approve, so a double-click cannot record them twice. */
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("select l from Lead l where l.id = :id")
+    Optional<Lead> findByIdForUpdate(@Param("id") String id);
+
     List<Lead> findByCreatedBy(String createdBy);
 
     /** Owner-wide escalation feed. Agent's own is {@link #findByEscalatedTrueAndCreatedBy}. */

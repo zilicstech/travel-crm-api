@@ -142,13 +142,10 @@ public class GlobalExceptionHandler {
         String cause = getCause(ex);
 
         if (DuplicateConstraintMessageParser.isDuplicateUniqueViolation(messageChain)) {
-            String field = DuplicateConstraintMessageParser.extractFieldLabel(messageChain);
-            log.warn("Duplicate value - field: {}, path: {}", field, path);
-            ApiErrorResponse response = ApiErrorResponse.of(
-                    "A record with this " + field + " already exists", "Duplicate value", null,
-                    HttpStatus.CONFLICT.value(), path);
-            response.setDetails(Map.of("field", field));
-            return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
+            log.warn("Duplicate value - path: {}, cause: {}", path, messageChain);
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(ApiErrorResponse.of(
+                    DuplicateConstraintMessageParser.humanMessage(messageChain), "Duplicate value", null,
+                    HttpStatus.CONFLICT.value(), path));
         }
 
         log.warn("Data integrity violation - path: {}, cause: {}", path, cause);
@@ -202,6 +199,14 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.FORBIDDEN).body(
                 ApiErrorResponse.of(ex.getMessage() != null ? ex.getMessage() : "Access denied",
                         "Forbidden", null, HttpStatus.FORBIDDEN.value(), path));
+    }
+
+    @ExceptionHandler(com.voyra.crm.security.InquiryRateLimiter.TooManyInquiriesException.class)
+    public ResponseEntity<ApiErrorResponse> handleTooManyInquiries(RuntimeException ex, HttpServletRequest request) {
+        String path = getPath(request);
+        log.warn("Rate limited - path: {}", path);
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(
+                ApiErrorResponse.of(ex.getMessage(), "Too many requests", null, HttpStatus.TOO_MANY_REQUESTS.value(), path));
     }
 
     @ExceptionHandler(SupplierException.class)

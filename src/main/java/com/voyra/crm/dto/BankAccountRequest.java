@@ -1,7 +1,9 @@
 package com.voyra.crm.dto;
 
 import io.swagger.v3.oas.annotations.media.Schema;
+import com.voyra.crm.util.ValidationPatterns;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 import lombok.Data;
 
 import java.math.BigDecimal;
@@ -17,6 +19,7 @@ public class BankAccountRequest {
     private String accountNumber;
 
     @Schema(example = "HDFC0000123")
+    @Pattern(regexp = ValidationPatterns.IFSC, message = ValidationPatterns.IFSC_MESSAGE)
     private String ifsc;
 
     @Schema(example = "MG Road Branch")

@@ -1,5 +1,8 @@
 package com.voyra.crm.controller;
 
+import com.voyra.crm.security.InquiryRateLimiter;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import jakarta.servlet.http.HttpServletRequest;
 import com.voyra.crm.dto.InquiryCreateRequest;
 import com.voyra.crm.dto.SimpleAckResponse;
 import com.voyra.crm.service.InquiryService;
@@ -21,11 +24,14 @@ import org.springframework.web.bind.annotation.RestController;
 public class PublicInquiryController {
 
     private final InquiryService inquiryService;
+    private final InquiryRateLimiter inquiryRateLimiter;
 
     @PostMapping
     @Operation(summary = "Submit a sales inquiry", description = "No auth required. Email or phone is required. "
             + "A filled honeypot field is accepted with the same response but not stored.")
-    public ResponseEntity<SimpleAckResponse> submit(@Valid @RequestBody InquiryCreateRequest request) {
+    @ApiResponse(responseCode = "429", description = "More than 5 inquiries a minute from one connection")
+    public ResponseEntity<SimpleAckResponse> submit(@Valid @RequestBody InquiryCreateRequest request, HttpServletRequest http) {
+        inquiryRateLimiter.check(InquiryRateLimiter.callerOf(http));
         inquiryService.submit(request);
         return ResponseEntity.ok(SimpleAckResponse.builder().success(true).message("Inquiry received").build());
     }

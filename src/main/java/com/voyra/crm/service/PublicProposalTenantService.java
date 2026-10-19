@@ -69,14 +69,11 @@ public class PublicProposalTenantService {
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public boolean selectOptions(String leadId, List<String> selectedItemIds) {
-        Optional<Lead> leadOpt = leadRepository.findById(leadId);
+        Optional<Lead> leadOpt = leadRepository.findByIdForUpdate(leadId);
         if (leadOpt.isEmpty()) {
             return false;
         }
         Lead lead = leadOpt.get();
-        if (lead.isProposalLocked()) {
-            throw new IllegalStateException("This proposal is locked. Please contact your agent to make changes.");
-        }
         List<LeadProposal> items = leadProposalRepository.findByLeadId(leadId);
         Map<String, LeadProposal> byId = items.stream()
                 .collect(Collectors.toMap(LeadProposal::getId, Function.identity()));
@@ -91,6 +88,16 @@ public class PublicProposalTenantService {
         Map<String, String> chosenIdByGroup = new java.util.HashMap<>();
         for (String id : selectedItemIds) {
             chosenIdByGroup.put(byId.get(id).getOptionGroup(), id);
+        }
+        boolean unchanged = items.stream()
+                .filter(i -> i.getOptionGroup() != null && chosenIdByGroup.containsKey(i.getOptionGroup()))
+                .allMatch(i -> i.isSelected() == i.getId().equals(chosenIdByGroup.get(i.getOptionGroup())));
+        if (lead.isProposalLocked()) {
+            // The same picks again (a double-click, a retry) are already committed: success, nothing recorded twice.
+            if (unchanged) {
+                return true;
+            }
+            throw new IllegalStateException("This proposal is locked. Please contact your agent to make changes.");
         }
 
         LocalDateTime now = LocalDateTime.now();
@@ -126,7 +133,7 @@ public class PublicProposalTenantService {
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public boolean approve(String leadId) {
-        Optional<Lead> leadOpt = leadRepository.findById(leadId);
+        Optional<Lead> leadOpt = leadRepository.findByIdForUpdate(leadId);
         if (leadOpt.isEmpty()) {
             return false;
         }

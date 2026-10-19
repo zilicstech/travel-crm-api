@@ -70,6 +70,7 @@ class BookingLifecycleServiceTest {
     @Mock private InvoiceDocumentService invoiceDocumentService;
     @Mock private PaymentReceiptService paymentReceiptService;
     @Mock private BookingInvoiceIssuer bookingInvoiceIssuer;
+    @Mock private com.voyra.crm.repository.CreditNoteRepository creditNoteRepository;
 
     @InjectMocks private BookingLifecycleService service;
 
@@ -433,6 +434,23 @@ class BookingLifecycleServiceTest {
 
         assertThat(BookingLifecycleService.build(f, Viewer.ACCOUNTANT).getRecords())
                 .extracting(BookingLifecycleResponse.MoneyRecord::getKind).containsExactly("SUPPLIER_REFUND");
+    }
+
+    /** Owner pass r2: a cancelled booking's money record shows the credit notes, so it is clear why money is owed back. */
+    @Test
+    void creditNotesAppearInTheMoneyRecordForEveryRole() {
+        com.voyra.crm.entity.CreditNote cn = com.voyra.crm.entity.CreditNote.builder().id("C1").creditNoteNumber("CN/2026-27/0181")
+                .status(com.voyra.crm.enums.CreditNoteStatus.ISSUED).invoiceId("I1").totalAmountInr(d("10270"))
+                .noteDate(LocalDate.of(2026, 10, 19)).build();
+        Facts f = new Facts(booking(BookingStatus.CANCELLED), 0, List.of(issued("12360", "-10270")), List.of(), List.of(), List.of(),
+                BigDecimal.ZERO, BigDecimal.ZERO, List.of(cn));
+
+        BookingLifecycleResponse.MoneyRecord row = BookingLifecycleService.build(f, Viewer.AGENT).getRecords().stream()
+                .filter(r -> "CREDIT_NOTE".equals(r.getKind())).findFirst().orElseThrow();
+        assertThat(row.getNumber()).isEqualTo("CN/2026-27/0181");
+        assertThat(row.getAmountInr()).isEqualByComparingTo("10270");
+        assertThat(row.getDate()).isEqualTo(LocalDate.of(2026, 10, 19));
+        assertThat(row.getParentId()).isEqualTo("I1");
     }
 
     @Test

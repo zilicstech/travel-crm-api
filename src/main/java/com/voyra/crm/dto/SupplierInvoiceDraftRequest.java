@@ -43,6 +43,9 @@ public class SupplierInvoiceDraftRequest {
     @Schema(example = "2026-09-19")
     private LocalDate receivedOn;
 
+    @Schema(description = "When the bill is due. Left out, approval sets it to the bill date plus the vendor's payment terms", example = "2026-10-03")
+    private LocalDate dueDate;
+
     @Schema(description = "One bill per booking - the booking this bill is for", example = "8f2a1c3d-58cc-4372-a567-0e02b2c3d479")
     private String bookingId;
 
