@@ -547,6 +547,11 @@ public class SupplierInvoiceService {
                 : (vendor.getGstNumber()));
         invoice.setSupplierStateCode(vendor.getStateCode());
         invoice.setInvoiceDate(request.getInvoiceDate());
+        if (request.getDueDate() != null && request.getInvoiceDate() != null && request.getDueDate().isBefore(request.getInvoiceDate())) {
+            throw new IllegalArgumentException("The due date can't be before the bill date");
+        }
+        // Null leaves it to approve(): the bill date plus the vendor's payment terms.
+        invoice.setDueDate(request.getDueDate());
         invoice.setReceivedOn(request.getReceivedOn() != null ? request.getReceivedOn() : LocalDate.now());
         invoice.setReferenceNote(request.getReferenceNote());
         invoice.setCurrencyCode(request.getCurrencyCode() != null ? request.getCurrencyCode() : "INR");
