@@ -8,6 +8,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class VoucherDetailsTest {
 
@@ -32,5 +33,23 @@ class VoucherDetailsTest {
                 .isEqualTo(LocalDate.of(2026, 12, 21));
         assertThat(VoucherDetails.lastDate(Map.of("journeyDate", "not a date"))).isNull();
         assertThat(VoucherDetails.lastDate(null)).isNull();
+    }
+
+    @Test
+    void theTripRulesApplyToAVouchersDetails() {
+        assertThatThrownBy(() -> VoucherDetails.clean(BookingType.HOTEL,
+                Map.of("hotelCheckIn", "2026-12-12", "hotelCheckOut", "2026-12-11"))).hasMessageContaining("Check-out");
+        assertThatThrownBy(() -> VoucherDetails.clean(BookingType.HOTEL, Map.of("hotelRooms", "0")))
+                .hasMessageContaining("Rooms must be at least 1");
+        assertThatThrownBy(() -> VoucherDetails.clean(BookingType.HOTEL, Map.of("hotelRooms", "two")))
+                .hasMessageContaining("Rooms");
+        assertThatThrownBy(() -> VoucherDetails.clean(BookingType.TRANSFER, Map.of("transferTime", "25:99")))
+                .hasMessageContaining("HH:mm");
+        assertThatThrownBy(() -> VoucherDetails.clean(BookingType.FLIGHT,
+                Map.of("journeyDate", "2026-12-20", "returnDate", "2026-12-10"))).hasMessageContaining("return");
+        assertThatThrownBy(() -> VoucherDetails.clean(BookingType.PACKAGE,
+                Map.of("journeyDate", "2026-12-20", "returnDate", "2026-12-10"))).hasMessageContaining("end date");
+        assertThat(VoucherDetails.clean(BookingType.HOTEL,
+                Map.of("hotelCheckIn", "2026-12-12", "hotelCheckOut", "2026-12-15", "hotelRooms", "1"))).hasSize(3);
     }
 }

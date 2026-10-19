@@ -516,7 +516,7 @@ public class BookingService {
      * existing *_name snapshot columns.
      */
     private static void checkTrip(Booking booking) {
-        TripRules.flight(booking.getJourneyDate(), booking.getReturnDate());
+        TripRules.journey(booking.getType(), booking.getJourneyDate(), booking.getReturnDate());
         TripRules.stay(booking.getHotelCheckIn(), booking.getHotelCheckOut(), booking.getHotelRooms(), null);
         TripRules.transfer(booking.getTransferTime(), null);
     }
@@ -789,7 +789,8 @@ public class BookingService {
     }
 
     private String labelOrType(Booking b) {
-        return b.getSupplier() != null ? b.getSupplier() : b.getType().name();
+        String type = b.getType().name();
+        return b.getSupplier() != null ? b.getSupplier() : type.charAt(0) + type.substring(1).toLowerCase();
     }
 
     /** The free-text supplier as given, else the picked Vendor's name, so the booking always shows who it is with. */

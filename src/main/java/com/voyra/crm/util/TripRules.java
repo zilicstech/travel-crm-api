@@ -1,6 +1,7 @@
 package com.voyra.crm.util;
 
 import com.voyra.crm.dto.FlightSectorDto;
+import com.voyra.crm.enums.BookingType;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -29,6 +30,14 @@ public final class TripRules {
         if (departure != null && returnDate != null && returnDate.isBefore(departure)) {
             throw new IllegalArgumentException("The return date can't be before the departure date");
         }
+    }
+
+    /** A booking's start and end: a package reads as start/end, everything else as departure/return. */
+    public static void journey(BookingType type, LocalDate start, LocalDate end) {
+        if (type == BookingType.PACKAGE && start != null && end != null && end.isBefore(start)) {
+            throw new IllegalArgumentException("The end date can't be before the start date");
+        }
+        flight(start, end);
     }
 
     /** Legs fly in order: no sector departs before the one before it. */
