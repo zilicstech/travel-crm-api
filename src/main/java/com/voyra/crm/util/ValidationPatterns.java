@@ -1,6 +1,6 @@
 package com.voyra.crm.util;
 
-/** Regexes shared by request DTOs' {@code @Pattern}s, so a field means the same thing on every form. */
+/** Regexes (and the cross-field rules built on them) shared by request DTOs and services, so a field means the same thing on every form. */
 public final class ValidationPatterns {
 
     private ValidationPatterns() {
@@ -17,4 +17,23 @@ public final class ValidationPatterns {
     /** IFSC: 4 bank letters, a zero, 6 branch characters. */
     public static final String IFSC = "^$|(?i)^[A-Z]{4}0[A-Z0-9]{6}$";
     public static final String IFSC_MESSAGE = "Enter a valid 11-character IFSC";
+
+    /** A GSTIN's first two digits are its state code; refuses a pair that disagrees (either blank passes). */
+    public static void requireGstinMatchesState(String gstin, String stateCode) {
+        if (gstin == null || gstin.isBlank() || stateCode == null || stateCode.isBlank()) {
+            return;
+        }
+        String gstinState = gstin.trim().substring(0, Math.min(2, gstin.trim().length()));
+        if (!gstinState.equals(stateCode.trim())) {
+            throw new IllegalArgumentException("This GSTIN is registered in state " + gstinState + ", but the GST state is "
+                    + stateCode.trim() + " - the first two digits of a GSTIN are its state code");
+        }
+    }
+
+    /** A B2C identifier is the household's phone number, so it must look like one. */
+    public static void requirePhone(String value) {
+        if (value != null && !value.matches(PHONE)) {
+            throw new IllegalArgumentException(PHONE_MESSAGE);
+        }
+    }
 }

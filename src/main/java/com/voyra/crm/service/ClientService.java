@@ -27,6 +27,7 @@ import com.voyra.crm.repository.VisaRepository;
 import com.voyra.crm.security.SecurityContextUtil;
 import com.voyra.crm.util.AuditSnapshot;
 import com.voyra.crm.util.UniqueIdResolver;
+import com.voyra.crm.util.ValidationPatterns;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -71,6 +72,11 @@ public class ClientService {
         if (clientRepository.existsByIdentifierAndIsActiveTrue(request.getIdentifier())) {
             throw new IllegalStateException("A client already exists with identifier " + request.getIdentifier());
         }
+        if (request.getType() == ClientType.B2C) {
+            ValidationPatterns.requirePhone(request.getIdentifier());
+            ValidationPatterns.requirePhone(request.getPrimaryMemberPhone());
+        }
+        ValidationPatterns.requireGstinMatchesState(request.getGstin(), request.getStateCode());
         rejectSamePhone(request.getIdentifier(), request.getType(), null);
         if (request.getCreditLimit() == null && !isOwner()) {
             throw new IllegalArgumentException("Enter the client's credit limit (0 if they pay upfront)");
@@ -208,6 +214,10 @@ public class ClientService {
         if (request.getType() != null) {
             client.setType(request.getType());
         }
+        boolean identityChanged = request.getIdentifier() != null || request.getType() != null;
+        if (identityChanged && client.getType() == ClientType.B2C) {
+            ValidationPatterns.requirePhone(client.getIdentifier());
+        }
 
         boolean renamed = request.getName() != null && !request.getName().equals(client.getName());
         if (renamed) {
@@ -219,6 +229,10 @@ public class ClientService {
         }
         if (request.getStateCode() != null) {
             client.setStateCode(request.getStateCode());
+        }
+        // Only when the pair is being edited, so an unrelated edit isn't blocked by older data.
+        if (request.getGstin() != null || request.getStateCode() != null) {
+            ValidationPatterns.requireGstinMatchesState(client.getGstin(), client.getStateCode());
         }
         if (request.getBillingAddress() != null) {
             client.setBillingAddress(request.getBillingAddress());

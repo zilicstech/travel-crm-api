@@ -5,6 +5,7 @@ import com.voyra.crm.dto.AgencyProfileUpdateRequest;
 import com.voyra.crm.entity.Tenant;
 import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.security.SecurityContextUtil;
+import com.voyra.crm.util.ValidationPatterns;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -48,6 +49,10 @@ public class AgencyProfileService {
         }
         if (request.getStateCode() != null) {
             tenant.setStateCode(request.getStateCode());
+        }
+        // Only when the pair is being edited, so an unrelated edit isn't blocked by older data.
+        if (request.getGstNumber() != null || request.getStateCode() != null) {
+            ValidationPatterns.requireGstinMatchesState(tenant.getGstNumber(), tenant.getStateCode());
         }
         if (request.getBaseCurrencyCode() != null) {
             tenant.setBaseCurrencyCode(request.getBaseCurrencyCode());

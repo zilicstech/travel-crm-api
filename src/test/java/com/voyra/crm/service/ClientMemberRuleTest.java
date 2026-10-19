@@ -294,6 +294,48 @@ class ClientMemberRuleTest {
         verify(memberRepository, never()).save(any());
     }
 
+    /** A B2C identifier is the household's phone and becomes the primary member's phone - "abc" is not one. */
+    @Test
+    void anIndividualClientsIdentifierMustBeAPhoneButACorporateHandleIsKept() {
+        authenticateAs("O1", UserType.AGENCY_OWNER);
+        ClientCreateRequest request = new ClientCreateRequest();
+        request.setIdentifier("abc");
+        request.setName("Ajay Sharma");
+        request.setType(ClientType.B2C);
+        request.setPrimaryMemberName("Ajay Sharma");
+        request.setPrimaryMemberPhone("abc");
+        assertThatThrownBy(() -> clientService.createClient(request))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(com.voyra.crm.util.ValidationPatterns.PHONE_MESSAGE);
+        verify(clientRepository, never()).save(any());
+
+        request.setType(ClientType.B2B);
+        request.setIdentifier("IYER-CORP");
+        request.setPrimaryMemberPhone(null);
+        when(clientRepository.existsById(any())).thenReturn(false);
+        when(memberRepository.existsById(any())).thenReturn(false);
+        clientService.createClient(request);
+        verify(clientRepository).save(any());
+    }
+
+    /** The first two GSTIN digits are its state code - a Karnataka GSTIN can't sit on a Maharashtra client. */
+    @Test
+    void aGstinWhoseStateDigitsDifferFromTheGstStateIsRefused() {
+        authenticateAs("A1", UserType.AGENT);
+        Client client = client("C1");
+        when(clientRepository.findById("C1")).thenReturn(Optional.of(client));
+        com.voyra.crm.dto.ClientUpdateRequest update = new com.voyra.crm.dto.ClientUpdateRequest();
+        update.setGstin("29AABCU9603R1ZM");
+        update.setStateCode("27");
+        assertThatThrownBy(() -> clientService.updateClient("C1", update))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("This GSTIN is registered in state 29, but the GST state is 27 - the first two digits of a GSTIN are its state code");
+
+        update.setStateCode("29");
+        clientService.updateClient("C1", update);
+        assertThat(client.getGstin()).isEqualTo("29AABCU9603R1ZM");
+    }
+
     private Member primary(String name) {
         return Member.builder().memberId("M1").clientId("C1").name(name)
                 .type(MemberType.CLIENT).relation(MemberRelation.SELF).isActive(true).build();
