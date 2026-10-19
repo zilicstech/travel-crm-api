@@ -276,6 +276,24 @@ class ClientMemberRuleTest {
         verify(memberRepository, never()).delete(any());
         assertThat(member.getIsActive()).isFalse();
     }
+    /** Removing someone still travelling on an open lead would leave an invisible, still-counted traveller there. */
+    @Test
+    void deactivatingAMemberWhoIsALiveTravellerOnAnOpenLeadIsRefusedNamingTheLead() {
+        authenticateAs("A1", UserType.AGENT);
+        when(clientRepository.findById("C1")).thenReturn(Optional.of(client("C1")));
+        Member member = Member.builder().memberId("M2").clientId("C1").name("Ankita Sharma")
+                .type(MemberType.MEMBER).relation(MemberRelation.SPOUSE).isActive(true).build();
+        when(memberRepository.findByMemberIdAndClientId("M2", "C1")).thenReturn(Optional.of(member));
+        when(leadMemberRepository.findOpenLeadDestinationsForMember("M2", LeadService.TERMINAL_STATUSES))
+                .thenReturn(List.of("Goa"));
+
+        assertThatThrownBy(() -> memberService().updateStatus("C1", "M2", false))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Ankita Sharma is a traveller on the open lead Goa - drop them from Goa first");
+        assertThat(member.getIsActive()).isTrue();
+        verify(memberRepository, never()).save(any());
+    }
+
     private Member primary(String name) {
         return Member.builder().memberId("M1").clientId("C1").name(name)
                 .type(MemberType.CLIENT).relation(MemberRelation.SELF).isActive(true).build();

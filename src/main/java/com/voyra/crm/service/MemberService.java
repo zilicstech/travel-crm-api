@@ -146,7 +146,8 @@ public class MemberService {
      *
      * <p>The primary member cannot be deactivated while the client is active: the partial
      * unique index guarantees exactly one, so removing them would leave the client with no
-     * point of contact and no source for its snapshot columns.
+     * point of contact and no source for its snapshot columns. Nor can a member who is still a
+     * live traveller on an open lead - they must be dropped (with a reason) there first.
      */
     @Transactional
     public MemberResponse updateStatus(String clientId, String memberId, boolean active) {
@@ -154,6 +155,16 @@ public class MemberService {
         if (!active && member.getType() == MemberType.CLIENT) {
             throw new IllegalStateException(
                     "The primary member cannot be deactivated - deactivate the client instead");
+        }
+        if (!active) {
+            List<String> openLeads = leadMemberRepository.findOpenLeadDestinationsForMember(
+                    memberId, LeadService.TERMINAL_STATUSES);
+            if (!openLeads.isEmpty()) {
+                String leads = String.join(", ", openLeads);
+                throw new IllegalStateException(member.getName() + " is a traveller on the open lead"
+                        + (openLeads.size() > 1 ? "s " : " ") + leads
+                        + " - drop them from " + (openLeads.size() > 1 ? "those leads" : leads) + " first");
+            }
         }
         Map<String, String> before = AuditSnapshot.of(member, AUDITED);
         member.setIsActive(active);

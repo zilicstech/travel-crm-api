@@ -70,7 +70,7 @@ public class ClientSubResourceController {
     @PatchMapping("/members/{memberId}/status")
     @Operation(summary = "Activate or deactivate a member",
             description = "Deactivation rather than deletion, so past lead manifests keep resolving. "
-                    + "The primary member cannot be deactivated.")
+                    + "The primary member cannot be deactivated, nor a member still travelling (not dropped) on an open lead.")
     public ResponseEntity<MemberResponse> updateMemberStatus(@PathVariable String clientId,
                                                              @PathVariable String memberId,
                                                              @Valid @RequestBody ActiveStatusUpdateRequest request) {

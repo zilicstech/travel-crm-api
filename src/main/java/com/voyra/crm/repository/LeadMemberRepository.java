@@ -2,6 +2,7 @@ package com.voyra.crm.repository;
 
 import com.voyra.crm.entity.LeadMember;
 import com.voyra.crm.enums.LeadMemberStatus;
+import com.voyra.crm.enums.LeadStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -25,6 +26,17 @@ public interface LeadMemberRepository extends JpaRepository<LeadMember, String> 
     boolean existsByLeadIdAndMemberId(String leadId, String memberId);
 
     long countByLeadIdAndStatus(String leadId, LeadMemberStatus status);
+
+    /** Destinations of the not-yet-closed leads this member still travels on (not DROPPED). */
+    @Query("""
+            SELECT l.destination FROM LeadMember lm, Lead l
+            WHERE l.id = lm.leadId AND lm.memberId = :memberId
+              AND lm.status <> com.voyra.crm.enums.LeadMemberStatus.DROPPED
+              AND l.status NOT IN :closed
+            ORDER BY l.destination
+            """)
+    List<String> findOpenLeadDestinationsForMember(@Param("memberId") String memberId,
+                                                   @Param("closed") Collection<LeadStatus> closed);
 
     /** Keeps the denormalized member_name snapshot live-synced on Member rename. */
     @Modifying
