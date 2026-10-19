@@ -58,4 +58,10 @@ class BookingInvoiceLineBuilderTest {
         assertThat(lines.get(0).getFareAmount()).isNull();
         assertThat(lines.get(0).getTaxAmount()).isNull();
     }
+
+    @Test
+    void lineDatesPrintTheSameWayAsTheRestOfTheInvoice() {
+        org.assertj.core.api.Assertions.assertThat(BookingInvoiceLineBuilder.lineDate("2026-12-20")).isEqualTo("20/12/26");
+        org.assertj.core.api.Assertions.assertThat(BookingInvoiceLineBuilder.lineDate("soon")).isEqualTo("soon");
+    }
 }
