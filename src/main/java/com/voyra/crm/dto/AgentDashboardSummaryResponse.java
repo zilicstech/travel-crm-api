@@ -37,7 +37,7 @@ public class AgentDashboardSummaryResponse {
     @Schema(description = "Total profit across this agent's bookings", example = "10000.00")
     private BigDecimal profit;
 
-    @Schema(description = "bookedLeads / myLeadsCount * 100, rounded", example = "25")
+    @Schema(description = "Leads this agent created that reached Booked / leads this agent created * 100, rounded - the same definition as the agent performance view", example = "25")
     private int conversionPercent;
 
     @Schema(description = "This agent's 5 most recently created bookings")

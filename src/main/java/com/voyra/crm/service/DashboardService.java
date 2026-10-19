@@ -88,7 +88,6 @@ public class DashboardService {
                 : leadRepository.findAccessibleToAgent(agentId, types);
 
         long myLeadsCount = myLeads.size();
-        long bookedCount = myLeads.stream().filter(l -> l.getStatus() == LeadStatus.BOOKED).count();
         long newCount = myLeads.stream().filter(l -> l.getStatus() == LeadStatus.NEW).count();
         long todayFollowUpsCount = myLeads.stream()
                 .filter(l -> l.getFollowUpDate() != null && !l.getFollowUpDate().isAfter(LocalDate.now())
@@ -116,7 +115,9 @@ public class DashboardService {
                 .pendingBookingsCount(bookingRepository.countByAgentIdAndBookingStatus(agentId, BookingStatus.PENDING))
                 .revenue(revenue.getTotalRevenue())
                 .profit(revenue.getTotalProfit())
-                .conversionPercent(percentage(bookedCount, myLeadsCount))
+                // Same definition as My Profile / agent detail: own created leads that reached Booked.
+                .conversionPercent(percentage(leadRepository.countByCreatedByAndStatus(agentId, LeadStatus.BOOKED),
+                        leadRepository.countByCreatedBy(agentId)))
                 .recentBookings(recentBookings)
                 .overdueFollowUps(overdueFollowUps)
                 .build();
