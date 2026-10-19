@@ -131,6 +131,8 @@ public class LeadService {
                 .categories(request.getCategories())
                 .budget(request.getBudget())
                 .followUpDate(request.getFollowUpDate())
+                .specialNotes(request.getSpecialNotes() == null || request.getSpecialNotes().isBlank()
+                        ? null : request.getSpecialNotes().trim())
                 .isActive(true)
                 .createdAt(LocalDateTime.now())
                 .createdBy(author.id())
@@ -141,6 +143,10 @@ public class LeadService {
         leadTimelineService.recordTransition(lead.getId(), LeadTimelineEventType.LEAD_CREATED,
                 null, LeadStatus.NEW, "Lead created for " + client.getName() + " to " + lead.getDestination());
         auditService.recordCreate(AuditEntityType.LEAD, lead.getId(), lead.getClientName() + " / " + lead.getDestination());
+        // Same transaction: a refused service (rooms 0, reversed stay) rolls the lead back too.
+        if (request.getServices() != null && !request.getServices().isEmpty()) {
+            serviceInstanceService.createServices(lead.getId(), request.getServices());
+        }
 
         log.info("Lead created: leadId={}, clientId={}, createdBy={}", lead.getId(), client.getId(), author.id());
         return toDetailResponse(lead);

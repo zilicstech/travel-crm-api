@@ -2,6 +2,7 @@ package com.voyra.crm.dto;
 
 import com.voyra.crm.enums.LeadPriority;
 import io.swagger.v3.oas.annotations.media.Schema;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.Size;
@@ -63,4 +64,12 @@ public class LeadCreateRequest {
     @Schema(description = "Standing preferences for this trip - airline, cabin, meal, hotel category",
             example = "Emirates preferred, vegetarian meals, 5-star only")
     private String preferences;
+
+    @Valid
+    @Schema(description = "The services to open on the lead, created in the same transaction - a refused "
+            + "service leaves no lead behind")
+    private List<ServiceDraft> services;
+
+    @Schema(description = "One remark for the whole trip", example = "First time abroad, celebrating their anniversary")
+    private String specialNotes;
 }
