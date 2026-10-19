@@ -80,7 +80,7 @@ public class BookingLifecycleResponse {
     public static class MoneyRecord {
         @Schema(description = "Id of the invoice, receipt, bill or payment")
         private String id;
-        @Schema(description = "INVOICE, RECEIPT, ADVANCE, ADVANCE_APPLIED, REFUND, SUPPLIER_BILL, SUPPLIER_PAYMENT or SUPPLIER_REFUND", example = "RECEIPT")
+        @Schema(description = "INVOICE, CREDIT_NOTE, RECEIPT, ADVANCE, ADVANCE_APPLIED, REFUND, SUPPLIER_BILL, SUPPLIER_PAYMENT or SUPPLIER_REFUND", example = "RECEIPT")
         private String kind;
         @Schema(example = "RCPT/2026-27/0012")
         private String number;
@@ -95,7 +95,7 @@ public class BookingLifecycleResponse {
         @Schema(description = "Supplier name for supplier rows", example = "IndiGo")
         private String party;
         private boolean reversed;
-        @Schema(description = "The invoice or bill this receipt or payment settles")
+        @Schema(description = "The invoice or bill this receipt, payment or credit note belongs to")
         private String parentId;
     }
 }

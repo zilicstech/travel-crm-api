@@ -66,7 +66,12 @@ public class BookingLifecycleService {
     /** Everything the steps are computed from, gathered once so the computation itself stays pure. */
     record Facts(Booking booking, int documentCount, List<Invoice> invoices, List<PaymentReceipt> receipts,
                  List<SupplierInvoice> bills, List<SupplierPayment> supplierPayments, BigDecimal clientWalletInr,
-                 BigDecimal invoicedPriceInr) {
+                 BigDecimal invoicedPriceInr, List<com.voyra.crm.entity.CreditNote> creditNotes) {
+        Facts(Booking booking, int documentCount, List<Invoice> invoices, List<PaymentReceipt> receipts,
+              List<SupplierInvoice> bills, List<SupplierPayment> supplierPayments, BigDecimal clientWalletInr,
+              BigDecimal invoicedPriceInr) {
+            this(booking, documentCount, invoices, receipts, bills, supplierPayments, clientWalletInr, invoicedPriceInr, List.of());
+        }
     }
 
     private final BookingService bookingService;
@@ -79,6 +84,7 @@ public class BookingLifecycleService {
     private final InvoiceDocumentService invoiceDocumentService;
     private final BookingInvoiceIssuer bookingInvoiceIssuer;
     private final PaymentReceiptService paymentReceiptService;
+    private final com.voyra.crm.repository.CreditNoteRepository creditNoteRepository;
 
     @Transactional(readOnly = true)
     public BookingLifecycleResponse getLifecycle(String bookingId) {
@@ -229,7 +235,9 @@ public class BookingLifecycleService {
         return new Facts(booking, bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc(id).size(),
                 invoiceRepository.findByBookingId(id), receipts, bills, payments,
                 paymentReceiptService.availableWalletFor(booking.getClientId(), booking.getId()),
-                bookingService.invoicedPrice(id));
+                bookingService.invoicedPrice(id),
+                creditNoteRepository.findByBookingIdAndStatusNot(id, com.voyra.crm.enums.CreditNoteStatus.CANCELLED).stream()
+                        .filter(c -> c.getStatus() == com.voyra.crm.enums.CreditNoteStatus.ISSUED).toList());
     }
 
     private static Viewer currentViewer() {
@@ -357,6 +365,11 @@ public class BookingLifecycleService {
             if (i.getDocumentType() != InvoiceDocumentType.TAX_INVOICE || i.getStatus() == InvoiceLifecycle.DRAFT) continue;
             rows.add(MoneyRecord.builder().id(i.getId()).kind("INVOICE").number(i.getInvoiceNumber()).status(i.getStatus().name())
                     .date(i.getInvoiceDate()).amountInr(i.getGrandTotalInr()).balanceInr(i.getBalanceDueInr()).build());
+        }
+        // Shown to every role like the invoices they reduce: why money is owed back after a cancel.
+        for (com.voyra.crm.entity.CreditNote c : f.creditNotes()) {
+            rows.add(MoneyRecord.builder().id(c.getId()).kind("CREDIT_NOTE").number(c.getCreditNoteNumber()).status(c.getStatus().name())
+                    .date(c.getNoteDate()).amountInr(c.getTotalAmountInr()).parentId(c.getInvoiceId()).build());
         }
         for (PaymentReceipt r : f.receipts()) {
             String kind = r.getDirection() == ReceiptDirection.REFUND ? "REFUND"
