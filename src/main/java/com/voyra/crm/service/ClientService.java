@@ -188,7 +188,9 @@ public class ClientService {
         }
         if (request.getName() != null && !request.getName().isBlank()) {
             for (Client c : clientRepository.findSimilarByName(request.getName())) {
-                byId.putIfAbsent(c.getId(), toDuplicateCandidate(c, "NAME_SIMILARITY"));
+                if (com.voyra.crm.util.NameSimilarity.likelySame(request.getName(), c.getName())) {
+                    byId.putIfAbsent(c.getId(), toDuplicateCandidate(c, "NAME_SIMILARITY"));
+                }
             }
         }
         return List.copyOf(byId.values());

@@ -178,6 +178,7 @@ public class BookingLifecycleService {
         String what = x.get("flightFrom") != null && x.get("flightTo") != null ? x.get("flightFrom") + " to " + x.get("flightTo")
                 : x.getOrDefault("hotelName", x.getOrDefault("transferPickup", x.getOrDefault("visaCountry", "")));
         String when = x.getOrDefault("journeyDate", x.getOrDefault("hotelCheckIn", x.getOrDefault("transferDate", "")));
+        when = when.isBlank() ? when : com.voyra.crm.util.BookingInvoiceLineBuilder.lineDate(when);
         String ref = d.getReferenceNumber() == null || d.getReferenceNumber().isBlank() ? "" : "(" + d.getReferenceNumber().trim() + ")";
         return java.util.stream.Stream.of(what, when, ref).filter(p -> !p.isBlank()).collect(java.util.stream.Collectors.joining(" "));
     }

@@ -44,7 +44,26 @@ public final class VoucherDetails {
                 out.put(key, v.length() > MAX_LENGTH ? v.substring(0, MAX_LENGTH) : v);
             }
         }
+        check(type, out);
         return out.isEmpty() ? null : out;
+    }
+
+    /** The same trip rules the booking itself obeys - the completion job reads these dates. */
+    private static void check(BookingType type, Map<String, String> d) {
+        TripRules.journey(type, date(d.get("journeyDate")), date(d.get("returnDate")));
+        TripRules.stay(date(d.get("hotelCheckIn")), date(d.get("hotelCheckOut")), rooms(d.get("hotelRooms")), null);
+        TripRules.transfer(d.get("transferTime"), null);
+    }
+
+    private static Integer rooms(String s) {
+        if (s == null) {
+            return null;
+        }
+        try {
+            return Integer.valueOf(s);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Rooms must be a whole number");
+        }
     }
 
     /** The latest date a voucher's details mention, or null. */
@@ -57,6 +76,9 @@ public final class VoucherDetails {
     }
 
     private static LocalDate date(String s) {
+        if (s == null) {
+            return null;
+        }
         try {
             return LocalDate.parse(s);
         } catch (DateTimeParseException e) {

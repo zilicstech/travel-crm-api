@@ -488,6 +488,6 @@ class BookingLifecycleServiceTest {
         ArgumentCaptor<InvoiceDraftRequest> draft = ArgumentCaptor.forClass(InvoiceDraftRequest.class);
         verify(invoiceDocumentService).createDraft(draft.capture());
         assertThat(draft.getValue().getLines().get(0).getDescription())
-                .isEqualTo("Additional services - BK-00007: BOM to DEL 2026-12-20 (RET1)");
+                .isEqualTo("Additional services - BK-00007: BOM to DEL 20/12/26 (RET1)");
     }
 }

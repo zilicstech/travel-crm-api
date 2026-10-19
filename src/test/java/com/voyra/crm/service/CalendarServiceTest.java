@@ -148,4 +148,34 @@ class CalendarServiceTest {
         assertThat(events).extracting(CalendarEventResponse::getDate)
                 .containsExactly(LocalDate.of(2026, 9, 5), LocalDate.of(2026, 9, 25));
     }
+
+    @Test
+    void anOverdueFollowUpIsHighAndABillCarriesItsNumberAndAmount() {
+        authenticateAs("O1", UserType.AGENCY_OWNER);
+        stubEmptyOwnerWide();
+        LocalDate past = LocalDate.now().minusDays(3);
+        LocalDate future = LocalDate.now().plusDays(3);
+        LeadFollowUp overdue = LeadFollowUp.builder().leadId("L1").clientName("A").leadDestination("Goa")
+                .dueDate(past).note("Call back").status(FollowUpStatus.OPEN).build();
+        LeadFollowUp upcoming = LeadFollowUp.builder().leadId("L2").clientName("B").leadDestination("Goa")
+                .dueDate(future).note("Send quote").status(FollowUpStatus.OPEN).build();
+        when(leadFollowUpRepository.findByStatusAndDueDateBetweenOrderByDueDateAsc(any(), any(), any()))
+                .thenReturn(List.of(overdue, upcoming));
+        com.voyra.crm.entity.SupplierInvoice bill = com.voyra.crm.entity.SupplierInvoice.builder().id("S1")
+                .vendorName("Agoda").supplierInvoiceNumber("AG-77").dueDate(future)
+                .balanceDueInr(new java.math.BigDecimal("8000.00")).build();
+        when(supplierInvoiceRepository.findByDueDateBetweenAndBalanceDueGreaterThan(any(), any(), any()))
+                .thenReturn(List.of(bill));
+
+        List<CalendarEventResponse> events = calendarService.list(past.minusDays(1), future.plusDays(1));
+
+        assertThat(events).filteredOn(e -> "L1".equals(e.getTargetId())).singleElement()
+                .satisfies(e -> assertThat(e.getSeverity()).isEqualTo("HIGH"));
+        assertThat(events).filteredOn(e -> "L2".equals(e.getTargetId())).singleElement()
+                .satisfies(e -> assertThat(e.getSeverity()).isEqualTo("MEDIUM"));
+        assertThat(events).filteredOn(e -> "S1".equals(e.getTargetId())).singleElement().satisfies(e -> {
+            assertThat(e.getSubtitle()).isEqualTo("AG-77");
+            assertThat(e.getAmount()).isEqualByComparingTo("8000");
+        });
+    }
 }

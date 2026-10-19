@@ -197,6 +197,30 @@ class LeadScopingTest {
     }
 
     @Test
+    void theWizardsServicesAreCreatedInsideTheLeadsOwnCreateSoARefusalSavesNothing() {
+        authenticateAs("A1", UserType.AGENT);
+        when(authorResolver.resolveCurrentAuthor()).thenReturn(new AuthorResolver.AuthorInfo("A1", "Vikram"));
+        when(clientService.findAccessibleClient("K1")).thenReturn(
+                com.voyra.crm.entity.Client.builder().id("K1").name("Arjun").build());
+        com.voyra.crm.dto.ServiceDraft hotel = new com.voyra.crm.dto.ServiceDraft();
+        hotel.setType(ServiceType.HOTEL);
+        hotel.setHotelRooms(0);
+        com.voyra.crm.dto.LeadCreateRequest request = new com.voyra.crm.dto.LeadCreateRequest();
+        request.setClientId("K1");
+        request.setDestination("Goa");
+        request.setServices(List.of(hotel));
+        request.setSpecialNotes("  Anniversary ");
+        when(serviceInstanceService.createServices(any(), eq(List.of(hotel))))
+                .thenThrow(new IllegalArgumentException("Rooms must be at least 1"));
+
+        // The exception leaves createLead's @Transactional, so the lead insert rolls back with it.
+        assertThatThrownBy(() -> leadService.createLead(request)).hasMessage("Rooms must be at least 1");
+        org.mockito.ArgumentCaptor<Lead> saved = org.mockito.ArgumentCaptor.forClass(Lead.class);
+        verify(leadRepository).save(saved.capture());
+        assertThat(saved.getValue().getSpecialNotes()).isEqualTo("Anniversary");
+    }
+
+    @Test
     void theFullListComesBackNewestFirst() {
         authenticateAs("O1", UserType.AGENCY_OWNER);
         Lead old = Lead.builder().id("OLD").createdBy("A1").status(LeadStatus.NEW)

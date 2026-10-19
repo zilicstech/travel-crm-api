@@ -33,6 +33,15 @@ public final class BookingInvoiceLineBuilder {
     private BookingInvoiceLineBuilder() {
     }
 
+    /** An ISO date as the invoice lines print dates (dd/MM/yy); anything unparseable as given. */
+    public static String lineDate(String iso) {
+        try {
+            return java.time.LocalDate.parse(iso).format(DATE);
+        } catch (java.time.format.DateTimeParseException e) {
+            return iso;
+        }
+    }
+
     public static List<InvoiceLineItemRequest> build(Booking booking, InvoiceServiceCategory category,
                                                        List<BookingPassenger> passengers,
                                                        Map<String, List<BookingSector>> sectorsByPassengerId) {
