@@ -393,9 +393,14 @@ public class PaymentReceiptService {
                 .build();
     }
 
-    /** Per booking: advances taken for it, less what its own invoices have already drawn from the wallet. */
+    /**
+     * Per booking: advances taken for it, less what its own invoices have already drawn from the wallet.
+     * Never more in total than the pool really holds: when another booking's invoice drew held money
+     * (NB-3: BK-01006's advance paid a BK-01094 invoice), the shortfall comes off the oldest advances first
+     * - the same oldest-first order the Apply Wallet deposit picker uses - so it stops blocking the rest.
+     */
     private java.util.Map<String, BigDecimal> heldPerBooking(String clientId) {
-        java.util.Map<String, BigDecimal> held = new java.util.HashMap<>();
+        java.util.Map<String, BigDecimal> held = new java.util.LinkedHashMap<>();
         paymentReceiptRepository.findByClientIdAndInvoiceIdIsNullAndIsAdvanceTrueOrderByReceivedOnAsc(clientId).stream()
                 .filter(r -> r.getBookingId() != null && r.getReversedAt() == null && r.getReversesReceiptId() == null)
                 .forEach(r -> held.merge(r.getBookingId(), signedAdvance(r), BigDecimal::add));
@@ -403,6 +408,15 @@ public class PaymentReceiptService {
                 .filter(r -> r.getBookingId() != null && r.getReversedAt() == null && r.getReversesReceiptId() == null && held.containsKey(r.getBookingId()))
                 .forEach(r -> held.merge(r.getBookingId(), r.getAmountInr().negate(), BigDecimal::add));
         held.replaceAll((k, v) -> v.max(BigDecimal.ZERO));
+        BigDecimal excess = held.values().stream().reduce(BigDecimal.ZERO, BigDecimal::add).subtract(remainingWallet(clientId));
+        for (java.util.Map.Entry<String, BigDecimal> e : held.entrySet()) {
+            if (excess.signum() <= 0) {
+                break;
+            }
+            BigDecimal cut = excess.min(e.getValue());
+            e.setValue(e.getValue().subtract(cut));
+            excess = excess.subtract(cut);
+        }
         return held;
     }
 

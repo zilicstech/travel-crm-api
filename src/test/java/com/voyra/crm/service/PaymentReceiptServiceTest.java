@@ -556,4 +556,24 @@ class PaymentReceiptServiceTest {
         assertThat(paymentReceiptService.heldForBooking("K1", "BA")).isEqualByComparingTo("500.00");
         assertThat(paymentReceiptService.availableWalletFor("K1", "BA")).isEqualByComparingTo("500.00");
     }
+
+    /**
+     * Round 2, NB-3 (the real BK-01006 / BK-01094 / BK-01244 rows): BK-01006's 5840 advance drew 1416
+     * for its own invoice, then 4424 of it paid a BK-01094 invoice. The pool is
+     * 5840 + 1920 - 1416 - 4424 = 1920, all of it BK-01244's advance; BK-01006 holds nothing any more.
+     */
+    @Test
+    void anAdvanceAppliedToAnotherBookingsInvoiceStopsBeingHeldForItsOwn() {
+        when(paymentReceiptRepository.findByClientIdAndInvoiceIdIsNullAndIsAdvanceTrueOrderByReceivedOnAsc("K1")).thenReturn(List.of(
+                PaymentReceipt.builder().id("D1").bookingId("B1006").isAdvance(true).amountInr(new BigDecimal("5840.00")).build(),
+                PaymentReceipt.builder().id("D2").bookingId("B1244").isAdvance(true).amountInr(new BigDecimal("1920.00")).build()));
+        when(paymentReceiptRepository.findByClientIdAndAppliedFromAdvanceTrueOrderByReceivedOnAsc("K1")).thenReturn(List.of(
+                PaymentReceipt.builder().id("A1").bookingId("B1006").appliedFromAdvance(true).amountInr(new BigDecimal("1416.00")).build(),
+                PaymentReceipt.builder().id("A2").bookingId("B1094").appliedFromAdvance(true).amountInr(new BigDecimal("4424.00")).build()));
+
+        assertThat(paymentReceiptService.heldForBooking("K1", "B1006")).isEqualByComparingTo("0.00");
+        assertThat(paymentReceiptService.heldForBooking("K1", "B1244")).isEqualByComparingTo("1920.00");
+        assertThat(paymentReceiptService.availableWalletFor("K1", "B1244")).isEqualByComparingTo("1920.00");
+        assertThat(paymentReceiptService.availableWalletFor("K1", "B1094")).isEqualByComparingTo("0.00");
+    }
 }
