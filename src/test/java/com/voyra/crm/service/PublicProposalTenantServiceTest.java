@@ -52,7 +52,7 @@ class PublicProposalTenantServiceTest {
     /** Approving with an option block undecided would hand the agency an incomplete trip. */
     @Test
     void approveIsRefusedWhileAnOptionBlockHasNoSavedChoice() {
-        when(leadRepository.findById("L1")).thenReturn(Optional.of(lead()));
+        when(leadRepository.findByIdForUpdate("L1")).thenReturn(Optional.of(lead()));
         when(leadTimelineRepository.findByLeadIdOrderByCreatedAtDesc("L1")).thenReturn(List.of());
         when(leadProposalRepository.findByLeadId("L1")).thenReturn(List.of(option("A", false), option("B", false)));
 
@@ -63,7 +63,7 @@ class PublicProposalTenantServiceTest {
     @Test
     void approveRecordsTheApprovalAndLocksTheChoices() {
         Lead lead = lead();
-        when(leadRepository.findById("L1")).thenReturn(Optional.of(lead));
+        when(leadRepository.findByIdForUpdate("L1")).thenReturn(Optional.of(lead));
         when(leadTimelineRepository.findByLeadIdOrderByCreatedAtDesc("L1")).thenReturn(List.of());
         when(leadProposalRepository.findByLeadId("L1")).thenReturn(List.of(option("A", false), option("B", true)));
 
@@ -76,11 +76,34 @@ class PublicProposalTenantServiceTest {
 
     @Test
     void approvingTwiceIsANoOp() {
-        when(leadRepository.findById("L1")).thenReturn(Optional.of(lead()));
+        when(leadRepository.findByIdForUpdate("L1")).thenReturn(Optional.of(lead()));
         when(leadTimelineRepository.findByLeadIdOrderByCreatedAtDesc("L1")).thenReturn(List.of(
                 LeadTimeline.builder().eventType(LeadTimelineEventType.PROPOSAL_APPROVED).build()));
 
         assertThat(service.approve("L1")).isTrue();
         verify(leadTimelineService, never()).recordCustomerAction(any(), any(), any(), any());
+    }
+
+    /** Round 2, R2-7: the double-clicked Approve re-sends the same pick - no second timeline entry, no "locked" error. */
+    @Test
+    void selectingTheSameOptionAgainIsANoOp() {
+        Lead lead = lead();
+        lead.setProposalLocked(true);
+        when(leadRepository.findByIdForUpdate("L1")).thenReturn(Optional.of(lead));
+        when(leadProposalRepository.findByLeadId("L1")).thenReturn(List.of(option("A", false), option("B", true)));
+
+        assertThat(service.selectOptions("L1", List.of("B"))).isTrue();
+        verify(leadTimelineService, never()).recordCustomerAction(any(), any(), any(), any());
+        verify(leadProposalRepository, never()).saveAll(any());
+    }
+
+    @Test
+    void changingThePickOnALockedProposalIsStillRefused() {
+        Lead lead = lead();
+        lead.setProposalLocked(true);
+        when(leadRepository.findByIdForUpdate("L1")).thenReturn(Optional.of(lead));
+        when(leadProposalRepository.findByLeadId("L1")).thenReturn(List.of(option("A", false), option("B", true)));
+
+        assertThatThrownBy(() -> service.selectOptions("L1", List.of("A"))).isInstanceOf(IllegalStateException.class);
     }
 }
