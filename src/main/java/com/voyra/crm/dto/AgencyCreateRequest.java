@@ -11,15 +11,18 @@ import lombok.Data;
 public class AgencyCreateRequest {
 
     @NotBlank(message = "Agency name is required")
+    @Size(max = 150, message = "Agency name must be 150 characters or fewer")
     @Schema(example = "Global Explorer Travels")
     private String agencyName;
 
     @NotBlank(message = "Owner name is required")
+    @Size(max = 150, message = "Owner name must be 150 characters or fewer")
     @Schema(example = "John Davis")
     private String ownerName;
 
     @NotBlank(message = "Owner email is required")
     @Email(message = "Owner email must be a valid email address")
+    @Size(max = 150, message = "Owner email must be 150 characters or fewer")
     @Schema(example = "owner@globalexplorer.com")
     private String ownerEmail;
 

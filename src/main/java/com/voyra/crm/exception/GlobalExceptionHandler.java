@@ -154,10 +154,18 @@ public class GlobalExceptionHandler {
         log.warn("Data integrity violation - path: {}, cause: {}", path, cause);
         // The database's own text (SQL, column names) stays in the log, never in the response.
         String message = messageChain != null && messageChain.contains("value too long")
-                ? "One of the values is too long - shorten it and try again"
+                ? tooLongMessage(messageChain)
                 : "The request could not be completed due to a data conflict";
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
                 ApiErrorResponse.of(message, "Data integrity violation", null, HttpStatus.BAD_REQUEST.value(), path));
+    }
+
+    /** Postgres names the limit ("character varying(150)") but not the column, so the message states the limit. */
+    private static String tooLongMessage(String messageChain) {
+        java.util.regex.Matcher limit = java.util.regex.Pattern.compile("varying\\((\\d+)\\)").matcher(messageChain);
+        return limit.find()
+                ? "A value is longer than the " + limit.group(1) + " characters allowed - shorten it and try again"
+                : "One of the values is too long - shorten it and try again";
     }
 
     @ExceptionHandler(IllegalStateException.class)

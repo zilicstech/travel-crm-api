@@ -13,6 +13,12 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 public class GlobalExceptionHandlerFixtureController {
 
+    @GetMapping("/test/too-long")
+    public String tooLong() {
+        throw new org.springframework.dao.DataIntegrityViolationException("could not execute statement",
+                new RuntimeException("ERROR: value too long for type character varying(150)"));
+    }
+
     @GetMapping("/test/illegal-argument")
     public String illegalArgument() {
         throw new IllegalArgumentException("bad input");

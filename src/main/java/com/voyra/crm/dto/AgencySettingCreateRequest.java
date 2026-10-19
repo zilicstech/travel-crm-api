@@ -4,6 +4,7 @@ import com.voyra.crm.enums.AgencySettingKind;
 import com.voyra.crm.enums.ServiceType;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
@@ -21,6 +22,7 @@ public class AgencySettingCreateRequest {
     private ServiceType serviceType;
 
     @NotBlank(message = "Name is required")
+    @Size(max = 150, message = "Name must be 150 characters or fewer")
     @Schema(example = "Cruise Package")
     private String name;
 }

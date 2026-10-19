@@ -50,6 +50,14 @@ class GlobalExceptionHandlerTest {
                 .andExpect(jsonPath("$.message").value("The 'day' parameter has an invalid value"));
     }
 
+    /** Postgres doesn't name the column, but it does give the limit - say it, never the SQL. */
+    @Test
+    void aTooLongValueStatesTheCharacterLimit() throws Exception {
+        mockMvc.perform(get("/test/too-long"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("A value is longer than the 150 characters allowed - shorten it and try again"));
+    }
+
     @Test
     void illegalStateMapsTo409() throws Exception {
         mockMvc.perform(get("/test/illegal-state"))
