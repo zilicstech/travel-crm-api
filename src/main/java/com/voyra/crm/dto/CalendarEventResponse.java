@@ -38,6 +38,12 @@ public class CalendarEventResponse {
     @Schema(description = "The lead, booking, invoice or visa id this event is about", example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String targetId;
 
-    @Schema(description = "LEAD, BOOKING, CLIENT_INVOICE or VISA - which id space targetId is in", example = "BOOKING")
+    @Schema(description = "LEAD, BOOKING, CLIENT_INVOICE, SUPPLIER_INVOICE or VISA - which id space targetId is in", example = "BOOKING")
     private String targetType;
+
+    @Schema(description = "What is still owed, in INR - invoice and supplier bill events only", example = "8000.00")
+    private java.math.BigDecimal amount;
+
+    @Schema(description = "The booking an invoice is for, so the calendar can open it", example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
+    private String bookingId;
 }

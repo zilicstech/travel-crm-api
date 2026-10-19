@@ -85,11 +85,13 @@ public class CalendarService {
                 ? leadFollowUpRepository.findByAssignedAgentIdAndStatusAndDueDateBetweenOrderByDueDateAsc(
                         agentId, FollowUpStatus.OPEN, from, to)
                 : leadFollowUpRepository.findByStatusAndDueDateBetweenOrderByDueDateAsc(FollowUpStatus.OPEN, from, to);
+        LocalDate today = LocalDate.now();
         for (LeadFollowUp f : followUps) {
+            boolean overdue = f.getDueDate().isBefore(today);
             rows.add(CalendarEventResponse.builder()
-                    .type("FOLLOW_UP").severity("MEDIUM")
+                    .type("FOLLOW_UP").severity(overdue ? "HIGH" : "MEDIUM")
                     .date(f.getDueDate())
-                    .title(f.getNote())
+                    .title(overdue ? "Overdue: " + f.getNote() : f.getNote())
                     .subtitle(f.getClientName() + " / " + f.getLeadDestination())
                     .targetId(f.getLeadId()).targetType("LEAD")
                     .build());
@@ -121,6 +123,8 @@ public class CalendarService {
                     .date(inv.getDueDate())
                     .title("Invoice due: " + inv.getClientName())
                     .subtitle(inv.getInvoiceNumber())
+                    .amount(inv.getBalanceDueInr())
+                    .bookingId(inv.getBookingId())
                     .targetId(inv.getId()).targetType("CLIENT_INVOICE")
                     .build());
         }
@@ -153,6 +157,7 @@ public class CalendarService {
                         .date(bill.getDueDate())
                         .title("Supplier bill due: " + bill.getVendorName())
                         .subtitle(bill.getSupplierInvoiceNumber())
+                        .amount(bill.getBalanceDueInr())
                         .targetId(bill.getId()).targetType("SUPPLIER_INVOICE")
                         .build());
             }
