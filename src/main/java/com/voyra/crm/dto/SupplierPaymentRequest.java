@@ -53,4 +53,8 @@ public class SupplierPaymentRequest {
 
     @Schema(example = "Advance for October bookings")
     private String notes;
+
+    @Schema(description = "With no supplierInvoiceId: clear the vendor's open bills (in base currency) oldest first "
+            + "with this one payment; anything left stays as an advance", example = "true")
+    private Boolean applyToOpenBills;
 }

@@ -41,4 +41,25 @@ public class InvoiceLineItemRequest {
 
     @Schema(description = "Display-only - the other half of unitPrice's Fare/Taxes split", example = "0.00")
     private BigDecimal taxAmount;
+
+    @Schema(description = "The booking this line bills. Set by the server on lines it builds from vouchers; on a draft update it only matches a line to keep its edited description.")
+    private String bookingId;
+
+    @Schema(description = "The voucher this line bills, when it bills one")
+    private String bookingDocumentId;
+
+    @Schema(description = "Set by the server from the voucher: its fare charges in base (basic, yq, ...); ignored when sent")
+    private java.util.Map<String, java.math.BigDecimal> charges;
+
+    @Schema(description = "Set by the server from the voucher: the ticket's travellers; ignored when sent")
+    private java.util.List<VoucherTraveller> travellers;
+
+    @Schema(description = "Set by the server from the voucher: the ticket's flights; ignored when sent")
+    private java.util.List<VoucherLeg> legs;
+
+    @Schema(description = "Set by the server from the voucher: its purchase currency; ignored when sent", example = "AED")
+    private String purchaseCurrency;
+
+    @Schema(description = "Set by the server from the voucher: its purchase rate to base; ignored when sent", example = "26.5")
+    private java.math.BigDecimal purchaseRate;
 }

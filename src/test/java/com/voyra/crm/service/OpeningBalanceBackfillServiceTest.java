@@ -45,6 +45,11 @@ class OpeningBalanceBackfillServiceTest {
     @Mock
     private JournalService journalService;
 
+    @org.mockito.Spy
+
+    private com.voyra.crm.service.BaseCurrency baseCurrency = new com.voyra.crm.service.BaseCurrency(null);
+
+
     @InjectMocks
     private OpeningBalanceBackfillService backfillService;
 

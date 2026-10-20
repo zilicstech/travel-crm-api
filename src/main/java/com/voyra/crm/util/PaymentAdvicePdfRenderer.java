@@ -54,7 +54,7 @@ public final class PaymentAdvicePdfRenderer {
             header.setWidthPercentage(100);
             header.setWidths(new float[]{1f, 1f});
             header.addCell(borderless(vendorBlock(vendor, labelFont, bodyFont)));
-            header.addCell(borderless(metaBlock(payment, labelFont, bodyFont)));
+            header.addCell(borderless(metaBlock(payment, InvoicePdfRenderer.base(agency), labelFont, bodyFont)));
             document.add(header);
             document.add(new Paragraph(" "));
 
@@ -94,14 +94,14 @@ public final class PaymentAdvicePdfRenderer {
         return table;
     }
 
-    private static PdfPTable metaBlock(SupplierPayment payment, Font labelFont, Font bodyFont) {
+    private static PdfPTable metaBlock(SupplierPayment payment, String base, Font labelFont, Font bodyFont) {
         PdfPTable table = new PdfPTable(1);
         table.setWidthPercentage(100);
         addRightAligned(table, "Voucher: " + valueOr(payment.getVoucherNumber()), labelFont);
         addRightAligned(table, "Date: " + str(payment.getPaidOn()), bodyFont);
         addRightAligned(table, "Mode: " + str(payment.getPaymentMode()), bodyFont);
         addRightAligned(table, "Currency: " + payment.getCurrencyCode()
-                + (!"INR".equals(payment.getCurrencyCode()) ? " (@ " + payment.getFxRateToInr() + ")" : ""), bodyFont);
+                + (!base.equals(payment.getCurrencyCode()) ? " (@ " + payment.getFxRateToInr() + ")" : ""), bodyFont);
         return table;
     }
 

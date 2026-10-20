@@ -68,10 +68,16 @@ class BookingCancellationServiceTest {
     @Mock private BookingInvoiceIssuer bookingInvoiceIssuer;
 
     /** GST-free by default: the charges invoice bills exactly what was kept (tests that need GST stub it). */
+    @Mock private InvoiceDocumentService invoiceDocumentService;
+
+    /** GST-free by default: the charges invoice bills exactly what was kept (tests that need GST stub it). */
     @org.junit.jupiter.api.BeforeEach
     void chargesInvoiceBillsWhatWasKept() {
         org.mockito.Mockito.lenient().when(bookingInvoiceIssuer.cancellationChargesTotal(any(), any(), any()))
                 .thenAnswer(i -> ((BigDecimal) i.getArgument(1)).add(i.getArgument(2)));
+        // Each invoice here bills only this booking: its share is the whole invoice.
+        org.mockito.Mockito.lenient().when(creditNoteService.shareOf(any(), any()))
+                .thenAnswer(i -> new CreditNoteService.Share(((Invoice) i.getArgument(0)).getTaxableValue(), BigDecimal.ONE));
     }
 
     @InjectMocks private BookingCancellationService service;
@@ -261,8 +267,8 @@ class BookingCancellationServiceTest {
         Invoice first = taxInvoice("I1", "12000");
         Invoice extra = taxInvoice("I2", "2500");
         twoInvoices(first, extra, "12360", "2590");
-        when(creditNoteService.previewRefundable(first, d("0"), d("0"))).thenReturn(d("12360"));
-        when(creditNoteService.previewRefundable(extra, d("0"), d("0"))).thenReturn(d("2590"));
+        when(creditNoteService.previewRefundable(first, "B1", d("0"), d("0"))).thenReturn(d("12360"));
+        when(creditNoteService.previewRefundable(extra, "B1", d("0"), d("0"))).thenReturn(d("2590"));
         BookingCancelRequest r = cancel("0", "0");
         r.setType(CancellationType.FULL_REFUND);
 
@@ -290,8 +296,8 @@ class BookingCancellationServiceTest {
         Invoice first = taxInvoice("I1", "12000");
         Invoice extra = taxInvoice("I2", "2500");
         twoInvoices(first, extra, "10770", "2590");
-        when(creditNoteService.previewRefundable(first, d("1500"), d("1000"))).thenReturn(d("10770"));
-        when(creditNoteService.previewRefundable(extra, d("0"), d("0"))).thenReturn(d("2590"));
+        when(creditNoteService.previewRefundable(first, "B1", d("1500"), d("1000"))).thenReturn(d("10770"));
+        when(creditNoteService.previewRefundable(extra, "B1", d("0"), d("0"))).thenReturn(d("2590"));
         BookingCancelRequest r = cancel("0", "500");
         r.setAirlineCharge(d("1000"));
 
@@ -321,8 +327,8 @@ class BookingCancellationServiceTest {
         Invoice first = taxInvoice("I1", "12000");
         Invoice extra = taxInvoice("I2", "2500");
         twoInvoices(first, extra, "0", "1180");
-        when(creditNoteService.previewRefundable(first, d("12000"), d("12000"))).thenReturn(d("0"));
-        when(creditNoteService.previewRefundable(extra, d("1500"), d("500"))).thenReturn(d("1180"));
+        when(creditNoteService.previewRefundable(first, "B1", d("12000"), d("12000"))).thenReturn(d("0"));
+        when(creditNoteService.previewRefundable(extra, "B1", d("1500"), d("500"))).thenReturn(d("1180"));
         BookingCancelRequest r = cancel("0", "1000");
         r.setAirlineCharge(d("12500"));
 
@@ -350,7 +356,7 @@ class BookingCancellationServiceTest {
         Invoice invoice = taxInvoice("I1", "12000");
         when(invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc(
                 "B1", InvoiceDocumentType.TAX_INVOICE, InvoiceLifecycle.CANCELLED)).thenReturn(List.of(invoice));
-        when(creditNoteService.previewRefundable(invoice, d("300"), d("300"))).thenReturn(d("12060"));
+        when(creditNoteService.previewRefundable(invoice, "B1", d("300"), d("300"))).thenReturn(d("12060"));
         when(creditNoteService.create(any())).thenReturn(CreditNoteResponse.builder().id("CN1").build());
         when(creditNoteService.issue("CN1")).thenReturn(CreditNoteResponse.builder().refundableAmount(d("12060")).taxableValue(d("11700")).build());
         BookingCancelRequest r = cancel("300", "0");
@@ -385,6 +391,75 @@ class BookingCancellationServiceTest {
         ArgumentCaptor<RefundSettlementRequest> rest = ArgumentCaptor.forClass(RefundSettlementRequest.class);
         verify(paymentReceiptService).refundAdvance(eq(b), any(), rest.capture(), eq(false));
         assertThat(rest.getValue().getAmount()).isEqualByComparingTo("640");
+    }
+
+    /** An invoice billed in AED at 25: the rupee charges are credited in AED and the AED refund comes back as rupees. */
+    @Test
+    void anInvoiceInAnotherCurrencyIsCreditedInItsCurrencyAndRefundedInRupees() {
+        Booking b = booking(BookingStatus.CONFIRMED);
+        b.setReceivedTotalInr(d("22000"));
+        Invoice invoice = taxInvoice("I1", "880");
+        invoice.setCurrencyCode("AED");
+        invoice.setFxRateToInr(d("25"));
+        when(invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc(
+                "B1", InvoiceDocumentType.TAX_INVOICE, InvoiceLifecycle.CANCELLED)).thenReturn(List.of(invoice));
+        // 3,500 + 1,000 kept = AED 180 off the AED 880, the supplier's AED 140 of it; AED 700 comes back.
+        when(creditNoteService.previewRefundable(invoice, "B1", d("180.00"), d("140.00"))).thenReturn(d("700"));
+        when(creditNoteService.create(any())).thenReturn(CreditNoteResponse.builder().id("CN1").build());
+        when(creditNoteService.issue("CN1")).thenReturn(CreditNoteResponse.builder().refundableAmount(d("700")).taxableValue(d("700")).build());
+
+        assertThat(service.preview("B1", null, d("3500"), d("1000")).getCustomerRefundDue()).isEqualByComparingTo("17500");
+        service.cancel("B1", cancel("3500", "1000"));
+
+        ArgumentCaptor<CreditNoteRequest> note = ArgumentCaptor.forClass(CreditNoteRequest.class);
+        verify(creditNoteService).create(note.capture());
+        assertThat(note.getValue().getCancellationFee()).isEqualByComparingTo("180");
+        assertThat(note.getValue().getSupplierRetained()).isEqualByComparingTo("140");
+        assertThat(b.getCustomerRefundDue()).isEqualByComparingTo("17500");
+    }
+
+    /** The refund is asked in rupees and taken off the AED note in AED - all of what is open when the rupees cover it. */
+    @Test
+    void aRefundOnAForeignCurrencyNoteIsTakenInThatCurrency() {
+        Booking b = booking(BookingStatus.CANCELLED);
+        b.setCustomerRefundDue(d("17500"));
+        com.voyra.crm.entity.CreditNote cn = com.voyra.crm.entity.CreditNote.builder().id("CN1").status(CreditNoteStatus.ISSUED)
+                .fxRateToInr(d("25")).refundableAmount(d("700")).refundedAmount(BigDecimal.ZERO).build();
+        when(creditNoteRepository.findByBookingIdAndStatusNot("B1", CreditNoteStatus.CANCELLED)).thenReturn(List.of(cn));
+
+        service.payCustomer("B1", pay("5000"));
+        service.payCustomer("B1", pay("17500"));
+
+        ArgumentCaptor<CreditNoteRefundRequest> refund = ArgumentCaptor.forClass(CreditNoteRefundRequest.class);
+        verify(creditNoteService, org.mockito.Mockito.times(2)).refund(eq("CN1"), refund.capture(), eq(false));
+        assertThat(refund.getAllValues().get(0).getAmount()).isEqualByComparingTo("200");
+        assertThat(refund.getAllValues().get(1).getAmount()).isEqualByComparingTo("700");
+        verify(paymentReceiptService, never()).refundAdvance(any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
+    }
+
+    /** Another booking on the same invoice was cancelled first: this one still gets its own credit note, for its part. */
+    @Test
+    void theSecondBookingCancelledOnASharedInvoiceGetsItsOwnCreditNote() {
+        Booking b = booking(BookingStatus.CONFIRMED);
+        Invoice invoice = Invoice.builder().id("I1").bookingId("B9").documentType(InvoiceDocumentType.TAX_INVOICE)
+                .status(InvoiceLifecycle.PARTIALLY_PAID).taxableValue(d("20000")).grandTotal(d("20000")).creditNoteTotal(d("10000")).build();
+        when(invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc(
+                "B1", InvoiceDocumentType.TAX_INVOICE, InvoiceLifecycle.CANCELLED)).thenReturn(List.of(invoice));
+        when(creditNoteRepository.findByInvoiceIdAndStatus("I1", com.voyra.crm.enums.CreditNoteStatus.ISSUED)).thenReturn(List.of(
+                com.voyra.crm.entity.CreditNote.builder().id("CN0").invoiceId("I1").bookingId("B9").build()));
+        when(creditNoteService.shareOf(invoice, "B1")).thenReturn(new CreditNoteService.Share(d("10000"), new BigDecimal("0.5")));
+        when(creditNoteService.create(any())).thenReturn(CreditNoteResponse.builder().id("CN1").build());
+        when(creditNoteService.issue("CN1")).thenReturn(CreditNoteResponse.builder().refundableAmount(d("0")).taxableValue(d("9000")).build());
+
+        service.cancel("B1", cancel("1000", "0"));
+
+        ArgumentCaptor<CreditNoteRequest> note = ArgumentCaptor.forClass(CreditNoteRequest.class);
+        verify(creditNoteService).create(note.capture());
+        assertThat(note.getValue().getBookingId()).isEqualTo("B1");
+        assertThat(note.getValue().getCancellationFee()).isEqualByComparingTo("1000");
+        verify(bookingInvoiceIssuer, never()).issueCancellationCharges(any(), any(), any());
+        // It was taken off any draft before anything else.
+        verify(invoiceDocumentService).removeBookingFromDraft("B1");
     }
 
     @Test
@@ -446,6 +521,30 @@ class BookingCancellationServiceTest {
         verify(supplierCreditNoteService).record(note.capture());
         assertThat(note.getValue().getTaxableValue()).as("the bill shrinks to the 20000 charge").isEqualByComparingTo("4000");
         assertThat(b.getSupplierRefundExpected()).isEqualByComparingTo("0");
+    }
+
+    /** A cancelled ticket's supplier takes its commission back: recalled on the bill before the credit note, and off the booking's profit. */
+    @Test
+    void theSupplierTakesItsCommissionBackOnACancelledTicket() {
+        Booking b = booking(BookingStatus.CONFIRMED);
+        b.setCommission(d("410"));
+        b.setProfit(d("1410"));
+        // Paid the net (10,000 - 410 + 8.20); recalled, the bill owes its gross again.
+        SupplierInvoice paid = SupplierInvoice.builder().id("S1").status(SupplierInvoiceStatus.PAID)
+                .grandTotal(d("10000")).commission(d("410")).supplierTds(d("8.20")).amountPaid(d("9598.20"))
+                .creditNoteTotal(BigDecimal.ZERO)
+                .cgstAmount(BigDecimal.ZERO).sgstAmount(BigDecimal.ZERO).igstAmount(BigDecimal.ZERO).build();
+        SupplierInvoice recalled = paid.toBuilder().commission(BigDecimal.ZERO).supplierTds(BigDecimal.ZERO).build();
+        when(supplierInvoiceRepository.findByBookingIdAndStatusNot("B1", SupplierInvoiceStatus.CANCELLED)).thenReturn(List.of(paid));
+        when(supplierInvoiceRepository.findById("S1")).thenReturn(Optional.of(recalled));
+
+        service.cancel("B1", cancel("2000", "0"));
+
+        verify(supplierInvoiceService).recallCommission("S1");
+        // Back from the supplier: what was paid less the 2,000 it kept.
+        assertThat(b.getSupplierRefundExpected()).isEqualByComparingTo("7598.20");
+        assertThat(b.getCommission()).isEqualByComparingTo("0");
+        assertThat(b.getProfit()).isEqualByComparingTo("1000");
     }
 
     @Test
@@ -615,12 +714,12 @@ class BookingCancellationServiceTest {
 
         assertThatThrownBy(() -> service.markChecked("B1")).hasMessageContaining("4680");
         assertThat(b.getRefundCheckedAt()).isNull();
-        // ...and it is not listed to cross-check yet either.
+        // ...and it is listed as charges to collect (the page keeps it off the cross-check tab until paid).
         b.setSupplierRefundExpected(BigDecimal.ZERO);
         b.setSupplierRefundReceived(BigDecimal.ZERO);
         when(bookingRepository.findByBookingStatus(BookingStatus.CANCELLED)).thenReturn(List.of(b));
-        service.listOutstanding();
-        verify(bookingService, never()).toResponsePublic(b);
+        when(bookingService.toResponsePublic(b)).thenReturn(com.voyra.crm.dto.BookingResponse.builder().build());
+        assertThat(service.listOutstanding().get(0).getChargesToCollectInr()).isEqualByComparingTo("4680");
     }
 
     @Test
@@ -633,11 +732,30 @@ class BookingCancellationServiceTest {
                 .supplierRefundExpected(BigDecimal.ZERO).supplierRefundReceived(BigDecimal.ZERO)
                 .refundCheckedAt(java.time.LocalDateTime.now()).build();
         when(bookingRepository.findByBookingStatus(BookingStatus.CANCELLED)).thenReturn(List.of(open, done));
+        when(bookingService.toResponsePublic(any())).thenAnswer(i -> com.voyra.crm.dto.BookingResponse.builder().build());
 
         service.listOutstanding();
 
         verify(bookingService).toResponsePublic(open);
         verify(bookingService, never()).toResponsePublic(done);
+    }
+
+    /** Nothing to refund either way, but the client still owes its cancellation charges: listed with what it owes. */
+    @Test
+    void aCancelledBookingWhoseClientStillOwesChargesIsListedWithWhatItOwes() {
+        Booking owes = Booking.builder().id("B1").bookingStatus(BookingStatus.CANCELLED)
+                .customerRefundDue(BigDecimal.ZERO).refundedTotalInr(BigDecimal.ZERO)
+                .supplierRefundExpected(BigDecimal.ZERO).supplierRefundReceived(BigDecimal.ZERO).build();
+        when(bookingRepository.findByBookingStatus(BookingStatus.CANCELLED)).thenReturn(List.of(owes));
+        when(bookingService.toResponsePublic(any())).thenAnswer(i -> com.voyra.crm.dto.BookingResponse.builder().build());
+        Invoice charges = taxInvoice("I1", "4500");
+        charges.setStatus(InvoiceLifecycle.ISSUED);
+        charges.setBalanceDue(d("4680"));
+        when(invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc(
+                "B1", InvoiceDocumentType.TAX_INVOICE, InvoiceLifecycle.CANCELLED)).thenReturn(List.of(charges));
+
+        assertThat(service.listOutstanding()).singleElement()
+                .satisfies(r -> assertThat(r.getChargesToCollectInr()).isEqualByComparingTo("4680"));
     }
 
     @Test

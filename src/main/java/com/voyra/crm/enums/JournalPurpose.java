@@ -66,6 +66,9 @@ public enum JournalPurpose {
     /** Row 18 - the month-end unrealized mark-to-market revaluation of an open foreign payable. */
     FOREX_REVALUATION,
 
+    /** A cancelled ticket's supplier takes back the commission it paid on a booked bill (and the TDS claim on it). */
+    SUPPLIER_COMMISSION_RECALLED,
+
     /** Not in the posting-rule table - a human-entered journal, never posted automatically. */
     MANUAL_ENTRY
 }

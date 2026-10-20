@@ -77,6 +77,20 @@ class TaxEngineTest {
     }
 
     @Test
+    void anAgencyWhoseBooksArentInRupeesChargesNoGst() {
+        when(tenantRepository.findById("T1")).thenReturn(Optional.of(
+                Tenant.builder().id("T1").stateCode("27").baseCurrencyCode("AED").build()));
+        when(clientService.findAccessibleClient("K1")).thenReturn(
+                Client.builder().id("K1").name("Jane").stateCode("27").isOverseas(false).build());
+
+        TaxComputationResult result = taxEngine.compute(new TaxComputationRequest(
+                "K1", new BigDecimal("50000.00"), SupplyNature.DOMESTIC_PACKAGE, null, false, "AED"));
+
+        assertThat(result.taxTreatment()).isEqualTo(TaxTreatment.EXEMPT);
+        assertThat(result.gstTotal()).isEqualByComparingTo("0");
+    }
+
+    @Test
     void sameStateClientSplitsIntoCgstAndSgst() {
         when(clientService.findAccessibleClient("K1")).thenReturn(
                 Client.builder().id("K1").name("Jane").stateCode("27").isOverseas(false).build());

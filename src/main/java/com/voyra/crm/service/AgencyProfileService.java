@@ -54,8 +54,10 @@ public class AgencyProfileService {
         if (request.getGstNumber() != null || request.getStateCode() != null) {
             ValidationPatterns.requireGstinMatchesState(tenant.getGstNumber(), tenant.getStateCode());
         }
-        if (request.getBaseCurrencyCode() != null) {
-            tenant.setBaseCurrencyCode(request.getBaseCurrencyCode());
+        // Every amount in the books is in it, so it is set once, when the agency is created.
+        if (request.getBaseCurrencyCode() != null && !request.getBaseCurrencyCode().isBlank()
+                && !request.getBaseCurrencyCode().trim().equalsIgnoreCase(tenant.getBaseCurrencyCode())) {
+            throw new IllegalArgumentException("The base currency is set when the agency is created and can't be changed");
         }
         if (request.getDefaultSacCode() != null) {
             tenant.setDefaultSacCode(request.getDefaultSacCode());
@@ -78,6 +80,15 @@ public class AgencyProfileService {
         if (request.getBankBranch() != null) {
             tenant.setBankBranch(request.getBankBranch());
         }
+        if (request.getContactPhone() != null) {
+            tenant.setContactPhone(blankToNull(request.getContactPhone()));
+        }
+        if (request.getContactEmail() != null) {
+            tenant.setContactEmail(blankToNull(request.getContactEmail()));
+        }
+        if (request.getWebsite() != null) {
+            tenant.setWebsite(blankToNull(request.getWebsite()));
+        }
         tenantRepository.save(tenant);
         log.info("Agency profile updated: tenantId={}", tenant.getId());
         return toResponse(tenant);
@@ -99,6 +110,11 @@ public class AgencyProfileService {
                 .legalName(t.getLegalName())
                 .bankAccountName(t.getBankAccountName()).bankAccountNumber(t.getBankAccountNumber())
                 .bankIfscCode(t.getBankIfscCode()).bankBranch(t.getBankBranch())
+                .contactPhone(t.getContactPhone()).contactEmail(t.getContactEmail()).website(t.getWebsite())
                 .build();
+    }
+
+    private static String blankToNull(String s) {
+        return s.isBlank() ? null : s.trim();
     }
 }

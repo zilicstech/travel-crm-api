@@ -61,6 +61,9 @@ class LeadServiceProposalAccessTest {
     @Mock private BookingService bookingService;
     @Mock private InvoiceService invoiceService;
     @Mock private AuditService auditService;
+    @org.mockito.Spy
+    private com.voyra.crm.service.BaseCurrency baseCurrency = new com.voyra.crm.service.BaseCurrency(null);
+
     @InjectMocks private LeadService leadService;
 
     private final com.voyra.crm.entity.LeadService flight = com.voyra.crm.entity.LeadService.builder()
@@ -119,5 +122,41 @@ class LeadServiceProposalAccessTest {
         verify(leadProposalRepository).save(saved.capture());
         assertThat(saved.getValue().getSellingPrice()).isEqualByComparingTo("1100");
         verify(serviceInstanceService).assertEditAccess(flight);
+    }
+
+    @Test
+    void aLineBoughtInAedIsCostedInBase() {
+        ProposalItemCreateRequest r = line("S1");
+        r.setNetCost(null);
+        r.setPurchaseCurrency("AED");
+        r.setPurchasePrice(new BigDecimal("1000"));
+        r.setPurchaseRate(new BigDecimal("22.85"));
+
+        leadService.addProposalItem("L1", r);
+
+        ArgumentCaptor<LeadProposal> saved = ArgumentCaptor.forClass(LeadProposal.class);
+        verify(leadProposalRepository).save(saved.capture());
+        assertThat(saved.getValue().getNetCost()).isEqualByComparingTo("22850.00");
+        assertThat(saved.getValue().getSellingPrice()).isEqualByComparingTo("25135");
+        assertThat(saved.getValue().getPurchaseCurrency()).isEqualTo("AED");
+    }
+
+    @Test
+    void aNewRateAloneRecostsTheLine() {
+        LeadProposal existing = LeadProposal.builder().id("P1").leadId("L1").serviceId("S1").description("DEL-BOM")
+                .netCost(new BigDecimal("4000")).sellingPrice(new BigDecimal("4400")).markupMode(MarkupMode.PERCENT)
+                .markupValue(new BigDecimal("10")).purchaseCurrency("AED").purchasePrice(new BigDecimal("1000"))
+                .purchaseRate(new BigDecimal("4")).build();
+        when(leadProposalRepository.findByIdAndLeadId("P1", "L1")).thenReturn(Optional.of(existing));
+        com.voyra.crm.dto.ProposalItemUpdateRequest r = new com.voyra.crm.dto.ProposalItemUpdateRequest();
+        r.setPurchaseCurrency("AED");
+        r.setPurchasePrice(new BigDecimal("1000"));
+        r.setPurchaseRate(new BigDecimal("4.2"));
+
+        leadService.updateProposalItem("L1", "P1", r);
+
+        assertThat(existing.getNetCost()).isEqualByComparingTo("4200.00");
+        assertThat(existing.getSellingPrice()).isEqualByComparingTo("4620");
+        assertThat(existing.getPurchaseRate()).isEqualByComparingTo("4.2");
     }
 }

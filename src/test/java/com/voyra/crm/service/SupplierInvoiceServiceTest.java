@@ -32,11 +32,15 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class SupplierInvoiceServiceTest {
+
+    @Mock
+    private com.voyra.crm.repository.InvoiceRepository invoiceRepository;
 
     @Mock
     private SupplierInvoiceRepository supplierInvoiceRepository;
@@ -60,6 +64,11 @@ class SupplierInvoiceServiceTest {
     private JournalService journalService;
     @Mock
     private JournalEntryRepository journalEntryRepository;
+
+    @org.mockito.Spy
+
+    private com.voyra.crm.service.BaseCurrency baseCurrency = new com.voyra.crm.service.BaseCurrency(null);
+
 
     @InjectMocks
     private SupplierInvoiceService supplierInvoiceService;
@@ -155,6 +164,156 @@ class SupplierInvoiceServiceTest {
         assertThat(captor.getValue().lines().get(0).accountCode()).isEqualTo("2210");
         assertThat(captor.getValue().lines().get(0).debitAmount()).isEqualByComparingTo("10000.00");
         assertThat(captor.getValue().lines().get(1).accountCode()).isEqualTo("2200");
+    }
+
+    // ---- commission the supplier pays the agency ------------------------------------------
+
+    private SupplierInvoice flightBillWithCommission(SupplierInvoiceStatus status) {
+        return SupplierInvoice.builder()
+                .id("SI1").vendorId("V1").vendorName("IndiGo").bookingId("B1")
+                .status(status).itcEligibility(ItcEligibility.ELIGIBLE)
+                .currencyCode("INR").fxRateToInr(BigDecimal.ONE)
+                .taxableValue(new BigDecimal("10000.00")).taxableValueInr(new BigDecimal("10000.00"))
+                .gstTotal(BigDecimal.ZERO).gstTotalInr(BigDecimal.ZERO)
+                .grandTotal(new BigDecimal("10000.00")).grandTotalInr(new BigDecimal("10000.00"))
+                .commission(new BigDecimal("410.00")).supplierTds(new BigDecimal("8.20"))
+                .roundOff(BigDecimal.ZERO).amountPaid(BigDecimal.ZERO).creditNoteTotal(BigDecimal.ZERO)
+                .balanceDue(new BigDecimal("9598.20")).balanceDueInr(new BigDecimal("9598.20"))
+                .build();
+    }
+
+    /** The supplier keeps its commission back: the agency owes the bill less it, plus the TDS the supplier deducted. */
+    @Test
+    void aVoucherWithCommissionDraftsABillOwingTheNet() {
+        when(vendorRepository.findById("V1")).thenReturn(Optional.of(Vendor.builder().id("V1").name("IndiGo").build()));
+        com.voyra.crm.entity.Booking booking = com.voyra.crm.entity.Booking.builder().id("B1")
+                .type(com.voyra.crm.enums.BookingType.FLIGHT).destination("BOM").build();
+
+        supplierInvoiceService.draftForVoucher(booking, "V1", null, null, new BigDecimal("10000"), null,
+                new BigDecimal("410.00"), new BigDecimal("8.20"));
+
+        ArgumentCaptor<SupplierInvoice> saved = ArgumentCaptor.forClass(SupplierInvoice.class);
+        org.mockito.Mockito.verify(supplierInvoiceRepository).save(saved.capture());
+        assertThat(saved.getValue().getGrandTotal()).isEqualByComparingTo("10000");
+        assertThat(saved.getValue().payable()).isEqualByComparingTo("9598.20");
+        assertThat(saved.getValue().getBalanceDue()).isEqualByComparingTo("9598.20");
+        assertThat(saved.getValue().getBalanceDueInr()).isEqualByComparingTo("9598.20");
+    }
+
+    /** Booked: the gross clears the pass-through, the commission is income and the supplier's TDS is claimed back. */
+    @Test
+    void approvingABillWithCommissionBooksItAsIncomeAndTheTdsAsReceivable() {
+        SupplierInvoice invoice = flightBillWithCommission(SupplierInvoiceStatus.DRAFT);
+        SupplierInvoiceLineItem line = SupplierInvoiceLineItem.builder()
+                .id("L1").supplierInvoiceId("SI1").sortOrder(0).description("DEL-BOM")
+                .quantity(BigDecimal.ONE).unitPrice(new BigDecimal("10000.00"))
+                .taxableValue(new BigDecimal("10000.00")).lineTotal(new BigDecimal("10000.00"))
+                .cgstAmount(BigDecimal.ZERO).sgstAmount(BigDecimal.ZERO).igstAmount(BigDecimal.ZERO)
+                .build();
+        when(supplierInvoiceRepository.findById("SI1")).thenReturn(Optional.of(invoice));
+        when(lineItemRepository.findBySupplierInvoiceIdOrderBySortOrder("SI1")).thenReturn(List.of(line));
+        when(vendorRepository.findById("V1")).thenReturn(Optional.of(Vendor.builder().id("V1").name("IndiGo").build()));
+        org.mockito.Mockito.lenient().when(bookingRepository.findById("B1")).thenReturn(Optional.of(
+                com.voyra.crm.entity.Booking.builder().id("B1").type(com.voyra.crm.enums.BookingType.FLIGHT).internationalTrip(false).build()));
+        stubAgency();
+
+        supplierInvoiceService.approve("SI1", null);
+
+        ArgumentCaptor<JournalPosting> captor = ArgumentCaptor.forClass(JournalPosting.class);
+        org.mockito.Mockito.verify(journalService).post(captor.capture());
+        var lines = captor.getValue().lines();
+        assertThat(lines).extracting(l -> l.accountCode()).containsExactly("2210", "1410", "2200", "4610");
+        assertThat(lines.get(1).debitAmount()).isEqualByComparingTo("8.20");
+        assertThat(lines.get(2).creditAmount()).isEqualByComparingTo("9598.20");
+        assertThat(lines.get(3).creditAmount()).isEqualByComparingTo("410.00");
+        BigDecimal debits = lines.stream().map(l -> l.debitAmount() != null ? l.debitAmount() : BigDecimal.ZERO).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal credits = lines.stream().map(l -> l.creditAmount() != null ? l.creditAmount() : BigDecimal.ZERO).reduce(BigDecimal.ZERO, BigDecimal::add);
+        assertThat(debits).isEqualByComparingTo(credits);
+        // The supplier's ledger is credited what is owed, the net.
+        ArgumentCaptor<com.voyra.crm.models.SupplierLedgerPosting> ledger = ArgumentCaptor.forClass(com.voyra.crm.models.SupplierLedgerPosting.class);
+        org.mockito.Mockito.verify(supplierLedgerService).post(ledger.capture());
+        assertThat(ledger.getValue().creditAmountInr()).isEqualByComparingTo("9598.20");
+    }
+
+    /** A cancelled ticket: the supplier takes the commission back - the income and the TDS claim are reversed. */
+    @Test
+    void recallingTheCommissionOnABookedBillReversesTheIncomeAndRaisesWhatIsOwed() {
+        SupplierInvoice bill = flightBillWithCommission(SupplierInvoiceStatus.APPROVED);
+        when(supplierInvoiceRepository.findById("SI1")).thenReturn(Optional.of(bill));
+
+        supplierInvoiceService.recallCommission("SI1");
+
+        assertThat(bill.getCommission()).isEqualByComparingTo("0");
+        assertThat(bill.getBalanceDue()).isEqualByComparingTo("10000");
+        ArgumentCaptor<JournalPosting> captor = ArgumentCaptor.forClass(JournalPosting.class);
+        org.mockito.Mockito.verify(journalService).post(captor.capture());
+        assertThat(captor.getValue().purpose()).isEqualTo(com.voyra.crm.enums.JournalPurpose.SUPPLIER_COMMISSION_RECALLED);
+        assertThat(captor.getValue().lines()).extracting(l -> l.accountCode()).containsExactly("4610", "1410", "2200");
+        assertThat(captor.getValue().lines().get(2).creditAmount()).isEqualByComparingTo("401.80");
+        // Its own supplier-ledger entry - the bill's BILL_BOOKED row already holds that (source, type) key.
+        ArgumentCaptor<com.voyra.crm.models.SupplierLedgerPosting> ledger = ArgumentCaptor.forClass(com.voyra.crm.models.SupplierLedgerPosting.class);
+        org.mockito.Mockito.verify(supplierLedgerService).post(ledger.capture());
+        assertThat(ledger.getValue().entryType()).isEqualTo(com.voyra.crm.enums.SupplierLedgerEntryType.COMMISSION_RECALLED);
+    }
+
+    @Test
+    void recallingTheCommissionOnAnUnpostedBillOnlyDropsIt() {
+        SupplierInvoice bill = flightBillWithCommission(SupplierInvoiceStatus.DRAFT);
+        when(supplierInvoiceRepository.findById("SI1")).thenReturn(Optional.of(bill));
+
+        supplierInvoiceService.recallCommission("SI1");
+
+        assertThat(bill.payable()).isEqualByComparingTo("10000");
+        org.mockito.Mockito.verifyNoInteractions(journalService);
+    }
+
+    /** The accountant sets the commission on the voucher: an unapproved bill owes the net, an approved one is refused. */
+    @Test
+    void theCommissionOnAnUnapprovedBillCanChangeAndOnAnApprovedOneCannot() {
+        SupplierInvoice bill = flightBillWithCommission(SupplierInvoiceStatus.DRAFT);
+        when(supplierInvoiceRepository.findById("SI1")).thenReturn(Optional.of(bill));
+
+        supplierInvoiceService.setDraftCommission("SI1", new BigDecimal("300"), new BigDecimal("6"));
+
+        assertThat(bill.getBalanceDue()).isEqualByComparingTo("9706");
+
+        bill.setStatus(SupplierInvoiceStatus.APPROVED);
+        assertThatThrownBy(() -> supplierInvoiceService.setDraftCommission("SI1", BigDecimal.ZERO, BigDecimal.ZERO))
+                .hasMessageContaining("already approved");
+    }
+
+    /** A voucher bought in AED drafts its bill in AED at the rate entered, so its base total is the voucher's cost. */
+    @Test
+    void aVoucherBoughtInAedDraftsAnAedBillAtItsRate() {
+        when(vendorRepository.findById("V1")).thenReturn(Optional.of(Vendor.builder().id("V1").name("Dubai DMC").build()));
+        when(supplierInvoiceRepository.findById(org.mockito.ArgumentMatchers.anyString())).thenReturn(Optional.empty());
+        com.voyra.crm.entity.Booking booking = com.voyra.crm.entity.Booking.builder().id("B1")
+                .type(com.voyra.crm.enums.BookingType.HOTEL).destination("Dubai").build();
+
+        supplierInvoiceService.draftForVoucher(booking, "V1", "HV-1", "AED", new BigDecimal("1000"), new BigDecimal("22.85"), null, null);
+
+        ArgumentCaptor<SupplierInvoice> saved = ArgumentCaptor.forClass(SupplierInvoice.class);
+        org.mockito.Mockito.verify(supplierInvoiceRepository).save(saved.capture());
+        assertThat(saved.getValue().getCurrencyCode()).isEqualTo("AED");
+        assertThat(saved.getValue().getFxRateToInr()).isEqualByComparingTo("22.85");
+        assertThat(saved.getValue().getFxRateSource()).isEqualTo("MANUAL");
+        assertThat(saved.getValue().getGrandTotal()).isEqualByComparingTo("1000");
+        assertThat(saved.getValue().getGrandTotalInr()).isEqualByComparingTo("22850.00");
+    }
+
+    @Test
+    void aVoucherBoughtInBaseDraftsABaseBill() {
+        when(vendorRepository.findById("V1")).thenReturn(Optional.of(Vendor.builder().id("V1").name("IndiGo").build()));
+        com.voyra.crm.entity.Booking booking = com.voyra.crm.entity.Booking.builder().id("B1")
+                .type(com.voyra.crm.enums.BookingType.FLIGHT).destination("BOM").build();
+
+        supplierInvoiceService.draftForVoucher(booking, "V1", null, null, new BigDecimal("4000"), null, null, null);
+
+        ArgumentCaptor<SupplierInvoice> saved = ArgumentCaptor.forClass(SupplierInvoice.class);
+        org.mockito.Mockito.verify(supplierInvoiceRepository).save(saved.capture());
+        assertThat(saved.getValue().getCurrencyCode()).isEqualTo("INR");
+        assertThat(saved.getValue().getFxRateToInr()).isEqualByComparingTo("1");
+        assertThat(saved.getValue().getGrandTotalInr()).isEqualByComparingTo("4000.00");
     }
 
     /** BUG-CRX-15: a hand-made bill (no booking) posts to its own category's purchase account, not Miscellaneous. */
@@ -271,7 +430,7 @@ class SupplierInvoiceServiceTest {
 
         var row = supplierInvoiceService.list(null, null, null).get(0);
 
-        assertThat(row.getBookingRef()).isEqualTo("BK-00995");
+        assertThat(row.getBookingRef()).isEqualTo("BK00000995");
         assertThat(row.getClientName()).isEqualTo("CRM Money Client");
     }
 

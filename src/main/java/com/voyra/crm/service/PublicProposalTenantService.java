@@ -45,6 +45,7 @@ public class PublicProposalTenantService {
     private final LeadServiceRepository leadServiceRepository;
     private final LeadTimelineService leadTimelineService;
     private final LeadTimelineRepository leadTimelineRepository;
+    private final BaseCurrency baseCurrency;
 
     /** Events that change what the customer approved - a later one of these reopens approval. */
     private static final Set<LeadTimelineEventType> PROPOSAL_CHANGES = Set.of(
@@ -208,6 +209,7 @@ public class PublicProposalTenantService {
                 .travelDateFrom(lead.getTravelDateFrom())
                 .travelDateTo(lead.getTravelDateTo())
                 .guestCount(guestCount)
+                .currencyCode(baseCurrency.code())
                 .items(items.stream()
                         .map(i -> PublicProposalItemResponse.builder()
                                 .id(i.getId()).type(i.getType())

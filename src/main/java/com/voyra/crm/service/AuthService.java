@@ -40,6 +40,7 @@ public class AuthService {
     private final AgentRepository agentRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
+    private final BaseCurrency baseCurrency;
 
     /**
      * Resolves the principal from the credentials alone - no role is supplied by the caller.
@@ -119,6 +120,7 @@ public class AuthService {
                 .name(t.getOwnerName())
                 .role(UserType.AGENCY_OWNER.name())
                 .tenantId(t.getId())
+                .baseCurrencyCode(baseCurrency.of(t.getId()))
                 .token(jwtService.generateToken(t.getOwnerEmail(), UserType.AGENCY_OWNER, t.getId(), t.getId()))
                 .build());
     }
@@ -139,6 +141,7 @@ public class AuthService {
                 .name(a.getName())
                 .role(role.name())
                 .tenantId(a.getTenantId())
+                .baseCurrencyCode(baseCurrency.of(a.getTenantId()))
                 .token(jwtService.generateToken(a.getEmail(), role, a.getId(), a.getTenantId()))
                 .build());
     }

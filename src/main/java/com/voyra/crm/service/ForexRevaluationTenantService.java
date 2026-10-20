@@ -47,6 +47,7 @@ public class ForexRevaluationTenantService {
     private final JournalEntryRepository journalEntryRepository;
     private final JournalService journalService;
     private final ExchangeRateProvider exchangeRateProvider;
+    private final BaseCurrency baseCurrency;
 
     public record RevaluationResult(int revalued) {
     }
@@ -54,7 +55,7 @@ public class ForexRevaluationTenantService {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public RevaluationResult revalueOpenForeignBills(LocalDate monthEnd) {
         List<SupplierInvoice> openForeignBills = supplierInvoiceRepository
-                .findByCurrencyCodeNotAndBalanceDueGreaterThanAndStatusIn("INR", BigDecimal.ZERO, OPEN_STATUSES);
+                .findByCurrencyCodeNotAndBalanceDueGreaterThanAndStatusIn(baseCurrency.code(), BigDecimal.ZERO, OPEN_STATUSES);
 
         int revalued = 0;
         for (SupplierInvoice bill : openForeignBills) {
@@ -62,7 +63,7 @@ public class ForexRevaluationTenantService {
 
             BigDecimal monthEndRate;
             try {
-                monthEndRate = exchangeRateProvider.resolve(bill.getCurrencyCode(), "INR", monthEnd).rate();
+                monthEndRate = exchangeRateProvider.resolve(bill.getCurrencyCode(), baseCurrency.code(), monthEnd).rate();
             } catch (IllegalStateException e) {
                 log.warn("No exchange rate for {}/INR as of {} - skipping revaluation of bill {}: {}",
                         bill.getCurrencyCode(), monthEnd, bill.getId(), e.getMessage());

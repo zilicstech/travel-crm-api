@@ -58,6 +58,7 @@ public class JournalService {
     private final LedgerAccountRepository ledgerAccountRepository;
     private final DocumentNumberService documentNumberService;
     private final AuditService auditService;
+    private final BaseCurrency baseCurrency;
 
     @Transactional
     public JournalEntry post(JournalPosting posting) {
@@ -103,7 +104,7 @@ public class JournalService {
                     .accountCode(lp.accountCode())
                     .partyType(lp.partyType())
                     .partyId(lp.partyId())
-                    .currencyCode(lp.currencyCode() != null ? lp.currencyCode() : "INR")
+                    .currencyCode(lp.currencyCode() != null ? lp.currencyCode() : baseCurrency.code())
                     .fxRateToInr(fxRate)
                     .debitAmount(debit)
                     .creditAmount(credit)
@@ -237,7 +238,7 @@ public class JournalService {
         }
         List<JournalLinePosting> lines = request.getLines().stream()
                 .map(l -> new JournalLinePosting(l.getAccountCode(), l.getPartyType(), l.getPartyId(),
-                        l.getCurrencyCode() != null ? l.getCurrencyCode() : "INR",
+                        l.getCurrencyCode(),
                         l.getFxRateToInr() != null ? l.getFxRateToInr() : BigDecimal.ONE,
                         nz(l.getDebitAmount()), nz(l.getCreditAmount()), l.getNarration()))
                 .toList();

@@ -34,6 +34,10 @@ public class CreditNoteRequest {
             + "on a commission-agent invoice it stays as pass-through, the rest of cancellationFee is the agency's fee.", example = "3500.00")
     private BigDecimal supplierRetained;
 
+    @Schema(description = "On an invoice billing several bookings: the booking this note credits (its share of the invoice). "
+            + "Defaults to the invoice's first booking.", example = "8f2a1c3d-58cc-4372-a567-0e02b2c3d479")
+    private String bookingId;
+
     @Schema(description = "Defaults to today when omitted", example = "2026-09-19")
     private LocalDate noteDate;
 }

@@ -46,6 +46,10 @@ class InvoiceDocumentControllerAuthTest {
     private TaxEngine taxEngine;
     @MockBean
     private InvoiceDocumentService invoiceDocumentService;
+    @MockBean
+    private com.voyra.crm.service.InvoicePurchaseService invoicePurchaseService;
+    @MockBean
+    private com.voyra.crm.service.BaseCurrency baseCurrency;
 
     private TaxPreviewRequest request() {
         TaxPreviewRequest r = new TaxPreviewRequest();

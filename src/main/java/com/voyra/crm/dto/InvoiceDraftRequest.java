@@ -20,6 +20,14 @@ public class InvoiceDraftRequest {
     @Schema(description = "Required when creating; ignored when replacing an existing draft", example = "8f2a1c3d-...")
     private String bookingId;
 
+    @Schema(description = "Create only: several bookings of one client, one supplier, one agent and one invoice "
+            + "type on one invoice, one line per voucher. Takes precedence over bookingId.")
+    private List<String> bookingIds;
+
+    @Schema(description = "The date the invoice is issued under - not after today, not before the latest invoice "
+            + "already issued in its series. Empty issues it under the day it is generated.", example = "2026-10-19")
+    private LocalDate invoiceDate;
+
     @Schema(description = "Overrides the category InvoiceServiceCategory.forBooking would derive from the "
             + "booking's own type - the only way to reach RAIL or MISCELLANEOUS, which have no BookingType "
             + "counterpart. Only read on create; a draft's category never changes on update.", example = "MISCELLANEOUS")

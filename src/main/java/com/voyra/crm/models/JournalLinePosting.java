@@ -17,20 +17,20 @@ public record JournalLinePosting(
         String narration
 ) {
     public static JournalLinePosting debit(String accountCode, BigDecimal amountInr, String narration) {
-        return new JournalLinePosting(accountCode, null, null, "INR", BigDecimal.ONE, amountInr, BigDecimal.ZERO, narration);
+        return new JournalLinePosting(accountCode, null, null, null, BigDecimal.ONE, amountInr, BigDecimal.ZERO, narration);
     }
 
     public static JournalLinePosting credit(String accountCode, BigDecimal amountInr, String narration) {
-        return new JournalLinePosting(accountCode, null, null, "INR", BigDecimal.ONE, BigDecimal.ZERO, amountInr, narration);
+        return new JournalLinePosting(accountCode, null, null, null, BigDecimal.ONE, BigDecimal.ZERO, amountInr, narration);
     }
 
     public static JournalLinePosting debitParty(String accountCode, String partyType, String partyId,
                                                  BigDecimal amountInr, String narration) {
-        return new JournalLinePosting(accountCode, partyType, partyId, "INR", BigDecimal.ONE, amountInr, BigDecimal.ZERO, narration);
+        return new JournalLinePosting(accountCode, partyType, partyId, null, BigDecimal.ONE, amountInr, BigDecimal.ZERO, narration);
     }
 
     public static JournalLinePosting creditParty(String accountCode, String partyType, String partyId,
                                                   BigDecimal amountInr, String narration) {
-        return new JournalLinePosting(accountCode, partyType, partyId, "INR", BigDecimal.ONE, BigDecimal.ZERO, amountInr, narration);
+        return new JournalLinePosting(accountCode, partyType, partyId, null, BigDecimal.ONE, BigDecimal.ZERO, amountInr, narration);
     }
 }

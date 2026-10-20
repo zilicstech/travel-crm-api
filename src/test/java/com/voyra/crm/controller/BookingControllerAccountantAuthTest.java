@@ -72,6 +72,33 @@ class BookingControllerAccountantAuthTest {
     }
 
     @Test
+    void theAccountantRemarkIsTheAccountantsAndOwnersNotTheAgents() throws Exception {
+        when(bookingService.updateAccountantRemark("B1", "Done (Zohaib)")).thenReturn(BookingResponse.builder().id("B1").build());
+        String body = "{\"remark\":\"Done (Zohaib)\"}";
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch("/api/bookings/B1/accountant-remark")
+                        .with(SecurityMockMvcRequestPostProcessors.user("accountant1").roles("ACCOUNTANT"))
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk());
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch("/api/bookings/B1/accountant-remark")
+                        .with(SecurityMockMvcRequestPostProcessors.user("owner1").roles("AGENCY_OWNER"))
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk());
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch("/api/bookings/B1/accountant-remark")
+                        .with(SecurityMockMvcRequestPostProcessors.user("agent1").roles("AGENT"))
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void aRemarkOverTheLimitIsRefused() throws Exception {
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch("/api/bookings/B1/accountant-remark")
+                        .with(SecurityMockMvcRequestPostProcessors.user("accountant1").roles("ACCOUNTANT"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"remark\":\"" + "x".repeat(256) + "\"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
     void accountantCannotCreateABooking() throws Exception {
         BookingCreateRequest request = new BookingCreateRequest();
         request.setClientId("K1");
@@ -110,6 +137,7 @@ class BookingControllerAccountantAuthTest {
         BookingLogRequest request = new BookingLogRequest();
         request.setServiceId("S1");
         request.setReference("ABCXYZ");
+        request.setVendorId("V1");
         request.setNetCost(java.math.BigDecimal.valueOf(42000));
         request.setSellingPrice(java.math.BigDecimal.valueOf(52000));
         return new MockMultipartFile("booking", "", MediaType.APPLICATION_JSON_VALUE,

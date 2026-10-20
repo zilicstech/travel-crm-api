@@ -51,13 +51,14 @@ public class GeneralLedgerController {
     }
 
     @GetMapping("/journals")
-    @Operation(summary = "Journal register", description = "Every journal entry in a date range with its lines, newest first. Defaults to the trailing month.")
+    @Operation(summary = "Journal register", description = "Every journal entry in a date range with its lines, newest first. Defaults to the trailing month. With sourceId, every entry that one document posted, whatever its date.")
     public ResponseEntity<List<JournalEntryResponse>> journalRegister(
             @RequestParam(value = "from", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(value = "to", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
-            @RequestParam(value = "sourceType", required = false) JournalSourceType sourceType) {
+            @RequestParam(value = "sourceType", required = false) JournalSourceType sourceType,
+            @RequestParam(value = "sourceId", required = false) String sourceId) {
         LocalDate[] range = resolveRange(from, to);
-        return ResponseEntity.ok(generalLedgerQueryService.journalRegister(range[0], range[1], sourceType));
+        return ResponseEntity.ok(generalLedgerQueryService.journalRegister(range[0], range[1], sourceType, sourceId));
     }
 
     private static LocalDate[] resolveRange(LocalDate from, LocalDate to) {

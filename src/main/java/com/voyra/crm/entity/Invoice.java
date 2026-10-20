@@ -279,8 +279,15 @@ public class Invoice {
     @Column(name = "terms", length = 2000)
     private String terms;
 
+    /** The uploaded invoice file, for an invoice raised in the agency's own software (null when this system printed it). */
     @Column(name = "pdf_file_key", length = 500)
     private String pdfFileKey;
+
+    @Column(name = "uploaded_file_name", length = 255)
+    private String uploadedFileName;
+
+    @Column(name = "uploaded_content_type", length = 150)
+    private String uploadedContentType;
 
     @Column(name = "created_at")
     private LocalDateTime createdAt;

@@ -59,6 +59,16 @@ public class BookingDocumentController {
         return ResponseEntity.ok(bookingDocumentService.updateDocument(bookingId, documentId, request));
     }
 
+    @PutMapping("/{documentId}/charges")
+    @PreAuthorize("hasAnyRole('AGENCY_OWNER', 'ACCOUNTANT')")
+    @Operation(summary = "Set a voucher's fare breakdown and supplier commission",
+            description = "The breakdown must add up to the voucher's purchase price. Refused once the voucher is invoiced; "
+                    + "the commission is refused once its supplier bill is approved.")
+    public ResponseEntity<BookingDocumentResponse> setCharges(@PathVariable String bookingId, @PathVariable String documentId,
+                                                               @Valid @RequestBody com.voyra.crm.dto.VoucherChargesRequest request) {
+        return ResponseEntity.ok(bookingDocumentService.setCharges(bookingId, documentId, request));
+    }
+
     @DeleteMapping("/{documentId}")
     @Operation(summary = "Remove a document")
     public ResponseEntity<Void> deleteDocument(@PathVariable String bookingId, @PathVariable String documentId) {

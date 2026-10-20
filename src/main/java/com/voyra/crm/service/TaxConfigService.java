@@ -109,7 +109,7 @@ public class TaxConfigService {
      * its rate from today. shortcut: no date-ahead rate changes; add date-ranged lookups to allow them.
      */
     private static void assertNotFuture(TaxRateConfigCreateRequest request) {
-        if (request.getEffectiveFrom() != null && request.getEffectiveFrom().isAfter(LocalDate.now())) {
+        if (request.getEffectiveFrom() != null && request.getEffectiveFrom().isAfter(com.voyra.crm.util.FinancialYear.today())) {
             throw new IllegalArgumentException("A tax rate can't start in the future - add or replace it on the day it takes effect");
         }
     }
@@ -125,7 +125,7 @@ public class TaxConfigService {
                 .taxablePercent(request.getTaxablePercent() != null ? request.getTaxablePercent() : new BigDecimal("100.000"))
                 .thresholdAmount(request.getThresholdAmount())
                 .tcsSection(request.getTcsSection())
-                .effectiveFrom(request.getEffectiveFrom() != null ? request.getEffectiveFrom() : LocalDate.now())
+                .effectiveFrom(request.getEffectiveFrom() != null ? request.getEffectiveFrom() : com.voyra.crm.util.FinancialYear.today())
                 .isDefault(Boolean.TRUE.equals(request.getIsDefault()))
                 .isActive(true)
                 .createdAt(LocalDateTime.now())

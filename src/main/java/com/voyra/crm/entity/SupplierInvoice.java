@@ -153,6 +153,16 @@ public class SupplierInvoice {
     @Builder.Default
     private BigDecimal roundOff = BigDecimal.ZERO;
 
+    /** What the supplier pays the agency on this bill and the TDS it deducts on that, in the bill's currency -
+     *  copied from the voucher. The agency owes {@link #payable()}, not the grand total. */
+    @Column(name = "commission", nullable = false, precision = 19, scale = 2)
+    @Builder.Default
+    private BigDecimal commission = BigDecimal.ZERO;
+
+    @Column(name = "supplier_tds", nullable = false, precision = 19, scale = 2)
+    @Builder.Default
+    private BigDecimal supplierTds = BigDecimal.ZERO;
+
     @Column(name = "grand_total", nullable = false, precision = 19, scale = 2)
     @Builder.Default
     private BigDecimal grandTotal = BigDecimal.ZERO;
@@ -259,5 +269,24 @@ public class SupplierInvoice {
         if (createdDate == null) {
             createdDate = LocalDateTime.now();
         }
+    }
+
+    /** What the agency owes the supplier: the bill less the commission the supplier keeps back, plus the TDS it deducted on it. */
+    public BigDecimal payable() {
+        return grandTotal.subtract(nz(commission)).add(nz(supplierTds));
+    }
+
+    /** {@link #payable()} in base at the bill's rate. */
+    public BigDecimal payableInr() {
+        return grandTotalInr.subtract(inr(commission)).add(inr(supplierTds));
+    }
+
+    /** An amount in the bill's currency, in base at its rate. */
+    public BigDecimal inr(BigDecimal amount) {
+        return nz(amount).multiply(fxRateToInr != null ? fxRateToInr : BigDecimal.ONE).setScale(2, java.math.RoundingMode.HALF_UP);
+    }
+
+    private static BigDecimal nz(BigDecimal v) {
+        return v != null ? v : BigDecimal.ZERO;
     }
 }

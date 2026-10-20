@@ -110,6 +110,15 @@ public class SupplierInvoiceResponse {
     @Schema(example = "13020.00")
     private BigDecimal grandTotal;
 
+    @Schema(description = "Commission the supplier pays the agency on this bill (kept back from what is paid), in the bill's currency", example = "410.00")
+    private BigDecimal commission;
+
+    @Schema(description = "TDS the supplier deducted on that commission (sec. 194H), in the bill's currency", example = "8.20")
+    private BigDecimal supplierTds;
+
+    @Schema(description = "What the agency owes the supplier: grand total less commission plus the supplier's TDS", example = "11278.20")
+    private BigDecimal payable;
+
     @Schema(example = "ELIGIBLE")
     private ItcEligibility itcEligibility;
 

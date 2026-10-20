@@ -41,6 +41,9 @@ class BookingLogServiceTest {
     @Mock private LeadMemberRepository leadMemberRepository;
     @Mock private VendorRepository vendorRepository;
     @Mock private FileStorageService fileStorageService;
+    @org.mockito.Spy
+    private com.voyra.crm.service.BaseCurrency baseCurrency = new com.voyra.crm.service.BaseCurrency(null);
+
     @InjectMocks private BookingLogService bookingLogService;
 
     private final MockMultipartFile voucher = new MockMultipartFile("file", "v.pdf", "application/pdf", new byte[]{1});
@@ -71,7 +74,7 @@ class BookingLogServiceTest {
     void storesTheVoucherThenCreatesTheConfirmedBookingWithIt() {
         when(fileStorageService.store(eq("T1"), eq("booking-documents"), anyString(), eq(voucher))).thenReturn("key-1");
         when(bookingService.logBooking(any(), anyString(), eq("key-1"), eq("v.pdf"), eq("application/pdf"),
-                eq(BookingDocumentType.HOTEL_VOUCHER), eq("HC-1")))
+                eq(BookingDocumentType.HOTEL_VOUCHER), eq("HC-1"), any()))
                 .thenReturn(BookingResponse.builder().id("B1").build());
 
         assertThat(bookingLogService.log(adHoc(), voucher).getId()).isEqualTo("B1");
@@ -81,7 +84,7 @@ class BookingLogServiceTest {
     @Test
     void deletesTheStoredVoucherWhenTheBookingIsRejected() {
         when(fileStorageService.store(any(), any(), any(), any())).thenReturn("key-2");
-        when(bookingService.logBooking(any(), any(), any(), any(), any(), any(), any()))
+        when(bookingService.logBooking(any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenThrow(new IllegalArgumentException("Client not found: C1"));
 
         assertThatThrownBy(() -> bookingLogService.log(adHoc(), voucher)).hasMessage("Client not found: C1");

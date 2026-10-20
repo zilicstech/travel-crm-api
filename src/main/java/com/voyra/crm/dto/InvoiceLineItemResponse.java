@@ -78,4 +78,28 @@ public class InvoiceLineItemResponse {
 
     @Schema(description = "Display-only - the supplier's own tax component (YQ/YR and similar), printed as a separate column next to Fare when present", example = "0.00")
     private BigDecimal taxAmount;
+
+    @Schema(description = "The booking this line bills")
+    private String bookingId;
+
+    @Schema(example = "BK-00042")
+    private String bookingRef;
+
+    @Schema(description = "The voucher this line bills")
+    private String bookingDocumentId;
+
+    @Schema(description = "The voucher's reference - PNR, confirmation no.", example = "NAHKSJ")
+    private String voucherReference;
+
+    @Schema(description = "The voucher's fare charges in base (basic, yq, yr, k3, oc, otherTax, processing, otherCharges); with the markup they make up the line")
+    private java.util.Map<String, BigDecimal> charges;
+
+    @Schema(description = "An air ticket line's travellers, as drafted")
+    private java.util.List<VoucherTraveller> travellers;
+
+    @Schema(description = "An air ticket line's flights, as drafted")
+    private java.util.List<VoucherLeg> legs;
+
+    @Schema(description = "The voucher's purchase cost in base. Owner and accountant only; null for agents.", example = "105800.00")
+    private BigDecimal purchaseCost;
 }

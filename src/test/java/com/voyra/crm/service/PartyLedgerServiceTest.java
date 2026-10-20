@@ -61,7 +61,7 @@ class PartyLedgerServiceTest {
         PartyLedgerResponse r = service.entries(LedgerPartyType.ALL, null, from, to);
 
         assertThat(r.getEntries()).extracting(e -> e.getPartyName()).containsExactly("TripJack", "Sharma Family");
-        assertThat(r.getEntries().get(1).getBookingRef()).isEqualTo("BK-00042");
+        assertThat(r.getEntries().get(1).getBookingRef()).isEqualTo("BK00000042");
         assertThat(r.getTotalDebitInr()).isEqualByComparingTo("12000");
         assertThat(r.getTotalCreditInr()).isEqualByComparingTo("10000");
         assertThat(r.getOpeningBalanceInr()).isNull();

@@ -33,6 +33,9 @@ public class LoginResponse {
     @Schema(description = "Omitted for SUPER_ADMIN", example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String tenantId;
 
+    @Schema(description = "The agency's base currency (ISO 4217) - every amount shown is in it. Omitted for SUPER_ADMIN", example = "INR")
+    private String baseCurrencyCode;
+
     @Schema(description = "Bearer JWT - pass as 'Authorization: Bearer <token>' on subsequent requests")
     private String token;
 

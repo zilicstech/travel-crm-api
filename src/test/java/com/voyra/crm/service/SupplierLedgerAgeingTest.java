@@ -33,6 +33,9 @@ class SupplierLedgerAgeingTest {
     @Mock private SupplierInvoiceRepository supplierInvoiceRepository;
     @Mock private VendorRepository vendorRepository;
     @Mock private JournalService journalService;
+    @org.mockito.Spy
+    private com.voyra.crm.service.BaseCurrency baseCurrency = new com.voyra.crm.service.BaseCurrency(null);
+
     @InjectMocks private SupplierLedgerService supplierLedgerService;
 
     private static SupplierLedgerEntry entry(String credit, String debit) {

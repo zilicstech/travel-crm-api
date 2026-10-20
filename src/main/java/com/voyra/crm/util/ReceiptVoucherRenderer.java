@@ -24,7 +24,7 @@ public final class ReceiptVoucherRenderer {
     private ReceiptVoucherRenderer() {
     }
 
-    public static byte[] write(PaymentReceipt receipt, String invoiceNumber) {
+    public static byte[] write(PaymentReceipt receipt, String invoiceNumber, String base) {
         Document document = new Document(PageSize.A5, 32, 32, 36, 36);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         try {
@@ -45,8 +45,8 @@ public final class ReceiptVoucherRenderer {
             row(table, "Date", InvoicePdfRenderer.str(receipt.getReceivedOn()), labelFont, bodyFont);
             row(table, "Against Invoice", InvoicePdfRenderer.valueOr(invoiceNumber), labelFont, bodyFont);
             row(table, "Amount", InvoicePdfRenderer.money(receipt.getAmount()) + " " + receipt.getCurrencyCode(), labelFont, bodyFont);
-            if (!"INR".equals(receipt.getCurrencyCode())) {
-                row(table, "Amount (INR)", InvoicePdfRenderer.money(receipt.getAmountInr()), labelFont, bodyFont);
+            if (!base.equals(receipt.getCurrencyCode())) {
+                row(table, "Amount (" + base + ")", InvoicePdfRenderer.money(receipt.getAmountInr()), labelFont, bodyFont);
             }
             row(table, "Payment Mode", String.valueOf(receipt.getPaymentMode()), labelFont, bodyFont);
             row(table, "Reference", InvoicePdfRenderer.valueOr(receipt.getInstrumentRef()), labelFont, bodyFont);

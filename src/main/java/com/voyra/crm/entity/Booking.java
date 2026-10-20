@@ -239,6 +239,11 @@ public class Booking {
     @Builder.Default
     private BigDecimal sellingPrice = BigDecimal.ZERO;
 
+    /** What the suppliers pay the agency on this booking's vouchers (base) - part of its profit. */
+    @Column(name = "commission", nullable = false, precision = 19, scale = 2)
+    @Builder.Default
+    private BigDecimal commission = BigDecimal.ZERO;
+
     @Column(name = "profit", nullable = false, precision = 19, scale = 2)
     @Builder.Default
     private BigDecimal profit = BigDecimal.ZERO;
@@ -305,6 +310,10 @@ public class Booking {
 
     @Column(name = "created_by", length = 36)
     private String createdBy;
+
+    /** The accountant's own short note (e.g. "Done (Zohaib)"). */
+    @Column(name = "accountant_remark", length = 255)
+    private String accountantRemark;
 
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;

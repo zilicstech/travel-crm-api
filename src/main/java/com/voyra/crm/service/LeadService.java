@@ -100,6 +100,7 @@ public class LeadService {
     private final BookingService bookingService;
     private final InvoiceService invoiceService;
     private final AuditService auditService;
+    private final BaseCurrency baseCurrency;
 
     @Transactional
     public LeadDetailResponse createLead(LeadCreateRequest request) {
@@ -421,8 +422,10 @@ public class LeadService {
     public ProposalItemResponse addProposalItem(String id, ProposalItemCreateRequest request) {
         Lead lead = findAccessibleLead(id);
         assertProposalUnlocked(lead);
-        BigDecimal netCost = request.getNetCost() != null ? request.getNetCost() : BigDecimal.ZERO;
-        BigDecimal sellingPrice = linePrice(netCost, request.getMarkupMode(), request.getMarkupValue(), request.getSellingPrice());
+        String base = baseCurrency.code();
+        com.voyra.crm.util.FxMath.Pricing pricing = com.voyra.crm.util.FxMath.resolve(request, base);
+        BigDecimal netCost = pricing.netCost() != null ? pricing.netCost() : BigDecimal.ZERO;
+        BigDecimal sellingPrice = linePrice(netCost, request.getMarkupMode(), pricing.markupValue(), request.getSellingPrice());
 
         com.voyra.crm.entity.LeadService service = lineService(lead, request.getServiceId());
         String serviceLabel = service != null ? service.getLabel() : null;
@@ -438,11 +441,12 @@ public class LeadService {
                 .netCost(netCost)
                 .sellingPrice(sellingPrice)
                 .markupMode(request.getMarkupMode())
-                .markupValue(request.getMarkupValue())
+                .markupValue(pricing.markupValue())
                 .optionGroup(request.getOptionGroup())
                 .createdAt(LocalDateTime.now())
                 .createdBy(currentUserId())
                 .build();
+        item.keepForeign(pricing, base);
         leadProposalRepository.save(item);
         if (request.getOptionGroup() != null && request.isSelected()) {
             enforceSingleSelection(id, request.getOptionGroup(), item.getId(), "AGENT");
@@ -468,7 +472,10 @@ public class LeadService {
         String optionGroup = request.getOptionGroup() != null ? request.getOptionGroup() : request.getServiceId();
 
         List<LeadProposal> created = new ArrayList<>();
+        String base = baseCurrency.code();
         for (ProposalItemBatchLine line : request.getItems()) {
+            com.voyra.crm.util.FxMath.Pricing pricing = com.voyra.crm.util.FxMath.resolve(line, base);
+            BigDecimal netCost = pricing.netCost() != null ? pricing.netCost() : BigDecimal.ZERO;
             LeadProposal item = LeadProposal.builder()
                     .id(UniqueIdResolver.resolve(leadProposalRepository::existsById))
                     .leadId(id)
@@ -477,15 +484,15 @@ public class LeadService {
                     .type(line.getType())
                     .description(line.getDescription())
                     .supplier(line.getSupplier())
-                    .netCost(line.getNetCost() != null ? line.getNetCost() : BigDecimal.ZERO)
-                    .sellingPrice(linePrice(line.getNetCost() != null ? line.getNetCost() : BigDecimal.ZERO,
-                            line.getMarkupMode(), line.getMarkupValue(), line.getSellingPrice()))
+                    .netCost(netCost)
+                    .sellingPrice(linePrice(netCost, line.getMarkupMode(), pricing.markupValue(), line.getSellingPrice()))
                     .markupMode(line.getMarkupMode())
-                    .markupValue(line.getMarkupValue())
+                    .markupValue(pricing.markupValue())
                     .optionGroup(optionGroup)
                     .createdAt(LocalDateTime.now())
                     .createdBy(currentUserId())
                     .build();
+            item.keepForeign(pricing, base);
             created.add(item);
         }
         leadProposalRepository.saveAll(created);
@@ -553,16 +560,24 @@ public class LeadService {
         if (request.getSupplier() != null) {
             item.setSupplier(request.getSupplier());
         }
-        if (request.getNetCost() != null) {
-            item.setNetCost(request.getNetCost());
-        }
         if (request.getSellingPrice() != null) {
             item.setSellingPrice(request.getSellingPrice());
         }
         if (request.getMarkupMode() != null) {
             item.setMarkupMode(request.getMarkupMode());
         }
-        if (request.getMarkupValue() != null) {
+        // A cost edit carries the whole price as typed: base figures, or foreign ones with their rates.
+        if (request.getNetCost() != null || request.getPurchasePrice() != null || request.getMarkupInput() != null) {
+            String base = baseCurrency.code();
+            com.voyra.crm.util.FxMath.Pricing pricing = com.voyra.crm.util.FxMath.resolve(request, base);
+            if (pricing.netCost() != null) {
+                item.setNetCost(pricing.netCost());
+            }
+            if (pricing.markupValue() != null) {
+                item.setMarkupValue(pricing.markupValue());
+            }
+            item.keepForeign(pricing, base);
+        } else if (request.getMarkupValue() != null) {
             item.setMarkupValue(request.getMarkupValue());
         }
         // A marked-up line's price is always cost + markup, whatever the request said.
@@ -958,6 +973,8 @@ public class LeadService {
                 .supplier(item.getSupplier()).netCost(item.getNetCost()).sellingPrice(item.getSellingPrice())
                 .marginPercent(MarginCalculator.marginPercent(item.getNetCost(), item.getSellingPrice()))
                 .markupMode(item.getMarkupMode()).markupValue(item.getMarkupValue())
+                .purchaseCurrency(item.getPurchaseCurrency()).purchasePrice(item.getPurchasePrice()).purchaseRate(item.getPurchaseRate())
+                .markupCurrency(item.getMarkupCurrency()).markupInput(item.getMarkupInput()).markupRate(item.getMarkupRate())
                 .optionGroup(item.getOptionGroup()).selected(item.isSelected())
                 .selectedBy(item.getSelectedBy()).selectedAt(item.getSelectedAt())
                 .build();

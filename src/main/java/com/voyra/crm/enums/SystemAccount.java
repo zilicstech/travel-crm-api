@@ -17,6 +17,8 @@ public enum SystemAccount {
     ACCOUNTS_RECEIVABLE("1200", "Accounts Receivable", LedgerAccountType.ASSET, null, true, ControlAccountOf.ACCOUNTS_RECEIVABLE),
     SUPPLIER_ADVANCES("1300", "Supplier Advances", LedgerAccountType.ASSET, null, true, ControlAccountOf.SUPPLIER_ADVANCES),
     INPUT_GST_RECEIVABLE("1400", "Input GST Receivable", LedgerAccountType.ASSET, null, false, null),
+    /** TDS suppliers deducted on the commission they pay the agency (sec. 194H) - claimed back in its return. */
+    TDS_RECEIVABLE("1410", "TDS Receivable", LedgerAccountType.ASSET, null, false, null),
 
     CLIENT_ADVANCES_HELD("2110", "Client Advances Held", LedgerAccountType.LIABILITY, null, true, ControlAccountOf.CLIENT_ADVANCES),
     UNEARNED_TOUR_REVENUE("2120", "Unearned Tour Revenue", LedgerAccountType.LIABILITY, null, true, ControlAccountOf.CLIENT_UNEARNED),
@@ -40,6 +42,8 @@ public enum SystemAccount {
     PURCHASES("5000", "Purchases", LedgerAccountType.EXPENSE, null, false, null),
 
     SERVICE_FEE_INCOME("4600", "Service Fee / Commission Income", LedgerAccountType.INCOME, null, false, null),
+    /** Commission suppliers pay the agency on tickets - kept apart from 4600, which is the GST base of the agency's own fee. */
+    SUPPLIER_COMMISSION_INCOME("4610", "Supplier Commission Income", LedgerAccountType.INCOME, null, false, null),
     REALIZED_FOREX_GAIN("4700", "Realized Forex Gain", LedgerAccountType.INCOME, null, false, null),
     UNREALIZED_FOREX_GAIN("4710", "Unrealized Forex Gain", LedgerAccountType.INCOME, null, false, null),
 

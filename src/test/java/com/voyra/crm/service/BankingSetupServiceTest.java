@@ -46,7 +46,7 @@ class BankingSetupServiceTest {
 
     private BankAccountService accounts() {
         return new BankAccountService(bankAccountRepository, ledgerAccountRepository, bankTransactionRepository,
-                paymentReceiptRepository, supplierPaymentRepository);
+                paymentReceiptRepository, supplierPaymentRepository, new BaseCurrency(null));
     }
 
     private BankMatchRuleService rules() {

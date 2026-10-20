@@ -30,4 +30,10 @@ public class AgencyCreateRequest {
     @Size(min = 8, message = "Password must be at least 8 characters")
     @Schema(description = "Login password for the Agency Owner, chosen by the Platform Admin and handed to the owner", example = "SecurePass123")
     private String ownerPassword;
+
+    @NotBlank(message = "Base currency is required")
+    @jakarta.validation.constraints.Pattern(regexp = "^[A-Za-z]{3}$", message = "Base currency must be a 3-letter ISO code")
+    @Schema(description = "ISO 4217 code every amount in this agency's books is kept in. Set once here; it can't be changed later.",
+            example = "INR")
+    private String baseCurrencyCode;
 }

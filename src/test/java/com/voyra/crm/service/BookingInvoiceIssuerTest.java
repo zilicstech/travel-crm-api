@@ -30,6 +30,26 @@ class BookingInvoiceIssuerTest {
     @Mock private TaxRateConfigRepository taxRateConfigRepository;
     @InjectMocks private BookingInvoiceIssuer issuer;
 
+    /** GST on the agency's own invoices is switched off for now (invoices come from the agency's own software); these cover it switched on. */
+    @org.junit.jupiter.api.BeforeEach
+    void gstOn() {
+        org.springframework.test.util.ReflectionTestUtils.setField(issuer, "gstEnabled", true);
+    }
+
+    @Test
+    void withGstSwitchedOffNoTaxIsAddedAndChargesCarryNone() {
+        org.springframework.test.util.ReflectionTestUtils.setField(issuer, "gstEnabled", false);
+        InvoiceDraftRequest draft = new InvoiceDraftRequest();
+
+        issuer.applyDefaultGst(draft, Booking.builder().type(BookingType.FLIGHT).internationalTrip(false).build());
+
+        assertThat(draft.getSupplyNature()).isEqualTo(SupplyNature.AIR_TICKET);
+        assertThat(draft.getTaxes()).isNullOrEmpty();
+        assertThat(issuer.cancellationChargesTotal(Booking.builder().type(BookingType.HOTEL).build(),
+                new BigDecimal("1000"), new BigDecimal("500"))).isEqualByComparingTo("1500");
+        org.mockito.Mockito.verifyNoInteractions(taxRateConfigRepository);
+    }
+
     @Test
     void aFlightGetsTheAirTicketDefaultGst() {
         when(taxRateConfigRepository.findByTaxKindAndSupplyNatureAndIsDefaultTrueAndIsActiveTrue(TaxKind.GST, SupplyNature.AIR_TICKET))
@@ -64,14 +84,14 @@ class BookingInvoiceIssuerTest {
         ArgumentCaptor<InvoiceDraftRequest> draft = ArgumentCaptor.forClass(InvoiceDraftRequest.class);
         verify(invoiceDocumentService).createDraft(draft.capture());
         assertThat(draft.getValue().getLines()).singleElement().satisfies(l -> {
-            assertThat(l.getDescription()).isEqualTo("Cancellation charges - BK-00042");
+            assertThat(l.getDescription()).isEqualTo("Cancellation charges - BK00000042");
             assertThat(l.getUnitPrice()).isEqualByComparingTo("1500");
         });
         assertThat(draft.getValue().getPassThroughAmount()).isEqualByComparingTo("1200");
         assertThat(issued.getGrandTotal()).isEqualByComparingTo("1554");
     }
 
-    /** The cancel preview shows what the charges invoice will bill: GST on the fee alone for a flight, on everything kept otherwise. */
+    /** The cancel preview shows what the charges invoice will bill: GST on the agency's fee alone - the supplier's part passes through. */
     @Test
     void theCancellationChargesTotalCarriesTheSameGstTheInvoiceWill() {
         when(taxRateConfigRepository.findByTaxKindAndSupplyNatureAndIsDefaultTrueAndIsActiveTrue(TaxKind.GST, SupplyNature.AIR_TICKET))
@@ -82,7 +102,7 @@ class BookingInvoiceIssuerTest {
         assertThat(issuer.cancellationChargesTotal(Booking.builder().type(BookingType.FLIGHT).internationalTrip(false).build(),
                 new BigDecimal("1200"), new BigDecimal("300"))).isEqualByComparingTo("1554");
         assertThat(issuer.cancellationChargesTotal(Booking.builder().type(BookingType.HOTEL).build(),
-                new BigDecimal("1200"), new BigDecimal("300"))).isEqualByComparingTo("1770");
+                new BigDecimal("1200"), new BigDecimal("300"))).isEqualByComparingTo("1554");
         assertThat(issuer.cancellationChargesTotal(Booking.builder().type(BookingType.TRANSFER).build(),
                 new BigDecimal("1200"), new BigDecimal("300"))).isEqualByComparingTo("1500");
     }

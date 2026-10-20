@@ -16,7 +16,7 @@ import java.util.List;
         + "destination, the service's own details, the agent and the travellers are all taken from "
         + "the lead's service and the matching request fields are ignored. Without it (an ad-hoc "
         + "booking) clientId, type and destination are required.")
-public class BookingLogRequest {
+public class BookingLogRequest implements com.voyra.crm.models.ForeignPriced {
 
     @Schema(description = "The lead's service this booking confirms. Omit for an ad-hoc booking.", example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String serviceId;
@@ -50,6 +50,7 @@ public class BookingLogRequest {
     @Schema(description = "PNR, hotel confirmation no., visa application no. or transfer voucher no. - stored in the column for the booking's type.", example = "ABCXYZ")
     private String reference;
 
+    @NotBlank(message = "Supplier is required")
     @Schema(description = "Supplier vendor; a vendor with a net cost drafts a supplier bill.", example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String vendorId;
 
@@ -72,6 +73,31 @@ public class BookingLogRequest {
     @Schema(example = "10.00")
     private BigDecimal markupValue;
 
+    @jakarta.validation.constraints.Size(max = 3, message = "Purchase currency must be a 3-letter code")
+    @Schema(description = "Currency the purchase price is in (ISO 4217); blank means the agency's base currency", example = "AED")
+    private String purchaseCurrency;
+
+    @jakarta.validation.constraints.DecimalMin(value = "0.0", message = "Purchase price cannot be negative")
+    @Schema(description = "What the supplier charges, in purchaseCurrency. When set, netCost is worked out from it at purchaseRate", example = "1000.00")
+    private java.math.BigDecimal purchasePrice;
+
+    @jakarta.validation.constraints.DecimalMin(value = "0.0", message = "Purchase rate cannot be negative")
+    @Schema(description = "What 1 unit of purchaseCurrency is worth in base on the purchase date; required when it isn't the base", example = "22.85")
+    private java.math.BigDecimal purchaseRate;
+
+    @jakarta.validation.constraints.Size(max = 3, message = "Markup currency must be a 3-letter code")
+    @Schema(description = "Currency a FLAT markupInput is in (ISO 4217); blank means base", example = "AED")
+    private String markupCurrency;
+
+    @jakarta.validation.constraints.DecimalMin(value = "0.0", message = "Markup cannot be negative")
+    @Schema(description = "A FLAT markup as typed, in markupCurrency. When set, markupValue is worked out from it at markupRate", example = "100.00")
+    private java.math.BigDecimal markupInput;
+
+    @jakarta.validation.constraints.DecimalMin(value = "0.0", message = "Markup rate cannot be negative")
+    @Schema(description = "What 1 unit of markupCurrency is worth in base; required when it isn't the base", example = "22.85")
+    private java.math.BigDecimal markupRate;
+
     @Schema(example = "Window seats requested")
     private String notes;
+
 }

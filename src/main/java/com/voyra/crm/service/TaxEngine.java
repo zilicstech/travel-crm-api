@@ -136,6 +136,10 @@ public class TaxEngine {
      * regardless of destination, so destination must never auto-trigger export.
      */
     private TaxTreatment determineTreatment(TaxComputationRequest request, Client client, Tenant agency) {
+        // GST is Indian law: an agency whose books aren't in rupees charges none.
+        if (agency.getBaseCurrencyCode() != null && !"INR".equals(agency.getBaseCurrencyCode())) {
+            return TaxTreatment.EXEMPT;
+        }
         boolean nonInr = request.currencyCode() != null && !"INR".equalsIgnoreCase(request.currencyCode());
         if (request.exportOfServiceRequested() && Boolean.TRUE.equals(client.getIsOverseas()) && nonInr) {
             return TaxTreatment.EXPORT_OF_SERVICE;

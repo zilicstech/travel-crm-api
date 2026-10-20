@@ -45,6 +45,7 @@ public class BookingAccountingSync {
     private final InvoiceRepository invoiceRepository;
     private final PaymentReceiptRepository paymentReceiptRepository;
     private final CreditNoteRepository creditNoteRepository;
+    private final com.voyra.crm.repository.InvoiceLineItemRepository invoiceLineItemRepository;
 
     /**
      * {@code paymentStatusSource} flips MANUAL -&gt; DERIVED the moment a live tax invoice first
@@ -65,8 +66,30 @@ public class BookingAccountingSync {
 
         List<Invoice> liveInvoices = invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc(
                 bookingId, InvoiceDocumentType.TAX_INVOICE, InvoiceLifecycle.CANCELLED);
-        BigDecimal invoicedTotalInr = sumInr(liveInvoices, Invoice::getGrandTotalInr);
-        BigDecimal receivedTotalInr = sumReceiptsInr(bookingId, ReceiptDirection.RECEIPT);
+        // An invoice billing several bookings counts for each by its share; its receipts are shared the same way.
+        // Refunds stay with the booking they were paid for (a credit note's refund carries its booking).
+        BigDecimal invoicedTotalInr = BigDecimal.ZERO;
+        BigDecimal sharedReceivedInr = BigDecimal.ZERO;
+        java.util.Set<String> shared = new java.util.HashSet<>();
+        for (Invoice invoice : liveInvoices) {
+            java.util.Map<String, com.voyra.crm.util.InvoiceShares.Share> shares = com.voyra.crm.util.InvoiceShares.of(
+                    invoice.getBookingId(), invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc(invoice.getId()));
+            BigDecimal grand = invoice.getGrandTotalInr() != null ? invoice.getGrandTotalInr() : BigDecimal.ZERO;
+            if (shares.size() <= 1) {
+                invoicedTotalInr = invoicedTotalInr.add(grand);
+                continue;
+            }
+            shared.add(invoice.getId());
+            invoicedTotalInr = invoicedTotalInr.add(com.voyra.crm.util.InvoiceShares.part(grand, shares, bookingId));
+            // Each payment counts for the booking it was recorded for; one naming no booking on the invoice is shared.
+            List<java.util.Map.Entry<String, BigDecimal>> received = paymentReceiptRepository.findByInvoiceIdOrderByReceivedOnAscCreatedAtAsc(invoice.getId()).stream()
+                    .filter(r -> r.getDirection() == ReceiptDirection.RECEIPT)
+                    .map(r -> java.util.Map.entry(r.getBookingId() != null ? r.getBookingId() : "", r.getAmountInr())).toList();
+            sharedReceivedInr = sharedReceivedInr.add(com.voyra.crm.util.InvoiceShares.attributed(bookingId, shares, received));
+        }
+        BigDecimal receivedTotalInr = sumInr(receipts(bookingId, ReceiptDirection.RECEIPT).stream()
+                .filter(r -> r.getInvoiceId() == null || !shared.contains(r.getInvoiceId())).toList(), PaymentReceipt::getAmountInr)
+                .add(sharedReceivedInr);
         BigDecimal refundedTotalInr = sumReceiptsInr(bookingId, ReceiptDirection.REFUND);
 
         booking.setInvoicedTotalInr(invoicedTotalInr);
@@ -131,10 +154,41 @@ public class BookingAccountingSync {
     }
 
     /** An advance still on the client's account (no invoice yet) is not money received for the booking until an invoice draws it down. */
+    /** One booking's own position on an invoice, in the invoice's currency: what it is billed and what was paid for it. */
+    public record Position(BigDecimal billed, BigDecimal received) {
+        public BigDecimal owed() {
+            return billed.subtract(received);
+        }
+    }
+
+    /**
+     * On an invoice billing several bookings each keeps its own account: its share of the invoice, less its own
+     * credit notes, against the payments recorded for it (refunds paid back off them). An invoice of one booking
+     * is simply the invoice. {@code excludeCreditNoteId} leaves out a note being issued right now.
+     */
+    public Position positionOn(Invoice invoice, String bookingId, String excludeCreditNoteId) {
+        java.util.Map<String, com.voyra.crm.util.InvoiceShares.Share> shares = com.voyra.crm.util.InvoiceShares.of(
+                invoice.getBookingId(), invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc(invoice.getId()));
+        List<java.util.Map.Entry<String, BigDecimal>> credits = creditNoteRepository.findByInvoiceIdAndStatus(invoice.getId(), CreditNoteStatus.ISSUED).stream()
+                .filter(n -> !n.getId().equals(excludeCreditNoteId))
+                .map(n -> java.util.Map.entry(n.getBookingId() != null ? n.getBookingId() : "", n.getTotalAmount())).toList();
+        List<java.util.Map.Entry<String, BigDecimal>> paid = paymentReceiptRepository.findByInvoiceIdOrderByReceivedOnAscCreatedAtAsc(invoice.getId()).stream()
+                .map(r -> java.util.Map.entry(r.getBookingId() != null ? r.getBookingId() : "",
+                        r.getDirection() == ReceiptDirection.REFUND ? r.getAmount().negate() : r.getAmount())).toList();
+        BigDecimal grand = invoice.getGrandTotal() != null ? invoice.getGrandTotal() : BigDecimal.ZERO;
+        BigDecimal share = shares.size() <= 1 ? grand : com.voyra.crm.util.InvoiceShares.part(grand, shares, bookingId);
+        return new Position(share.subtract(com.voyra.crm.util.InvoiceShares.attributed(bookingId, shares, credits)),
+                com.voyra.crm.util.InvoiceShares.attributed(bookingId, shares, paid));
+    }
+
     private BigDecimal sumReceiptsInr(String bookingId, ReceiptDirection direction) {
-        return sumInr(paymentReceiptRepository.findByBookingIdAndDirection(bookingId, direction).stream()
+        return sumInr(receipts(bookingId, direction), PaymentReceipt::getAmountInr);
+    }
+
+    private List<PaymentReceipt> receipts(String bookingId, ReceiptDirection direction) {
+        return paymentReceiptRepository.findByBookingIdAndDirection(bookingId, direction).stream()
                 .filter(r -> direction != ReceiptDirection.RECEIPT || !(r.getInvoiceId() == null && Boolean.TRUE.equals(r.getIsAdvance())))
-                .toList(), PaymentReceipt::getAmountInr);
+                .toList();
     }
 
     private static PaymentStatus deriveStatus(BigDecimal invoicedTotalInr, BigDecimal receivedTotalInr, BigDecimal refundedTotalInr) {

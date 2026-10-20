@@ -56,4 +56,7 @@ public class PublicProposalResponse {
 
     @Schema(description = "True once the customer approved this proposal and nothing on it changed since")
     private boolean approved;
+
+    @Schema(description = "ISO 4217 code every amount here is in - the agency's base currency", example = "INR")
+    private String currencyCode;
 }

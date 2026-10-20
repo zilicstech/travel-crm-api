@@ -24,4 +24,7 @@ public class AgencyCreateResponse {
 
     @Schema(description = "Agency Owner's login email", example = "owner@globalexplorer.com")
     private String ownerEmail;
+
+    @Schema(description = "ISO 4217 code the agency's books are kept in", example = "INR")
+    private String baseCurrencyCode;
 }

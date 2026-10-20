@@ -68,6 +68,13 @@ class ClientMemberRuleTest {
     private ClientCreditService clientCreditService;
 
 
+    @org.mockito.Spy
+
+
+    private com.voyra.crm.service.BaseCurrency baseCurrency = new com.voyra.crm.service.BaseCurrency(null);
+
+
+
     @InjectMocks
     private ClientService clientService;
 

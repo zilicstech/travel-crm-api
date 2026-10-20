@@ -32,7 +32,7 @@ import java.time.LocalDateTime;
 @Builder(toBuilder = true)
 @SQLDelete(sql = "UPDATE booking_document SET deleted_at = now() WHERE id = ?")
 @SQLRestriction("deleted_at IS NULL")
-public class BookingDocument {
+public class BookingDocument implements com.voyra.crm.models.ForeignPricedRecord {
 
     @Id
     @Column(name = "id", length = 36)
@@ -79,8 +79,60 @@ public class BookingDocument {
     @Column(name = "markup_value", precision = 14, scale = 2)
     private java.math.BigDecimal markupValue;
 
+    /** What was typed, when the purchase price or a flat markup was in another currency - see util.FxMath.
+     *  netCost and markupValue above are always the base-currency figures. */
+    @Column(name = "purchase_currency", length = 3)
+    private String purchaseCurrency;
+
+    @Column(name = "purchase_price", precision = 14, scale = 2)
+    private java.math.BigDecimal purchasePrice;
+
+    @Column(name = "purchase_rate", precision = 18, scale = 6)
+    private java.math.BigDecimal purchaseRate;
+
+    @Column(name = "markup_currency", length = 3)
+    private String markupCurrency;
+
+    @Column(name = "markup_input", precision = 14, scale = 2)
+    private java.math.BigDecimal markupInput;
+
+    @Column(name = "markup_rate", precision = 18, scale = 6)
+    private java.math.BigDecimal markupRate;
+
     @Column(name = "vendor_id", length = 36)
     private String vendorId;
+
+    /** The fare's charges (basic, yq, yr, k3, oc, otherTax, processing, otherCharges) in the purchase currency;
+     *  when set, the purchase price is their sum - see util.VoucherCharges. */
+    @org.hibernate.annotations.JdbcTypeCode(org.hibernate.type.SqlTypes.JSON)
+    @Column(name = "charges", columnDefinition = "jsonb")
+    private java.util.Map<String, java.math.BigDecimal> charges;
+
+    /** What the supplier pays the agency on this voucher (flights): PERCENT of basic or FLAT, as typed. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "commission_mode", length = 10)
+    private com.voyra.crm.enums.MarkupMode commissionMode;
+
+    @Column(name = "commission_value", precision = 14, scale = 2)
+    private java.math.BigDecimal commissionValue;
+
+    /** TDS % the supplier deducts on the commission (sec. 194H). */
+    @Column(name = "supplier_tds_rate", precision = 5, scale = 2)
+    private java.math.BigDecimal supplierTdsRate;
+
+    /** The commission and the supplier's TDS on it, in the purchase currency (as the supplier bill is). */
+    @Column(name = "commission", nullable = false, precision = 14, scale = 2)
+    @Builder.Default
+    private java.math.BigDecimal commission = java.math.BigDecimal.ZERO;
+
+    @Column(name = "supplier_tds", nullable = false, precision = 14, scale = 2)
+    @Builder.Default
+    private java.math.BigDecimal supplierTds = java.math.BigDecimal.ZERO;
+
+    /** The commission in base - what it adds to the booking's commission and profit. */
+    @Column(name = "commission_inr", nullable = false, precision = 14, scale = 2)
+    @Builder.Default
+    private java.math.BigDecimal commissionInr = java.math.BigDecimal.ZERO;
 
     /** The supplier bill this voucher drafted, withdrawn with the voucher while still unposted. */
     @Column(name = "supplier_invoice_id", length = 36)
@@ -90,6 +142,16 @@ public class BookingDocument {
     @org.hibernate.annotations.JdbcTypeCode(org.hibernate.type.SqlTypes.JSON)
     @Column(name = "details", columnDefinition = "jsonb")
     private java.util.Map<String, String> details;
+
+    /** An air ticket's travellers (snapshots of the client's members) - see util.VoucherTrip. */
+    @org.hibernate.annotations.JdbcTypeCode(org.hibernate.type.SqlTypes.JSON)
+    @Column(name = "travellers", columnDefinition = "jsonb")
+    private java.util.List<com.voyra.crm.dto.VoucherTraveller> travellers;
+
+    /** An air ticket's flights in order; its flat flight details are worked out from them. */
+    @org.hibernate.annotations.JdbcTypeCode(org.hibernate.type.SqlTypes.JSON)
+    @Column(name = "legs", columnDefinition = "jsonb")
+    private java.util.List<com.voyra.crm.dto.VoucherLeg> legs;
 
     @Column(name = "sort_order", nullable = false)
     @Builder.Default

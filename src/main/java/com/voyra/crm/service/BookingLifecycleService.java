@@ -1,11 +1,9 @@
 package com.voyra.crm.service;
 
-import com.voyra.crm.dto.BookingInvoiceRequest;
 import com.voyra.crm.dto.BookingLifecycleResponse;
 import com.voyra.crm.dto.BookingLifecycleResponse.MoneyRecord;
 import com.voyra.crm.dto.BookingLifecycleResponse.Step;
 import com.voyra.crm.dto.BookingPaymentRequest;
-import com.voyra.crm.dto.InvoiceDraftRequest;
 import com.voyra.crm.dto.PaymentReceiptRequest;
 import com.voyra.crm.entity.Booking;
 import com.voyra.crm.entity.Invoice;
@@ -36,6 +34,7 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -53,6 +52,8 @@ public class BookingLifecycleService {
 
     static final String UPLOAD_VOUCHER = "UPLOAD_VOUCHER";
     static final String CANCEL = "CANCEL";
+    // Accounts generate the invoice from a draft (InvoiceDocumentService#createDrafts), or upload one
+    // raised in the agency's own software.
     static final String GENERATE_INVOICE = "GENERATE_INVOICE";
     static final String RECORD_PAYMENT = "RECORD_PAYMENT";
     static final String REFUND_CLIENT = "REFUND_CLIENT";
@@ -66,11 +67,23 @@ public class BookingLifecycleService {
     /** Everything the steps are computed from, gathered once so the computation itself stays pure. */
     record Facts(Booking booking, int documentCount, List<Invoice> invoices, List<PaymentReceipt> receipts,
                  List<SupplierInvoice> bills, List<SupplierPayment> supplierPayments, BigDecimal clientWalletInr,
-                 BigDecimal invoicedPriceInr, List<com.voyra.crm.entity.CreditNote> creditNotes) {
+                 BigDecimal invoicedPriceInr, List<com.voyra.crm.entity.CreditNote> creditNotes,
+                 Map<String, BigDecimal> ownOwedInr) {
         Facts(Booking booking, int documentCount, List<Invoice> invoices, List<PaymentReceipt> receipts,
               List<SupplierInvoice> bills, List<SupplierPayment> supplierPayments, BigDecimal clientWalletInr,
               BigDecimal invoicedPriceInr) {
             this(booking, documentCount, invoices, receipts, bills, supplierPayments, clientWalletInr, invoicedPriceInr, List.of());
+        }
+
+        Facts(Booking booking, int documentCount, List<Invoice> invoices, List<PaymentReceipt> receipts,
+              List<SupplierInvoice> bills, List<SupplierPayment> supplierPayments, BigDecimal clientWalletInr,
+              BigDecimal invoicedPriceInr, List<com.voyra.crm.entity.CreditNote> creditNotes) {
+            this(booking, documentCount, invoices, receipts, bills, supplierPayments, clientWalletInr, invoicedPriceInr, creditNotes, Map.of());
+        }
+
+        /** What this booking still owes on an invoice that also bills other bookings (its own account); null when it bills only this one. */
+        BigDecimal ownOwed(Invoice invoice) {
+            return ownOwedInr.get(invoice.getId());
         }
     }
 
@@ -82,48 +95,15 @@ public class BookingLifecycleService {
     private final SupplierInvoiceRepository supplierInvoiceRepository;
     private final SupplierPaymentRepository supplierPaymentRepository;
     private final InvoiceDocumentService invoiceDocumentService;
-    private final BookingInvoiceIssuer bookingInvoiceIssuer;
     private final PaymentReceiptService paymentReceiptService;
     private final com.voyra.crm.repository.CreditNoteRepository creditNoteRepository;
+    private final BookingAccountingSync bookingAccountingSync;
+    private final BaseCurrency baseCurrency;
 
     @Transactional(readOnly = true)
     public BookingLifecycleResponse getLifecycle(String bookingId) {
         Booking booking = bookingService.findAccessibleBooking(bookingId);
-        return build(gather(booking), currentViewer());
-    }
-
-    /**
-     * Generates and issues the booking's tax invoice in one step. A draft someone already started
-     * is issued as it is; a booking that already has a live invoice is refused. Issuing applies
-     * any money the client holds on account, so a payment taken before the invoice settles it.
-     */
-    @Transactional
-    public BookingLifecycleResponse generateInvoice(String bookingId, BookingInvoiceRequest request) {
-        Booking booking = lockAccessible(bookingId);
-        List<Invoice> live = liveTaxInvoices(booking.getId());
-        Invoice draft = live.stream().filter(i -> i.getStatus() == InvoiceLifecycle.DRAFT).findFirst().orElse(null);
-        BigDecimal uninvoiced = nz(booking.getSellingPrice()).subtract(bookingService.invoicedPrice(booking.getId()));
-        if (draft == null && !live.isEmpty() && uninvoiced.signum() <= 0) {
-            throw new IllegalStateException("This booking is fully invoiced");
-        }
-        InvoiceDraftRequest draftRequest = draftRequest(booking, request);
-        // Taxed like a hand-raised invoice: the agency's default GST for what the booking is.
-        bookingInvoiceIssuer.applyDefaultGst(draftRequest, booking);
-        if (draft == null && !live.isEmpty()) {
-            // Vouchers added after the first invoice: one more invoice for just what they added.
-            com.voyra.crm.dto.InvoiceLineItemRequest line = new com.voyra.crm.dto.InvoiceLineItemRequest();
-            String added = addedVouchers(booking.getId());
-            line.setDescription("Additional services - " + BookingService.bookingRef(booking.getBookingNumber())
-                    + (added.isEmpty() ? "" : ": " + added));
-            line.setServiceType(booking.getServiceType());
-            line.setQuantity(BigDecimal.ONE);
-            line.setUnitPrice(uninvoiced);
-            draftRequest.setLines(List.of(line));
-        }
-        String invoiceId = draft != null ? draft.getId() : invoiceDocumentService.createDraft(draftRequest).getId();
-        invoiceDocumentService.issue(invoiceId);
-        log.info("Booking invoice generated: bookingId={}, invoiceId={}", booking.getId(), invoiceId);
-        return build(gather(reload(booking)), currentViewer());
+        return build(gather(booking), currentViewer(), baseCurrency.code());
     }
 
     /**
@@ -136,9 +116,16 @@ public class BookingLifecycleService {
         Booking booking = lockAccessible(bookingId);
         List<Invoice> issued = liveTaxInvoices(booking.getId()).stream()
                 .filter(i -> i.getStatus() != InvoiceLifecycle.DRAFT).toList();
+        // On an invoice that also bills other bookings, a payment for this one settles only its own account, even
+        // while the invoice reads paid because another booking's refund is unpaid (the receipt caps it). The
+        // payment is in base; an invoice billed in another currency owes its balance at its own rate.
+        Map<String, BigDecimal> owing = new java.util.HashMap<>();
+        issued.forEach(i -> owing.put(i.getId(), toBase(i, invoiceDocumentService.weightOf(i, booking.getId()).compareTo(BigDecimal.ONE) == 0
+                ? nz(i.getBalanceDue()).max(BigDecimal.ZERO)
+                : bookingAccountingSync.positionOn(i, booking.getId(), null).owed().max(BigDecimal.ZERO))));
         if (booking.getBookingStatus() == BookingStatus.CANCELLED) {
             // Only what its invoices still owe (cancellation charges); nothing is held for a cancelled trip.
-            BigDecimal owed = issued.stream().map(i -> nz(i.getBalanceDue()).max(BigDecimal.ZERO)).reduce(BigDecimal.ZERO, BigDecimal::add);
+            BigDecimal owed = owing.values().stream().reduce(BigDecimal.ZERO, BigDecimal::add);
             if (owed.signum() == 0) {
                 throw new IllegalStateException("This booking is cancelled - record refunds instead");
             }
@@ -151,11 +138,12 @@ public class BookingLifecycleService {
         // exists, or for a voucher added after it. Open invoices are settled first, oldest first; the
         // rest is held on the client's account for this booking and applied to its next invoice.
         BigDecimal left = request.getAmount();
-        for (Invoice invoice : issued.stream().filter(i -> nz(i.getBalanceDue()).signum() > 0).toList()) {
+        for (Invoice invoice : issued.stream().filter(i -> owing.get(i.getId()).signum() > 0).toList()) {
             if (left.signum() == 0) break;
-            BigDecimal part = left.min(nz(invoice.getBalanceDue()));
-            PaymentReceiptRequest r = receiptRequest(request, part);
+            BigDecimal part = left.min(owing.get(invoice.getId()));
+            PaymentReceiptRequest r = receiptRequest(request, inInvoiceCurrency(invoice, part));
             r.setInvoiceId(invoice.getId());
+            r.setBookingId(booking.getId());
             paymentReceiptService.record(r);
             left = left.subtract(part);
         }
@@ -166,27 +154,20 @@ public class BookingLifecycleService {
             receipt.setNotes("Advance for " + BookingService.bookingRef(booking.getBookingNumber()));
             paymentReceiptService.record(receipt);
         }
-        return build(gather(reload(booking)), currentViewer());
+        return build(gather(reload(booking)), currentViewer(), baseCurrency.code());
     }
 
-    /** The priced vouchers added since the last invoice, e.g. "BOM to DEL 2026-12-20 (RET1)". */
-    private String addedVouchers(String bookingId) {
-        java.time.LocalDateTime invoicedAt = bookingService.lastInvoicedAt(bookingId);
-        String added = bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc(bookingId).stream()
-                .filter(d -> nz(d.getSellingPrice()).signum() > 0 && !BookingService.isInvoiced(d, invoicedAt))
-                .map(BookingLifecycleService::voucherLabel).filter(l -> !l.isEmpty())
-                .collect(java.util.stream.Collectors.joining(", "));
-        return added.length() > 400 ? added.substring(0, 400) : added;
+    private static BigDecimal toBase(Invoice invoice, BigDecimal amount) {
+        BigDecimal fx = invoice.getFxRateToInr();
+        return fx == null || fx.compareTo(BigDecimal.ONE) == 0 ? amount : amount.multiply(fx).setScale(2, java.math.RoundingMode.HALF_UP);
     }
 
-    private static String voucherLabel(com.voyra.crm.entity.BookingDocument d) {
-        java.util.Map<String, String> x = d.getDetails() == null ? java.util.Map.of() : d.getDetails();
-        String what = x.get("flightFrom") != null && x.get("flightTo") != null ? x.get("flightFrom") + " to " + x.get("flightTo")
-                : x.getOrDefault("hotelName", x.getOrDefault("transferPickup", x.getOrDefault("visaCountry", "")));
-        String when = x.getOrDefault("journeyDate", x.getOrDefault("hotelCheckIn", x.getOrDefault("transferDate", "")));
-        when = when.isBlank() ? when : com.voyra.crm.util.BookingInvoiceLineBuilder.lineDate(when);
-        String ref = d.getReferenceNumber() == null || d.getReferenceNumber().isBlank() ? "" : "(" + d.getReferenceNumber().trim() + ")";
-        return java.util.stream.Stream.of(what, when, ref).filter(p -> !p.isBlank()).collect(java.util.stream.Collectors.joining(" "));
+    /** A base amount on an invoice billed in another currency; a part settling the whole balance takes it exactly. */
+    private BigDecimal inInvoiceCurrency(Invoice invoice, BigDecimal baseAmount) {
+        BigDecimal fx = invoice.getFxRateToInr();
+        if (fx == null || fx.compareTo(BigDecimal.ONE) == 0) return baseAmount;
+        BigDecimal balance = nz(invoice.getBalanceDue());
+        return baseAmount.compareTo(toBase(invoice, balance)) >= 0 ? balance : baseAmount.divide(fx, 2, java.math.RoundingMode.HALF_UP).min(balance);
     }
 
     private static PaymentReceiptRequest receiptRequest(BookingPaymentRequest request, BigDecimal amount) {
@@ -212,17 +193,6 @@ public class BookingLifecycleService {
                 bookingId, InvoiceDocumentType.TAX_INVOICE, InvoiceLifecycle.CANCELLED);
     }
 
-    private static InvoiceDraftRequest draftRequest(Booking booking, BookingInvoiceRequest request) {
-        InvoiceDraftRequest draft = new InvoiceDraftRequest();
-        draft.setBookingId(booking.getId());
-        if (request != null) {
-            draft.setServiceCategory(request.getServiceCategory());
-            draft.setDueDate(request.getDueDate());
-            draft.setNotes(blankToNull(request.getNotes()));
-        }
-        return draft;
-    }
-
     private Booking reload(Booking booking) {
         return bookingRepository.findById(booking.getId()).orElse(booking);
     }
@@ -233,12 +203,17 @@ public class BookingLifecycleService {
         receipts.addAll(paymentReceiptRepository.findByBookingIdAndDirection(id, ReceiptDirection.REFUND));
         List<SupplierInvoice> bills = supplierInvoiceRepository.findByBookingIdAndStatusNot(id, SupplierInvoiceStatus.CANCELLED);
         List<SupplierPayment> payments = supplierPaymentRepository.findByBookingId(id);
+        List<Invoice> invoices = invoiceRepository.findByBookingId(id);
+        Map<String, BigDecimal> ownOwed = new java.util.HashMap<>();
+        invoices.stream().filter(i -> invoiceDocumentService.weightOf(i, id).compareTo(BigDecimal.ONE) != 0)
+                .forEach(i -> ownOwed.put(i.getId(), toBase(i, bookingAccountingSync.positionOn(i, id, null).owed())));
         return new Facts(booking, bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc(id).size(),
-                invoiceRepository.findByBookingId(id), receipts, bills, payments,
+                invoices, receipts, bills, payments,
                 paymentReceiptService.availableWalletFor(booking.getClientId(), booking.getId()),
                 bookingService.invoicedPrice(id),
                 creditNoteRepository.findByBookingIdAndStatusNot(id, com.voyra.crm.enums.CreditNoteStatus.CANCELLED).stream()
-                        .filter(c -> c.getStatus() == com.voyra.crm.enums.CreditNoteStatus.ISSUED).toList());
+                        .filter(c -> c.getStatus() == com.voyra.crm.enums.CreditNoteStatus.ISSUED).toList(),
+                ownOwed);
     }
 
     private static Viewer currentViewer() {
@@ -248,6 +223,10 @@ public class BookingLifecycleService {
 
     /** Pure: the whole response from the gathered facts and who is asking. */
     static BookingLifecycleResponse build(Facts f, Viewer viewer) {
+        return build(f, viewer, "INR");
+    }
+
+    static BookingLifecycleResponse build(Facts f, Viewer viewer, String currency) {
         Booking b = f.booking();
         BookingStatus status = b.getBookingStatus();
         boolean cancelled = status == BookingStatus.CANCELLED;
@@ -265,11 +244,16 @@ public class BookingLifecycleService {
         // After the invoice, a voucher added since then is still to collect too (before its GST, which its own invoice adds).
         BigDecimal sinceInvoice = cancelled || !invoiced ? BigDecimal.ZERO
                 : nz(b.getSellingPrice()).subtract(nz(f.invoicedPriceInr())).max(BigDecimal.ZERO);
+        // What its invoices still owe for this booking - on an invoice shared with other bookings, its own account
+        // (its share less its own credit notes and the payments recorded for it).
+        BigDecimal owedOnInvoices = liveInvoices.stream().filter(i -> i.getStatus() != InvoiceLifecycle.DRAFT)
+                .map(i -> (f.ownOwed(i) != null ? f.ownOwed(i) : nz(i.getBalanceDueInr())).max(BigDecimal.ZERO))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        boolean shared = liveInvoices.stream().anyMatch(i -> f.ownOwed(i) != null);
         // A cancelled booking still owes whatever its invoices leave unpaid (e.g. cancellation charges).
-        BigDecimal toCollect = cancelled
-                ? liveInvoices.stream().filter(i -> i.getStatus() != InvoiceLifecycle.DRAFT)
-                        .map(i -> nz(i.getBalanceDueInr()).max(BigDecimal.ZERO)).reduce(BigDecimal.ZERO, BigDecimal::add)
-                : (invoiced ? invoicedTotal.subtract(received).add(sinceInvoice) : nz(b.getSellingPrice()).subtract(received).subtract(nz(f.clientWalletInr())))
+        BigDecimal toCollect = cancelled ? owedOnInvoices
+                : (invoiced ? (shared ? owedOnInvoices : invoicedTotal.subtract(received)).add(sinceInvoice)
+                        : nz(b.getSellingPrice()).subtract(received).subtract(nz(f.clientWalletInr())))
                         .max(BigDecimal.ZERO);
 
         BigDecimal refundDue = nz(b.getCustomerRefundDue());
@@ -295,28 +279,32 @@ public class BookingLifecycleService {
                         + (unpriced ? " - add the cost and markup to confirm" : "") : "No voucher uploaded yet"));
         BigDecimal uninvoiced = cancelled ? BigDecimal.ZERO : nz(b.getSellingPrice()).subtract(nz(f.invoicedPriceInr())).max(BigDecimal.ZERO);
         steps.add(step("INVOICE", invoiced ? (uninvoiced.signum() > 0 ? "PARTIAL" : "DONE") : cancelled ? "NA" : "OPEN",
-                invoiced ? "Invoiced " + money(invoicedTotal) + (uninvoiced.signum() > 0 ? " · " + money(uninvoiced) + " added since the last invoice" : "")
+                invoiced ? "Invoiced " + money(invoicedTotal, currency) + (uninvoiced.signum() > 0 ? " · " + money(uninvoiced, currency) + " added since the last invoice" : "")
                         : liveInvoices.isEmpty() ? "Not invoiced yet" : "Draft invoice not issued yet"));
-        steps.add(paymentStep(cancelled, invoiced, received, toCollect, f.clientWalletInr()));
+        steps.add(paymentStep(cancelled, invoiced, received, toCollect, f.clientWalletInr(), currency));
         if (cancelled) {
             steps.add(step("CANCELLED", "DONE", "Cancelled"));
-            steps.add(step("CLIENT_REFUND", refundDue.signum() == 0 ? "NA" : clientRefundOpen ? (refunded.signum() > 0 ? "PARTIAL" : "OPEN") : "DONE",
-                    refundDue.signum() == 0 ? "Nothing to refund" : money(refunded) + " of " + money(refundDue) + " refunded"));
+            // The supplier's refund comes first, then the client's - the order the money moves in.
             String supplierRefundState = refundExpected.signum() == 0 ? "NA" : supplierRefundOpen ? (refundReceived.signum() > 0 ? "PARTIAL" : "OPEN") : "DONE";
             // The agent records this refund, so every role sees its amounts (never the bills or net cost behind them).
             String supplierRefundSummary = refundExpected.signum() == 0 ? "Nothing expected"
-                    : money(refundReceived) + " of " + money(refundExpected) + " received"
-                    + (claim != null ? " · " + money(claim) + " claimed into bank - waiting for the accountant's check" : "");
+                    : money(refundReceived, currency) + " of " + money(refundExpected, currency) + " received"
+                    + (claim != null ? " · " + money(claim, currency) + " claimed into bank - waiting for the accountant's check" : "");
             steps.add(step("SUPPLIER_REFUND", supplierRefundState,
                     supplierRefundSummary + (b.getRefundCheckedAt() != null ? " - cross-checked" : "")));
+            steps.add(step("CLIENT_REFUND", refundDue.signum() == 0 ? "NA" : clientRefundOpen ? (refunded.signum() > 0 ? "PARTIAL" : "OPEN") : "DONE",
+                    refundDue.signum() == 0 ? "Nothing to refund" : money(refunded, currency) + " of " + money(refundDue, currency) + " refunded"));
         }
 
         List<String> actions = new ArrayList<>();
         if (ops && !cancelled) actions.add(UPLOAD_VOUCHER);
         if (ops && live) actions.add(CANCEL);
-        if (accounts && !cancelled && (invoiced ? uninvoiced.signum() > 0 : nz(b.getSellingPrice()).signum() > 0)) actions.add(GENERATE_INVOICE);
-        // Always open on a priced live booking: a client may pay more than the estimate (GST, an extra voucher) and it is held as an advance.
-        if (accounts && (cancelled ? toCollect.signum() > 0 : nz(b.getSellingPrice()).signum() > 0)) actions.add(RECORD_PAYMENT);
+        if (accounts && !cancelled && (invoiced ? uninvoiced.signum() > 0 : nz(b.getSellingPrice()).signum() > 0)) {
+            if (status != BookingStatus.PENDING) actions.add(GENERATE_INVOICE);
+        }
+        // Only while something is still to collect: invoiced and unpaid, not invoiced yet (held as an advance until the
+        // invoice), a voucher added since the last invoice, or a cancelled booking's charges. A fully paid booking has none.
+        if (accounts && toCollect.signum() > 0) actions.add(RECORD_PAYMENT);
         if (accounts && cancelled && clientRefundOpen) actions.add(REFUND_CLIENT);
         if (ops && cancelled && supplierRefundOpen && claim == null) actions.add(SUPPLIER_REFUND);
         if (accounts && cancelled && claim != null) {
@@ -341,23 +329,23 @@ public class BookingLifecycleService {
                 .build();
     }
 
-    private static Step paymentStep(boolean cancelled, boolean invoiced, BigDecimal received, BigDecimal toCollect, BigDecimal wallet) {
+    private static Step paymentStep(boolean cancelled, boolean invoiced, BigDecimal received, BigDecimal toCollect, BigDecimal wallet, String currency) {
         if (cancelled) {
             if (toCollect.signum() > 0) {
-                return step("PAYMENT", "OPEN", money(toCollect) + " cancellation charges to collect");
+                return step("PAYMENT", "OPEN", money(toCollect, currency) + " cancellation charges to collect");
             }
             if (received.signum() == 0 && nz(wallet).signum() > 0) {
-                return step("PAYMENT", "DONE", money(wallet) + " held as an advance before cancelling");
+                return step("PAYMENT", "DONE", money(wallet, currency) + " held as an advance before cancelling");
             }
             // Not "before cancelling": cancellation charges are often paid after the cancel.
-            return step("PAYMENT", received.signum() > 0 ? "DONE" : "NA", money(received) + " received");
+            return step("PAYMENT", received.signum() > 0 ? "DONE" : "NA", money(received, currency) + " received");
         }
         if (toCollect.signum() == 0 && received.signum() > 0) {
-            return step("PAYMENT", "DONE", "Fully paid - " + money(received));
+            return step("PAYMENT", "DONE", "Fully paid - " + money(received, currency));
         }
-        String held = !invoiced && nz(wallet).signum() > 0 ? " · " + money(wallet) + " held on account, applied on invoice" : "";
+        String held = !invoiced && nz(wallet).signum() > 0 ? " · " + money(wallet, currency) + " held on account, applied on invoice" : "";
         return step("PAYMENT", received.signum() > 0 ? "PARTIAL" : "OPEN",
-                (received.signum() > 0 ? money(received) + " received, " : "") + money(toCollect) + " to collect" + held);
+                (received.signum() > 0 ? money(received, currency) + " received, " : "") + money(toCollect, currency) + " to collect" + held);
     }
 
     private static List<MoneyRecord> records(Facts f, boolean withSupplier) {
@@ -365,7 +353,8 @@ public class BookingLifecycleService {
         for (Invoice i : f.invoices()) {
             if (i.getDocumentType() != InvoiceDocumentType.TAX_INVOICE || i.getStatus() == InvoiceLifecycle.DRAFT) continue;
             rows.add(MoneyRecord.builder().id(i.getId()).kind("INVOICE").number(i.getInvoiceNumber()).status(i.getStatus().name())
-                    .date(i.getInvoiceDate()).amountInr(i.getGrandTotalInr()).balanceInr(i.getBalanceDueInr()).build());
+                    .date(i.getInvoiceDate()).amountInr(i.getGrandTotalInr()).balanceInr(i.getBalanceDueInr())
+                    .hasFile(i.getPdfFileKey() != null).build());
         }
         // Shown to every role like the invoices they reduce: why money is owed back after a cancel.
         for (com.voyra.crm.entity.CreditNote c : f.creditNotes()) {
@@ -403,8 +392,8 @@ public class BookingLifecycleService {
         return Step.builder().key(key).state(state).summary(summary).build();
     }
 
-    private static String money(BigDecimal v) {
-        return com.voyra.crm.util.BookingNextStep.rupees(v);
+    private static String money(BigDecimal v, String currency) {
+        return com.voyra.crm.util.BookingNextStep.money(v, currency);
     }
 
     private static BigDecimal nz(BigDecimal v) {

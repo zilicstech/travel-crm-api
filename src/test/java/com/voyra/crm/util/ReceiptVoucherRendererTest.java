@@ -23,7 +23,7 @@ class ReceiptVoucherRendererTest {
 
     @Test
     void producesARealPdf() {
-        byte[] pdf = ReceiptVoucherRenderer.write(sampleReceipt(), "INV/2026-27/0001");
+        byte[] pdf = ReceiptVoucherRenderer.write(sampleReceipt(), "INV/2026-27/0001", "INR");
 
         assertThat(pdf).isNotEmpty();
         assertThat(new String(pdf, 0, 5, java.nio.charset.StandardCharsets.US_ASCII)).isEqualTo("%PDF-");
@@ -33,8 +33,8 @@ class ReceiptVoucherRendererTest {
     void reRenderingTheSamePersistedReceiptIsContentIdentical() {
         PaymentReceipt receipt = sampleReceipt();
 
-        byte[] first = ReceiptVoucherRenderer.write(receipt, "INV/2026-27/0001");
-        byte[] second = ReceiptVoucherRenderer.write(receipt, "INV/2026-27/0001");
+        byte[] first = ReceiptVoucherRenderer.write(receipt, "INV/2026-27/0001", "INR");
+        byte[] second = ReceiptVoucherRenderer.write(receipt, "INV/2026-27/0001", "INR");
 
         assertThat(InvoicePdfRendererTest.stripVolatileMetadata(second))
                 .isEqualTo(InvoicePdfRendererTest.stripVolatileMetadata(first));
@@ -46,8 +46,8 @@ class ReceiptVoucherRendererTest {
                 .amount(new BigDecimal("-50000.00")).amountInr(new BigDecimal("-50000.00"))
                 .reversesReceiptId("R0").build();
 
-        byte[] receiptPdf = ReceiptVoucherRenderer.write(sampleReceipt(), "INV/2026-27/0001");
-        byte[] refundPdf = ReceiptVoucherRenderer.write(refund, "INV/2026-27/0001");
+        byte[] receiptPdf = ReceiptVoucherRenderer.write(sampleReceipt(), "INV/2026-27/0001", "INR");
+        byte[] refundPdf = ReceiptVoucherRenderer.write(refund, "INV/2026-27/0001", "INR");
 
         assertThat(refundPdf).isNotEqualTo(receiptPdf);
     }

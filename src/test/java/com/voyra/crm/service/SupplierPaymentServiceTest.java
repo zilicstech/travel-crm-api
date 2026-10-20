@@ -76,6 +76,11 @@ class SupplierPaymentServiceTest {
     @Mock
     private ExchangeRateProvider exchangeRateProvider;
 
+    @org.mockito.Spy
+
+    private com.voyra.crm.service.BaseCurrency baseCurrency = new com.voyra.crm.service.BaseCurrency(null);
+
+
     @InjectMocks
     private SupplierPaymentService supplierPaymentService;
 
@@ -189,6 +194,34 @@ class SupplierPaymentServiceTest {
         assertThat(posting.lines().get(0).debitAmount()).isEqualByComparingTo("50000.00");
         assertThat(posting.lines().get(1).accountCode()).isEqualTo("1110"); // BANK_ACCOUNTS
         assertThat(posting.lines().get(1).creditAmount()).isEqualByComparingTo("50000.00");
+    }
+
+    /** "Pay supplier" 5,000: one voucher and one ledger row; it clears the 3,500 bill, then 1,500 of the 2,000 one. */
+    @Test
+    void onePaymentClearsTheOpenBillsOldestFirst() {
+        SupplierInvoice older = approvedBill(new BigDecimal("3500.00"));
+        SupplierInvoice newer = approvedBill(new BigDecimal("2000.00"));
+        newer.setId("SI2");
+        when(vendorRepository.findById("V1")).thenReturn(Optional.of(vendor()));
+        when(supplierPaymentRepository.existsById(any())).thenReturn(false);
+        when(documentNumberService.next(DocumentKind.PAYMENT_VOUCHER, LocalDate.of(2026, 9, 19))).thenReturn("PV/2026-27/0009");
+        java.util.List<SupplierPayment> saved = new java.util.ArrayList<>();
+        when(supplierPaymentRepository.save(any())).thenAnswer(i -> { saved.add(i.getArgument(0)); return i.getArgument(0); });
+        when(supplierPaymentRepository.findById(any())).thenAnswer(i -> saved.stream().filter(p -> p.getId().equals(i.getArgument(0))).findFirst());
+        when(supplierPaymentRepository.findByVendorIdAndIsAdvanceTrueOrderByPaidOnAsc("V1")).thenAnswer(i -> saved.subList(0, 1));
+        when(supplierInvoiceRepository.findById("SI1")).thenReturn(Optional.of(older));
+        when(supplierInvoiceRepository.findById("SI2")).thenReturn(Optional.of(newer));
+        when(supplierInvoiceRepository.findByVendorIdAndCurrencyCodeAndStatusInAndBalanceDueGreaterThanOrderByInvoiceDateAscCreatedDateAsc(
+                org.mockito.ArgumentMatchers.eq("V1"), org.mockito.ArgumentMatchers.eq("INR"), any(), any())).thenReturn(List.of(older, newer));
+        SupplierPaymentRequest r = request(null, new BigDecimal("5000.00"));
+        r.setApplyToOpenBills(true);
+
+        supplierPaymentService.pay(r);
+
+        verify(supplierLedgerService, org.mockito.Mockito.times(1)).post(any());
+        assertThat(older.getStatus()).isEqualTo(SupplierInvoiceStatus.PAID);
+        assertThat(newer.getBalanceDue()).isEqualByComparingTo("500.00");
+        assertThat(saved).hasSize(3);
     }
 
     @Test

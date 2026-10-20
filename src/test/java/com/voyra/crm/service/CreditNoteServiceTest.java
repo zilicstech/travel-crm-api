@@ -1,5 +1,6 @@
 package com.voyra.crm.service;
 
+import com.voyra.crm.repository.InvoiceLineItemRepository;
 import com.voyra.crm.dto.CreditNoteRefundRequest;
 import com.voyra.crm.dto.CreditNoteRequest;
 import com.voyra.crm.dto.CreditNoteResponse;
@@ -66,6 +67,14 @@ class CreditNoteServiceTest {
     private com.voyra.crm.repository.JournalEntryRepository journalEntryRepository;
     @Mock
     private com.voyra.crm.repository.JournalLineRepository journalLineRepository;
+
+    @org.mockito.Spy
+
+    private com.voyra.crm.service.BaseCurrency baseCurrency = new com.voyra.crm.service.BaseCurrency(null);
+    @Mock
+    private InvoiceLineItemRepository invoiceLineItemRepository;
+
+
 
     @InjectMocks
     private CreditNoteService creditNoteService;
@@ -161,6 +170,29 @@ class CreditNoteServiceTest {
         assertThat(response.getTotalAmount()).isEqualByComparingTo("1180.00");
     }
 
+    /** On an invoice billing two bookings, cancelling one credits only its part of the invoice and its tax. */
+    @Test
+    void aCreditForOneBookingOfASharedInvoiceReversesOnlyItsPart() {
+        Invoice invoice = issuedInvoice();
+        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(invoice));
+        when(creditNoteRepository.existsById(any())).thenReturn(false);
+        when(creditNoteRepository.findByInvoiceIdAndStatus("I1", CreditNoteStatus.ISSUED)).thenReturn(List.of());
+        when(invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc("I1")).thenReturn(List.of(
+                com.voyra.crm.entity.InvoiceLineItem.builder().bookingId("B1").taxableValue(new BigDecimal("600.00")).build(),
+                com.voyra.crm.entity.InvoiceLineItem.builder().bookingId("B2").taxableValue(new BigDecimal("400.00")).build()));
+        when(bookingRepository.findById("B2")).thenReturn(Optional.of(
+                com.voyra.crm.entity.Booking.builder().id("B2").bookingStatus(com.voyra.crm.enums.BookingStatus.CANCELLED).build()));
+        CreditNoteRequest r = request(BigDecimal.ZERO);
+        r.setBookingId("B2");
+
+        CreditNoteResponse response = creditNoteService.create(r);
+
+        assertThat(response.getBookingId()).isEqualTo("B2");
+        assertThat(response.getTaxableValue()).isEqualByComparingTo("400.00");
+        assertThat(response.getCgstAmount()).isEqualByComparingTo("36.00");
+        assertThat(response.getTotalAmount()).isEqualByComparingTo("472.00");
+    }
+
     @Test
     void aPartialCreditWithARetentionFeeReversesOnlyItsProRataShare() {
         Invoice invoice = issuedInvoice();
@@ -210,6 +242,29 @@ class CreditNoteServiceTest {
         assertThat(invoice.getCreditNoteTotal()).isEqualByComparingTo("1180.00");
         assertThat(invoice.getBalanceDue()).isEqualByComparingTo("0.00");
         assertThat(invoice.getStatus()).isEqualTo(InvoiceLifecycle.PAID);
+    }
+
+    /** A credit note on an invoice nobody has paid leaves it issued, not "partially paid". */
+    @Test
+    void creditingAnUnpaidInvoiceLeavesItIssued() {
+        Invoice invoice = issuedInvoice();
+        CreditNote draft = CreditNote.builder().id("CN1").invoiceId("I1").clientId("K1")
+                .status(CreditNoteStatus.DRAFT).currencyCode("INR").fxRateToInr(BigDecimal.ONE)
+                .taxableValue(new BigDecimal("1000.00")).cgstAmount(new BigDecimal("90.00"))
+                .sgstAmount(new BigDecimal("90.00")).totalAmount(new BigDecimal("1180.00"))
+                .totalAmountInr(new BigDecimal("1180.00")).refundedAmount(BigDecimal.ZERO).build();
+        when(creditNoteRepository.findById("CN1")).thenReturn(Optional.of(draft));
+        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(invoice));
+        when(creditNoteRepository.findByInvoiceIdAndStatus("I1", CreditNoteStatus.ISSUED)).thenReturn(List.of());
+        when(documentNumberService.next(DocumentKind.CREDIT_NOTE, LocalDate.now())).thenReturn("CN/2026-27/0002");
+        when(paymentReceiptRepository.findByInvoiceIdOrderByReceivedOnAscCreatedAtAsc("I1")).thenReturn(List.of());
+        invoice.setGrandTotal(new BigDecimal("5000.00"));
+        invoice.setBalanceDue(new BigDecimal("5000.00"));
+
+        creditNoteService.issue("CN1");
+
+        assertThat(invoice.getBalanceDue()).isEqualByComparingTo("3820.00");
+        assertThat(invoice.getStatus()).isEqualTo(InvoiceLifecycle.ISSUED);
     }
 
     @Test
@@ -311,6 +366,50 @@ class CreditNoteServiceTest {
         when(invoiceRepository.findById("I1")).thenReturn(Optional.of(invoice));
         when(creditNoteRepository.findByInvoiceIdAndStatus("I1", CreditNoteStatus.ISSUED)).thenReturn(List.of());
         when(documentNumberService.next(DocumentKind.CREDIT_NOTE, LocalDate.now())).thenReturn("CN/2026-27/0004");
+        when(paymentReceiptRepository.findByInvoiceIdOrderByReceivedOnAscCreatedAtAsc("I1")).thenReturn(List.of());
+        when(journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(
+                com.voyra.crm.enums.JournalSourceType.INVOICE, "I1", com.voyra.crm.enums.JournalPurpose.INVOICE_RAISED_DEFERRED))
+                .thenReturn(Optional.empty());
+        when(journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(
+                com.voyra.crm.enums.JournalSourceType.INVOICE, "I1", com.voyra.crm.enums.JournalPurpose.INVOICE_RAISED_RECOGNIZED))
+                .thenReturn(Optional.empty());
+        when(journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(
+                com.voyra.crm.enums.JournalSourceType.INVOICE, "I1", com.voyra.crm.enums.JournalPurpose.INVOICE_RAISED_COMMISSION_AGENT))
+                .thenReturn(Optional.of(com.voyra.crm.entity.JournalEntry.builder().id("JE9").build()));
+        when(journalLineRepository.findByJournalEntryIdOrderByLineNo("JE9")).thenReturn(List.of(
+                com.voyra.crm.entity.JournalLine.builder().accountCode("1200").debitAmountInr(new BigDecimal("12000.00")).creditAmountInr(BigDecimal.ZERO).narration("AR").build(),
+                com.voyra.crm.entity.JournalLine.builder().accountCode("2210").debitAmountInr(BigDecimal.ZERO).creditAmountInr(new BigDecimal("10000.00")).narration("Pass-through").build(),
+                com.voyra.crm.entity.JournalLine.builder().accountCode("4600").debitAmountInr(BigDecimal.ZERO).creditAmountInr(new BigDecimal("2000.00")).narration("Fee").build()));
+
+        creditNoteService.issue("CN1");
+
+        org.mockito.ArgumentCaptor<com.voyra.crm.models.JournalPosting> captor =
+                org.mockito.ArgumentCaptor.forClass(com.voyra.crm.models.JournalPosting.class);
+        org.mockito.Mockito.verify(journalService).post(captor.capture());
+        var lines = captor.getValue().lines();
+        assertThat(lines).extracting(com.voyra.crm.models.JournalLinePosting::accountCode).containsExactly("2210", "4600", "1200");
+        assertThat(lines.get(0).debitAmount()).isEqualByComparingTo("6500.00");
+        assertThat(lines.get(1).debitAmount()).isEqualByComparingTo("1000.00");
+        assertThat(lines.get(2).creditAmount()).isEqualByComparingTo("7500.00");
+    }
+
+    /** The same cancellation on an invoice billed in AED at 25: the note's AED figures post in rupees. */
+    @Test
+    void aCancellationCreditNoteInAnotherCurrencyPostsInRupees() {
+        Invoice invoice = issuedInvoice();
+        invoice.setCurrencyCode("AED");
+        invoice.setFxRateToInr(new BigDecimal("25"));
+        invoice.setGrandTotal(new BigDecimal("480.00"));
+        invoice.setGrandTotalInr(new BigDecimal("12000.00"));
+        CreditNote draft = CreditNote.builder().id("CN1").invoiceId("I1").clientId("K1")
+                .status(CreditNoteStatus.DRAFT).currencyCode("AED").fxRateToInr(new BigDecimal("25"))
+                .taxableValue(new BigDecimal("300.00")).totalAmount(new BigDecimal("300.00"))
+                .totalAmountInr(new BigDecimal("7500.00")).refundedAmount(BigDecimal.ZERO)
+                .cancellationFee(new BigDecimal("180.00")).supplierRetained(new BigDecimal("140.00")).build();
+        when(creditNoteRepository.findById("CN1")).thenReturn(Optional.of(draft));
+        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(invoice));
+        when(creditNoteRepository.findByInvoiceIdAndStatus("I1", CreditNoteStatus.ISSUED)).thenReturn(List.of());
+        when(documentNumberService.next(DocumentKind.CREDIT_NOTE, LocalDate.now())).thenReturn("CN/2026-27/0005");
         when(paymentReceiptRepository.findByInvoiceIdOrderByReceivedOnAscCreatedAtAsc("I1")).thenReturn(List.of());
         when(journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(
                 com.voyra.crm.enums.JournalSourceType.INVOICE, "I1", com.voyra.crm.enums.JournalPurpose.INVOICE_RAISED_DEFERRED))

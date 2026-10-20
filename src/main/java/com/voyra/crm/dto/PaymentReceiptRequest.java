@@ -22,7 +22,8 @@ public class PaymentReceiptRequest {
     @Schema(description = "Required when invoiceId is omitted - the client this deposit belongs to", example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String clientId;
 
-    @Schema(description = "Deposit only: the booking this advance was taken for. It is held for that booking and never applied to the client's other invoices.", example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
+    @Schema(description = "The booking this money is for. A deposit is held for it and never applied to the client's other invoices; "
+            + "a payment against an invoice billing several bookings counts for it alone (required there).", example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String bookingId;
 
     @NotNull(message = "amount is required")

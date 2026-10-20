@@ -59,6 +59,17 @@ public final class InvoicePdfRenderer {
      */
     public static byte[] write(Invoice invoice, List<InvoiceLineItem> lines, List<InvoiceTax> taxes, Tenant agency,
                                 Booking booking, List<BookingCostComponent> costComponents) {
+        return write(invoice, lines, taxes, agency, booking, costComponents, List.of(), List.of());
+    }
+
+    /**
+     * @param voucherRefs the references (PNR, confirmation no.) of the vouchers the lines bill - printed
+     *                    in place of the booking's own when there are any
+     * @param bookingRefs the BK-numbers the invoice bills - printed when it bills more than one
+     */
+    public static byte[] write(Invoice invoice, List<InvoiceLineItem> lines, List<InvoiceTax> taxes, Tenant agency,
+                                Booking booking, List<BookingCostComponent> costComponents,
+                                List<String> voucherRefs, List<String> bookingRefs) {
         Document document = new Document(PageSize.A4, 32, 32, 36, 36);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         try {
@@ -72,9 +83,13 @@ public final class InvoicePdfRenderer {
             Font smallFont = FontFactory.getFont(FontFactory.HELVETICA, 8);
 
             document.add(new Paragraph(docTitle(invoice), titleFont));
-            String reference = keyReference(invoice.getServiceCategory(), booking);
+            String reference = voucherRefs.isEmpty() ? keyReference(invoice.getServiceCategory(), booking)
+                    : referenceLabel(invoice.getServiceCategory()) + ": " + String.join(", ", voucherRefs);
             if (reference != null) {
                 document.add(new Paragraph(reference, subtitleFont));
+            }
+            if (bookingRefs.size() > 1) {
+                document.add(new Paragraph("Bookings: " + String.join(", ", bookingRefs), bodyFont));
             }
             document.add(new Paragraph(" "));
 
@@ -82,7 +97,7 @@ public final class InvoicePdfRenderer {
             header.setWidthPercentage(100);
             header.setWidths(new float[]{1f, 1f});
             header.addCell(borderless(supplierBlock(invoice, labelFont, bodyFont)));
-            header.addCell(borderless(documentMetaBlock(invoice, labelFont, bodyFont)));
+            header.addCell(borderless(documentMetaBlock(invoice, base(agency), labelFont, bodyFont)));
             document.add(header);
             document.add(new Paragraph(" "));
 
@@ -97,7 +112,7 @@ public final class InvoicePdfRenderer {
                 document.add(new Paragraph(" "));
             }
 
-            document.add(totalsTable(invoice, taxes, labelFont, bodyFont));
+            document.add(totalsTable(invoice, taxes, base(agency), labelFont, bodyFont));
             document.add(new Paragraph(" "));
             document.add(new Paragraph(
                     AmountInWords.forAmount(invoice.getGrandTotal(), invoice.getCurrencyCode()) + " Only",
@@ -160,6 +175,17 @@ public final class InvoicePdfRenderer {
         };
     }
 
+    private static String referenceLabel(InvoiceServiceCategory category) {
+        if (category == null) return "Reference";
+        return switch (category) {
+            case AIR_INTERNATIONAL, AIR_DOMESTIC, RAIL -> "PNR";
+            case HOTEL -> "Confirmation No";
+            case VISA -> "Application No";
+            case TRANSPORT -> "Voucher No";
+            case PACKAGE, MISCELLANEOUS -> "Reference";
+        };
+    }
+
     private static PdfPTable bankBlock(Tenant agency, Font labelFont, Font bodyFont) {
         if (agency == null || isBlank(agency.getBankAccountNumber())) {
             return null;
@@ -197,7 +223,7 @@ public final class InvoicePdfRenderer {
         String payload = "Pay to: " + valueOr(agency.getBankAccountName())
                 + "\nA/C: " + valueOr(agency.getBankAccountNumber())
                 + (!isBlank(agency.getBankIfscCode()) ? "\nIFSC: " + agency.getBankIfscCode() : "")
-                + "\nAmount: " + money(invoice.getGrandTotalInr()) + " INR"
+                + "\nAmount: " + money(invoice.getGrandTotalInr()) + " " + base(agency)
                 + "\nRef: " + valueOr(invoice.getInvoiceNumber());
         Image qr = QrCodeRenderer.render(payload, 160);
         qr.scaleToFit(80, 80);
@@ -222,14 +248,14 @@ public final class InvoicePdfRenderer {
         return table;
     }
 
-    private static PdfPTable documentMetaBlock(Invoice invoice, Font labelFont, Font bodyFont) {
+    private static PdfPTable documentMetaBlock(Invoice invoice, String base, Font labelFont, Font bodyFont) {
         PdfPTable table = new PdfPTable(1);
         table.setWidthPercentage(100);
         addRightAligned(table, "No: " + valueOr(invoice.getInvoiceNumber()), labelFont);
         addRightAligned(table, "Date: " + valueOr(str(invoice.getInvoiceDate())), bodyFont);
         addRightAligned(table, "Due: " + valueOr(str(invoice.getDueDate())), bodyFont);
         addRightAligned(table, "Currency: " + invoice.getCurrencyCode()
-                + (!"INR".equals(invoice.getCurrencyCode()) ? " (locked @ " + invoice.getFxRateToInr() + ")" : ""), bodyFont);
+                + (!base.equals(invoice.getCurrencyCode()) ? " (locked @ " + invoice.getFxRateToInr() + ")" : ""), bodyFont);
         return table;
     }
 
@@ -271,7 +297,9 @@ public final class InvoicePdfRenderer {
             table.addCell(headerCell(h, headerFont));
         }
         for (InvoiceLineItem line : lines) {
-            table.addCell(new PdfPCell(new Phrase(line.getDescription(), cellFont)));
+            // The voucher's fare charges under the line, as the ticket lists them.
+            String charges = VoucherCharges.describe(line.getCharges(), line.getLineSubtotal(), InvoicePdfRenderer::money);
+            table.addCell(new PdfPCell(new Phrase(charges == null ? line.getDescription() : line.getDescription() + "\n" + charges, cellFont)));
             table.addCell(new PdfPCell(new Phrase(valueOr(line.getSacCode()), cellFont)));
             rightCell(table, line.getQuantity().stripTrailingZeros().toPlainString(), cellFont);
             if (fareSplit) {
@@ -311,6 +339,8 @@ public final class InvoicePdfRenderer {
                 disbursementTotal = disbursementTotal.add(c.getNetCostInr() != null ? c.getNetCostInr() : BigDecimal.ZERO);
             }
         } else {
+            // Billed from vouchers: the invoice carries the cost it passes through.
+            disbursementTotal = invoice.getPassThroughAmount() != null ? invoice.getPassThroughAmount() : BigDecimal.ZERO;
             table.addCell(new PdfPCell(new Phrase("Supplier cost", bodyFont)));
             rightCell(table, money(disbursementTotal), bodyFont);
         }
@@ -340,7 +370,7 @@ public final class InvoicePdfRenderer {
      * every tax on the invoice is hidden, no tax breakup prints at all - just one fare figure,
      * matching the client's own reimbursement-style invoice (ACCOUNTING_REDESIGN_SPEC.md §3).
      */
-    private static PdfPTable totalsTable(Invoice invoice, List<InvoiceTax> taxes, Font labelFont, Font bodyFont) {
+    private static PdfPTable totalsTable(Invoice invoice, List<InvoiceTax> taxes, String base, Font labelFont, Font bodyFont) {
         PdfPTable table = new PdfPTable(new float[]{3f, 1.5f});
         table.setWidthPercentage(50);
         table.setHorizontalAlignment(Element.ALIGN_RIGHT);
@@ -360,18 +390,23 @@ public final class InvoicePdfRenderer {
         if (invoice.getRoundOff().compareTo(BigDecimal.ZERO) != 0) {
             totalRow(table, "Round Off", money(invoice.getRoundOff()), bodyFont);
         }
-        // Matches the source system's own dual-currency block (spec §2.5/§3): INR total
-        // always shown, the invoice's own currency shown alongside it when that isn't INR.
-        // "INR" not "₹" - OpenPDF's base Helvetica (WinAnsiEncoding) has no glyph for U+20B9
+        // Matches the source system's own dual-currency block (spec §2.5/§3): the base-currency
+        // total always shown, the invoice's own currency alongside it when that isn't the base.
+        // The code, not "₹" - OpenPDF's base Helvetica (WinAnsiEncoding) has no glyph for U+20B9
         // and silently drops it, leaving "Total Amount in" with nothing after it.
-        totalRow(table, "Total Amount in INR", money(invoice.getGrandTotalInr()), labelFont);
-        if (!"INR".equals(invoice.getCurrencyCode())) {
+        totalRow(table, "Total Amount in " + base, money(invoice.getGrandTotalInr()), labelFont);
+        if (!base.equals(invoice.getCurrencyCode())) {
             totalRow(table, "Total Amount in " + invoice.getCurrencyCode(), money(invoice.getGrandTotal()), labelFont);
         }
         return table;
     }
 
     // ---------------------------------------------------------------- small helpers
+
+    /** The agency's base currency; INR when the caller passed no agency. */
+    static String base(Tenant agency) {
+        return agency != null && agency.getBaseCurrencyCode() != null ? agency.getBaseCurrencyCode() : "INR";
+    }
 
     private static void addPlain(PdfPTable table, String text, Font font) {
         PdfPCell cell = new PdfPCell(new Phrase(text, font));

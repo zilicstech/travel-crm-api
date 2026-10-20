@@ -60,12 +60,24 @@ class PaymentReceiptServiceTest {
     private JournalService journalService;
     @Mock
     private com.voyra.crm.repository.JournalEntryRepository journalEntryRepository;
+    @Mock
+    private InvoiceLineSource invoiceLineSource;
+    @Mock
+    private com.voyra.crm.repository.BookingRepository bookingRepository;
+    @Mock
+    private com.voyra.crm.repository.CreditNoteRepository creditNoteRepository;
+
+    @org.mockito.Spy
+
+    private com.voyra.crm.service.BaseCurrency baseCurrency = new com.voyra.crm.service.BaseCurrency(null);
+
 
     @InjectMocks
     private PaymentReceiptService paymentReceiptService;
 
     @BeforeEach
     void authenticateAsAccountant() {
+        TestInvoiceLines.into(paymentReceiptService, invoiceRepository, null, null);
         CustomUserPrincipal principal = new CustomUserPrincipal("AC1", "neha", UserType.ACCOUNTANT, "T1");
         SecurityContextHolder.getContext().setAuthentication(
                 new UsernamePasswordAuthenticationToken(principal, null, List.of()));
@@ -93,6 +105,61 @@ class PaymentReceiptServiceTest {
         r.setPaymentMode(PaymentMode.BANK_TRANSFER);
         r.setReceivedOn(LocalDate.of(2026, 9, 19));
         return r;
+    }
+
+    /** An invoice billing two bookings: each keeps its own account, so a part payment must say which booking it is for. */
+    @Test
+    void aPartPaymentOnAnInvoiceOfSeveralBookingsMustNameTheBooking() {
+        Invoice invoice = issuedInvoice(new BigDecimal("1000.00"));
+        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(invoice));
+        when(invoiceLineSource.bookingIdsOf(any())).thenReturn(List.of("B1", "B2"));
+        org.springframework.test.util.ReflectionTestUtils.setField(paymentReceiptService, "invoiceLineSource", invoiceLineSource);
+
+        assertThatThrownBy(() -> paymentReceiptService.record(request(new BigDecimal("400.00"))))
+                .hasMessageContaining("pick the booking this payment is for");
+        PaymentReceiptRequest other = request(new BigDecimal("400.00"));
+        other.setBookingId("B9");
+        assertThatThrownBy(() -> paymentReceiptService.record(other)).hasMessageContaining("isn't on invoice");
+    }
+
+    /** A payment named for one booking of a combined invoice can't settle more than that booking owes - the rest would read as paid on the other. */
+    @Test
+    void aPaymentNamedForOneBookingIsCappedAtWhatThatBookingOwes() {
+        Invoice invoice = issuedInvoice(new BigDecimal("17860.00"));
+        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(invoice));
+        when(invoiceLineSource.bookingIdsOf(any())).thenReturn(List.of("B1", "B2"));
+        org.springframework.test.util.ReflectionTestUtils.setField(paymentReceiptService, "invoiceLineSource", invoiceLineSource);
+        when(bookingAccountingSync.positionOn(invoice, "B2", null))
+                .thenReturn(new BookingAccountingSync.Position(new BigDecimal("11180.00"), BigDecimal.ZERO));
+
+        PaymentReceiptRequest tooMuch = request(new BigDecimal("17860.00"));
+        tooMuch.setBookingId("B2");
+        assertThatThrownBy(() -> paymentReceiptService.record(tooMuch)).hasMessageContaining("owes only 11180.00");
+        org.mockito.Mockito.verify(paymentReceiptRepository, org.mockito.Mockito.never()).save(any());
+    }
+
+    /** One booking cancelled with its refund still unpaid makes the invoice read paid; the other booking can still pay its own share. */
+    @Test
+    void theOtherBookingCanPayWhileACancelledBookingsRefundIsUnpaid() {
+        Invoice invoice = issuedInvoice(new BigDecimal("33540.00"));
+        invoice.setStatus(InvoiceLifecycle.PAID);
+        invoice.setBalanceDue(new BigDecimal("-9140.00"));
+        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(invoice));
+        when(invoiceLineSource.bookingIdsOf(any())).thenReturn(List.of("B1", "B2"));
+        org.springframework.test.util.ReflectionTestUtils.setField(paymentReceiptService, "invoiceLineSource", invoiceLineSource);
+        when(creditNoteRepository.findByInvoiceIdAndStatus("I1", com.voyra.crm.enums.CreditNoteStatus.ISSUED)).thenReturn(List.of(
+                com.voyra.crm.entity.CreditNote.builder().refundableAmount(new BigDecimal("17680.00")).refundedAmount(BigDecimal.ZERO).build()));
+        when(bookingAccountingSync.positionOn(invoice, "B2", null))
+                .thenReturn(new BookingAccountingSync.Position(new BigDecimal("11180.00"), new BigDecimal("2640.00")));
+        when(paymentReceiptRepository.existsById(any())).thenReturn(false);
+
+        PaymentReceiptRequest tooMuch = request(new BigDecimal("8540.01"));
+        tooMuch.setBookingId("B2");
+        assertThatThrownBy(() -> paymentReceiptService.record(tooMuch)).hasMessageContaining("owes only 8540.00");
+        PaymentReceiptRequest share = request(new BigDecimal("8540.00"));
+        share.setBookingId("B2");
+        paymentReceiptService.record(share);
+        org.mockito.Mockito.verify(paymentReceiptRepository).save(org.mockito.ArgumentMatchers.argThat(r -> "B2".equals(r.getBookingId())));
     }
 
     @Test
@@ -399,6 +466,58 @@ class PaymentReceiptServiceTest {
         request.setAmount(new BigDecimal("8850.01"));
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> paymentReceiptService.applyAdvance("I1", request))
                 .hasMessageContaining("8850.00");
+    }
+
+    /** An invoice billing two bookings may draw money held for either; what it draws of each booking's advance is drawn under it. */
+    @Test
+    void anInvoiceOfTwoBookingsDrawsEachBookingsHeldAdvanceUnderThatBooking() {
+        Invoice invoice = issuedInvoice(new BigDecimal("20000.00"));
+        com.voyra.crm.repository.InvoiceLineItemRepository lines = org.mockito.Mockito.mock(com.voyra.crm.repository.InvoiceLineItemRepository.class);
+        when(lines.findBookingIdsByInvoiceId("I1")).thenReturn(List.of(invoice.getBookingId(), "B9"));
+        TestInvoiceLines.into(paymentReceiptService, invoiceRepository, lines, null);
+        PaymentReceipt onAccount = PaymentReceipt.builder().id("D1").clientId("K1").isAdvance(true).direction(ReceiptDirection.RECEIPT)
+                .amountInr(new BigDecimal("8850.00")).build();
+        PaymentReceipt heldForB9 = PaymentReceipt.builder().id("D2").clientId("K1").bookingId("B9").isAdvance(true)
+                .direction(ReceiptDirection.RECEIPT).amountInr(new BigDecimal("1320.00")).build();
+        when(paymentReceiptRepository.findByClientIdAndInvoiceIdIsNullAndIsAdvanceTrueOrderByReceivedOnAsc("K1"))
+                .thenReturn(List.of(onAccount, heldForB9));
+        when(paymentReceiptRepository.findByClientIdAndAppliedFromAdvanceTrueOrderByReceivedOnAsc("K1")).thenReturn(List.of());
+        when(bookingAccountingSync.positionOn(invoice, invoice.getBookingId(), null))
+                .thenReturn(new BookingAccountingSync.Position(new BigDecimal("15000.00"), BigDecimal.ZERO));
+
+        assertThat(paymentReceiptService.availableWalletFor("K1", List.of(invoice.getBookingId(), "B9"))).isEqualByComparingTo("10170.00");
+        paymentReceiptService.applyAvailableWallet(invoice);
+
+        ArgumentCaptor<PaymentReceipt> saved = ArgumentCaptor.forClass(PaymentReceipt.class);
+        org.mockito.Mockito.verify(paymentReceiptRepository, org.mockito.Mockito.atLeast(2)).save(saved.capture());
+        assertThat(saved.getAllValues()).filteredOn(r -> Boolean.TRUE.equals(r.getAppliedFromAdvance()))
+                .extracting(PaymentReceipt::getBookingId, r -> r.getAmountInr().toPlainString())
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("B9", "1320.00"),
+                        org.assertj.core.groups.Tuple.tuple(invoice.getBookingId(), "8850.00"));
+    }
+
+    /** Money on account spread over a combined invoice goes to each booking up to what it owes, not all to the first. */
+    @Test
+    void walletOnAccountIsDrawnPerBookingUpToWhatEachOwes() {
+        Invoice invoice = issuedInvoice(new BigDecimal("33540.00"));
+        com.voyra.crm.repository.InvoiceLineItemRepository lines = org.mockito.Mockito.mock(com.voyra.crm.repository.InvoiceLineItemRepository.class);
+        when(lines.findBookingIdsByInvoiceId("I1")).thenReturn(List.of(invoice.getBookingId(), "B9"));
+        TestInvoiceLines.into(paymentReceiptService, invoiceRepository, lines, null);
+        PaymentReceipt onAccount = PaymentReceipt.builder().id("D1").clientId("K1").isAdvance(true).direction(ReceiptDirection.RECEIPT)
+                .amountInr(new BigDecimal("30000.00")).build();
+        when(paymentReceiptRepository.findByClientIdAndInvoiceIdIsNullAndIsAdvanceTrueOrderByReceivedOnAsc("K1")).thenReturn(List.of(onAccount));
+        when(paymentReceiptRepository.findByClientIdAndAppliedFromAdvanceTrueOrderByReceivedOnAsc("K1")).thenReturn(List.of());
+        when(bookingAccountingSync.positionOn(invoice, invoice.getBookingId(), null))
+                .thenReturn(new BookingAccountingSync.Position(new BigDecimal("22360.00"), BigDecimal.ZERO));
+
+        paymentReceiptService.applyAvailableWallet(invoice);
+
+        ArgumentCaptor<PaymentReceipt> saved = ArgumentCaptor.forClass(PaymentReceipt.class);
+        org.mockito.Mockito.verify(paymentReceiptRepository, org.mockito.Mockito.atLeast(2)).save(saved.capture());
+        assertThat(saved.getAllValues()).filteredOn(r -> Boolean.TRUE.equals(r.getAppliedFromAdvance()))
+                .extracting(PaymentReceipt::getBookingId, r -> r.getAmountInr().toPlainString())
+                .containsExactly(org.assertj.core.groups.Tuple.tuple(invoice.getBookingId(), "22360.00"),
+                        org.assertj.core.groups.Tuple.tuple("B9", "7640.00"));
     }
 
     @Test

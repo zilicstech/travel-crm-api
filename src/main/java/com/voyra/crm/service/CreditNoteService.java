@@ -79,6 +79,7 @@ public class CreditNoteService {
     private final JournalService journalService;
     private final com.voyra.crm.repository.JournalEntryRepository journalEntryRepository;
     private final com.voyra.crm.repository.JournalLineRepository journalLineRepository;
+    private final com.voyra.crm.repository.InvoiceLineItemRepository invoiceLineItemRepository;
 
     @Transactional
     public CreditNoteResponse create(CreditNoteRequest request) {
@@ -92,19 +93,22 @@ public class CreditNoteService {
                 && invoice.getStatus() != InvoiceLifecycle.PAID) {
             throw new IllegalStateException("Only an issued invoice can be credited");
         }
-        if (request.getReason() == CreditNoteReason.BOOKING_CANCELLED && invoice.getBookingId() != null) {
-            Booking booking = bookingRepository.findById(invoice.getBookingId()).orElse(null);
+        String bookingId = request.getBookingId() != null && !request.getBookingId().isBlank()
+                ? request.getBookingId() : invoice.getBookingId();
+        if (request.getReason() == CreditNoteReason.BOOKING_CANCELLED && bookingId != null) {
+            Booking booking = bookingRepository.findById(bookingId).orElse(null);
             if (booking != null && booking.getBookingStatus() != BookingStatus.CANCELLED) {
                 throw new IllegalStateException("Reason BOOKING_CANCELLED requires the booking to actually be cancelled first");
             }
         }
 
         BigDecimal cancellationFee = request.getCancellationFee() != null ? request.getCancellationFee() : BigDecimal.ZERO;
-        if (cancellationFee.compareTo(invoice.getTaxableValue()) > 0) {
+        Share share = shareOf(invoice, bookingId);
+        if (cancellationFee.compareTo(share.taxable()) > 0) {
             throw new IllegalArgumentException("cancellationFee cannot exceed the invoice's taxable value");
         }
 
-        Reversal reversal = computeReversal(invoice, cancellationFee, request.getSupplierRetained());
+        Reversal reversal = computeReversal(invoice, cancellationFee, request.getSupplierRetained(), share);
         assertWithinInvoiceValue(invoice, reversal.totalAmount, null);
 
         LocalDate noteDate = request.getNoteDate() != null ? request.getNoteDate() : LocalDate.now();
@@ -114,7 +118,7 @@ public class CreditNoteService {
                 .invoiceNumber(invoice.getInvoiceNumber())
                 .clientId(invoice.getClientId())
                 .clientName(invoice.getClientName())
-                .bookingId(invoice.getBookingId())
+                .bookingId(bookingId)
                 .reason(request.getReason())
                 .reasonNote(request.getReasonNote())
                 .status(CreditNoteStatus.DRAFT)
@@ -161,14 +165,16 @@ public class CreditNoteService {
         // Capped at cash actually receipted on the invoice, not the note's own face value -
         // a credit note issued against a partially (or un-)paid invoice cannot be refunded
         // for more than the agency ever actually collected from the client.
-        note.setRefundableAmount(refundableFor(invoice, note.getTotalAmount(), note.getId()));
+        note.setRefundableAmount(refundableFor(invoice, note.getBookingId(), note.getTotalAmount(), note.getId()));
         creditNoteRepository.save(note);
 
         invoice.setCreditNoteTotal(invoice.getCreditNoteTotal().add(note.getTotalAmount()));
         BigDecimal balanceDue = invoice.getGrandTotal().subtract(invoice.getAmountReceived()).subtract(invoice.getCreditNoteTotal());
         invoice.setBalanceDue(balanceDue);
         invoice.setBalanceDueInr(scaleToInr(balanceDue, invoice.getFxRateToInr()));
-        invoice.setStatus(InvoiceLifecyclePolicy.deriveFromBalance(invoice.getGrandTotal(), balanceDue));
+        // A credit is not a payment: an invoice nobody has paid stays issued, however much of it is credited.
+        invoice.setStatus(balanceDue.signum() > 0 && cashReceiptedOnInvoice(invoice.getId()).signum() == 0
+                ? InvoiceLifecycle.ISSUED : InvoiceLifecyclePolicy.deriveFromBalance(invoice.getGrandTotal(), balanceDue));
         invoiceRepository.save(invoice);
 
         customerLedgerService.post(new LedgerPosting(
@@ -283,7 +289,7 @@ public class CreditNoteService {
         customerLedgerService.post(new LedgerPosting(
                 note.getClientId(), request.getReceivedOn(), LedgerEntryType.REFUND_PAID,
                 LedgerSourceType.RECEIPT, receipt.getId(), receipt.getReceiptNumber(),
-                "Refund " + receipt.getReceiptNumber() + " against " + note.getCreditNoteNumber(),
+                refundNarration(note, receipt, toWallet),
                 note.getBookingId(), receipt.getCurrencyCode(), receipt.getFxRateToInr(),
                 receipt.getAmountInr(), BigDecimal.ZERO, receipt.getAmountInr(), BigDecimal.ZERO));
         postRefundPaidJournal(note, receipt, toWallet);
@@ -341,9 +347,28 @@ public class CreditNoteService {
     /** What a cancellation credit note on this invoice would let the customer get back - the same
      *  maths {@link #create}/{@link #issue} use, without writing anything. */
     @Transactional(readOnly = true)
-    public BigDecimal previewRefundable(Invoice invoice, BigDecimal cancellationFee, BigDecimal supplierRetained) {
-        BigDecimal fee = cancellationFee.min(invoice.getTaxableValue()).max(BigDecimal.ZERO);
-        return refundableFor(invoice, computeReversal(invoice, fee, supplierRetained).totalAmount, null);
+    public BigDecimal previewRefundable(Invoice invoice, String bookingId, BigDecimal cancellationFee, BigDecimal supplierRetained) {
+        Share share = shareOf(invoice, bookingId);
+        BigDecimal fee = cancellationFee.min(share.taxable()).max(BigDecimal.ZERO);
+        return refundableFor(invoice, bookingId, computeReversal(invoice, fee, supplierRetained, share).totalAmount, null);
+    }
+
+    /** One booking's part of an invoice: its taxable value and weight (the whole invoice, weight 1, when it bills only one). */
+    record Share(BigDecimal taxable, BigDecimal weight) {
+    }
+
+    /** The booking's part of the invoice - what a cancellation of that booking can credit. */
+    Share shareOf(Invoice invoice, String bookingId) {
+        java.util.Map<String, com.voyra.crm.util.InvoiceShares.Share> shares = com.voyra.crm.util.InvoiceShares.of(
+                invoice.getBookingId(), invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc(invoice.getId()));
+        if (shares.size() <= 1 || bookingId == null) {
+            return new Share(invoice.getTaxableValue(), BigDecimal.ONE);
+        }
+        com.voyra.crm.util.InvoiceShares.Share s = shares.get(bookingId);
+        if (s == null) {
+            throw new IllegalArgumentException("That booking isn't on invoice " + invoice.getInvoiceNumber());
+        }
+        return new Share(s.taxable(), s.weight());
     }
 
     // ---------------------------------------------------------------- internals
@@ -357,15 +382,17 @@ public class CreditNoteService {
      * credited to the invoice's total taxable value - there is no line-item table to apportion
      * per line, so this is the whole-invoice equivalent (see the class javadoc).
      */
-    private Reversal computeReversal(Invoice invoice, BigDecimal cancellationFee, BigDecimal supplierRetained) {
-        BigDecimal creditableTaxableValue = invoice.getTaxableValue().subtract(cancellationFee);
-        BigDecimal ratio = invoice.getTaxableValue().compareTo(BigDecimal.ZERO) == 0
+    private Reversal computeReversal(Invoice invoice, BigDecimal cancellationFee, BigDecimal supplierRetained, Share share) {
+        BigDecimal creditableTaxableValue = share.taxable().subtract(cancellationFee);
+        BigDecimal ratio = share.taxable().compareTo(BigDecimal.ZERO) == 0
                 ? BigDecimal.ZERO
-                : creditableTaxableValue.divide(invoice.getTaxableValue(), 10, RoundingMode.HALF_UP);
-        BigDecimal feeRatio = commissionAgentFeeRatio(invoice, creditableTaxableValue, supplierRetained);
+                : creditableTaxableValue.divide(share.taxable(), 10, RoundingMode.HALF_UP);
+        BigDecimal feeRatio = commissionAgentFeeRatio(invoice, creditableTaxableValue, supplierRetained, share);
         if (feeRatio != null) {
             ratio = feeRatio;
         }
+        // The booking's part of the invoice's tax, by its weight, then the part of that being credited.
+        ratio = ratio.multiply(share.weight());
 
         BigDecimal cgst = invoice.getCgstAmount().multiply(ratio).setScale(2, RoundingMode.HALF_UP);
         BigDecimal sgst = invoice.getSgstAmount().multiply(ratio).setScale(2, RoundingMode.HALF_UP);
@@ -380,7 +407,7 @@ public class CreditNoteService {
      * only on the fee it refunds: the fare refunded is the pass-through less what the supplier kept,
      * and the rest of the credit is fee. Null when the invoice isn't one (pro-rate by taxable value).
      */
-    private BigDecimal commissionAgentFeeRatio(Invoice invoice, BigDecimal creditableTaxableValue, BigDecimal supplierRetained) {
+    private BigDecimal commissionAgentFeeRatio(Invoice invoice, BigDecimal creditableTaxableValue, BigDecimal supplierRetained, Share share) {
         if (supplierRetained == null || invoice.getBillingModel() != com.voyra.crm.enums.InvoiceBillingModel.COMMISSION_AGENT) {
             return null;
         }
@@ -396,8 +423,8 @@ public class CreditNoteService {
             return null;
         }
         BigDecimal fx = invoice.getFxRateToInr() != null && invoice.getFxRateToInr().signum() > 0 ? invoice.getFxRateToInr() : BigDecimal.ONE;
-        BigDecimal passThrough = passThroughInr.divide(fx, 2, RoundingMode.HALF_UP);
-        BigDecimal feeBase = invoice.getTaxableValue().subtract(passThrough);
+        BigDecimal passThrough = passThroughInr.divide(fx, 2, RoundingMode.HALF_UP).multiply(share.weight()).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal feeBase = share.taxable().subtract(passThrough);
         if (feeBase.signum() <= 0) {
             return BigDecimal.ZERO;
         }
@@ -420,7 +447,13 @@ public class CreditNoteService {
 
     /** Cash comes back only for what the customer paid beyond what is still billed once this
      *  credit lands - a partly paid invoice that is partly credited may owe nothing back. */
-    private BigDecimal refundableFor(Invoice invoice, BigDecimal noteTotal, String excludeId) {
+    private BigDecimal refundableFor(Invoice invoice, String bookingId, BigDecimal noteTotal, String excludeId) {
+        // On an invoice billing several bookings each keeps its own account: only what was paid for this booking
+        // beyond what is still billed for it comes back - never another booking's money.
+        if (bookingId != null && shareOf(invoice, bookingId).weight().compareTo(BigDecimal.ONE) != 0) {
+            BookingAccountingSync.Position own = bookingAccountingSync.positionOn(invoice, bookingId, excludeId);
+            return own.received().subtract(own.billed().subtract(noteTotal)).max(BigDecimal.ZERO).min(noteTotal);
+        }
         BigDecimal otherCredits = creditNoteRepository.findByInvoiceIdAndStatus(invoice.getId(), CreditNoteStatus.ISSUED).stream()
                 .filter(cn -> !cn.getId().equals(excludeId))
                 .map(CreditNote::getTotalAmount)
@@ -522,7 +555,9 @@ public class CreditNoteService {
             BigDecimal passThroughCredited = originalLines.stream().filter(l -> passThrough.equals(l.getAccountCode()))
                     .map(l -> nz(l.getCreditAmountInr())).reduce(BigDecimal.ZERO, BigDecimal::add);
             BigDecimal refund = note.getTotalAmountInr();
-            BigDecimal fromPassThrough = passThroughCredited.subtract(note.getSupplierRetained()).max(BigDecimal.ZERO).min(refund);
+            // The journal is in rupees; the note's figures are in its invoice's currency.
+            BigDecimal retainedInr = scaleToInr(note.getSupplierRetained(), note.getFxRateToInr());
+            BigDecimal fromPassThrough = passThroughCredited.subtract(retainedInr).max(BigDecimal.ZERO).min(refund);
             if (fromPassThrough.signum() > 0) amounts.put(passThrough, fromPassThrough);
             BigDecimal rest = refund.subtract(fromPassThrough);
             BigDecimal agencyCredited = originalLines.stream().filter(l -> !passThrough.equals(l.getAccountCode()))
@@ -592,6 +627,12 @@ public class CreditNoteService {
                         "Credit note " + note.getCreditNoteNumber() + " cancelled: " + reason));
     }
 
+    /** How the client's ledger reads a refund: money paid out by the agency to the client, or put on their account. */
+    private static String refundNarration(CreditNote note, PaymentReceipt receipt, boolean toWallet) {
+        return (toWallet ? "Refund credited to the client's account" : "Refund paid to the client by the agency")
+                + " - " + receipt.getReceiptNumber() + " against credit note " + note.getCreditNoteNumber();
+    }
+
     /** Posting-rule-table row 13 - a cash refund paid out against a credit note. */
     private void postRefundPaidJournal(CreditNote note, PaymentReceipt receipt, boolean toWallet) {
         BigDecimal amountInr = receipt.getAmountInr();
@@ -601,8 +642,7 @@ public class CreditNoteService {
         String bankCode = receipt.getPaymentMode() == com.voyra.crm.enums.PaymentMode.CASH
                 ? com.voyra.crm.enums.SystemAccount.CASH_IN_HAND.code()
                 : com.voyra.crm.enums.SystemAccount.BANK_ACCOUNTS.code();
-        String narration = "Refund " + receipt.getReceiptNumber() + " against " + note.getCreditNoteNumber()
-                + (toWallet ? ", credited to client account" : "");
+        String narration = refundNarration(note, receipt, toWallet);
         com.voyra.crm.models.JournalLinePosting creditLine = toWallet
                 ? com.voyra.crm.models.JournalLinePosting.creditParty(
                         com.voyra.crm.enums.SystemAccount.CLIENT_ADVANCES_HELD.code(), "CLIENT", note.getClientId(), amountInr, narration)

@@ -74,8 +74,17 @@ public class InvoiceResponse {
     @Schema(example = "1 Link Road, Mumbai")
     private String agencyAddress;
 
-    @Schema(example = "8f2a1c3d-58cc-4372-a567-0e02b2c3d479")
+    @Schema(description = "The invoice's first booking", example = "8f2a1c3d-58cc-4372-a567-0e02b2c3d479")
     private String bookingId;
+
+    @Schema(description = "Every booking the invoice bills, its first booking first")
+    private List<InvoiceBookingRefResponse> bookings;
+
+    @Schema(example = "Shubh Camroon Staff")
+    private String agentName;
+
+    @Schema(description = "The supplier's cost the invoice passes through untaxed (commission-agent invoices)", example = "105800.00")
+    private BigDecimal passThroughAmount;
 
     @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String leadId;

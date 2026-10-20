@@ -17,13 +17,13 @@ public final class BookingNextStep {
     private BookingNextStep() {
     }
 
-    public static String of(Booking b, int documentCount) {
+    public static String of(Booking b, int documentCount, String currency) {
         if (b.getBookingStatus() == BookingStatus.CANCELLED) {
             BigDecimal refund = nz(b.getCustomerRefundDue()).subtract(nz(b.getRefundedTotalInr()));
-            if (refund.signum() > 0) return "Refund client " + rupees(refund);
+            if (refund.signum() > 0) return "Refund client " + money(refund, currency);
             BigDecimal fromSupplier = nz(b.getSupplierRefundExpected()).subtract(nz(b.getSupplierRefundReceived()));
-            if (b.getSupplierRefundClaimAmount() != null) return "Check supplier refund in bank " + rupees(b.getSupplierRefundClaimAmount());
-            if (fromSupplier.signum() > 0) return "Record supplier refund " + rupees(fromSupplier);
+            if (b.getSupplierRefundClaimAmount() != null) return "Check supplier refund in bank " + money(b.getSupplierRefundClaimAmount(), currency);
+            if (fromSupplier.signum() > 0) return "Record supplier refund " + money(fromSupplier, currency);
             boolean anyRefund = nz(b.getCustomerRefundDue()).signum() > 0 || nz(b.getSupplierRefundExpected()).signum() > 0;
             return anyRefund && b.getRefundCheckedAt() == null ? "Cross-check refunds" : null;
         }
@@ -31,12 +31,14 @@ public final class BookingNextStep {
         BigDecimal invoiced = nz(b.getInvoicedTotalInr());
         if (invoiced.signum() == 0 && nz(b.getSellingPrice()).signum() > 0) return "Generate invoice";
         BigDecimal toCollect = invoiced.subtract(nz(b.getReceivedTotalInr()));
-        if (toCollect.signum() > 0) return "Collect " + rupees(toCollect);
+        if (toCollect.signum() > 0) return "Collect " + money(toCollect, currency);
         return null;
     }
 
-    public static String rupees(BigDecimal v) {
-        return "₹" + String.format(Locale.ENGLISH, "%,.0f", nz(v));
+    /** A whole amount with its currency: "₹6,000" for rupees, "AED 6,000" for any other code. */
+    public static String money(BigDecimal v, String currency) {
+        String amount = String.format(Locale.ENGLISH, "%,.0f", nz(v));
+        return currency == null || "INR".equals(currency) ? "₹" + amount : currency + " " + amount;
     }
 
     private static BigDecimal nz(BigDecimal v) {

@@ -28,14 +28,14 @@ class BookingSortTest {
 
     @Test
     void unknownColumnIsRejected() {
-        assertThatThrownBy(() -> BookingSort.parse("netCost,desc"))
-                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("netCost");
+        assertThatThrownBy(() -> BookingSort.parse("profit,desc"))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("profit");
     }
 
     @Test
-    void bookingRefIsZeroPaddedAndGrowsPastFiveDigits() {
-        assertThat(BookingService.bookingRef(42L)).isEqualTo("BK-00042");
-        assertThat(BookingService.bookingRef(123456L)).isEqualTo("BK-123456");
+    void bookingRefIsZeroPaddedToEightDigitsAndGrowsPastThem() {
+        assertThat(BookingService.bookingRef(42L)).isEqualTo("BK00000042");
+        assertThat(BookingService.bookingRef(123456789L)).isEqualTo("BK123456789");
         assertThat(BookingService.bookingRef(null)).isNull();
     }
 }

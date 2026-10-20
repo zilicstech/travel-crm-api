@@ -31,6 +31,14 @@ public class BookingInvoiceIssuer {
     private final InvoiceDocumentService invoiceDocumentService;
     private final TaxRateConfigRepository taxRateConfigRepository;
 
+    /**
+     * Off for now: the agency raises its GST invoices in its own software and uploads them on the
+     * booking, so nothing this system bills adds GST (and no GST state is needed). On again restores
+     * the default slab on every booking-raised invoice.
+     */
+    @org.springframework.beans.factory.annotation.Value("${voyra.invoicing.gst-enabled:false}")
+    private boolean gstEnabled;
+
     /** What the booking is, for picking its GST slab. */
     static SupplyNature supplyNature(InvoiceServiceCategory category, boolean international) {
         return switch (category) {
@@ -49,6 +57,7 @@ public class BookingInvoiceIssuer {
                 ? draft.getServiceCategory() : InvoiceServiceCategory.forBooking(booking.getType(), international);
         SupplyNature nature = supplyNature(category, international);
         draft.setSupplyNature(nature);
+        if (!gstEnabled) return;
         taxRateConfigRepository.findByTaxKindAndSupplyNatureAndIsDefaultTrueAndIsActiveTrue(TaxKind.GST, nature)
                 .ifPresent(gst -> {
                     InvoiceTaxRequest tax = new InvoiceTaxRequest();
@@ -68,6 +77,7 @@ public class BookingInvoiceIssuer {
      */
     public BigDecimal cancellationChargesTotal(Booking booking, BigDecimal supplierCharge, BigDecimal agencyFee) {
         BigDecimal kept = supplierCharge.add(agencyFee);
+        if (!gstEnabled) return kept;
         boolean international = Boolean.TRUE.equals(booking.getInternationalTrip());
         InvoiceServiceCategory category = InvoiceServiceCategory.forBooking(booking.getType(), international);
         BigDecimal base = category.defaultBillingModel() == InvoiceBillingModel.COMMISSION_AGENT ? agencyFee : kept;

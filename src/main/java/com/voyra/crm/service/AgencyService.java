@@ -48,6 +48,7 @@ public class AgencyService {
                 .ownerEmail(request.getOwnerEmail())
                 .password(passwordEncoder.encode(request.getOwnerPassword()))
                 .isActive(true)
+                .baseCurrencyCode(com.voyra.crm.util.FxMath.code(request.getBaseCurrencyCode(), BaseCurrency.DEFAULT))
                 .build();
 
         // Flush first: a concurrent create with the same owner email (a double-click) waits on the
@@ -64,6 +65,7 @@ public class AgencyService {
                 .agencyName(tenant.getAgencyName())
                 .ownerName(tenant.getOwnerName())
                 .ownerEmail(tenant.getOwnerEmail())
+                .baseCurrencyCode(tenant.getBaseCurrencyCode())
                 .build();
     }
 
@@ -132,6 +134,7 @@ public class AgencyService {
                 .agentsCount(agentsCount)
                 .totalRevenue(totalRevenue)
                 .createdDate(tenant.getCreatedDate())
+                .baseCurrencyCode(tenant.getBaseCurrencyCode())
                 .build();
     }
 

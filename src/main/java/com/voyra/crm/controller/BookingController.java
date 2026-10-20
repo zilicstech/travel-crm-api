@@ -1,5 +1,6 @@
 package com.voyra.crm.controller;
 
+import com.voyra.crm.dto.BookingAccountantRemarkRequest;
 import com.voyra.crm.dto.BookingCancelPreviewResponse;
 import com.voyra.crm.dto.BookingCancelRequest;
 import com.voyra.crm.dto.BookingCostComponentRequest;
@@ -27,6 +28,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Pageable;
 import io.swagger.v3.oas.annotations.Parameter;
 import org.springframework.http.ResponseEntity;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -108,12 +110,40 @@ public class BookingController {
             @RequestParam(value = "sort", required = false) String sort,
             @Parameter(description = "true: only bookings with client money or a refund still open - paged list only")
             @RequestParam(value = "moneyPending", required = false, defaultValue = "false") boolean moneyPending,
+            @Parameter(description = "Booked on, from (inclusive) - paged list only")
+            @RequestParam(value = "bookedFrom", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) java.time.LocalDate bookedFrom,
+            @Parameter(description = "Booked on, to (inclusive) - paged list only")
+            @RequestParam(value = "bookedTo", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) java.time.LocalDate bookedTo,
+            @Parameter(description = "Travel date (each type's first date), from - paged list only")
+            @RequestParam(value = "travelFrom", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) java.time.LocalDate travelFrom,
+            @Parameter(description = "Travel date, to - paged list only")
+            @RequestParam(value = "travelTo", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) java.time.LocalDate travelTo,
+            @RequestParam(value = "clientId", required = false) String clientId,
+            @Parameter(description = "Flight cabin, e.g. Economy - paged list only")
+            @RequestParam(value = "cabin", required = false) String cabin,
+            @Parameter(description = "A voucher bought in this currency; the base currency means none bought in another - paged list only")
+            @RequestParam(value = "purchaseCurrency", required = false) String purchaseCurrency,
+            @RequestParam(value = "paymentStatus", required = false) com.voyra.crm.enums.PaymentStatus paymentStatus,
+            @Parameter(description = "User id of whoever created the booking's lead (or the booking itself) - paged list only")
+            @RequestParam(value = "assignedBy", required = false) String assignedBy,
+            @Parameter(description = "HAS or NONE: with or without an accountant remark - paged list only")
+            @RequestParam(value = "remark", required = false) String remark,
             @RequestParam(value = "page", required = false) Integer page,
             @RequestParam(value = "size", required = false) Integer size) {
         Pageable pageable = PageRequestUtil.resolve(page, size);
         return ResponseEntity.ok(pageable == null
                 ? bookingService.listBookings(type, status, destination, agentId, vendorId)
-                : bookingService.listBookings(type, status, destination, agentId, vendorId, q, sort, moneyPending, pageable));
+                : bookingService.listBookings(type, status, destination, agentId, vendorId, q, sort, moneyPending,
+                        new com.voyra.crm.models.BookingListFilter(bookedFrom, bookedTo, travelFrom, travelTo, clientId, cabin,
+                                purchaseCurrency, paymentStatus, assignedBy, remark), pageable));
+    }
+
+    @PatchMapping("/{id}/accountant-remark")
+    @PreAuthorize("hasAnyRole('AGENCY_OWNER', 'ACCOUNTANT')")
+    @Operation(summary = "Set the accountant's note on a booking", description = "Owner or accountant; a blank remark clears it.")
+    public ResponseEntity<BookingResponse> updateAccountantRemark(@PathVariable String id,
+                                                                  @Valid @RequestBody BookingAccountantRemarkRequest request) {
+        return ResponseEntity.ok(bookingService.updateAccountantRemark(id, request.getRemark()));
     }
 
     @GetMapping("/{id}")

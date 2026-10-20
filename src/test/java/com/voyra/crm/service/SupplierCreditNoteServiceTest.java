@@ -60,6 +60,11 @@ class SupplierCreditNoteServiceTest {
     @Mock
     private JournalLineRepository journalLineRepository;
 
+    @org.mockito.Spy
+
+    private com.voyra.crm.service.BaseCurrency baseCurrency = new com.voyra.crm.service.BaseCurrency(null);
+
+
     @InjectMocks
     private SupplierCreditNoteService supplierCreditNoteService;
 

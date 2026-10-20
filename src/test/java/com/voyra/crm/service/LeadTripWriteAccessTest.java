@@ -69,6 +69,9 @@ class LeadTripWriteAccessTest {
     @Mock private BookingService bookingService;
     @Mock private InvoiceService invoiceService;
     @Mock private AuditService auditService;
+    @org.mockito.Spy
+    private com.voyra.crm.service.BaseCurrency baseCurrency = new com.voyra.crm.service.BaseCurrency(null);
+
     @InjectMocks private LeadService leadService;
 
     private final Lead lead = Lead.builder().id("L1").createdBy("CREATOR").status(LeadStatus.NEW)

@@ -70,6 +70,11 @@ class BankMatchingServiceTest {
     @Mock private SupplierPaymentService supplierPaymentService;
     @Mock private JournalService journalService;
 
+    @org.mockito.Spy
+
+    private com.voyra.crm.service.BaseCurrency baseCurrency = new com.voyra.crm.service.BaseCurrency(null);
+
+
     @InjectMocks
     private BankMatchingService bankMatchingService;
 
@@ -105,7 +110,8 @@ class BankMatchingServiceTest {
                 BankAccount.builder().id("BA1").accountName("HDFC Current").build()));
         when(paymentReceiptService.record(any(PaymentReceiptRequest.class)))
                 .thenReturn(PaymentReceiptResponse.builder().id("PR1").build());
-        when(paymentReceiptRepository.findById("PR1")).thenReturn(Optional.of(PaymentReceipt.builder().id("PR1").build()));
+        when(paymentReceiptRepository.findByInvoiceIdOrderByReceivedOnAscCreatedAtAsc(any())).thenReturn(List.of(
+                PaymentReceipt.builder().id("PR1").instrumentRef(txn.getBankReference()).receivedOn(txn.getTxnDate()).build()));
 
         int matched = bankMatchingService.runTier1(List.of(txn));
 
@@ -156,7 +162,8 @@ class BankMatchingServiceTest {
                 BankAccount.builder().id("BA1").accountName("HDFC Current").build()));
         when(paymentReceiptService.record(any(PaymentReceiptRequest.class)))
                 .thenReturn(PaymentReceiptResponse.builder().id("PR2").build());
-        when(paymentReceiptRepository.findById("PR2")).thenReturn(Optional.of(PaymentReceipt.builder().id("PR2").build()));
+        when(paymentReceiptRepository.findByInvoiceIdOrderByReceivedOnAscCreatedAtAsc(any())).thenReturn(List.of(
+                PaymentReceipt.builder().id("PR2").instrumentRef(txn.getBankReference()).receivedOn(txn.getTxnDate()).build()));
 
         bankMatchingService.confirmMatch("BT1", BankMatchedSourceType.INVOICE, "INV2");
 

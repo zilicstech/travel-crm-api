@@ -97,11 +97,19 @@ class BookingProfitTest {
     private ClientCreditService clientCreditService;
 
 
+    @org.mockito.Spy
+
+
+    private com.voyra.crm.service.BaseCurrency baseCurrency = new com.voyra.crm.service.BaseCurrency(null);
+
+
+
     @InjectMocks
     private BookingService bookingService;
 
     @BeforeEach
     void authenticateAsAgent() {
+        TestInvoiceLines.into(bookingService, invoiceRepository, null, bookingDocumentRepository);
         CustomUserPrincipal principal = new CustomUserPrincipal("A1", "liam", UserType.AGENT, "T1");
         SecurityContextHolder.getContext().setAuthentication(
                 new UsernamePasswordAuthenticationToken(principal, null, java.util.List.of()));

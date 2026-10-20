@@ -78,6 +78,8 @@ public class SupplierInvoiceService {
     private final FileStorageService fileStorageService;
     private final JournalService journalService;
     private final com.voyra.crm.repository.JournalEntryRepository journalEntryRepository;
+    private final com.voyra.crm.repository.InvoiceRepository invoiceRepository;
+    private final BaseCurrency baseCurrency;
 
     @Transactional
     public SupplierInvoiceResponse createDraft(SupplierInvoiceDraftRequest request) {
@@ -126,7 +128,7 @@ public class SupplierInvoiceService {
     public List<SupplierInvoiceResponse> createAutoDraft(Booking booking, String vendorId) {
         List<BookingCostComponent> components = bookingCostComponentRepository.findByBookingIdOrderBySortOrder(booking.getId());
         if (components.isEmpty()) {
-            return List.of(createAutoDraftSingle(booking, vendorId, booking.getNetCost()));
+            return List.of(createAutoDraftSingle(booking, vendorId, booking.getNetCost(), null, null, null, null));
         }
 
         Map<String, List<BookingCostComponent>> byVendor = components.stream()
@@ -146,9 +148,12 @@ public class SupplierInvoiceService {
         return ref != null ? ref : booking.getId();
     }
 
-    /** One voucher's own bill: its supplier, its cost, its reference. */
-    public SupplierInvoiceResponse draftForVoucher(Booking booking, String vendorId, BigDecimal cost, String reference) {
-        SupplierInvoiceResponse drafted = createAutoDraftSingle(booking, vendorId, cost);
+    /** One voucher's own bill: its supplier, its cost, its reference - in the currency it was bought in
+     *  (null means base), so paying it at another rate posts the difference as forex gain or loss. */
+    public SupplierInvoiceResponse draftForVoucher(Booking booking, String vendorId, String reference,
+                                                   String currency, BigDecimal price, BigDecimal rate,
+                                                   BigDecimal commission, BigDecimal supplierTds) {
+        SupplierInvoiceResponse drafted = createAutoDraftSingle(booking, vendorId, price, currency, rate, commission, supplierTds);
         if (reference != null && !reference.isBlank()) {
             supplierInvoiceRepository.findById(drafted.getId()).ifPresent(bill -> {
                 bill.setNotes(bill.getNotes() + " Voucher " + reference.trim() + ".");
@@ -161,11 +166,22 @@ public class SupplierInvoiceService {
     /** The pre-Decision-7 path: one vendor, one line, at the booking's blended net cost. GST is
      *  left at zero - the agent's net cost is an estimate, not what the supplier will actually
      *  bill tax on. */
-    private SupplierInvoiceResponse createAutoDraftSingle(Booking booking, String vendorId, BigDecimal netCost) {
+    private SupplierInvoiceResponse createAutoDraftSingle(Booking booking, String vendorId, BigDecimal netCost,
+                                                          String currency, BigDecimal rate,
+                                                          BigDecimal commission, BigDecimal supplierTds) {
         Vendor vendor = findVendor(vendorId);
         SupplierInvoice invoice = newAutoDraftHeader(booking, vendor,
                 "Drafted automatically from booking " + ref(booking)
                         + " at the agent's net cost - confirm against the supplier's real invoice before approving.");
+        String base = baseCurrency.code();
+        if (currency != null && !currency.equals(base)) {
+            invoice.setCurrencyCode(currency);
+            invoice.setFxRateToInr(rate);
+            invoice.setFxRateSource("MANUAL");
+        }
+        // The voucher's commission: the supplier keeps it back, so the agency owes the bill less it, plus the TDS.
+        invoice.setCommission(commission != null ? commission : BigDecimal.ZERO);
+        invoice.setSupplierTds(supplierTds != null ? supplierTds : BigDecimal.ZERO);
 
         SupplierInvoiceLineItemRequest line = new SupplierInvoiceLineItemRequest();
         line.setDescription((booking.getDestination() != null ? booking.getDestination() : "Booking") + " - " + ref(booking));
@@ -224,7 +240,7 @@ public class SupplierInvoiceService {
                 .leadId(booking.getLeadId())
                 .serviceType(booking.getServiceType())
                 .referenceNote(booking.getPnr())
-                .currencyCode("INR")
+                .currencyCode(baseCurrency.code())
                 .fxRateToInr(BigDecimal.ONE)
                 .fxRateSource("INR_IDENTITY")
                 .itcEligibility(com.voyra.crm.enums.ItcEligibility.ELIGIBLE)
@@ -267,6 +283,24 @@ public class SupplierInvoiceService {
 
         log.info("Supplier bill draft updated: id={}", id);
         return toResponse(invoice, lines);
+    }
+
+    /**
+     * "Purchase ?" on the client's invoice: a voucher's draft bill, at the cost it was drafted at, gets the
+     * supplier's own bill number and date and is booked.
+     */
+    @Transactional
+    public SupplierInvoiceResponse confirmPurchase(String id, String supplierInvoiceNumber, java.time.LocalDate invoiceDate) {
+        SupplierInvoice invoice = findById(id);
+        SupplierInvoiceLifecyclePolicy.assertEditable(invoice.getStatus());
+        invoice.setSupplierInvoiceNumber(supplierInvoiceNumber.trim());
+        if (invoiceDate != null) {
+            invoice.setInvoiceDate(invoiceDate);
+        }
+        invoice.setUpdatedAt(LocalDateTime.now());
+        invoice.setUpdatedBy(currentUserId());
+        supplierInvoiceRepository.save(invoice);
+        return approve(invoice, null);
     }
 
     @Transactional
@@ -361,7 +395,7 @@ public class SupplierInvoiceService {
                 SupplierLedgerEntryType.BILL_BOOKED, SupplierLedgerSourceType.SUPPLIER_INVOICE, invoice.getId(),
                 invoice.getSupplierInvoiceNumber(), "Supplier bill " + labelFor(invoice) + " booked",
                 invoice.getBookingId(), invoice.getCurrencyCode(), invoice.getFxRateToInr(),
-                BigDecimal.ZERO, invoice.getGrandTotal(), BigDecimal.ZERO, invoice.getGrandTotalInr()));
+                BigDecimal.ZERO, invoice.payable(), BigDecimal.ZERO, invoice.payableInr()));
         postBillBookedJournal(invoice);
 
         auditService.recordUpdate(AuditEntityType.SUPPLIER_INVOICE, invoice.getId(), labelFor(invoice), overrideChange);
@@ -379,7 +413,8 @@ public class SupplierInvoiceService {
      */
     private List<AuditChange> applyCostCapGate(SupplierInvoice invoice, String overrideReason) {
         BigDecimal cap = costComponentCap(invoice);
-        if (cap == null || invoice.getGrandTotal().compareTo(cap) <= 0) {
+        // Both sides in base: the bill and its components may be in other currencies.
+        if (cap == null || invoice.getGrandTotalInr().compareTo(cap) <= 0) {
             return List.of();
         }
 
@@ -396,7 +431,7 @@ public class SupplierInvoiceService {
         }
         if (!hasOverride) {
             throw new IllegalArgumentException("This bill exceeds the booking's quoted cost cap of " + cap
-                    + " by " + invoice.getGrandTotal().subtract(cap) + " - an override reason is required to approve it anyway");
+                    + " by " + invoice.getGrandTotalInr().subtract(cap) + " - an override reason is required to approve it anyway");
         }
         return List.of(AuditChange.builder()
                 .field("costCapOverride")
@@ -416,7 +451,74 @@ public class SupplierInvoiceService {
         if (components.isEmpty()) {
             return null;
         }
-        return components.stream().map(BookingCostComponent::getNetCost).reduce(BigDecimal.ZERO, BigDecimal::add);
+        return components.stream().map(c -> c.getNetCostInr() != null ? c.getNetCostInr() : c.getNetCost())
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    /** An unapproved bill's commission and the supplier's TDS on it, as its voucher now has them. */
+    @Transactional
+    public void setDraftCommission(String id, BigDecimal commission, BigDecimal tds) {
+        SupplierInvoice bill = supplierInvoiceRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Supplier bill not found: " + id));
+        if (bill.getStatus() != SupplierInvoiceStatus.DRAFT && bill.getStatus() != SupplierInvoiceStatus.PENDING_APPROVAL) {
+            throw new IllegalStateException("This voucher's supplier bill is already "
+                    + (bill.getStatus() == SupplierInvoiceStatus.CANCELLED ? "cancelled" : "approved") + " - its commission can't change");
+        }
+        bill.setCommission(commission);
+        bill.setSupplierTds(tds);
+        bill.setBalanceDue(bill.payable().subtract(bill.getAmountPaid()).subtract(bill.getCreditNoteTotal()));
+        bill.setBalanceDueInr(bill.inr(bill.getBalanceDue()));
+        supplierInvoiceRepository.save(bill);
+    }
+
+    /**
+     * A cancelled ticket: the supplier takes its commission back. An unposted bill simply loses it; on a booked
+     * bill the commission income and the TDS claimed on it are reversed, and the agency owes the supplier that
+     * much more.
+     */
+    @Transactional
+    public void recallCommission(String id) {
+        SupplierInvoice bill = supplierInvoiceRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Supplier bill not found: " + id));
+        BigDecimal commission = bill.getCommission() != null ? bill.getCommission() : BigDecimal.ZERO;
+        BigDecimal tds = bill.getSupplierTds() != null ? bill.getSupplierTds() : BigDecimal.ZERO;
+        if (commission.signum() == 0 && tds.signum() == 0) {
+            return;
+        }
+        boolean booked = bill.getStatus() != SupplierInvoiceStatus.DRAFT && bill.getStatus() != SupplierInvoiceStatus.PENDING_APPROVAL
+                && bill.getStatus() != SupplierInvoiceStatus.CANCELLED;
+        BigDecimal commissionInr = bill.inr(commission);
+        BigDecimal tdsInr = bill.inr(tds);
+        bill.setCommission(BigDecimal.ZERO);
+        bill.setSupplierTds(BigDecimal.ZERO);
+        bill.setBalanceDue(bill.payable().subtract(bill.getAmountPaid()).subtract(bill.getCreditNoteTotal()));
+        bill.setBalanceDueInr(bill.inr(bill.getBalanceDue()));
+        if (booked) {
+            bill.setStatus(SupplierInvoiceLifecyclePolicy.deriveFromBalance(bill.payable().subtract(bill.getCreditNoteTotal()), bill.getBalanceDue()));
+            String narration = "Commission on supplier bill " + labelFor(bill) + " taken back - booking cancelled";
+            LocalDate today = LocalDate.now();
+            supplierLedgerService.post(new SupplierLedgerPosting(
+                    bill.getVendorId(), today, SupplierLedgerEntryType.COMMISSION_RECALLED, SupplierLedgerSourceType.SUPPLIER_INVOICE, bill.getId(),
+                    bill.getSupplierInvoiceNumber(), narration, bill.getBookingId(), bill.getCurrencyCode(), bill.getFxRateToInr(),
+                    BigDecimal.ZERO, commission.subtract(tds), BigDecimal.ZERO, commissionInr.subtract(tdsInr)));
+            List<com.voyra.crm.models.JournalLinePosting> lines = new ArrayList<>();
+            lines.add(com.voyra.crm.models.JournalLinePosting.debit(
+                    com.voyra.crm.enums.SystemAccount.SUPPLIER_COMMISSION_INCOME.code(), commissionInr, narration));
+            if (tdsInr.signum() > 0) {
+                lines.add(com.voyra.crm.models.JournalLinePosting.credit(
+                        com.voyra.crm.enums.SystemAccount.TDS_RECEIVABLE.code(), tdsInr, "TDS claim on the commission reversed"));
+            }
+            if (commissionInr.subtract(tdsInr).signum() > 0) {
+                lines.add(com.voyra.crm.models.JournalLinePosting.creditParty(
+                        com.voyra.crm.enums.SystemAccount.ACCOUNTS_PAYABLE.code(), "VENDOR", bill.getVendorId(),
+                        commissionInr.subtract(tdsInr), narration));
+            }
+            journalService.post(new com.voyra.crm.models.JournalPosting(today,
+                    com.voyra.crm.enums.JournalSourceType.SUPPLIER_INVOICE, bill.getId(),
+                    com.voyra.crm.enums.JournalPurpose.SUPPLIER_COMMISSION_RECALLED, narration, bill.getBookingId(), null, lines));
+        }
+        supplierInvoiceRepository.save(bill);
+        log.info("Supplier commission taken back: billId={}, commission={}, booked={}", id, commission, booked);
     }
 
     @Transactional
@@ -457,10 +559,14 @@ public class SupplierInvoiceService {
                     SupplierLedgerEntryType.REVERSAL, SupplierLedgerSourceType.SUPPLIER_INVOICE, invoice.getId(),
                     invoice.getSupplierInvoiceNumber(), "Supplier bill " + labelFor(invoice) + " cancelled",
                     invoice.getBookingId(), invoice.getCurrencyCode(), invoice.getFxRateToInr(),
-                    invoice.getGrandTotal(), BigDecimal.ZERO, invoice.getGrandTotalInr(), BigDecimal.ZERO));
+                    invoice.payable(), BigDecimal.ZERO, invoice.payableInr(), BigDecimal.ZERO));
             journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(
                     com.voyra.crm.enums.JournalSourceType.SUPPLIER_INVOICE, invoice.getId(),
                     com.voyra.crm.enums.JournalPurpose.SUPPLIER_BILL_BOOKED)
+                    .ifPresent(entry -> journalService.reverse(entry.getId(), "Supplier bill cancelled: " + reason));
+            journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(
+                    com.voyra.crm.enums.JournalSourceType.SUPPLIER_INVOICE, invoice.getId(),
+                    com.voyra.crm.enums.JournalPurpose.SUPPLIER_COMMISSION_RECALLED)
                     .ifPresent(entry -> journalService.reverse(entry.getId(), "Supplier bill cancelled: " + reason));
         }
         log.info("Supplier bill cancelled: id={}, reason={}", id, reason);
@@ -554,10 +660,11 @@ public class SupplierInvoiceService {
         invoice.setDueDate(request.getDueDate());
         invoice.setReceivedOn(request.getReceivedOn() != null ? request.getReceivedOn() : LocalDate.now());
         invoice.setReferenceNote(request.getReferenceNote());
-        invoice.setCurrencyCode(request.getCurrencyCode() != null ? request.getCurrencyCode() : "INR");
-        if (!"INR".equals(invoice.getCurrencyCode())) {
+        String base = baseCurrency.code();
+        invoice.setCurrencyCode(com.voyra.crm.util.FxMath.code(request.getCurrencyCode(), base));
+        if (!base.equals(invoice.getCurrencyCode())) {
             if (request.getFxRateToInr() == null || request.getFxRateToInr().compareTo(BigDecimal.ZERO) <= 0) {
-                throw new IllegalArgumentException("fxRateToInr is required and must be positive for a non-INR bill");
+                throw new IllegalArgumentException("fxRateToInr is required and must be positive for a bill not in " + base);
             }
             invoice.setFxRateToInr(request.getFxRateToInr());
             invoice.setFxRateSource("MANUAL");
@@ -636,8 +743,8 @@ public class SupplierInvoiceService {
         invoice.setTaxableValueInr(taxable.multiply(invoice.getFxRateToInr()).setScale(2, RoundingMode.HALF_UP));
         invoice.setGstTotalInr(gstTotal.multiply(invoice.getFxRateToInr()).setScale(2, RoundingMode.HALF_UP));
         invoice.setGrandTotalInr(grandTotal.multiply(invoice.getFxRateToInr()).setScale(2, RoundingMode.HALF_UP));
-        invoice.setBalanceDue(grandTotal.subtract(invoice.getAmountPaid()).subtract(invoice.getCreditNoteTotal()));
-        invoice.setBalanceDueInr(invoice.getGrandTotalInr()
+        invoice.setBalanceDue(invoice.payable().subtract(invoice.getAmountPaid()).subtract(invoice.getCreditNoteTotal()));
+        invoice.setBalanceDueInr(invoice.payableInr()
                 .subtract(invoice.getAmountPaid().multiply(invoice.getFxRateToInr()).setScale(2, RoundingMode.HALF_UP))
                 .subtract(invoice.getCreditNoteTotal().multiply(invoice.getFxRateToInr()).setScale(2, RoundingMode.HALF_UP)));
 
@@ -666,7 +773,7 @@ public class SupplierInvoiceService {
         // client: the bill clears the pass-through the invoice credited instead of becoming a purchase,
         // so only the agency's fee is ever income.
         boolean passThrough = invoice.getBookingId() != null
-                && category.defaultBillingModel() == com.voyra.crm.enums.InvoiceBillingModel.COMMISSION_AGENT;
+                && billingModelOf(invoice.getBookingId(), category) == com.voyra.crm.enums.InvoiceBillingModel.COMMISSION_AGENT;
         String debitAccount = passThrough
                 ? com.voyra.crm.enums.SystemAccount.CLIENT_PASS_THROUGH_PAYABLE.code()
                 : com.voyra.crm.enums.SystemAccount.purchaseCode(category);
@@ -682,14 +789,36 @@ public class SupplierInvoiceService {
         if (lines.isEmpty()) {
             return;
         }
+        // Commission the supplier keeps back is the agency's income; the TDS it deducted on it is claimed back.
+        BigDecimal commissionInr = invoice.inr(invoice.getCommission());
+        BigDecimal supplierTdsInr = invoice.inr(invoice.getSupplierTds());
+        if (supplierTdsInr.signum() > 0) {
+            lines.add(com.voyra.crm.models.JournalLinePosting.debit(
+                    com.voyra.crm.enums.SystemAccount.TDS_RECEIVABLE.code(), supplierTdsInr, "TDS deducted by supplier on commission"));
+        }
         lines.add(com.voyra.crm.models.JournalLinePosting.creditParty(
-                com.voyra.crm.enums.SystemAccount.ACCOUNTS_PAYABLE.code(), "VENDOR", invoice.getVendorId(), grandTotalInr, narration));
+                com.voyra.crm.enums.SystemAccount.ACCOUNTS_PAYABLE.code(), "VENDOR", invoice.getVendorId(),
+                grandTotalInr.subtract(commissionInr).add(supplierTdsInr), narration));
+        if (commissionInr.signum() > 0) {
+            lines.add(com.voyra.crm.models.JournalLinePosting.credit(
+                    com.voyra.crm.enums.SystemAccount.SUPPLIER_COMMISSION_INCOME.code(), commissionInr, "Commission from supplier"));
+        }
 
         journalService.post(new com.voyra.crm.models.JournalPosting(
                 invoice.getInvoiceDate() != null ? invoice.getInvoiceDate() : LocalDate.now(),
                 com.voyra.crm.enums.JournalSourceType.SUPPLIER_INVOICE, invoice.getId(),
                 com.voyra.crm.enums.JournalPurpose.SUPPLIER_BILL_BOOKED, narration,
                 invoice.getBookingId(), null, lines));
+    }
+
+    /** How the booking is billed to its client: its first raised tax invoice decides (one raised as principal keeps the bill a
+     *  purchase), else the category's default - so the bill and the client's invoice post to the same side. */
+    private com.voyra.crm.enums.InvoiceBillingModel billingModelOf(String bookingId, com.voyra.crm.enums.InvoiceServiceCategory category) {
+        return invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc(bookingId,
+                        com.voyra.crm.enums.InvoiceDocumentType.TAX_INVOICE, com.voyra.crm.enums.InvoiceLifecycle.CANCELLED).stream()
+                .filter(i -> i.getStatus() != com.voyra.crm.enums.InvoiceLifecycle.DRAFT && i.getBillingModel() != null)
+                .map(com.voyra.crm.entity.Invoice::getBillingModel).findFirst()
+                .orElse(category.defaultBillingModel());
     }
 
     private com.voyra.crm.enums.InvoiceServiceCategory resolvePurchaseCategory(SupplierInvoice invoice) {
@@ -762,6 +891,7 @@ public class SupplierInvoiceService {
                 .cgstAmount(i.getCgstAmount()).sgstAmount(i.getSgstAmount()).igstAmount(i.getIgstAmount())
                 .gstTotal(i.getGstTotal()).cessAmount(i.getCessAmount()).roundOff(i.getRoundOff())
                 .grandTotal(i.getGrandTotal())
+                .commission(i.getCommission()).supplierTds(i.getSupplierTds()).payable(i.payable())
                 .itcEligibility(i.getItcEligibility()).itcNote(i.getItcNote()).isReverseCharge(i.getIsReverseCharge())
                 .tdsSection(i.getTdsSection()).tdsRatePercent(i.getTdsRatePercent()).tdsAmount(i.getTdsAmount())
                 .taxableValueInr(i.getTaxableValueInr()).gstTotalInr(i.getGstTotalInr()).grandTotalInr(i.getGrandTotalInr())

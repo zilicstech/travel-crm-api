@@ -120,6 +120,34 @@ public class InvoiceLineItem {
     @Column(name = "tax_amount", precision = 19, scale = 2)
     private BigDecimal taxAmount;
 
+    /** The booking (and voucher) this line bills - an invoice may cover several bookings of one client. */
+    @Column(name = "booking_id", length = 36)
+    private String bookingId;
+
+    @Column(name = "booking_document_id", length = 36)
+    private String bookingDocumentId;
+
+    /** The voucher's fare charges in base (basic, yq, ...), printed under the line. */
+    @org.hibernate.annotations.JdbcTypeCode(org.hibernate.type.SqlTypes.JSON)
+    @Column(name = "charges", columnDefinition = "jsonb")
+    private java.util.Map<String, BigDecimal> charges;
+
+    /** The ticket's travellers and flights as they were when the line was drafted - printed on the air invoice. */
+    @org.hibernate.annotations.JdbcTypeCode(org.hibernate.type.SqlTypes.JSON)
+    @Column(name = "travellers", columnDefinition = "jsonb")
+    private java.util.List<com.voyra.crm.dto.VoucherTraveller> travellers;
+
+    @org.hibernate.annotations.JdbcTypeCode(org.hibernate.type.SqlTypes.JSON)
+    @Column(name = "legs", columnDefinition = "jsonb")
+    private java.util.List<com.voyra.crm.dto.VoucherLeg> legs;
+
+    /** The voucher's purchase currency and rate, for the invoice's total in that currency. */
+    @Column(name = "purchase_currency", length = 3)
+    private String purchaseCurrency;
+
+    @Column(name = "purchase_rate", precision = 18, scale = 6)
+    private BigDecimal purchaseRate;
+
     @Column(name = "tax_rate_config_id", length = 36)
     private String taxRateConfigId;
 

@@ -10,12 +10,13 @@ import java.time.LocalDate;
 @Data
 @Schema(description = "A voucher document to attach to a booking - an e-ticket, a hotel voucher, "
         + "an insurance certificate. The file itself is uploaded separately via the /file endpoint.")
-public class BookingDocumentCreateRequest {
+public class BookingDocumentCreateRequest implements com.voyra.crm.models.ForeignPriced {
 
     @NotNull(message = "Document type is required")
     @Schema(example = "E_TICKET")
     private BookingDocumentType docType;
 
+    @jakarta.validation.constraints.NotBlank(message = "Reference is required")
     @jakarta.validation.constraints.Size(max = 100, message = "Reference must be 100 characters or fewer")
     @Schema(example = "0987654321")
     private String referenceNumber;
@@ -37,6 +38,30 @@ public class BookingDocumentCreateRequest {
     @Schema(example = "10.00")
     private java.math.BigDecimal markupValue;
 
+    @jakarta.validation.constraints.Size(max = 3, message = "Purchase currency must be a 3-letter code")
+    @Schema(description = "Currency the purchase price is in (ISO 4217); blank means the agency's base currency", example = "AED")
+    private String purchaseCurrency;
+
+    @jakarta.validation.constraints.DecimalMin(value = "0.0", message = "Purchase price cannot be negative")
+    @Schema(description = "What the supplier charges, in purchaseCurrency. When set, netCost is worked out from it at purchaseRate", example = "1000.00")
+    private java.math.BigDecimal purchasePrice;
+
+    @jakarta.validation.constraints.DecimalMin(value = "0.0", message = "Purchase rate cannot be negative")
+    @Schema(description = "What 1 unit of purchaseCurrency is worth in base on the purchase date; required when it isn't the base", example = "22.85")
+    private java.math.BigDecimal purchaseRate;
+
+    @jakarta.validation.constraints.Size(max = 3, message = "Markup currency must be a 3-letter code")
+    @Schema(description = "Currency a FLAT markupInput is in (ISO 4217); blank means base", example = "AED")
+    private String markupCurrency;
+
+    @jakarta.validation.constraints.DecimalMin(value = "0.0", message = "Markup cannot be negative")
+    @Schema(description = "A FLAT markup as typed, in markupCurrency. When set, markupValue is worked out from it at markupRate", example = "100.00")
+    private java.math.BigDecimal markupInput;
+
+    @jakarta.validation.constraints.DecimalMin(value = "0.0", message = "Markup rate cannot be negative")
+    @Schema(description = "What 1 unit of markupCurrency is worth in base; required when it isn't the base", example = "22.85")
+    private java.math.BigDecimal markupRate;
+
     @Schema(description = "Owner only: save even though it takes the client over their credit limit", example = "false")
     private Boolean overrideCreditLimit;
 
@@ -47,4 +72,16 @@ public class BookingDocumentCreateRequest {
             + "flightTo, journeyDate, flightDepartTime for a flight; hotelName, hotelCheckIn, hotelCheckOut for a hotel). "
             + "Unknown keys and blank values are dropped.", example = "{\"airline\": \"IndiGo\", \"flightNumber\": \"6E 203\"}")
     private java.util.Map<String, String> details;
+
+    @Schema(description = "An air ticket's travellers - the client's members, by memberId (required for an e-ticket on a flight booking)")
+    private java.util.List<VoucherTraveller> travellers;
+
+    @Schema(description = "Flight bookings: Domestic (false) or International (true) - sets the booking's trip type, which picks the "
+            + "invoice series and title; it can't change once the booking is on a draft or issued invoice", example = "false")
+    private Boolean internationalTrip;
+
+    @Schema(description = "An air ticket's flights in order, one or more (required for an e-ticket on a flight booking). "
+            + "Its flat flight details are worked out from them.")
+    private java.util.List<VoucherLeg> legs;
+
 }

@@ -93,6 +93,16 @@ public class Tenant {
     @Column(name = "bank_branch", length = 200)
     private String bankBranch;
 
+    /** Printed in the invoice header with the address. */
+    @Column(name = "contact_phone", length = 30)
+    private String contactPhone;
+
+    @Column(name = "contact_email", length = 150)
+    private String contactEmail;
+
+    @Column(name = "website", length = 150)
+    private String website;
+
     @Column(name = "low_margin_threshold_percent", precision = 5, scale = 2)
     private BigDecimal lowMarginThresholdPercent;
 

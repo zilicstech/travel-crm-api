@@ -33,7 +33,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class DocumentNumberServiceIT extends AbstractIntegrationTest {
 
-    private static final Pattern NUMBER_PATTERN = Pattern.compile("^INV/(\\d{4}-\\d{2})/(\\d{4})$");
+    private static final Pattern NUMBER_PATTERN = Pattern.compile("^(INV)(\\d{8})$");
 
     @Autowired
     private AgencyService agencyService;
@@ -87,7 +87,7 @@ class DocumentNumberServiceIT extends AbstractIntegrationTest {
 
         List<Integer> sequenceNumbers = results.stream().map(number -> {
             Matcher m = NUMBER_PATTERN.matcher(number);
-            assertThat(m.matches()).as("number %s matches INV/<fy>/<seq>", number).isTrue();
+            assertThat(m.matches()).as("number %s matches INV<8 digits>", number).isTrue();
             return Integer.parseInt(m.group(2));
         }).sorted().toList();
 

@@ -43,6 +43,7 @@ public class GeneralLedgerQueryService {
     private final JournalLineRepository journalLineRepository;
     private final JournalEntryRepository journalEntryRepository;
     private final JournalService journalService;
+    private final BaseCurrency baseCurrency;
 
     @Transactional(readOnly = true)
     public List<LedgerAccountBalanceResponse> chartOfAccounts(LocalDate asOf) {
@@ -98,7 +99,7 @@ public class GeneralLedgerQueryService {
             totalDebit = totalDebit.add(debit);
             totalCredit = totalCredit.add(credit);
             running = running.add(natural(type, debit, credit));
-            boolean foreign = l.getCurrencyCode() != null && !"INR".equals(l.getCurrencyCode());
+            boolean foreign = l.getCurrencyCode() != null && !baseCurrency.code().equals(l.getCurrencyCode());
             rows.add(AccountLedgerLineResponse.builder()
                     .journalEntryId(e.getId()).entryNumber(e.getEntryNumber()).entryDate(e.getEntryDate())
                     .sourceType(e.getSourceType()).sourceId(e.getSourceId()).purpose(e.getPurpose()).status(e.getStatus())
@@ -124,7 +125,15 @@ public class GeneralLedgerQueryService {
     /** Journal register, newest first, optionally narrowed to one source document type. */
     @Transactional(readOnly = true)
     public List<JournalEntryResponse> journalRegister(LocalDate from, LocalDate to, JournalSourceType sourceType) {
-        List<JournalEntry> entries = journalEntryRepository.findByEntryDateBetweenOrderByEntryDateDescEntryNumberDesc(from, to)
+        return journalRegister(from, to, sourceType, null);
+    }
+
+    /** With {@code sourceId}: every entry that one document posted, whatever its date. */
+    @Transactional(readOnly = true)
+    public List<JournalEntryResponse> journalRegister(LocalDate from, LocalDate to, JournalSourceType sourceType, String sourceId) {
+        List<JournalEntry> entries = (sourceId != null
+                ? journalEntryRepository.findBySourceIdOrderByEntryDateAscEntryNumberAsc(sourceId)
+                : journalEntryRepository.findByEntryDateBetweenOrderByEntryDateDescEntryNumberDesc(from, to))
                 .stream()
                 .filter(e -> sourceType == null || e.getSourceType() == sourceType)
                 .toList();

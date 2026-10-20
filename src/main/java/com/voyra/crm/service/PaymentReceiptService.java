@@ -61,20 +61,38 @@ public class PaymentReceiptService {
     private final com.voyra.crm.repository.BookingRepository bookingRepository;
     private final JournalService journalService;
     private final com.voyra.crm.repository.JournalEntryRepository journalEntryRepository;
+    private final BaseCurrency baseCurrency;
+    private final InvoiceLineSource invoiceLineSource;
+    private final com.voyra.crm.repository.CreditNoteRepository creditNoteRepository;
 
     @Transactional
     public PaymentReceiptResponse record(PaymentReceiptRequest request) {
         boolean hasInvoice = request.getInvoiceId() != null && !request.getInvoiceId().isBlank();
-        return hasInvoice ? recordAgainstInvoice(request) : recordDeposit(request);
+        return hasInvoice ? recordAgainstInvoice(request, true) : recordDeposit(request);
     }
 
-    private PaymentReceiptResponse recordAgainstInvoice(PaymentReceiptRequest request) {
+    /** @param capToBooking false only for the per-booking split, whose last part takes any rounding paisa */
+    private PaymentReceiptResponse recordAgainstInvoice(PaymentReceiptRequest request, boolean capToBooking) {
         Invoice invoice = invoiceRepository.findById(request.getInvoiceId())
                 .orElseThrow(() -> new IllegalArgumentException("Invoice not found: " + request.getInvoiceId()));
-        InvoiceLifecyclePolicy.assertReceivable(invoice.getStatus());
         boolean isProforma = invoice.getStatus() == InvoiceLifecycle.PROFORMA_ISSUED;
-        if (!isProforma) {
+        List<String> bookings = invoiceLineSource.bookingIdsOf(invoice);
+        boolean named = request.getBookingId() != null && !request.getBookingId().isBlank();
+        // A booking on a combined invoice keeps its own account: it can still owe while the invoice reads paid,
+        // when another booking's cancellation refund is not paid out yet. Its cap is assertWithinBookingOwed.
+        boolean ownAccount = capToBooking && named && bookings.size() > 1 && !isProforma;
+        if (!(ownAccount && invoice.getStatus() == InvoiceLifecycle.PAID)) {
+            InvoiceLifecyclePolicy.assertReceivable(invoice.getStatus());
+        }
+        if (!isProforma && !ownAccount) {
             assertWithinBalanceDue(invoice, request.getAmount());
+        }
+        if (!named && bookings.size() > 1 && !isProforma && request.getAmount().compareTo(invoice.getBalanceDue()) == 0) {
+            return recordPerBooking(invoice, bookings, request);
+        }
+        String bookingId = bookingFor(invoice, bookings, request.getBookingId());
+        if (ownAccount) {
+            assertWithinBookingOwed(invoice, bookingId, request.getAmount());
         }
 
         LocalDate receivedOn = request.getReceivedOn();
@@ -88,7 +106,7 @@ public class PaymentReceiptService {
                 .direction(ReceiptDirection.RECEIPT)
                 .invoiceId(invoice.getId())
                 .clientId(invoice.getClientId())
-                .bookingId(invoice.getBookingId())
+                .bookingId(bookingId)
                 .currencyCode(invoice.getCurrencyCode())
                 .fxRateToInr(invoice.getFxRateToInr())
                 .amount(request.getAmount())
@@ -111,11 +129,74 @@ public class PaymentReceiptService {
         if (!isProforma) {
             applySettlement(invoice);
         }
-        bookingAccountingSync.syncPayment(invoice.getBookingId());
+        syncBookings(invoice);
 
         auditService.recordCreate(AuditEntityType.PAYMENT_RECEIPT, receipt.getId(), receipt.getReceiptNumber());
         log.info("Receipt recorded: id={}, invoiceId={}, amount={}", receipt.getId(), invoice.getId(), receipt.getAmount());
         return toResponse(receipt);
+    }
+
+    /**
+     * The booking a payment against the invoice is for. On an invoice billing several bookings each booking
+     * keeps its own account, so the accountant says which one was paid; an invoice of one booking needs no choice.
+     */
+    private String bookingFor(Invoice invoice, List<String> bookings, String requested) {
+        if (requested != null && !requested.isBlank()) {
+            if (!bookings.contains(requested)) {
+                throw new IllegalArgumentException("That booking isn't on invoice " + invoice.getInvoiceNumber());
+            }
+            return requested;
+        }
+        if (bookings.size() > 1) {
+            throw new IllegalArgumentException("This invoice bills several bookings - pick the booking this payment is for");
+        }
+        return invoice.getBookingId();
+    }
+
+    /**
+     * The whole balance of an invoice billing several bookings, paid with no booking named (a bank match): one
+     * receipt per booking for what that booking still owes, so every booking's own account closes. Returns the last.
+     */
+    private PaymentReceiptResponse recordPerBooking(Invoice invoice, List<String> bookings, PaymentReceiptRequest request) {
+        BigDecimal left = request.getAmount();
+        PaymentReceiptResponse last = null;
+        for (String bookingId : bookings) {
+            BigDecimal part = left.min(bookingAccountingSync.positionOn(invoice, bookingId, null).owed().max(BigDecimal.ZERO));
+            // The last booking takes whatever is left, so the receipts always add up to the payment.
+            if (bookingId.equals(bookings.get(bookings.size() - 1))) part = left;
+            if (part.signum() <= 0) continue;
+            PaymentReceiptRequest one = new PaymentReceiptRequest();
+            one.setInvoiceId(invoice.getId());
+            one.setBookingId(bookingId);
+            one.setAmount(part);
+            one.setPaymentMode(request.getPaymentMode());
+            one.setInstrumentRef(request.getInstrumentRef());
+            one.setBankAccountLabel(request.getBankAccountLabel());
+            one.setReceivedOn(request.getReceivedOn());
+            one.setNotes(request.getNotes());
+            last = recordAgainstInvoice(one, false);
+            left = left.subtract(part);
+            invoice = invoiceRepository.findById(invoice.getId()).orElse(invoice);
+        }
+        return last;
+    }
+
+    /**
+     * On an invoice billing several bookings each booking keeps its own account, so a payment named for one
+     * booking can't settle more than that booking still owes - the excess would read as paid on the other one.
+     * Nor more than the invoice will owe once its credit notes' open refunds are paid out, so the client is
+     * never over-collected on the invoice as a whole.
+     */
+    private void assertWithinBookingOwed(Invoice invoice, String bookingId, BigDecimal amount) {
+        BigDecimal openRefunds = creditNoteRepository.findByInvoiceIdAndStatus(invoice.getId(), com.voyra.crm.enums.CreditNoteStatus.ISSUED).stream()
+                .map(n -> n.getRefundableAmount().subtract(n.getRefundedAmount()).max(BigDecimal.ZERO))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal owed = bookingAccountingSync.positionOn(invoice, bookingId, null).owed()
+                .min(invoice.getBalanceDue().add(openRefunds)).max(BigDecimal.ZERO);
+        if (amount.compareTo(owed) > 0) {
+            throw new IllegalStateException("This booking owes only " + owed + " on invoice " + invoice.getInvoiceNumber()
+                    + ". Record the rest against the other booking on the invoice, or as a deposit.");
+        }
     }
 
     /**
@@ -163,7 +244,7 @@ public class PaymentReceiptService {
                 .invoiceId(null)
                 .clientId(client.getId())
                 .bookingId(request.getBookingId() != null && !request.getBookingId().isBlank() ? request.getBookingId() : null)
-                .currencyCode("INR")
+                .currencyCode(baseCurrency.code())
                 .fxRateToInr(BigDecimal.ONE)
                 .amount(request.getAmount())
                 .amountInr(request.getAmount())
@@ -212,7 +293,7 @@ public class PaymentReceiptService {
                 .invoiceId(proformaInvoiceId)
                 .clientId(booking.getClientId())
                 .bookingId(booking.getId())
-                .currencyCode("INR")
+                .currencyCode(baseCurrency.code())
                 .fxRateToInr(BigDecimal.ONE)
                 .amount(request.getAmount())
                 .amountInr(request.getAmount())
@@ -226,10 +307,11 @@ public class PaymentReceiptService {
                 .createdBy(currentUserId())
                 .build();
         paymentReceiptRepository.save(receipt);
-        String narration = "Refund " + number + " on cancelled booking";
+        String narration = (toWallet ? "Refund credited to the client's account" : "Refund paid to the client by the agency")
+                + " - " + number + " (cancelled booking)";
         customerLedgerService.post(new LedgerPosting(
                 receipt.getClientId(), receipt.getReceivedOn(), LedgerEntryType.REFUND_PAID,
-                LedgerSourceType.RECEIPT, receipt.getId(), number, narration, booking.getId(), "INR", BigDecimal.ONE,
+                LedgerSourceType.RECEIPT, receipt.getId(), number, narration, booking.getId(), baseCurrency.code(), BigDecimal.ONE,
                 request.getAmount(), BigDecimal.ZERO, request.getAmount(), BigDecimal.ZERO));
         if (toWallet) {
             // The money never leaves Client Advances Held - it only moves into the wallet pool
@@ -268,7 +350,7 @@ public class PaymentReceiptService {
                 .financialYear(FinancialYear.of(on))
                 .direction(ReceiptDirection.RECEIPT)
                 .clientId(clientId)
-                .currencyCode("INR")
+                .currencyCode(baseCurrency.code())
                 .fxRateToInr(BigDecimal.ONE)
                 .amount(amount)
                 .amountInr(amount)
@@ -283,7 +365,7 @@ public class PaymentReceiptService {
         paymentReceiptRepository.save(receipt);
         customerLedgerService.post(new LedgerPosting(
                 clientId, on, LedgerEntryType.PAYMENT_RECEIVED, LedgerSourceType.RECEIPT, receipt.getId(), number,
-                narration, null, "INR", BigDecimal.ONE, BigDecimal.ZERO, amount, BigDecimal.ZERO, amount));
+                narration, null, baseCurrency.code(), BigDecimal.ONE, BigDecimal.ZERO, amount, BigDecimal.ZERO, amount));
         auditService.recordCreate(AuditEntityType.PAYMENT_RECEIPT, receipt.getId(), number);
         return toResponse(receipt);
     }
@@ -304,13 +386,13 @@ public class PaymentReceiptService {
         }
 
         // Never money held for the client's other bookings - the same limit the auto-apply on issue keeps to.
-        BigDecimal remaining = availableWalletFor(invoice.getClientId(), invoice.getBookingId());
+        BigDecimal remaining = inInvoiceCurrency(invoice, availableWalletFor(invoice.getClientId(), invoiceLineSource.bookingIdsOf(invoice)));
         if (request.getAmount().compareTo(remaining) > 0) {
             throw new IllegalStateException("Only " + remaining + " of the wallet is available for this invoice");
         }
 
         PaymentReceipt applied = applyFromWallet(invoice, request.getAmount(), "Applied from deposit " + advance.getId());
-        bookingAccountingSync.syncPayment(invoice.getBookingId());
+        syncBookings(invoice);
         auditService.recordCreate(AuditEntityType.PAYMENT_RECEIPT, invoice.getId(), "Wallet applied to " + invoice.getClientName());
         log.info("Wallet applied: advanceId={}, invoiceId={}, amount={}", advance.getId(), invoiceId, request.getAmount());
         return toResponse(applied);
@@ -325,7 +407,7 @@ public class PaymentReceiptService {
      */
     @Transactional
     public void applyAvailableWallet(Invoice invoice) {
-        BigDecimal remaining = availableWalletFor(invoice.getClientId(), invoice.getBookingId());
+        BigDecimal remaining = inInvoiceCurrency(invoice, availableWalletFor(invoice.getClientId(), invoiceLineSource.bookingIdsOf(invoice)));
         if (remaining.compareTo(BigDecimal.ZERO) <= 0 || invoice.getBalanceDue().compareTo(BigDecimal.ZERO) <= 0) {
             return;
         }
@@ -334,19 +416,51 @@ public class PaymentReceiptService {
         log.info("Wallet auto-applied on issue: invoiceId={}, amount={}", invoice.getId(), amount);
     }
 
+    /**
+     * Draws {@code amount} from the wallet onto the invoice. On an invoice billing several bookings, each
+     * booking's own held advance is drawn under that booking (so it no longer reads as held), then the rest
+     * under each booking up to what it still owes, so every booking's own account reads right. @return the first drawdown
+     */
     private PaymentReceipt applyFromWallet(Invoice invoice, BigDecimal amount, String note) {
+        List<String> bookingIds = invoiceLineSource.bookingIdsOf(invoice);
+        java.util.Map<String, BigDecimal> held = bookingIds.size() > 1 ? heldPerBooking(invoice.getClientId()) : java.util.Map.of();
+        List<PaymentReceipt> drawn = new java.util.ArrayList<>();
+        BigDecimal left = amount;
+        for (String bookingId : bookingIds) {
+            BigDecimal part = left.min(inInvoiceCurrency(invoice, held.getOrDefault(bookingId, BigDecimal.ZERO)));
+            if (part.signum() > 0) {
+                drawn.add(drawdown(invoice, bookingId, part, note));
+                left = left.subtract(part);
+            }
+        }
+        for (int i = 0; bookingIds.size() > 1 && i < bookingIds.size() - 1 && left.signum() > 0; i++) {
+            BigDecimal part = left.min(bookingAccountingSync.positionOn(invoice, bookingIds.get(i), null).owed().max(BigDecimal.ZERO));
+            if (part.signum() > 0) {
+                drawn.add(drawdown(invoice, bookingIds.get(i), part, note));
+                left = left.subtract(part);
+            }
+        }
+        // The last booking (the only one on a single-booking invoice) takes what is left, so the drawdowns add up.
+        if (left.signum() > 0) {
+            drawn.add(drawdown(invoice, bookingIds.isEmpty() ? invoice.getBookingId() : bookingIds.get(bookingIds.size() - 1), left, note));
+        }
+        applySettlement(invoice);
+        return drawn.get(0);
+    }
+
+    private PaymentReceipt drawdown(Invoice invoice, String bookingId, BigDecimal amount, String note) {
         PaymentReceipt applied = PaymentReceipt.builder()
                 .id(UniqueIdResolver.resolve(paymentReceiptRepository::existsById))
                 .direction(ReceiptDirection.RECEIPT)
                 .invoiceId(invoice.getId())
                 .clientId(invoice.getClientId())
-                .bookingId(invoice.getBookingId())
+                .bookingId(bookingId)
                 .currencyCode(invoice.getCurrencyCode())
                 .fxRateToInr(invoice.getFxRateToInr())
                 .amount(amount)
                 .amountInr(scaleToInr(amount, invoice.getFxRateToInr()))
                 .paymentMode(PaymentMode.ADJUSTMENT)
-                .receivedOn(LocalDate.now())
+                .receivedOn(FinancialYear.today())
                 .isAdvance(false)
                 .appliedFromAdvance(true)
                 .notes(note)
@@ -358,8 +472,12 @@ public class PaymentReceiptService {
         // recorded (AD-5). The GL still needs this: moving a balance from 2110 to 1200 is a
         // real double-entry transfer, not a net-zero convenience the subsidiary ledger can skip.
         postAdvanceAppliedJournal(applied, invoice, amount);
-        applySettlement(invoice);
         return applied;
+    }
+
+    /** Every booking the invoice bills gets its received figures worked out again. */
+    private void syncBookings(Invoice invoice) {
+        invoiceLineSource.bookingIdsOf(invoice).forEach(bookingAccountingSync::syncPayment);
     }
 
     /**
@@ -369,11 +487,17 @@ public class PaymentReceiptService {
      */
     @Transactional(readOnly = true)
     public BigDecimal availableWalletFor(String clientId, String bookingId) {
+        return availableWalletFor(clientId, bookingId == null ? List.of() : List.of(bookingId));
+    }
+
+    /** The same, for an invoice billing several bookings: money held for any of them is its own. */
+    @Transactional(readOnly = true)
+    public BigDecimal availableWalletFor(String clientId, java.util.Collection<String> bookingIds) {
         if (clientId == null) {
             return BigDecimal.ZERO;
         }
         BigDecimal reservedElsewhere = heldPerBooking(clientId).entrySet().stream()
-                .filter(e -> !e.getKey().equals(bookingId))
+                .filter(e -> !bookingIds.contains(e.getKey()))
                 .map(java.util.Map.Entry::getValue)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         return remainingWallet(clientId).subtract(reservedElsewhere).max(BigDecimal.ZERO);
@@ -388,7 +512,7 @@ public class PaymentReceiptService {
                 .filter(r -> r.getReversedAt() == null && r.getDirection() != ReceiptDirection.REFUND)
                 .map(PaymentReceipt::getId).findFirst().orElse(null);
         return com.voyra.crm.dto.InvoiceWalletResponse.builder()
-                .availableInr(availableWalletFor(invoice.getClientId(), invoice.getBookingId()))
+                .availableInr(availableWalletFor(invoice.getClientId(), invoiceLineSource.bookingIdsOf(invoice)))
                 .advanceReceiptId(depositId)
                 .build();
     }
@@ -469,7 +593,7 @@ public class PaymentReceiptService {
         boolean isProforma = invoice != null && invoice.getStatus() == InvoiceLifecycle.PROFORMA_ISSUED;
         boolean appliedFromAdvance = Boolean.TRUE.equals(original.getAppliedFromAdvance());
 
-        LocalDate today = LocalDate.now();
+        LocalDate today = FinancialYear.today();
         String number = appliedFromAdvance ? null : documentNumberService.next(DocumentKind.RECEIPT, today);
         String actor = currentUserId();
         LocalDateTime now = LocalDateTime.now();
@@ -510,7 +634,7 @@ public class PaymentReceiptService {
             applySettlement(invoice);
         }
         if (invoice != null) {
-            bookingAccountingSync.syncPayment(invoice.getBookingId());
+            syncBookings(invoice);
         }
 
         auditService.recordCreate(AuditEntityType.PAYMENT_RECEIPT, reversal.getId(),
@@ -530,7 +654,7 @@ public class PaymentReceiptService {
         String invoiceNumber = receipt.getInvoiceId() != null
                 ? invoiceRepository.findById(receipt.getInvoiceId()).map(Invoice::getInvoiceNumber).orElse(null)
                 : null;
-        return ReceiptVoucherRenderer.write(receipt, invoiceNumber);
+        return ReceiptVoucherRenderer.write(receipt, invoiceNumber, baseCurrency.code());
     }
 
     @Transactional(readOnly = true)
@@ -713,6 +837,15 @@ public class PaymentReceiptService {
             }
         }
         return receipt;
+    }
+
+    /**
+     * The wallet is held in base; an invoice billed in another currency draws it at its own rate, rounded down
+     * so a drawdown never takes more base than the wallet holds.
+     */
+    static BigDecimal inInvoiceCurrency(Invoice invoice, BigDecimal baseAmount) {
+        BigDecimal fx = invoice.getFxRateToInr();
+        return fx == null || fx.compareTo(BigDecimal.ONE) == 0 ? baseAmount : baseAmount.divide(fx, 2, RoundingMode.DOWN);
     }
 
     private static BigDecimal scaleToInr(BigDecimal amount, BigDecimal fxRateToInr) {

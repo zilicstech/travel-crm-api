@@ -276,10 +276,14 @@ public class BankMatchingService {
         request.setReceivedOn(txn.getTxnDate());
         var response = paymentReceiptService.record(request);
 
-        paymentReceiptRepository.findById(response.getId()).ifPresent(receipt -> {
-            receipt.setBankAccountId(txn.getBankAccountId());
-            paymentReceiptRepository.save(receipt);
-        });
+        // An invoice billing several bookings is receipted once per booking - every one of them came from this bank line.
+        paymentReceiptRepository.findByInvoiceIdOrderByReceivedOnAscCreatedAtAsc(invoice.getId()).stream()
+                .filter(receipt -> receipt.getBankAccountId() == null && java.util.Objects.equals(receipt.getInstrumentRef(), txn.getBankReference())
+                        && receipt.getReceivedOn().equals(txn.getTxnDate()))
+                .forEach(receipt -> {
+                    receipt.setBankAccountId(txn.getBankAccountId());
+                    paymentReceiptRepository.save(receipt);
+                });
 
         txn.setMatchStatus(BankTransactionMatchStatus.TIER1_MATCHED);
         txn.setMatchedSourceType(BankMatchedSourceType.INVOICE);

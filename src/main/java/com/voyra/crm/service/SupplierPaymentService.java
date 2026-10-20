@@ -62,6 +62,7 @@ public class SupplierPaymentService {
     private final JournalService journalService;
     private final com.voyra.crm.repository.JournalEntryRepository journalEntryRepository;
     private final ExchangeRateProvider exchangeRateProvider;
+    private final BaseCurrency baseCurrency;
 
     @Transactional
     public SupplierPaymentResponse pay(SupplierPaymentRequest request) {
@@ -87,7 +88,7 @@ public class SupplierPaymentService {
         // is always the bill's own rate (or 1, for an advance), so fxVarianceInr stays null.
         BigDecimal settlementRate = invoice != null ? invoice.getFxRateToInr() : BigDecimal.ONE;
         BigDecimal fxVarianceInr = null;
-        if (invoice != null && !"INR".equals(invoice.getCurrencyCode())) {
+        if (invoice != null && !baseCurrency.code().equals(invoice.getCurrencyCode())) {
             settlementRate = resolveSettlementRate(request, invoice, paidOn);
             // Positive = settlement cost more INR than the bill rate implied (a loss) - same
             // sign convention as postPaymentJournal's own variance, which is the actual posting.
@@ -105,9 +106,9 @@ public class SupplierPaymentService {
                 .vendorName(vendor.getName())
                 .supplierInvoiceId(invoice != null ? invoice.getId() : null)
                 .bookingId(invoice != null ? invoice.getBookingId() : null)
-                .currencyCode(invoice != null ? invoice.getCurrencyCode() : "INR")
+                .currencyCode(invoice != null ? invoice.getCurrencyCode() : baseCurrency.code())
                 .fxRateToInr(settlementRate)
-                .settlementFxRate(invoice != null && !"INR".equals(invoice.getCurrencyCode()) ? settlementRate : null)
+                .settlementFxRate(invoice != null && !baseCurrency.code().equals(invoice.getCurrencyCode()) ? settlementRate : null)
                 .fxVarianceInr(fxVarianceInr)
                 .amount(request.getAmount())
                 .amountInr(scaleToInr(request.getAmount(), settlementRate))
@@ -123,17 +124,38 @@ public class SupplierPaymentService {
                 .createdBy(actor)
                 .build();
         supplierPaymentRepository.save(payment);
-        postForPayment(payment);
+        postForPayment(payment, invoice == null && Boolean.TRUE.equals(request.getApplyToOpenBills()));
         postPaymentJournal(payment, invoice);
 
         if (invoice != null) {
             applySettlement(invoice, payment.getAmount());
+        } else if (Boolean.TRUE.equals(request.getApplyToOpenBills())) {
+            settleOpenBills(payment);
         }
 
         auditService.recordCreate(AuditEntityType.SUPPLIER_PAYMENT, payment.getId(), payment.getVoucherNumber());
         log.info("Supplier payment recorded: id={}, vendorId={}, isAdvance={}, amount={}",
                 payment.getId(), vendor.getId(), isAdvance, payment.getAmount());
         return toResponse(payment);
+    }
+
+    /**
+     * "Pay supplier": the one payment just booked (an advance - one ledger row, one journal) clears
+     * the vendor's open base-currency bills oldest first; what is left stays as an advance. A
+     * foreign-currency bill needs its own settlement rate, so it is left for its own payment.
+     */
+    private void settleOpenBills(SupplierPayment payment) {
+        BigDecimal left = payment.getAmount();
+        SupplierAdvanceApplyRequest apply = new SupplierAdvanceApplyRequest();
+        apply.setAdvancePaymentId(payment.getId());
+        for (SupplierInvoice bill : supplierInvoiceRepository.findByVendorIdAndCurrencyCodeAndStatusInAndBalanceDueGreaterThanOrderByInvoiceDateAscCreatedDateAsc(
+                payment.getVendorId(), baseCurrency.code(),
+                List.of(SupplierInvoiceStatus.APPROVED, SupplierInvoiceStatus.PARTIALLY_PAID), BigDecimal.ZERO)) {
+            if (left.signum() <= 0) break;
+            apply.setAmount(left.min(bill.getBalanceDue()));
+            applyAdvance(bill.getId(), apply);
+            left = left.subtract(apply.getAmount());
+        }
     }
 
     /**
@@ -172,7 +194,7 @@ public class SupplierPaymentService {
                 .direction(SupplierPaymentDirection.PAYMENT)
                 .vendorId(vendor.getId())
                 .vendorName(vendor.getName())
-                .currencyCode("INR")
+                .currencyCode(baseCurrency.code())
                 .fxRateToInr(BigDecimal.ONE)
                 .amount(amount)
                 .amountInr(amount)
@@ -188,7 +210,7 @@ public class SupplierPaymentService {
         supplierPaymentRepository.save(payment);
         supplierLedgerService.post(new SupplierLedgerPosting(
                 vendor.getId(), on, SupplierLedgerEntryType.ADVANCE_PAID, SupplierLedgerSourceType.SUPPLIER_PAYMENT,
-                payment.getId(), number, narration, null, "INR", BigDecimal.ONE,
+                payment.getId(), number, narration, null, baseCurrency.code(), BigDecimal.ONE,
                 amount, BigDecimal.ZERO, amount, BigDecimal.ZERO));
         auditService.recordCreate(AuditEntityType.SUPPLIER_PAYMENT, payment.getId(), number);
         return toResponse(payment);
@@ -291,7 +313,7 @@ public class SupplierPaymentService {
                 .build();
         supplierPaymentRepository.save(reversal);
         if (!original.getAppliedFromAdvance()) {
-            postForPayment(reversal);
+            postForPayment(reversal, false);
         }
         reversePaymentJournal(original);
 
@@ -384,7 +406,7 @@ public class SupplierPaymentService {
             return request.getSettlementFxRate();
         }
         try {
-            return exchangeRateProvider.resolve(invoice.getCurrencyCode(), "INR", paidOn).rate();
+            return exchangeRateProvider.resolve(invoice.getCurrencyCode(), baseCurrency.code(), paidOn).rate();
         } catch (IllegalStateException e) {
             log.warn("No exchange rate available for {}/INR on {} - falling back to the bill's own rate {}: {}",
                     invoice.getCurrencyCode(), paidOn, invoice.getFxRateToInr(), e.getMessage());
@@ -415,7 +437,7 @@ public class SupplierPaymentService {
                 .build();
     }
 
-    private void postForPayment(SupplierPayment payment) {
+    private void postForPayment(SupplierPayment payment, boolean clearsBills) {
         boolean isDebit = payment.getAmountInr().compareTo(BigDecimal.ZERO) >= 0;
         BigDecimal amount = payment.getAmount().abs();
         BigDecimal amountInr = payment.getAmountInr().abs();
@@ -424,7 +446,7 @@ public class SupplierPaymentService {
                 ? "Payment " + orId(payment.getVoucherNumber(), payment.getId()) + " reverses "
                         + supplierPaymentRepository.findById(payment.getReversesPaymentId())
                                 .map(p -> orId(p.getVoucherNumber(), p.getId())).orElse(payment.getReversesPaymentId())
-                : "Payment " + orId(payment.getVoucherNumber(), payment.getId()) + " recorded";
+                : "Payment " + orId(payment.getVoucherNumber(), payment.getId()) + (clearsBills ? " - clears open bills oldest first" : " recorded");
 
         supplierLedgerService.post(new SupplierLedgerPosting(
                 payment.getVendorId(), payment.getPaidOn(), type,
@@ -519,11 +541,11 @@ public class SupplierPaymentService {
     /** delta is signed - positive when money/credit is applied toward the bill, negative when a payment against it is reversed. */
     private void applySettlement(SupplierInvoice invoice, BigDecimal delta) {
         invoice.setAmountPaid(invoice.getAmountPaid().add(delta));
-        BigDecimal balanceDue = invoice.getGrandTotal().subtract(invoice.getAmountPaid()).subtract(invoice.getCreditNoteTotal());
+        BigDecimal balanceDue = invoice.payable().subtract(invoice.getAmountPaid()).subtract(invoice.getCreditNoteTotal());
         invoice.setBalanceDue(balanceDue);
         invoice.setBalanceDueInr(scaleToInr(balanceDue, invoice.getFxRateToInr()));
         // Partly paid means money moved; a credit note alone only lowers what is owed.
-        invoice.setStatus(SupplierInvoiceLifecyclePolicy.deriveFromBalance(invoice.getGrandTotal().subtract(invoice.getCreditNoteTotal()), balanceDue));
+        invoice.setStatus(SupplierInvoiceLifecyclePolicy.deriveFromBalance(invoice.payable().subtract(invoice.getCreditNoteTotal()), balanceDue));
         supplierInvoiceRepository.save(invoice);
     }
 

@@ -56,4 +56,16 @@ public class AgencyProfileUpdateRequest {
 
     @Schema(example = "MG Road branch, Bengaluru")
     private String bankBranch;
+
+    @Schema(description = "Printed in the invoice header", example = "9993341873")
+    @jakarta.validation.constraints.Size(max = 30, message = "Phone must be 30 characters or fewer")
+    private String contactPhone;
+
+    @Schema(description = "Printed in the invoice header", example = "info@tourwayz.com")
+    @jakarta.validation.constraints.Size(max = 150, message = "Email must be 150 characters or fewer")
+    private String contactEmail;
+
+    @Schema(description = "Printed in the invoice header", example = "www.tourwayz.com")
+    @jakarta.validation.constraints.Size(max = 150, message = "Website must be 150 characters or fewer")
+    private String website;
 }

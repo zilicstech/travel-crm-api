@@ -1,6 +1,5 @@
 package com.voyra.crm.controller;
 
-import com.voyra.crm.dto.BookingInvoiceRequest;
 import com.voyra.crm.dto.BookingLifecycleResponse;
 import com.voyra.crm.dto.BookingPaymentRequest;
 import com.voyra.crm.service.BookingLifecycleService;
@@ -32,12 +31,6 @@ public class BookingLifecycleController {
     @Operation(summary = "The booking's lifecycle", description = "Each step's state, the money records behind them and the actions this caller may take. Supplier figures are omitted for agents.")
     public ResponseEntity<BookingLifecycleResponse> get(@PathVariable String id) {
         return ResponseEntity.ok(bookingLifecycleService.getLifecycle(id));
-    }
-
-    @PostMapping("/{id}/invoice")
-    @Operation(summary = "Generate the booking's invoice", description = "Creates and issues the tax invoice from the booking; money held on the client's account is applied.")
-    public ResponseEntity<BookingLifecycleResponse> generateInvoice(@PathVariable String id, @Valid @RequestBody(required = false) BookingInvoiceRequest request) {
-        return ResponseEntity.ok(bookingLifecycleService.generateInvoice(id, request));
     }
 
     @PostMapping("/{id}/payments")

@@ -7,5 +7,7 @@ package com.voyra.crm.enums;
  * {@code SupplierLedgerService} for the credit/debit convention.
  */
 public enum SupplierLedgerEntryType {
-    BILL_BOOKED, PAYMENT_MADE, ADVANCE_PAID, CREDIT_NOTE_RECEIVED, REFUND_RECEIVED, OPENING_BALANCE, REVERSAL
+    BILL_BOOKED, PAYMENT_MADE, ADVANCE_PAID, CREDIT_NOTE_RECEIVED, REFUND_RECEIVED, OPENING_BALANCE, REVERSAL,
+    /** A cancelled ticket's commission taken back by the supplier: the bill owes that much more. */
+    COMMISSION_RECALLED
 }

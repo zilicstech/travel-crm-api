@@ -42,4 +42,8 @@ public interface SupplierInvoiceRepository extends JpaRepository<SupplierInvoice
     /** Month-end unrealized revaluation input (Rule 3.5.1) - every open, foreign-currency bill with a real outstanding balance. */
     List<SupplierInvoice> findByCurrencyCodeNotAndBalanceDueGreaterThanAndStatusIn(
             String inr, BigDecimal zero, List<SupplierInvoiceStatus> openStatuses);
+
+    /** A vendor's open bills in one currency, oldest first - what a single "Pay supplier" payment clears in turn. */
+    List<SupplierInvoice> findByVendorIdAndCurrencyCodeAndStatusInAndBalanceDueGreaterThanOrderByInvoiceDateAscCreatedDateAsc(
+            String vendorId, String currencyCode, List<SupplierInvoiceStatus> statuses, BigDecimal zero);
 }

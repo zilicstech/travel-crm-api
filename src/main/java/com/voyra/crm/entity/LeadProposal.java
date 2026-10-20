@@ -36,7 +36,7 @@ import java.time.LocalDateTime;
 @Builder(toBuilder = true)
 @SQLDelete(sql = "UPDATE lead_proposal SET deleted_at = now() WHERE id = ?")
 @SQLRestriction("deleted_at IS NULL")
-public class LeadProposal {
+public class LeadProposal implements com.voyra.crm.models.ForeignPricedRecord {
 
     @Id
     @Column(name = "id", length = 36)
@@ -79,6 +79,26 @@ public class LeadProposal {
 
     @Column(name = "markup_value", precision = 19, scale = 4)
     private BigDecimal markupValue;
+
+    /** What was typed, when the purchase price or a flat markup was in another currency - see util.FxMath.
+     *  netCost and markupValue above are always the base-currency figures. */
+    @Column(name = "purchase_currency", length = 3)
+    private String purchaseCurrency;
+
+    @Column(name = "purchase_price", precision = 14, scale = 2)
+    private java.math.BigDecimal purchasePrice;
+
+    @Column(name = "purchase_rate", precision = 18, scale = 6)
+    private java.math.BigDecimal purchaseRate;
+
+    @Column(name = "markup_currency", length = 3)
+    private String markupCurrency;
+
+    @Column(name = "markup_input", precision = 14, scale = 2)
+    private java.math.BigDecimal markupInput;
+
+    @Column(name = "markup_rate", precision = 18, scale = 6)
+    private java.math.BigDecimal markupRate;
 
     @Column(name = "created_at")
     private LocalDateTime createdAt;

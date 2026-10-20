@@ -56,6 +56,7 @@ public class SupplierLedgerService {
     private final SupplierInvoiceRepository supplierInvoiceRepository;
     private final VendorRepository vendorRepository;
     private final JournalService journalService;
+    private final BaseCurrency baseCurrency;
 
     @Transactional
     public void post(SupplierLedgerPosting posting) {
@@ -148,11 +149,12 @@ public class SupplierLedgerService {
         List<SupplierLedgerEntry> entries = ledgerRepository.findByVendorIdOrderByEntryDateAscCreatedAtAsc(vendorId);
 
         BigDecimal billed = entries.stream()
-                .filter(e -> e.getEntryType() == SupplierLedgerEntryType.BILL_BOOKED || e.getEntryType() == SupplierLedgerEntryType.REVERSAL)
+                .filter(e -> e.getEntryType() == SupplierLedgerEntryType.BILL_BOOKED || e.getEntryType() == SupplierLedgerEntryType.REVERSAL
+                        || e.getEntryType() == SupplierLedgerEntryType.COMMISSION_RECALLED)
                 .map(e -> e.getCreditAmountInr().subtract(e.getDebitAmountInr()))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal paid = entries.stream()
-                .filter(e -> e.getEntryType() == SupplierLedgerEntryType.PAYMENT_MADE)
+                .filter(e -> e.getEntryType() == SupplierLedgerEntryType.PAYMENT_MADE || e.getEntryType() == SupplierLedgerEntryType.ADVANCE_PAID)
                 .map(e -> e.getDebitAmountInr().subtract(e.getCreditAmountInr()))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal running = runningTotal(entries);
@@ -268,7 +270,7 @@ public class SupplierLedgerService {
                 // string, or every opening balance overflows the column (F-001, mirrors the
                 // identical bug in CustomerLedgerService). documentNumber carries the label instead.
                 vendor.getId(), "OB-" + request.getAsOfDate(), note, null,
-                "INR", BigDecimal.ONE,
+                baseCurrency.code(), BigDecimal.ONE,
                 isCredit ? BigDecimal.ZERO : magnitude, isCredit ? magnitude : BigDecimal.ZERO,
                 isCredit ? BigDecimal.ZERO : magnitude, isCredit ? magnitude : BigDecimal.ZERO));
 

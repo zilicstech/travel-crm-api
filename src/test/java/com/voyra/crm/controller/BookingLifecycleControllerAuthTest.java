@@ -20,6 +20,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -40,9 +41,16 @@ class BookingLifecycleControllerAuthTest {
         mockMvc.perform(get("/api/bookings/B1/lifecycle").with(user("a").roles("AGENT"))).andExpect(status().isOk());
     }
 
+    /** Invoices are generated from the vouchers in Accounts; uploading one raised elsewhere is gone. */
     @Test
-    void agentCannotGenerateAnInvoice() throws Exception {
-        mockMvc.perform(post("/api/bookings/B1/invoice").with(user("a").roles("AGENT"))).andExpect(status().isForbidden());
+    void theInvoiceUploadIsGone() throws Exception {
+        mockMvc.perform(multipart("/api/bookings/B1/invoice/upload").with(user("o").roles("AGENCY_OWNER")))
+                .andExpect(status().is4xxClientError());
+    }
+
+    @Test
+    void theOneClickGenerateInvoiceIsOff() throws Exception {
+        mockMvc.perform(post("/api/bookings/B1/invoice").with(user("o").roles("AGENCY_OWNER"))).andExpect(status().is4xxClientError());
     }
 
     @Test
@@ -63,11 +71,5 @@ class BookingLifecycleControllerAuthTest {
         mockMvc.perform(post("/api/bookings/B1/payments").with(user("o").roles("AGENCY_OWNER"))
                 .contentType(MediaType.APPLICATION_JSON).content("{\"paymentMode\":\"UPI\",\"receivedOn\":\"2026-10-17\"}"))
                 .andExpect(status().isBadRequest());
-    }
-
-    @Test
-    void ownerCanGenerateAnInvoiceWithNoBody() throws Exception {
-        when(bookingLifecycleService.generateInvoice(eq("B1"), any())).thenReturn(BookingLifecycleResponse.builder().build());
-        mockMvc.perform(post("/api/bookings/B1/invoice").with(user("o").roles("AGENCY_OWNER"))).andExpect(status().isOk());
     }
 }

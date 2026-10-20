@@ -73,7 +73,7 @@ public class SupplierCreditNoteService {
         assertWithinInvoiceValue(invoice, totalAmount, null);
         // Only the part of the credit that exceeds what we still owe on the bill can come back as
         // cash - and then only up to cash actually paid. The rest simply lowers the payable.
-        BigDecimal stillOwed = invoice.getGrandTotal().subtract(invoice.getAmountPaid())
+        BigDecimal stillOwed = invoice.payable().subtract(invoice.getAmountPaid())
                 .subtract(invoice.getCreditNoteTotal()).max(BigDecimal.ZERO);
         BigDecimal refundable = totalAmount.subtract(stillOwed).max(BigDecimal.ZERO);
 
@@ -108,11 +108,11 @@ public class SupplierCreditNoteService {
         supplierCreditNoteRepository.save(note);
 
         invoice.setCreditNoteTotal(invoice.getCreditNoteTotal().add(totalAmount));
-        BigDecimal balanceDue = invoice.getGrandTotal().subtract(invoice.getAmountPaid()).subtract(invoice.getCreditNoteTotal());
+        BigDecimal balanceDue = invoice.payable().subtract(invoice.getAmountPaid()).subtract(invoice.getCreditNoteTotal());
         invoice.setBalanceDue(balanceDue);
         invoice.setBalanceDueInr(scaleToInr(balanceDue, invoice.getFxRateToInr()));
         // Partly paid means money moved; a credit note alone only lowers what is owed.
-        invoice.setStatus(SupplierInvoiceLifecyclePolicy.deriveFromBalance(invoice.getGrandTotal().subtract(invoice.getCreditNoteTotal()), balanceDue));
+        invoice.setStatus(SupplierInvoiceLifecyclePolicy.deriveFromBalance(invoice.payable().subtract(invoice.getCreditNoteTotal()), balanceDue));
         supplierInvoiceRepository.save(invoice);
 
         supplierLedgerService.post(new SupplierLedgerPosting(
@@ -140,11 +140,11 @@ public class SupplierCreditNoteService {
 
         SupplierInvoice invoice = findInvoice(note.getSupplierInvoiceId());
         invoice.setCreditNoteTotal(invoice.getCreditNoteTotal().subtract(note.getTotalAmount()));
-        BigDecimal balanceDue = invoice.getGrandTotal().subtract(invoice.getAmountPaid()).subtract(invoice.getCreditNoteTotal());
+        BigDecimal balanceDue = invoice.payable().subtract(invoice.getAmountPaid()).subtract(invoice.getCreditNoteTotal());
         invoice.setBalanceDue(balanceDue);
         invoice.setBalanceDueInr(scaleToInr(balanceDue, invoice.getFxRateToInr()));
         // Partly paid means money moved; a credit note alone only lowers what is owed.
-        invoice.setStatus(SupplierInvoiceLifecyclePolicy.deriveFromBalance(invoice.getGrandTotal().subtract(invoice.getCreditNoteTotal()), balanceDue));
+        invoice.setStatus(SupplierInvoiceLifecyclePolicy.deriveFromBalance(invoice.payable().subtract(invoice.getCreditNoteTotal()), balanceDue));
         supplierInvoiceRepository.save(invoice);
 
         supplierLedgerService.post(new SupplierLedgerPosting(
@@ -212,7 +212,7 @@ public class SupplierCreditNoteService {
         supplierLedgerService.post(new SupplierLedgerPosting(
                 note.getVendorId(), request.getReceivedOn(), SupplierLedgerEntryType.REFUND_RECEIVED,
                 SupplierLedgerSourceType.SUPPLIER_PAYMENT, payment.getId(), null,
-                "Refund received against supplier credit note " + labelFor(note),
+                refundNarration(note, toWallet),
                 note.getBookingId(), payment.getCurrencyCode(), payment.getFxRateToInr(),
                 BigDecimal.ZERO, payment.getAmountInr(), BigDecimal.ZERO, payment.getAmountInr()));
 
@@ -222,11 +222,11 @@ public class SupplierCreditNoteService {
         // negative balance the credit note left behind is cleared.
         SupplierInvoice invoice = findInvoice(note.getSupplierInvoiceId());
         invoice.setAmountPaid(invoice.getAmountPaid().subtract(request.getAmount()));
-        BigDecimal balanceDue = invoice.getGrandTotal().subtract(invoice.getAmountPaid()).subtract(invoice.getCreditNoteTotal());
+        BigDecimal balanceDue = invoice.payable().subtract(invoice.getAmountPaid()).subtract(invoice.getCreditNoteTotal());
         invoice.setBalanceDue(balanceDue);
         invoice.setBalanceDueInr(scaleToInr(balanceDue, invoice.getFxRateToInr()));
         // Partly paid means money moved; a credit note alone only lowers what is owed.
-        invoice.setStatus(SupplierInvoiceLifecyclePolicy.deriveFromBalance(invoice.getGrandTotal().subtract(invoice.getCreditNoteTotal()), balanceDue));
+        invoice.setStatus(SupplierInvoiceLifecyclePolicy.deriveFromBalance(invoice.payable().subtract(invoice.getCreditNoteTotal()), balanceDue));
         supplierInvoiceRepository.save(invoice);
 
         note.setRefundedAmount(note.getRefundedAmount().add(request.getAmount()));
@@ -282,7 +282,8 @@ public class SupplierCreditNoteService {
                         invoice.getId(), com.voyra.crm.enums.JournalPurpose.SUPPLIER_BILL_BOOKED)
                 .map(entry -> journalLineRepository.findByJournalEntryIdOrderByLineNo(entry.getId()).stream()
                         .filter(l -> l.getDebitAmount().compareTo(BigDecimal.ZERO) > 0)
-                        .filter(l -> !l.getAccountCode().equals(com.voyra.crm.enums.SystemAccount.INPUT_GST_RECEIVABLE.code()))
+                        .filter(l -> !l.getAccountCode().equals(com.voyra.crm.enums.SystemAccount.INPUT_GST_RECEIVABLE.code())
+                                && !l.getAccountCode().equals(com.voyra.crm.enums.SystemAccount.TDS_RECEIVABLE.code()))
                         .findFirst().map(com.voyra.crm.entity.JournalLine::getAccountCode).orElse(null))
                 .orElse(com.voyra.crm.enums.SystemAccount.purchaseCode(com.voyra.crm.enums.InvoiceServiceCategory.MISCELLANEOUS));
 
@@ -316,7 +317,7 @@ public class SupplierCreditNoteService {
         String bankCode = payment.getPaymentMode() == com.voyra.crm.enums.PaymentMode.CASH
                 ? com.voyra.crm.enums.SystemAccount.CASH_IN_HAND.code()
                 : com.voyra.crm.enums.SystemAccount.BANK_ACCOUNTS.code();
-        String narration = "Refund received against supplier credit note " + labelFor(note);
+        String narration = refundNarration(note, toWallet);
         journalService.post(new com.voyra.crm.models.JournalPosting(
                 payment.getPaidOn(), com.voyra.crm.enums.JournalSourceType.SUPPLIER_PAYMENT, payment.getId(),
                 com.voyra.crm.enums.JournalPurpose.SUPPLIER_REFUND_RECEIVED, narration, note.getBookingId(), null,
@@ -344,6 +345,13 @@ public class SupplierCreditNoteService {
 
     private String currentUserId() {
         return SecurityContextUtil.getCurrentUserOrThrow().userId();
+    }
+
+    /** How the supplier's ledger reads a refund: who sent it back, and whether it reached the bank or stays in their wallet. */
+    private static String refundNarration(SupplierCreditNote n, boolean toWallet) {
+        return "Refund received from " + n.getVendorName()
+                + (toWallet ? " - kept in the supplier wallet" : " - credited to the agency's bank")
+                + (n.getSupplierNoteNumber() != null ? " (credit note " + n.getSupplierNoteNumber() + ")" : "");
     }
 
     private static String labelFor(SupplierCreditNote n) {

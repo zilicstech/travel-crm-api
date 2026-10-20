@@ -34,6 +34,9 @@ class ClientCreditServiceTest {
     @Mock private BookingRepository bookingRepository;
     @Mock private CustomerLedgerEntryRepository ledgerRepository;
     @Mock private AuditService auditService;
+    @org.mockito.Spy
+    private com.voyra.crm.service.BaseCurrency baseCurrency = new com.voyra.crm.service.BaseCurrency(null);
+
     @InjectMocks private ClientCreditService service;
 
     private final Client client = Client.builder().id("C1").name("Sharma Family").creditLimit(new BigDecimal("100000")).build();

@@ -95,12 +95,23 @@ class InvoiceDocumentServiceTest {
     private BookingAccountingSync bookingAccountingSync;
     @Mock
     private PaymentReceiptService paymentReceiptService;
+    @Mock
+    private FileStorageService fileStorageService;
+
+    @org.mockito.Spy
+
+    private com.voyra.crm.service.BaseCurrency baseCurrency = new com.voyra.crm.service.BaseCurrency(null);
+    @Mock
+    private com.voyra.crm.repository.BookingDocumentRepository bookingDocumentRepository;
+
+
 
     @InjectMocks
     private InvoiceDocumentService invoiceDocumentService;
 
     @BeforeEach
     void authenticateAsAccountant() {
+        TestInvoiceLines.into(invoiceDocumentService, invoiceRepository, invoiceLineItemRepository, bookingDocumentRepository);
         CustomUserPrincipal principal = new CustomUserPrincipal("AC1", "neha", UserType.ACCOUNTANT, "T1");
         SecurityContextHolder.getContext().setAuthentication(
                 new UsernamePasswordAuthenticationToken(principal, null, List.of()));
@@ -280,7 +291,7 @@ class InvoiceDocumentServiceTest {
 
         assertThatThrownBy(() -> invoiceDocumentService.createDraft(request))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("fxRateToInr");
+                .hasMessageContaining("Enter the rate: what 1 USD is in");
     }
 
     @Test
@@ -571,5 +582,195 @@ class InvoiceDocumentServiceTest {
 
         assertThat(items.get(0).getAmountReceivedInr()).isEqualByComparingTo("12360.00");
         assertThat(items.get(0).getCreditNoteTotalInr()).isEqualByComparingTo("12060.00");
+    }
+
+    // ---- several bookings on one invoice ----------------------------------------------------
+
+    private Booking flight(String id, long number, String client, String vendor, String price, String cost) {
+        return Booking.builder().id(id).bookingNumber(number).clientId(client).clientName("Vishal").agentId("A1").agentName("Liam")
+                .vendorId(vendor).supplier("MMT").type(BookingType.FLIGHT).internationalTrip(true).destination("Dubai")
+                .bookingStatus(BookingStatus.CONFIRMED).paymentStatus(PaymentStatus.PENDING)
+                .sellingPrice(new BigDecimal(price)).netCost(new BigDecimal(cost)).build();
+    }
+
+    private com.voyra.crm.entity.BookingDocument voucher(String id, String bookingId, String ref, String cost, String price) {
+        return com.voyra.crm.entity.BookingDocument.builder().id(id).bookingId(bookingId).referenceNumber(ref)
+                .netCost(new BigDecimal(cost)).sellingPrice(new BigDecimal(price)).build();
+    }
+
+    /** Two flights of one client and supplier, each with one priced voucher, and 18% GST as the default. */
+    private void twoFlights(Booking b1, Booking b2) {
+        for (Booking b : List.of(b1, b2)) {
+            org.mockito.Mockito.lenient().when(bookingRepository.findByIdForUpdate(b.getId())).thenReturn(Optional.of(b));
+            org.mockito.Mockito.lenient().when(bookingRepository.findById(b.getId())).thenReturn(Optional.of(b));
+        }
+        org.mockito.Mockito.lenient().when(bookingRepository.findAllById(any())).thenReturn(List.of(b1, b2));
+        org.mockito.Mockito.lenient().when(bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc("B1"))
+                .thenReturn(List.of(voucher("V1", "B1", "NAHKSJ", "105800", "107800")));
+        org.mockito.Mockito.lenient().when(bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc("B2"))
+                .thenReturn(List.of(voucher("V2", "B2", "HYJJUY", "9000", "10000")));
+        org.mockito.Mockito.lenient().when(bookingDocumentRepository.findAllById(any())).thenReturn(List.of(
+                brokenDown(voucher("V1", "B1", "NAHKSJ", "105800", "107800")), brokenDown(voucher("V2", "B2", "HYJJUY", "9000", "10000"))));
+        org.mockito.Mockito.lenient().when(clientService.findAccessibleClient("K1")).thenReturn(client());
+        com.voyra.crm.entity.TaxRateConfig gst = com.voyra.crm.entity.TaxRateConfig.builder().id("G18")
+                .taxKind(com.voyra.crm.enums.TaxKind.GST).label("GST 18%").ratePercent(new BigDecimal("18.000")).build();
+        org.mockito.Mockito.lenient().when(taxRateConfigRepository.findByTaxKindAndSupplyNatureAndIsDefaultTrueAndIsActiveTrue(any(), any()))
+                .thenReturn(Optional.of(gst));
+        org.mockito.Mockito.lenient().when(taxRateConfigRepository.findById("G18")).thenReturn(Optional.of(gst));
+        org.mockito.Mockito.lenient().when(taxEngine.resolveTreatment(eq("K1"), any(), anyBoolean(), any())).thenReturn(TaxTreatment.INTRA_STATE);
+    }
+
+    @Test
+    void oneDraftBillsEveryVoucherOfTheBookingsWithGstOnTheMarkupOnly() {
+        twoFlights(flight("B1", 42, "K1", "V1", "107800", "105800"), flight("B2", 43, "K1", "V1", "10000", "9000"));
+
+        InvoiceResponse draft = invoiceDocumentService.createDrafts(List.of("B2", "B1"));
+
+        assertThat(draft.getStatus()).isEqualTo(InvoiceLifecycle.DRAFT);
+        assertThat(draft.getBookingId()).isEqualTo("B1");
+        assertThat(draft.getBillingModel()).isEqualTo(com.voyra.crm.enums.InvoiceBillingModel.COMMISSION_AGENT);
+        assertThat(draft.getLines()).extracting(com.voyra.crm.dto.InvoiceLineItemResponse::getBookingDocumentId).containsExactly("V1", "V2");
+        assertThat(draft.getLines()).extracting(com.voyra.crm.dto.InvoiceLineItemResponse::getBookingId).containsExactly("B1", "B2");
+        assertThat(draft.getTaxableValue()).isEqualByComparingTo("117800");
+        assertThat(draft.getPassThroughAmount()).isEqualByComparingTo("114800");
+        // 18% of the 3,000 markup, not of the fare.
+        assertThat(draft.getGstTotal()).isEqualByComparingTo("540.00");
+        assertThat(draft.getGrandTotal()).isEqualByComparingTo("118340.00");
+    }
+
+    @Test
+    void oneDraftTakesOnlyOneClientOneSupplierAndConfirmedBookings() {
+        twoFlights(flight("B1", 42, "K1", "V1", "107800", "105800"), flight("B2", 43, "K2", "V1", "10000", "9000"));
+        assertThatThrownBy(() -> invoiceDocumentService.createDrafts(List.of("B1", "B2")))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("same client, supplier");
+
+        Booking pending = flight("B3", 44, "K1", "V1", "5000", "4000");
+        pending.setBookingStatus(BookingStatus.PENDING);
+        when(bookingRepository.findByIdForUpdate("B3")).thenReturn(Optional.of(pending));
+        assertThatThrownBy(() -> invoiceDocumentService.createDrafts(List.of("B3")))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("isn't confirmed");
+
+        Booking noSupplier = flight("B4", 45, "K1", null, "5000", "4000");
+        when(bookingRepository.findByIdForUpdate("B4")).thenReturn(Optional.of(noSupplier));
+        // On its own it needs no supplier; combined, it does.
+        assertThatThrownBy(() -> invoiceDocumentService.createDrafts(List.of("B1", "B4")))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("BK00000045 has no supplier");
+    }
+
+    @Test
+    void aBookingAlreadyOnADraftIsNotDraftedAgain() {
+        twoFlights(flight("B1", 42, "K1", "V1", "107800", "105800"), flight("B2", 43, "K1", "V1", "10000", "9000"));
+        org.mockito.Mockito.lenient().when(invoiceRepository.findDraftsForBooking("B2")).thenReturn(List.of(Invoice.builder().id("D1").build()));
+        assertThatThrownBy(() -> invoiceDocumentService.createDrafts(List.of("B1", "B2")))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("BK00000043 is already on a draft invoice");
+    }
+
+    @Test
+    void generatingADraftOfTwoBookingsSyncsBothAndRecognisesOnIssue() {
+        twoFlights(flight("B1", 42, "K1", "V1", "107800", "105800"), flight("B2", 43, "K1", "V1", "10000", "9000"));
+        Invoice draft = Invoice.builder().id("I1").bookingId("B1").clientId("K1").documentType(InvoiceDocumentType.TAX_INVOICE)
+                .status(InvoiceLifecycle.DRAFT).serviceCategory(InvoiceServiceCategory.AIR_INTERNATIONAL)
+                .billingModel(com.voyra.crm.enums.InvoiceBillingModel.COMMISSION_AGENT).passThroughAmount(new BigDecimal("114800"))
+                .currencyCode("INR").fxRateToInr(BigDecimal.ONE).taxableValue(new BigDecimal("117800")).taxableValueInr(new BigDecimal("117800"))
+                .grandTotal(new BigDecimal("117800")).grandTotalInr(new BigDecimal("117800")).balanceDue(new BigDecimal("117800")).build();
+        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(draft));
+        when(invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc("I1")).thenReturn(List.of(
+                InvoiceLineItem.builder().invoiceId("I1").bookingId("B1").bookingDocumentId("V1").lineSubtotal(new BigDecimal("107800")).build(),
+                InvoiceLineItem.builder().invoiceId("I1").bookingId("B2").bookingDocumentId("V2").lineSubtotal(new BigDecimal("10000")).build()));
+        when(invoiceLineItemRepository.findBookingIdsByInvoiceId("I1")).thenReturn(List.of("B1", "B2"));
+        when(documentNumberService.next(any(), any())).thenReturn("ITI/26-27/0001");
+
+        invoiceDocumentService.issue("I1");
+
+        org.mockito.Mockito.verify(bookingAccountingSync).syncPayment("B1");
+        org.mockito.Mockito.verify(bookingAccountingSync).syncPayment("B2");
+        ArgumentCaptor<com.voyra.crm.models.JournalPosting> posted = ArgumentCaptor.forClass(com.voyra.crm.models.JournalPosting.class);
+        org.mockito.Mockito.verify(journalService).post(posted.capture());
+        assertThat(posted.getValue().narration()).contains("BK00000042, BK00000043").contains("NAHKSJ, HYJJUY");
+    }
+
+    private static com.voyra.crm.entity.BookingDocument brokenDown(com.voyra.crm.entity.BookingDocument d) {
+        d.setCharges(new java.util.LinkedHashMap<>(java.util.Map.of("basic", d.getNetCost())));
+        return d;
+    }
+
+    /** A flight ticket's invoice prints its fare breakdown, so it waits for the accountant to enter one. */
+    @Test
+    void aFlightVoucherWithNoFareBreakdownIsNotInvoiced() {
+        twoFlights(flight("B1", 42, "K1", "V1", "107800", "105800"), flight("B2", 43, "K1", "V1", "10000", "9000"));
+        Invoice draft = Invoice.builder().id("I1").bookingId("B1").status(InvoiceLifecycle.DRAFT)
+                .serviceCategory(InvoiceServiceCategory.AIR_INTERNATIONAL).build();
+        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(draft));
+        when(invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc("I1")).thenReturn(List.of(
+                InvoiceLineItem.builder().invoiceId("I1").bookingId("B1").bookingDocumentId("V1").lineSubtotal(new BigDecimal("107800")).build()));
+        when(invoiceLineItemRepository.findBookingIdsByInvoiceId("I1")).thenReturn(List.of("B1"));
+        when(bookingDocumentRepository.findAllById(any())).thenReturn(List.of(voucher("V1", "B1", "NAHKSJ", "105800", "107800")));
+
+        assertThatThrownBy(() -> invoiceDocumentService.issue("I1"))
+                .isInstanceOf(IllegalStateException.class).hasMessage("Add the fare breakdown for PNR NAHKSJ before generating the invoice");
+    }
+
+    @Test
+    void aDraftLineCarriesItsTicketsTravellersFlightsAndPurchaseCurrency() {
+        twoFlights(flight("B1", 42, "K1", "V1", "107800", "105800"), flight("B2", 43, "K1", "V1", "10000", "9000"));
+        com.voyra.crm.entity.BookingDocument ticket = voucher("V1", "B1", "NAHKSJ", "105800", "107800");
+        ticket.setDocType(com.voyra.crm.enums.BookingDocumentType.E_TICKET);
+        ticket.setTravellers(List.of(new com.voyra.crm.dto.VoucherTraveller("M1", "Mukesh", com.voyra.crm.enums.PaxType.ADULT)));
+        ticket.setLegs(List.of(com.voyra.crm.dto.VoucherLeg.builder().from("BOM").to("DXB").travelDate(java.time.LocalDate.of(2026, 12, 19)).build()));
+        ticket.setPurchaseCurrency("AED");
+        ticket.setPurchaseRate(new BigDecimal("22.85"));
+        when(bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc("B1")).thenReturn(List.of(ticket));
+
+        InvoiceResponse draft = invoiceDocumentService.createDrafts(List.of("B1"));
+
+        com.voyra.crm.dto.InvoiceLineItemResponse line = draft.getLines().get(0);
+        assertThat(line.getTravellers()).extracting(com.voyra.crm.dto.VoucherTraveller::getName).containsExactly("Mukesh");
+        assertThat(line.getLegs()).extracting(com.voyra.crm.dto.VoucherLeg::getTo).containsExactly("DXB");
+        assertThat(line.getDescription()).contains("Mukesh");
+    }
+
+    @Test
+    void anAirTicketWithNoTravellersIsNotInvoiced() {
+        twoFlights(flight("B1", 42, "K1", "V1", "107800", "105800"), flight("B2", 43, "K1", "V1", "10000", "9000"));
+        Invoice draft = Invoice.builder().id("I1").bookingId("B1").status(InvoiceLifecycle.DRAFT)
+                .serviceCategory(InvoiceServiceCategory.AIR_INTERNATIONAL).build();
+        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(draft));
+        when(invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc("I1")).thenReturn(List.of(
+                InvoiceLineItem.builder().invoiceId("I1").bookingId("B1").bookingDocumentId("V1").lineSubtotal(new BigDecimal("107800")).build()));
+        when(invoiceLineItemRepository.findBookingIdsByInvoiceId("I1")).thenReturn(List.of("B1"));
+        com.voyra.crm.entity.BookingDocument ticket = brokenDown(voucher("V1", "B1", "NAHKSJ", "105800", "107800"));
+        ticket.setDocType(com.voyra.crm.enums.BookingDocumentType.E_TICKET);
+        when(bookingDocumentRepository.findAllById(any())).thenReturn(List.of(ticket));
+
+        assertThatThrownBy(() -> invoiceDocumentService.issue("I1")).isInstanceOf(IllegalStateException.class)
+                .hasMessage("Add the travellers for PNR NAHKSJ on the booking's voucher - delete this draft first, then draft it again");
+    }
+
+    @Test
+    void aDraftWhoseVouchersChangedIsNotIssued() {
+        twoFlights(flight("B1", 42, "K1", "V1", "107800", "105800"), flight("B2", 43, "K1", "V1", "10000", "9000"));
+        Invoice draft = Invoice.builder().id("I1").bookingId("B1").status(InvoiceLifecycle.DRAFT)
+                .serviceCategory(InvoiceServiceCategory.AIR_INTERNATIONAL).build();
+        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(draft));
+        // Saved when B1's voucher was priced lower.
+        when(invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc("I1")).thenReturn(List.of(
+                InvoiceLineItem.builder().invoiceId("I1").bookingId("B1").bookingDocumentId("V1").lineSubtotal(new BigDecimal("100000")).build()));
+
+        assertThatThrownBy(() -> invoiceDocumentService.issue("I1"))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("save the draft again");
+    }
+
+    @Test
+    void anInvoiceIsNotDatedAheadOrBeforeItsSeries() {
+        Invoice future = Invoice.builder().id("I1").bookingId("B1").status(InvoiceLifecycle.DRAFT)
+                .serviceCategory(InvoiceServiceCategory.HOTEL).invoiceDate(LocalDate.now().plusDays(1)).build();
+        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(future));
+        when(invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc("I1")).thenReturn(List.of(
+                InvoiceLineItem.builder().invoiceId("I1").bookingId("B1").lineSubtotal(new BigDecimal("100")).build()));
+        assertThatThrownBy(() -> invoiceDocumentService.issue("I1")).hasMessageContaining("can't be in the future");
+
+        future.setInvoiceDate(LocalDate.now().minusDays(5));
+        when(invoiceRepository.latestIssuedDate(eq(InvoiceServiceCategory.HOTEL), any())).thenReturn(LocalDate.now().minusDays(1));
+        assertThatThrownBy(() -> invoiceDocumentService.issue("I1")).hasMessageContaining("already issued up to");
     }
 }

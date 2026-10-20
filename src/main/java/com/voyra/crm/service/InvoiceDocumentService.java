@@ -1,6 +1,7 @@
 package com.voyra.crm.service;
 
 import com.voyra.crm.dto.AuditChange;
+import com.voyra.crm.dto.InvoiceBookingRefResponse;
 import com.voyra.crm.dto.InvoiceDraftRequest;
 import com.voyra.crm.dto.InvoiceLineItemRequest;
 import com.voyra.crm.dto.InvoiceLineItemResponse;
@@ -51,7 +52,9 @@ import com.voyra.crm.util.AuditSnapshot;
 import com.voyra.crm.util.BookingInvoiceLineBuilder;
 import com.voyra.crm.util.FinancialYear;
 import com.voyra.crm.util.InvoiceLifecyclePolicy;
+import com.voyra.crm.util.AirInvoicePdfRenderer;
 import com.voyra.crm.util.InvoicePdfRenderer;
+import com.voyra.crm.util.InvoiceShares;
 import com.voyra.crm.util.UniqueIdResolver;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -106,9 +109,141 @@ public class InvoiceDocumentService {
     private final CustomerLedgerService customerLedgerService;
     private final BookingAccountingSync bookingAccountingSync;
     private final PaymentReceiptService paymentReceiptService;
+    private final FileStorageService fileStorageService;
+    private final BaseCurrency baseCurrency;
+    private final InvoiceLineSource invoiceLineSource;
+    private final com.voyra.crm.repository.BookingDocumentRepository bookingDocumentRepository;
+    private final com.voyra.crm.repository.AgentRepository agentRepository;
+
+    /**
+     * One draft invoice for several bookings of one client - the accountant's bulk "create draft
+     * invoice". They must share the supplier, the agent and the invoice type (its series, title and
+     * GST nature), be confirmed, have something left to bill and sit on no other draft. One line per
+     * voucher not yet invoiced; GST on the markup only (the vouchers' cost passes through untaxed).
+     * The bookings are locked in id order first, so two accountants drafting overlapping bookings
+     * queue rather than both succeeding.
+     */
+    @Transactional
+    public InvoiceResponse createDrafts(List<String> bookingIds) {
+        List<String> ids = bookingIds == null ? List.of() : bookingIds.stream()
+                .filter(id -> id != null && !id.isBlank()).distinct().sorted().toList();
+        if (ids.isEmpty()) {
+            throw new IllegalArgumentException("Pick at least one booking");
+        }
+        List<Booking> bookings = ids.stream().map(id -> bookingRepository.findByIdForUpdate(id)
+                .orElseThrow(() -> new IllegalArgumentException("Booking not found: " + id)))
+                .sorted(java.util.Comparator.comparing(Booking::getBookingNumber, java.util.Comparator.nullsLast(java.util.Comparator.naturalOrder())))
+                .toList();
+        Booking first = bookings.get(0);
+        InvoiceServiceCategory category = categoryOf(first);
+        List<InvoiceLineItemRequest> lines = new ArrayList<>();
+        BigDecimal passThrough = BigDecimal.ZERO;
+        for (Booking b : bookings) {
+            String ref = BookingService.bookingRef(b.getBookingNumber());
+            if (b.getBookingStatus() != BookingStatus.CONFIRMED && b.getBookingStatus() != BookingStatus.COMPLETED) {
+                throw new IllegalStateException(ref + (b.getBookingStatus() == BookingStatus.CANCELLED
+                        ? " is cancelled - it can't be invoiced" : " isn't confirmed yet - add its priced voucher first"));
+            }
+            // Combining is by supplier; a booking invoiced on its own needs none.
+            if (bookings.size() > 1 && (b.getVendorId() == null || b.getVendorId().isBlank())) {
+                throw new IllegalStateException(ref + " has no supplier - set it on the booking before combining it");
+            }
+            if (!b.getClientId().equals(first.getClientId()) || !java.util.Objects.equals(b.getVendorId(), first.getVendorId())
+                    || !java.util.Objects.equals(b.getAgentId(), first.getAgentId()) || categoryOf(b) != category) {
+                throw new IllegalArgumentException("One invoice takes bookings of the same client, supplier, agent and invoice type only - "
+                        + ref + " differs from " + BookingService.bookingRef(first.getBookingNumber()));
+            }
+            if (invoiceLineSource.draftOf(b.getId()) != null) {
+                throw new IllegalStateException(ref + " is already on a draft invoice - open that draft instead");
+            }
+            InvoiceLineSource.Lines own = invoiceLineSource.linesFor(b, category);
+            if (own.lines().isEmpty()) {
+                throw new IllegalStateException(ref + " is fully invoiced");
+            }
+            lines.addAll(own.lines());
+            passThrough = passThrough.add(own.passThrough());
+        }
+        InvoiceDraftRequest draft = new InvoiceDraftRequest();
+        draft.setBookingId(first.getId());
+        draft.setServiceCategory(category);
+        draft.setBillingModel(InvoiceBillingModel.COMMISSION_AGENT);
+        draft.setPassThroughAmount(passThrough);
+        draft.setSupplyNature(BookingInvoiceIssuer.supplyNature(category, Boolean.TRUE.equals(first.getInternationalTrip())));
+        draft.setLines(lines);
+        taxRateConfigRepository.findByTaxKindAndSupplyNatureAndIsDefaultTrueAndIsActiveTrue(TaxKind.GST, draft.getSupplyNature())
+                .filter(gst -> baseCurrency.code().equals("INR"))
+                .ifPresent(gst -> {
+                    InvoiceTaxRequest tax = new InvoiceTaxRequest();
+                    tax.setLabel(gst.getLabel());
+                    tax.setTaxRateConfigId(gst.getId());
+                    tax.setMode(TaxLineMode.PERCENT);
+                    tax.setRatePercent(gst.getRatePercent());
+                    tax.setVisibleToCustomer(true);
+                    draft.setTaxes(List.of(tax));
+                });
+        InvoiceResponse created = draftFrom(draft);
+        log.info("Draft invoice created for bookings: id={}, bookings={}", created.getId(), ids);
+        return created;
+    }
+
+    private static InvoiceServiceCategory categoryOf(Booking b) {
+        return InvoiceServiceCategory.forBooking(b.getType(), Boolean.TRUE.equals(b.getInternationalTrip()));
+    }
+
+    /**
+     * Takes a booking off its live draft (nothing is posted on a draft): the draft is deleted when it
+     * bills only that booking, else rebuilt for the rest. Used before the booking is cancelled or gets
+     * an invoice uploaded, so a colleague's combined draft keeps its other bookings.
+     */
+    @Transactional
+    public void removeBookingFromDraft(String bookingId) {
+        for (Invoice draft : invoiceRepository.findDraftsForBooking(bookingId)) {
+            List<String> rest = invoiceLineSource.bookingIdsOf(draft).stream().filter(id -> !id.equals(bookingId)).toList();
+            if (rest.isEmpty()) {
+                deleteDraft(draft.getId());
+                continue;
+            }
+            draft.setBookingId(rest.get(0));
+            Booking primary = bookingRepository.findById(rest.get(0)).orElseThrow();
+            draft.setLeadId(primary.getLeadId());
+            List<InvoiceLineItemRequest> lineInputs = rederive(draft, rest, null);
+            List<InvoiceLineItem> lines = recomputeLines(draft, lineInputs);
+            List<InvoiceTax> taxes = recomputeTaxes(draft, taxRequestsOf(draft.getId()));
+            invoiceRepository.save(draft);
+            invoiceLineItemRepository.deleteByInvoiceId(draft.getId());
+            invoiceLineItemRepository.saveAll(lines);
+            invoiceTaxRepository.deleteByInvoiceId(draft.getId());
+            invoiceTaxRepository.saveAll(taxes);
+            log.info("Booking taken off draft invoice: bookingId={}, invoiceId={}", bookingId, draft.getId());
+        }
+    }
+
+    /** This booking's weight on an invoice: 1 when it bills only this booking. */
+    public BigDecimal weightOf(Invoice invoice, String bookingId) {
+        java.util.Map<String, InvoiceShares.Share> shares = sharesOf(invoice);
+        InvoiceShares.Share share = shares.get(bookingId);
+        return share != null ? share.weight() : shares.isEmpty() ? BigDecimal.ONE : BigDecimal.ZERO;
+    }
+
+
+    private java.util.Map<String, InvoiceShares.Share> sharesOf(Invoice invoice) {
+        return InvoiceShares.of(invoice.getBookingId(), invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc(invoice.getId()));
+    }
 
     @Transactional
     public InvoiceResponse createDraft(InvoiceDraftRequest request) {
+        // Charges print on the tax invoice: only the server sets them, from a voucher (createDrafts).
+        if (request.getLines() != null) request.getLines().forEach(l -> {
+            l.setCharges(null);
+            l.setTravellers(null);
+            l.setLegs(null);
+            l.setPurchaseCurrency(null);
+            l.setPurchaseRate(null);
+        });
+        return draftFrom(request);
+    }
+
+    private InvoiceResponse draftFrom(InvoiceDraftRequest request) {
         if (request.getBookingId() == null || request.getBookingId().isBlank()) {
             throw new IllegalArgumentException("bookingId is required");
         }
@@ -164,7 +299,7 @@ public class InvoiceDocumentService {
                 && agency.getInvoiceTerms() != null && !agency.getInvoiceTerms().isBlank()) {
             invoice.setTerms(agency.getInvoiceTerms());
         }
-        List<InvoiceLineItemRequest> lineInputs = resolveLines(booking, category, request.getLines());
+        List<InvoiceLineItemRequest> lineInputs = resolveLines(booking, category, request.getLines(), invoice);
         List<InvoiceLineItem> lines = recomputeLines(invoice, lineInputs);
         List<InvoiceTax> taxes = recomputeTaxes(invoice, request.getTaxes());
         invoiceRepository.save(invoice);
@@ -194,7 +329,8 @@ public class InvoiceDocumentService {
         invoice.setUpdatedAt(LocalDateTime.now());
         invoice.setUpdatedBy(currentUserId());
 
-        List<InvoiceLineItemRequest> lineInputs = resolveLines(booking, category, request.getLines());
+        // Prices always come from the vouchers; only the lines' wording is taken from the request.
+        List<InvoiceLineItemRequest> lineInputs = rederive(invoice, invoiceLineSource.bookingIdsOf(invoice), request.getLines());
         List<InvoiceLineItem> lines = recomputeLines(invoice, lineInputs);
         List<InvoiceTax> taxes = recomputeTaxes(invoice, request.getTaxes());
         invoiceRepository.save(invoice);
@@ -214,22 +350,134 @@ public class InvoiceDocumentService {
     }
 
     /**
-     * The heart of ACCOUNTING_REDESIGN_SPEC.md §5.1: an explicit, non-empty {@code lines} list
-     * from the caller still wins (existing tests and any transitional manual entry keep
-     * working), but the normal path is the booking's own captured passengers - no line is ever
-     * hand-typed once a booking has them. See {@code BookingInvoiceLineBuilder}.
+     * The caller's lines when it gives any (an uploaded invoice, cancellation charges), each billing
+     * this booking; otherwise what the booking has left to bill, from its vouchers - see
+     * {@link InvoiceLineSource#linesFor}. A booking with nothing left falls back to its travellers'
+     * lines, as before vouchers carried the money.
      */
     private List<InvoiceLineItemRequest> resolveLines(Booking booking, InvoiceServiceCategory category,
-                                                        List<InvoiceLineItemRequest> requestedLines) {
+                                                        List<InvoiceLineItemRequest> requestedLines, Invoice invoice) {
         if (requestedLines != null && !requestedLines.isEmpty()) {
+            requestedLines.stream().filter(l -> l.getBookingId() == null).forEach(l -> l.setBookingId(booking.getId()));
             return requestedLines;
+        }
+        InvoiceLineSource.Lines own = invoiceLineSource.linesFor(booking, category);
+        if (!own.lines().isEmpty()) {
+            if (invoice.getPassThroughAmount() == null) {
+                invoice.setPassThroughAmount(inInvoiceCurrency(invoice, own.passThrough()));
+            }
+            return inInvoiceCurrency(invoice, own.lines());
         }
         List<BookingPassenger> passengers = bookingPassengerRepository.findByBookingIdOrderBySortOrderAsc(booking.getId());
         Map<String, List<BookingSector>> sectorsByPassenger = passengers.isEmpty() ? Map.of()
                 : bookingSectorRepository.findByBookingPassengerIdInOrderBySortOrderAsc(
                         passengers.stream().map(BookingPassenger::getId).toList())
                     .stream().collect(java.util.stream.Collectors.groupingBy(BookingSector::getBookingPassengerId));
-        return BookingInvoiceLineBuilder.build(booking, category, passengers, sectorsByPassenger);
+        List<InvoiceLineItemRequest> lines = BookingInvoiceLineBuilder.build(booking, category, passengers, sectorsByPassenger);
+        lines.forEach(l -> l.setBookingId(booking.getId()));
+        return lines;
+    }
+
+    /**
+     * A draft's lines worked out again from its bookings' vouchers, keeping any wording the accountant
+     * gave a line (matched by voucher, else by booking, in order). A booking with nothing left to bill
+     * keeps the lines it had. Sets the pass-through to the vouchers' cost.
+     */
+    private List<InvoiceLineItemRequest> rederive(Invoice invoice, List<String> bookingIds, List<InvoiceLineItemRequest> edits) {
+        InvoiceServiceCategory category = invoice.getServiceCategory();
+        List<InvoiceLineItem> existing = invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc(invoice.getId());
+        java.util.Map<String, java.util.ArrayDeque<String>> wording = new java.util.HashMap<>();
+        for (InvoiceLineItemRequest e : edits != null ? edits : existing.stream().map(InvoiceDocumentService::toRequest).toList()) {
+            if (e.getDescription() != null && !e.getDescription().isBlank()) {
+                wording.computeIfAbsent(lineKey(e), k -> new java.util.ArrayDeque<>()).add(e.getDescription().trim());
+            }
+        }
+        List<InvoiceLineItemRequest> out = new ArrayList<>();
+        BigDecimal passThrough = BigDecimal.ZERO;
+        for (String id : bookingIds) {
+            Booking b = bookingRepository.findById(id).orElseThrow(() -> new IllegalStateException("Booking not found: " + id));
+            InvoiceLineSource.Lines own = invoiceLineSource.linesFor(b, category != null ? category : categoryOf(b));
+            if (own.lines().isEmpty()) {
+                existing.stream().filter(l -> id.equals(l.getBookingId() != null ? l.getBookingId() : invoice.getBookingId()))
+                        .map(InvoiceDocumentService::toRequest).forEach(out::add);
+                continue;
+            }
+            out.addAll(inInvoiceCurrency(invoice, own.lines()));
+            passThrough = passThrough.add(inInvoiceCurrency(invoice, own.passThrough()));
+        }
+        for (InvoiceLineItemRequest line : out) {
+            java.util.ArrayDeque<String> words = wording.get(lineKey(line));
+            if (words != null && !words.isEmpty()) line.setDescription(words.poll());
+        }
+        invoice.setPassThroughAmount(passThrough.signum() > 0 ? passThrough : invoice.getPassThroughAmount());
+        return out;
+    }
+
+    /**
+     * The vouchers' prices are in base; an invoice billed in another currency carries them at its own rate
+     * (the accountant's, on the draft). Every save works them out again from base, so changing the currency
+     * or the rate never compounds a rounding.
+     */
+    private List<InvoiceLineItemRequest> inInvoiceCurrency(Invoice invoice, List<InvoiceLineItemRequest> lines) {
+        BigDecimal fx = foreignRate(invoice);
+        if (fx == null) return lines;
+        for (InvoiceLineItemRequest l : lines) {
+            if (l.getUnitPrice() != null) l.setUnitPrice(l.getUnitPrice().divide(fx, 2, RoundingMode.HALF_UP));
+            if (l.getCharges() != null) {
+                Map<String, BigDecimal> converted = new java.util.LinkedHashMap<>();
+                l.getCharges().forEach((k, v) -> converted.put(k, v == null ? null : v.divide(fx, 2, RoundingMode.HALF_UP)));
+                l.setCharges(converted);
+            }
+        }
+        return lines;
+    }
+
+    private BigDecimal inInvoiceCurrency(Invoice invoice, BigDecimal baseAmount) {
+        BigDecimal fx = foreignRate(invoice);
+        return fx == null || baseAmount == null ? baseAmount : baseAmount.divide(fx, 2, RoundingMode.HALF_UP);
+    }
+
+    /** The invoice's rate to base when it is billed in another currency; null when it is in base. */
+    private BigDecimal foreignRate(Invoice invoice) {
+        return baseCurrency.code().equals(invoice.getCurrencyCode()) || invoice.getFxRateToInr() == null
+                || invoice.getFxRateToInr().compareTo(BigDecimal.ONE) == 0 ? null : invoice.getFxRateToInr();
+    }
+
+    private static String lineKey(InvoiceLineItemRequest l) {
+        return l.getBookingDocumentId() != null ? "v:" + l.getBookingDocumentId() : "b:" + l.getBookingId();
+    }
+
+    private static InvoiceLineItemRequest toRequest(InvoiceLineItem l) {
+        InvoiceLineItemRequest r = new InvoiceLineItemRequest();
+        r.setDescription(l.getDescription());
+        r.setSacCode(l.getSacCode());
+        r.setServiceType(l.getServiceType());
+        r.setQuantity(l.getQuantity());
+        r.setUnitPrice(l.getUnitPrice());
+        r.setDiscountAmount(l.getDiscountAmount());
+        r.setFareAmount(l.getFareAmount());
+        r.setTaxAmount(l.getTaxAmount());
+        r.setBookingId(l.getBookingId());
+        r.setBookingDocumentId(l.getBookingDocumentId());
+        r.setCharges(l.getCharges());
+        r.setTravellers(l.getTravellers());
+        r.setLegs(l.getLegs());
+        r.setPurchaseCurrency(l.getPurchaseCurrency());
+        r.setPurchaseRate(l.getPurchaseRate());
+        return r;
+    }
+
+    private List<InvoiceTaxRequest> taxRequestsOf(String invoiceId) {
+        return invoiceTaxRepository.findByInvoiceIdOrderBySortOrderAsc(invoiceId).stream().map(t -> {
+            InvoiceTaxRequest r = new InvoiceTaxRequest();
+            r.setLabel(t.getLabel());
+            r.setTaxRateConfigId(t.getTaxRateConfigId());
+            r.setMode(t.getMode());
+            r.setRatePercent(t.getRatePercent());
+            r.setFlatAmount(t.getFlatAmount());
+            r.setVisibleToCustomer(t.getVisibleToCustomer());
+            return r;
+        }).toList();
     }
 
     @Transactional
@@ -247,6 +495,20 @@ public class InvoiceDocumentService {
         return toResponse(findAccessibleInvoice(id));
     }
 
+    /** An uploaded invoice's file. Not {@code @Transactional}: reading object storage is barred inside a transaction (blueprint §8.6). */
+    public UploadedInvoiceFile getUploadedFile(String id) {
+        Invoice invoice = findAccessibleInvoice(id);
+        if (invoice.getPdfFileKey() == null) {
+            throw new IllegalArgumentException("This invoice has no uploaded file");
+        }
+        return new UploadedInvoiceFile(fileStorageService.retrieve(invoice.getPdfFileKey()),
+                invoice.getUploadedFileName(), invoice.getUploadedContentType());
+    }
+
+    /** Not a DTO - never serialized to JSON, only unpacked into a binary response by the controller. */
+    public record UploadedInvoiceFile(org.springframework.core.io.Resource resource, String filename, String contentType) {
+    }
+
     @Transactional(readOnly = true)
     public byte[] getPdf(String id) {
         Invoice invoice = findAccessibleInvoice(id);
@@ -256,11 +518,28 @@ public class InvoiceDocumentService {
         // fresh at print time, never frozen on the invoice - they're presentational only and
         // never feed a money figure, unlike everything InvoicePdfRenderer otherwise reads.
         Tenant agency = currentAgency();
+        if (AirInvoicePdfRenderer.applies(invoice.getServiceCategory(), lines)) {
+            Map<String, String> references = new java.util.HashMap<>();
+            bookingDocumentRepository.findAllById(lines.stream().map(InvoiceLineItem::getBookingDocumentId)
+                            .filter(java.util.Objects::nonNull).distinct().toList())
+                    .forEach(d -> references.put(d.getId(), d.getReferenceNumber()));
+            return AirInvoicePdfRenderer.write(invoice, lines, taxes, agency, references, logoOf(agency),
+                    userName(invoice.getIssuedBy() != null ? invoice.getIssuedBy() : invoice.getCreatedBy()));
+        }
         Booking booking = invoice.getBookingId() != null
                 ? bookingRepository.findById(invoice.getBookingId()).orElse(null) : null;
-        List<BookingCostComponent> costComponents = booking != null
+        List<String> bookingIds = invoiceLineSource.bookingIdsOf(invoice);
+        // Cost components belong to one booking; an invoice of several prints the cost it passes through.
+        List<BookingCostComponent> costComponents = booking != null && bookingIds.size() <= 1
                 ? bookingCostComponentRepository.findByBookingIdOrderBySortOrder(booking.getId()) : List.of();
-        return InvoicePdfRenderer.write(invoice, lines, taxes, agency, booking, costComponents);
+        List<String> voucherRefs = bookingDocumentRepository.findAllById(lines.stream().map(InvoiceLineItem::getBookingDocumentId)
+                        .filter(java.util.Objects::nonNull).distinct().toList()).stream()
+                .map(com.voyra.crm.entity.BookingDocument::getReferenceNumber).filter(r -> r != null && !r.isBlank())
+                .distinct().toList();
+        Map<String, String> refs = new java.util.HashMap<>();
+        bookingRepository.findAllById(bookingIds).forEach(b -> refs.put(b.getId(), BookingService.bookingRef(b.getBookingNumber())));
+        return InvoicePdfRenderer.write(invoice, lines, taxes, agency, booking, costComponents, voucherRefs,
+                bookingIds.stream().map(refs::get).filter(java.util.Objects::nonNull).toList());
     }
 
     @Transactional(readOnly = true)
@@ -278,7 +557,12 @@ public class InvoiceDocumentService {
             predicates.add((root, query, cb) -> cb.equal(root.get("clientId"), clientId));
         }
         if (bookingId != null) {
-            predicates.add((root, query, cb) -> cb.equal(root.get("bookingId"), bookingId));
+            predicates.add((root, query, cb) -> {
+                jakarta.persistence.criteria.Subquery<String> billed = query.subquery(String.class);
+                jakarta.persistence.criteria.Root<InvoiceLineItem> line = billed.from(InvoiceLineItem.class);
+                billed.select(line.get("invoiceId")).where(cb.equal(line.get("bookingId"), bookingId));
+                return cb.or(cb.equal(root.get("bookingId"), bookingId), root.get("id").in(billed));
+            });
         }
         if (from != null) {
             predicates.add((root, query, cb) -> cb.greaterThanOrEqualTo(root.get("invoiceDate"), from));
@@ -298,13 +582,23 @@ public class InvoiceDocumentService {
         return invoices.stream().map(i -> toListItem(i, refs)).toList();
     }
 
-    /** Booking id -> BK-number for one page of invoices, in one query - people search invoices by it. */
+    /** Invoice id -> its bookings' BK-numbers for one page of invoices, in two queries - people search invoices by them. */
     private Map<String, String> bookingRefs(List<Invoice> invoices) {
-        List<String> ids = invoices.stream().map(Invoice::getBookingId).filter(java.util.Objects::nonNull).distinct().toList();
         Map<String, String> refs = new java.util.HashMap<>();
-        if (!ids.isEmpty()) {
-            bookingRepository.findAllById(ids).forEach(b -> refs.put(b.getId(), BookingService.bookingRef(b.getBookingNumber())));
-        }
+        if (invoices.isEmpty()) return refs;
+        Map<String, java.util.LinkedHashSet<String>> idsByInvoice = new java.util.HashMap<>();
+        invoices.forEach(i -> {
+            java.util.LinkedHashSet<String> ids = new java.util.LinkedHashSet<>();
+            if (i.getBookingId() != null) ids.add(i.getBookingId());
+            idsByInvoice.put(i.getId(), ids);
+        });
+        invoiceLineItemRepository.findByInvoiceIdInOrderBySortOrderAsc(invoices.stream().map(Invoice::getId).toList()).stream()
+                .filter(l -> l.getBookingId() != null).forEach(l -> idsByInvoice.get(l.getInvoiceId()).add(l.getBookingId()));
+        Map<String, String> byBooking = new java.util.HashMap<>();
+        bookingRepository.findAllById(idsByInvoice.values().stream().flatMap(java.util.Set::stream).distinct().toList())
+                .forEach(b -> byBooking.put(b.getId(), BookingService.bookingRef(b.getBookingNumber())));
+        idsByInvoice.forEach((invoiceId, ids) -> refs.put(invoiceId,
+                ids.stream().map(byBooking::get).filter(java.util.Objects::nonNull).collect(java.util.stream.Collectors.joining(", "))));
         return refs;
     }
 
@@ -318,7 +612,11 @@ public class InvoiceDocumentService {
             throw new IllegalStateException("At least one line is required to issue an invoice");
         }
 
-        LocalDate today = LocalDate.now();
+        assertMatchesVouchers(invoice, lines);
+        assertFareBreakdowns(lines);
+        assertTravellers(lines);
+        LocalDate today = invoice.getInvoiceDate() != null ? invoice.getInvoiceDate() : FinancialYear.today();
+        assertIssueDate(invoice, today);
         String number = documentNumberService.next(invoiceDocumentKind(invoice.getServiceCategory()), today);
 
         invoice.setInvoiceNumber(number);
@@ -334,7 +632,7 @@ public class InvoiceDocumentService {
         // A returning customer's standing deposit draws down automatically the moment a real
         // invoice exists against them - see PaymentReceiptService#applyAvailableWallet.
         paymentReceiptService.applyAvailableWallet(invoice);
-        bookingAccountingSync.syncPayment(invoice.getBookingId());
+        syncBookings(invoice);
 
         auditService.recordCreate(AuditEntityType.INVOICE, invoice.getId(), invoice.getInvoiceNumber());
         log.info("Invoice issued: id={}, number={}", invoice.getId(), number);
@@ -370,7 +668,7 @@ public class InvoiceDocumentService {
 
         List<InvoiceLineItem> proformaLines = invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc(proformaId);
         List<InvoiceTax> proformaTaxes = invoiceTaxRepository.findByInvoiceIdOrderBySortOrderAsc(proformaId);
-        LocalDate today = LocalDate.now();
+        LocalDate today = FinancialYear.today();
         String number = documentNumberService.next(invoiceDocumentKind(proforma.getServiceCategory()), today);
         String newId = UniqueIdResolver.resolve(invoiceRepository::existsById);
         LocalDateTime now = LocalDateTime.now();
@@ -437,7 +735,7 @@ public class InvoiceDocumentService {
         }
         postInvoiceRaised(taxInvoice);
         postInvoiceRaisedJournal(taxInvoice);
-        bookingAccountingSync.syncPayment(taxInvoice.getBookingId());
+        syncBookings(taxInvoice);
 
         proforma.setStatus(InvoiceLifecycle.CANCELLED);
         proforma.setCancelledAt(now);
@@ -474,7 +772,7 @@ public class InvoiceDocumentService {
             postCancellationReversal(invoice);
             reverseInvoiceRaisedJournal(invoice);
         }
-        bookingAccountingSync.syncPayment(invoice.getBookingId());
+        syncBookings(invoice);
 
         List<AuditChange> changes = AuditSnapshot.diff(before, AuditSnapshot.of(invoice, AUDITED));
         auditService.recordUpdate(AuditEntityType.INVOICE, invoice.getId(), invoice.getInvoiceNumber(), changes);
@@ -483,6 +781,115 @@ public class InvoiceDocumentService {
     }
 
     // ---------------------------------------------------------------- internals
+
+    /** Every booking the invoice bills gets its invoiced / received figures worked out again. */
+    private void syncBookings(Invoice invoice) {
+        invoiceLineSource.bookingIdsOf(invoice).forEach(bookingAccountingSync::syncPayment);
+    }
+
+    /** The agency's logo for the printed invoice; none when it has no logo or the file can't be read. */
+    private byte[] logoOf(Tenant agency) {
+        if (agency == null || agency.getLogoKey() == null || agency.getLogoKey().isBlank()) return null;
+        try (java.io.InputStream in = fileStorageService.retrieve(agency.getLogoKey()).getInputStream()) {
+            return in.readAllBytes();
+        } catch (Exception e) {
+            log.warn("Invoice logo not readable: key={}", agency.getLogoKey());
+            return null;
+        }
+    }
+
+    /** Who a user id is - an agent, or the agency's owner (whose user id is the tenant's). */
+    private String userName(String userId) {
+        if (userId == null) return null;
+        return agentRepository.findById(userId).map(com.voyra.crm.entity.Agent::getName)
+                .or(() -> tenantRepository.findById(userId).map(Tenant::getOwnerName)).orElse(null);
+    }
+
+    /** An invoice billed from vouchers is issued only while its lines still are what those bookings have left to bill. */
+    /** A flight ticket's invoice prints its fare breakdown: the accountant enters one for every flight voucher it bills. */
+    private void assertFareBreakdowns(List<InvoiceLineItem> lines) {
+        List<String> ids = lines.stream().map(InvoiceLineItem::getBookingDocumentId).filter(java.util.Objects::nonNull).distinct().toList();
+        if (ids.isEmpty()) return;
+        List<com.voyra.crm.entity.BookingDocument> vouchers = bookingDocumentRepository.findAllById(ids);
+        Map<String, com.voyra.crm.enums.BookingType> types = bookingRepository.findAllById(vouchers.stream()
+                .map(com.voyra.crm.entity.BookingDocument::getBookingId).distinct().toList()).stream()
+                .collect(java.util.stream.Collectors.toMap(Booking::getId, Booking::getType));
+        vouchers.stream().filter(d -> types.get(d.getBookingId()) == com.voyra.crm.enums.BookingType.FLIGHT && d.getCharges() == null).findFirst()
+                .ifPresent(d -> {
+                    throw new IllegalStateException("Add the fare breakdown for " + (d.getReferenceNumber() != null
+                            ? "PNR " + d.getReferenceNumber() : "the flight voucher") + " before generating the invoice");
+                });
+    }
+
+    /** The air invoice names every ticket's travellers: a flight booking's e-ticket line can't be issued without them. */
+    private void assertTravellers(List<InvoiceLineItem> lines) {
+        List<String> ids = lines.stream().filter(l -> l.getTravellers() == null || l.getTravellers().isEmpty())
+                .map(InvoiceLineItem::getBookingDocumentId).filter(java.util.Objects::nonNull).distinct().toList();
+        if (ids.isEmpty()) return;
+        List<com.voyra.crm.entity.BookingDocument> vouchers = bookingDocumentRepository.findAllById(ids);
+        Map<String, com.voyra.crm.enums.BookingType> types = bookingRepository.findAllById(vouchers.stream()
+                .map(com.voyra.crm.entity.BookingDocument::getBookingId).distinct().toList()).stream()
+                .collect(java.util.stream.Collectors.toMap(Booking::getId, Booking::getType));
+        vouchers.stream().filter(d -> types.get(d.getBookingId()) == com.voyra.crm.enums.BookingType.FLIGHT
+                        && d.getDocType() == com.voyra.crm.enums.BookingDocumentType.E_TICKET).findFirst()
+                .ifPresent(d -> {
+                    throw new IllegalStateException("Add the travellers for " + (d.getReferenceNumber() != null
+                            ? "PNR " + d.getReferenceNumber() : "the air ticket") + " on the booking's voucher - delete this draft first, then draft it again");
+                });
+    }
+
+    private void assertMatchesVouchers(Invoice invoice, List<InvoiceLineItem> lines) {
+        if (lines.stream().noneMatch(l -> l.getBookingDocumentId() != null)) {
+            return;
+        }
+        for (String id : invoiceLineSource.bookingIdsOf(invoice)) {
+            Booking b = bookingRepository.findById(id).orElse(null);
+            if (b == null) continue;
+            BigDecimal billed = lines.stream().filter(l -> id.equals(l.getBookingId() != null ? l.getBookingId() : invoice.getBookingId()))
+                    .map(InvoiceLineItem::getLineSubtotal).reduce(BigDecimal.ZERO, BigDecimal::add);
+            BigDecimal left = inInvoiceCurrency(invoice, invoiceLineSource.linesFor(b, invoice.getServiceCategory() != null ? invoice.getServiceCategory() : categoryOf(b))
+                    .lines()).stream().map(l -> l.getQuantity().multiply(l.getUnitPrice()).setScale(2, RoundingMode.HALF_UP))
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+            if (billed.compareTo(left) != 0) {
+                throw new IllegalStateException(BookingService.bookingRef(b.getBookingNumber())
+                        + "'s vouchers changed since this draft was saved - save the draft again to bring it up to date");
+            }
+        }
+    }
+
+    /** Never dated ahead, nor before an invoice already issued in its series - the numbers stay in date order. */
+    private void assertIssueDate(Invoice invoice, LocalDate date) {
+        if (date.isAfter(FinancialYear.today())) {
+            throw new IllegalArgumentException("The invoice date can't be in the future");
+        }
+        if (invoice.getServiceCategory() == null) {
+            return;
+        }
+        LocalDate latest = invoiceRepository.latestIssuedDate(invoice.getServiceCategory(), FinancialYear.of(date));
+        if (latest != null && date.isBefore(latest)) {
+            throw new IllegalArgumentException(invoice.getServiceCategory().documentTitle() + "s are already issued up to "
+                    + latest.format(java.time.format.DateTimeFormatter.ofPattern("dd MMM yyyy")) + " - date this one on or after it");
+        }
+    }
+
+    /** e.g. "Tax invoice ITI/26-27/0012 · BK-00042, BK-00043 · NAHKSJ, HYJJUY" - what the ledger and journal rows say. */
+    private String narrationOf(Invoice invoice, String prefix) {
+        List<String> ids = invoiceLineSource.bookingIdsOf(invoice);
+        // findAllById has no order: bookings by number, vouchers in line order.
+        String bookings = bookingRepository.findAllById(ids).stream()
+                .sorted(java.util.Comparator.comparing(Booking::getBookingNumber, java.util.Comparator.nullsLast(java.util.Comparator.naturalOrder())))
+                .map(b -> BookingService.bookingRef(b.getBookingNumber())).collect(java.util.stream.Collectors.joining(", "));
+        List<String> voucherIds = invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc(invoice.getId()).stream()
+                .map(InvoiceLineItem::getBookingDocumentId).filter(java.util.Objects::nonNull).distinct().toList();
+        Map<String, com.voyra.crm.entity.BookingDocument> vouchers = bookingDocumentRepository.findAllById(voucherIds).stream()
+                .collect(java.util.stream.Collectors.toMap(com.voyra.crm.entity.BookingDocument::getId, d -> d));
+        String refs = voucherIds.stream().map(vouchers::get).filter(java.util.Objects::nonNull)
+                .map(com.voyra.crm.entity.BookingDocument::getReferenceNumber).filter(r -> r != null && !r.isBlank())
+                .distinct().collect(java.util.stream.Collectors.joining(", "));
+        String text = java.util.stream.Stream.of(prefix, bookings, refs).filter(p -> !p.isBlank())
+                .collect(java.util.stream.Collectors.joining(" · "));
+        return text.length() > 255 ? text.substring(0, 254) + "…" : text;
+    }
 
     /**
      * Debits the client for the full grand total the moment a real tax invoice exists - whether
@@ -496,7 +903,7 @@ public class InvoiceDocumentService {
         customerLedgerService.post(new LedgerPosting(
                 invoice.getClientId(), invoice.getInvoiceDate(), LedgerEntryType.INVOICE_RAISED,
                 LedgerSourceType.INVOICE, invoice.getId(), invoice.getInvoiceNumber(),
-                "Tax invoice " + invoice.getInvoiceNumber() + " raised", invoice.getBookingId(),
+                narrationOf(invoice, "Tax invoice " + invoice.getInvoiceNumber() + " raised"), invoice.getBookingId(),
                 invoice.getCurrencyCode(), invoice.getFxRateToInr(),
                 invoice.getGrandTotal(), BigDecimal.ZERO, invoice.getGrandTotalInr(), BigDecimal.ZERO));
     }
@@ -504,7 +911,7 @@ public class InvoiceDocumentService {
     /** Undoes the INVOICE_RAISED debit for a tax invoice cancelled before any receipt exists against it. */
     private void postCancellationReversal(Invoice invoice) {
         customerLedgerService.post(new LedgerPosting(
-                invoice.getClientId(), LocalDate.now(), LedgerEntryType.REVERSAL,
+                invoice.getClientId(), FinancialYear.today(), LedgerEntryType.REVERSAL,
                 LedgerSourceType.INVOICE, invoice.getId(), invoice.getInvoiceNumber(),
                 "Tax invoice " + invoice.getInvoiceNumber() + " cancelled: " + invoice.getCancelReason(),
                 invoice.getBookingId(), invoice.getCurrencyCode(), invoice.getFxRateToInr(),
@@ -524,7 +931,7 @@ public class InvoiceDocumentService {
         BigDecimal gstInr = invoice.getGstTotalInr() != null ? invoice.getGstTotalInr() : BigDecimal.ZERO;
         BigDecimal tcsInr = invoice.getTcsAmountInr() != null ? invoice.getTcsAmountInr() : BigDecimal.ZERO;
         BigDecimal grandTotalInr = invoice.getGrandTotalInr();
-        String narration = "Tax invoice " + invoice.getInvoiceNumber() + " raised";
+        String narration = narrationOf(invoice, "Tax invoice " + invoice.getInvoiceNumber() + " raised");
 
         List<com.voyra.crm.models.JournalLinePosting> lines = new ArrayList<>();
         lines.add(com.voyra.crm.models.JournalLinePosting.debitParty(
@@ -551,10 +958,11 @@ public class InvoiceDocumentService {
                         com.voyra.crm.enums.SystemAccount.OUTPUT_GST_PAYABLE.code(), gstInr, "Output GST on fee"));
             }
         } else {
-            Booking booking = invoice.getBookingId() != null
+            // An invoice billing several bookings is recognised on issue: deferral follows one booking's departure.
+            Booking booking = invoice.getBookingId() != null && invoiceLineSource.bookingIdsOf(invoice).size() == 1
                     ? bookingRepository.findById(invoice.getBookingId()).orElse(null) : null;
             boolean departureFuture = booking != null && booking.getDepartureDate() != null
-                    && booking.getDepartureDate().isAfter(LocalDate.now());
+                    && booking.getDepartureDate().isAfter(FinancialYear.today());
             purpose = departureFuture
                     ? com.voyra.crm.enums.JournalPurpose.INVOICE_RAISED_DEFERRED
                     : com.voyra.crm.enums.JournalPurpose.INVOICE_RAISED_RECOGNIZED;
@@ -602,15 +1010,15 @@ public class InvoiceDocumentService {
 
     private void applyDraftFields(Invoice invoice, InvoiceDraftRequest request) {
         String currencyCode = request.getCurrencyCode() != null && !request.getCurrencyCode().isBlank()
-                ? request.getCurrencyCode().toUpperCase() : "INR";
+                ? request.getCurrencyCode().toUpperCase() : baseCurrency.code();
         invoice.setCurrencyCode(currencyCode);
 
-        if ("INR".equals(currencyCode)) {
+        if (baseCurrency.code().equals(currencyCode)) {
             invoice.setFxRateToInr(BigDecimal.ONE);
             invoice.setFxRateSource(FxRateSource.INR_IDENTITY);
         } else {
             if (request.getFxRateToInr() == null || request.getFxRateToInr().compareTo(BigDecimal.ZERO) <= 0) {
-                throw new IllegalArgumentException("fxRateToInr is required and must be positive when currencyCode is not INR");
+                throw new IllegalArgumentException("Enter the rate: what 1 " + currencyCode + " is in " + baseCurrency.code());
             }
             invoice.setFxRateToInr(request.getFxRateToInr());
             invoice.setFxRateSource(FxRateSource.MANUAL);
@@ -620,6 +1028,10 @@ public class InvoiceDocumentService {
         invoice.setPlaceOfSupplyOverride(request.getPlaceOfSupplyCodeOverride());
         invoice.setExportOfServiceRequested(Boolean.TRUE.equals(request.getExportOfServiceRequested()));
         invoice.setDueDate(request.getDueDate());
+        if (request.getInvoiceDate() != null && request.getInvoiceDate().isAfter(FinancialYear.today())) {
+            throw new IllegalArgumentException("The invoice date can't be in the future");
+        }
+        invoice.setInvoiceDate(request.getInvoiceDate());
         invoice.setNotes(request.getNotes());
         invoice.setTerms(request.getTerms());
     }
@@ -658,6 +1070,13 @@ public class InvoiceDocumentService {
                         .lineTotal(net)
                         .fareAmount(req.getFareAmount())
                         .taxAmount(req.getTaxAmount())
+                        .bookingId(req.getBookingId())
+                        .bookingDocumentId(req.getBookingDocumentId())
+                        .charges(req.getCharges())
+                        .travellers(req.getTravellers())
+                        .legs(req.getLegs())
+                        .purchaseCurrency(req.getPurchaseCurrency())
+                        .purchaseRate(req.getPurchaseRate())
                         .createdAt(LocalDateTime.now())
                         .build();
                 lines.add(line);
@@ -897,7 +1316,21 @@ public class InvoiceDocumentService {
     }
 
     private InvoiceResponse toResponse(Invoice i, List<InvoiceLineItem> lines, List<InvoiceTax> taxes) {
+        List<String> bookingIds = invoiceLineSource.bookingIdsOf(i);
+        Map<String, Booking> bookings = new java.util.LinkedHashMap<>();
+        bookingRepository.findAllById(bookingIds).forEach(b -> bookings.put(b.getId(), b));
+        Map<String, com.voyra.crm.entity.BookingDocument> vouchers = new java.util.HashMap<>();
+        bookingDocumentRepository.findAllById(lines.stream().map(InvoiceLineItem::getBookingDocumentId)
+                .filter(java.util.Objects::nonNull).distinct().toList()).forEach(d -> vouchers.put(d.getId(), d));
+        // The working behind the price is for the owner and the accountant only.
+        boolean costs = !SecurityContextUtil.getCurrentUserOrThrow().isAgent();
+        Booking first = i.getBookingId() != null ? bookings.get(i.getBookingId()) : null;
         return InvoiceResponse.builder()
+                .bookings(bookingIds.stream().filter(bookings::containsKey).map(id -> InvoiceBookingRefResponse.builder()
+                        .id(id).bookingRef(BookingService.bookingRef(bookings.get(id).getBookingNumber()))
+                        .supplier(bookings.get(id).getSupplier()).build()).toList())
+                .agentName(first != null ? first.getAgentName() : null)
+                .passThroughAmount(costs ? i.getPassThroughAmount() : null)
                 .id(i.getId()).invoiceNumber(i.getInvoiceNumber()).financialYear(i.getFinancialYear())
                 .documentType(i.getDocumentType()).status(i.getStatus()).serviceCategory(i.getServiceCategory())
                 .billingModel(i.getBillingModel())
@@ -924,7 +1357,18 @@ public class InvoiceDocumentService {
                 .issuedAt(i.getIssuedAt()).issuedBy(i.getIssuedBy())
                 .cancelledAt(i.getCancelledAt()).cancelledBy(i.getCancelledBy()).cancelReason(i.getCancelReason())
                 .supersedesInvoiceId(i.getSupersedesInvoiceId()).notes(i.getNotes()).terms(i.getTerms())
-                .lines(lines.stream().map(InvoiceDocumentService::toLineResponse).toList())
+                .lines(lines.stream().map(l -> {
+                    InvoiceLineItemResponse r = toLineResponse(l);
+                    String bookingId = l.getBookingId() != null ? l.getBookingId() : i.getBookingId();
+                    Booking b = bookingId != null ? bookings.get(bookingId) : null;
+                    com.voyra.crm.entity.BookingDocument v = l.getBookingDocumentId() != null ? vouchers.get(l.getBookingDocumentId()) : null;
+                    r.setBookingId(bookingId);
+                    r.setBookingRef(b != null ? BookingService.bookingRef(b.getBookingNumber()) : null);
+                    r.setBookingDocumentId(l.getBookingDocumentId());
+                    r.setVoucherReference(v != null ? v.getReferenceNumber() : null);
+                    r.setPurchaseCost(costs && v != null ? v.getNetCost() : null);
+                    return r;
+                }).toList())
                 .taxes(taxes.stream().map(InvoiceDocumentService::toTaxResponse).toList())
                 .build();
     }
@@ -949,6 +1393,8 @@ public class InvoiceDocumentService {
                 .igstRatePercent(l.getIgstRatePercent()).cgstAmount(l.getCgstAmount())
                 .sgstAmount(l.getSgstAmount()).igstAmount(l.getIgstAmount()).lineTotal(l.getLineTotal())
                 .fareAmount(l.getFareAmount()).taxAmount(l.getTaxAmount())
+                .charges(l.getCharges())
+                .travellers(l.getTravellers()).legs(l.getLegs())
                 .build();
     }
 
@@ -957,7 +1403,7 @@ public class InvoiceDocumentService {
                 .id(i.getId()).invoiceNumber(i.getInvoiceNumber()).financialYear(i.getFinancialYear())
                 .documentType(i.getDocumentType()).status(i.getStatus()).serviceCategory(i.getServiceCategory())
                 .clientId(i.getClientId()).clientName(i.getClientName())
-                .bookingId(i.getBookingId()).bookingRef(bookingRefs.get(i.getBookingId())).agentId(i.getAgentId())
+                .bookingId(i.getBookingId()).bookingRef(bookingRefs.get(i.getId())).agentId(i.getAgentId())
                 .currencyCode(i.getCurrencyCode()).grandTotal(i.getGrandTotal()).grandTotalInr(i.getGrandTotalInr())
                 .balanceDue(i.getBalanceDue()).balanceDueInr(i.getBalanceDueInr())
                 .amountReceivedInr(scaleToInr(i.getAmountReceived(), i.getFxRateToInr()))

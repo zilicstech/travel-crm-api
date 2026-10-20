@@ -59,6 +59,7 @@ public class CustomerLedgerService {
     private final ClientRepository clientRepository;
     private final JournalService journalService;
     private final ClientCreditService clientCreditService;
+    private final BaseCurrency baseCurrency;
 
     @Transactional
     public void post(LedgerPosting posting) {
@@ -255,7 +256,7 @@ public class CustomerLedgerService {
                 // string, or every opening balance overflows the column (F-001). documentNumber
                 // (a much roomier, purely cosmetic column) carries the human-readable label instead.
                 client.getId(), "OB-" + request.getAsOfDate(), note, null,
-                "INR", BigDecimal.ONE,
+                baseCurrency.code(), BigDecimal.ONE,
                 isDebit ? magnitude : BigDecimal.ZERO, isDebit ? BigDecimal.ZERO : magnitude,
                 isDebit ? magnitude : BigDecimal.ZERO, isDebit ? BigDecimal.ZERO : magnitude));
 

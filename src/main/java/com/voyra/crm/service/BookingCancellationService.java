@@ -71,6 +71,7 @@ public class BookingCancellationService {
     private final AuthorResolver authorResolver;
     private final RevenueRecognitionTenantService revenueRecognitionTenantService;
     private final BookingInvoiceIssuer bookingInvoiceIssuer;
+    private final InvoiceDocumentService invoiceDocumentService;
 
     @Transactional(readOnly = true)
     public BookingCancelPreviewResponse preview(String bookingId, BigDecimal airlineCharge, BigDecimal supplierCharge, BigDecimal agencyFee) {
@@ -86,8 +87,8 @@ public class BookingCancellationService {
         BigDecimal chargesInvoice = invoices.isEmpty() && charge.add(fee).signum() > 0
                 ? bookingInvoiceIssuer.cancellationChargesTotal(booking, charge, fee) : null;
         BigDecimal due = !invoices.isEmpty()
-                ? spread(invoices, charge, fee).stream()
-                        .map(c -> creditNoteService.previewRefundable(c.invoice(), c.cancellationFee(), c.supplierRetained()))
+                ? spread(invoices, bookingId, charge, fee).stream()
+                        .map(c -> toInr(c.invoice(), creditNoteService.previewRefundable(c.invoice(), bookingId, c.cancellationFee(), c.supplierRetained())))
                         .reduce(held, BigDecimal::add)
                 : chargesInvoice != null
                         ? customerPaid.subtract(chargesInvoice).max(BigDecimal.ZERO)
@@ -115,6 +116,8 @@ public class BookingCancellationService {
         }
         BigDecimal charge = nz(request.getAirlineCharge()).add(nz(request.getSupplierCharge()));
         BigDecimal fee = nz(request.getAgencyFee());
+        // Off any draft invoice first (nothing is posted on a draft); a combined draft keeps its other bookings.
+        invoiceDocumentService.removeBookingFromDraft(bookingId);
         bookingAccountingSync.syncPayment(bookingId);
         List<Invoice> invoices = liveTaxInvoices(bookingId);
         BigDecimal held = held(booking);
@@ -132,15 +135,16 @@ public class BookingCancellationService {
         if (!invoices.isEmpty()) {
             // Every invoice gets its own credit note (its own GST split); money still held for the booking goes back too.
             due = held;
-            for (Credit c : spread(invoices, charge, fee)) {
+            for (Credit c : spread(invoices, bookingId, charge, fee)) {
                 CreditNoteRequest note = new CreditNoteRequest();
                 note.setInvoiceId(c.invoice().getId());
+                note.setBookingId(bookingId);
                 note.setReason(CreditNoteReason.BOOKING_CANCELLED);
                 note.setReasonNote(reason);
                 note.setCancellationFee(c.cancellationFee());
                 note.setSupplierRetained(c.supplierRetained());
                 CreditNoteResponse issued = creditNoteService.issue(creditNoteService.create(note).getId());
-                due = due.add(nz(issued.getRefundableAmount()));
+                due = due.add(toInr(c.invoice(), nz(issued.getRefundableAmount())));
                 revenueRecognitionTenantService.recognizeRetainedOnCancellation(c.invoice(), issued.getTaxableValue(), LocalDate.now());
             }
         } else if (charges != null) {
@@ -156,6 +160,9 @@ public class BookingCancellationService {
         List<SupplierInvoice> bills = supplierInvoiceRepository.findByBookingIdAndStatusNot(bookingId, SupplierInvoiceStatus.CANCELLED);
         BigDecimal expected = supplierExpected(booking, bills, charge, true);
 
+        // The supplier took its commission back on the cancelled tickets (supplierExpected recalled it on each bill).
+        booking.setProfit(nz(booking.getProfit()).subtract(nz(booking.getCommission())));
+        booking.setCommission(BigDecimal.ZERO);
         booking.setCancellationType(request.getType());
         booking.setCancellationSupplierCharge(charge);
         booking.setCancellationAirlineCharge(nz(request.getAirlineCharge()));
@@ -182,13 +189,18 @@ public class BookingCancellationService {
             if (note.getStatus() != CreditNoteStatus.ISSUED || left.signum() <= 0 || open.signum() <= 0) {
                 continue;
             }
+            // The note is in its invoice's currency, the refund in rupees: taking all that is open takes it
+            // exactly, so a note refunded in parts still closes at its full amount.
+            BigDecimal fx = nz(note.getFxRateToInr()).signum() > 0 ? note.getFxRateToInr() : BigDecimal.ONE;
+            BigDecimal openInr = open.multiply(fx).setScale(2, RoundingMode.HALF_UP);
+            BigDecimal takenInr = left.min(openInr);
             CreditNoteRefundRequest refund = new CreditNoteRefundRequest();
-            refund.setAmount(left.min(open));
+            refund.setAmount(takenInr.compareTo(openInr) == 0 ? open : takenInr.divide(fx, 2, RoundingMode.DOWN));
             refund.setPaymentMode(request.getPaymentMode());
             refund.setInstrumentRef(request.getReference());
             refund.setReceivedOn(request.getPaidOn());
             creditNoteService.refund(note.getId(), refund, toAccount);
-            left = left.subtract(refund.getAmount());
+            left = left.subtract(takenInr);
         }
         if (left.signum() > 0) {
             String proformaId = invoiceRepository.findByBookingId(bookingId).stream()
@@ -325,14 +337,19 @@ public class BookingCancellationService {
         booking.setSupplierRefundClaimAt(null);
     }
 
-    /** Cancelled bookings where either side still has money to move, or that Accounts has not cross-checked yet (once the client has paid any charges). */
+    /**
+     * Cancelled bookings where money still has to move - a refund either way, or cancellation charges the client still
+     * owes on its invoices ({@code chargesToCollectInr}) - or that Accounts has not cross-checked yet.
+     */
     @Transactional(readOnly = true)
     public List<BookingResponse> listOutstanding() {
         return bookingRepository.findByBookingStatus(BookingStatus.CANCELLED).stream()
                 .filter(b -> b.getRefundCheckedAt() == null || !settled(b))
-                // Settled but the client still owes cancellation charges: not ready to cross-check, it is collected on the invoice.
-                .filter(b -> !settled(b) || clientOwes(b.getId()).signum() == 0)
-                .map(bookingService::toResponsePublic)
+                .map(b -> {
+                    BookingResponse response = bookingService.toResponsePublic(b);
+                    response.setChargesToCollectInr(clientOwes(b.getId()));
+                    return response;
+                })
                 .toList();
     }
 
@@ -341,7 +358,9 @@ public class BookingCancellationService {
         return invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc(
                         bookingId, InvoiceDocumentType.TAX_INVOICE, InvoiceLifecycle.CANCELLED).stream()
                 .filter(i -> LIVE.contains(i.getStatus()))
-                .map(i -> nz(i.getBalanceDue()).max(BigDecimal.ZERO))
+                .map(i -> toInr(i, creditNoteService.shareOf(i, bookingId).weight().compareTo(BigDecimal.ONE) == 0
+                        ? nz(i.getBalanceDue()).max(BigDecimal.ZERO)
+                        : bookingAccountingSync.positionOn(i, bookingId, null).owed().max(BigDecimal.ZERO)))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
@@ -387,6 +406,11 @@ public class BookingCancellationService {
                 .sorted(java.util.Comparator.comparing((SupplierInvoice b) -> UNPOSTED.contains(b.getStatus())))
                 .toList();
         for (SupplierInvoice bill : ordered) {
+            // A cancelled ticket's commission goes back to the supplier: the figures below are the bill's gross.
+            if (write && nz(bill.getCommission()).signum() + nz(bill.getSupplierTds()).signum() > 0) {
+                supplierInvoiceService.recallCommission(bill.getId());
+                bill = supplierInvoiceRepository.findById(bill.getId()).orElse(bill);
+            }
             if (UNPOSTED.contains(bill.getStatus())) {
                 // An unpaid draft bill with a charge still to place becomes a real payable for that charge:
                 // the supplier kept it, so the agency owes it even though nothing was paid yet. With no charge
@@ -470,10 +494,21 @@ public class BookingCancellationService {
         return invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc(
                         bookingId, InvoiceDocumentType.TAX_INVOICE, InvoiceLifecycle.CANCELLED).stream()
                 .filter(i -> LIVE.contains(i.getStatus()))
-                // An invoice someone already credited by hand gets no second credit note - the
-                // refund then follows the money actually held, like an uninvoiced booking.
-                .filter(i -> i.getCreditNoteTotal() == null || i.getCreditNoteTotal().signum() == 0)
+                // An invoice that already credits this booking (by hand, or for this booking's earlier
+                // cancellation) gets no second credit note - the refund then follows the money actually
+                // held. Another booking's credit note on a shared invoice doesn't count.
+                .filter(i -> !creditedFor(i, bookingId))
                 .toList();
+    }
+
+    /** A credit note on the invoice already credits this booking (a credit total with no note on record counts too). */
+    private boolean creditedFor(Invoice invoice, String bookingId) {
+        List<com.voyra.crm.entity.CreditNote> notes = creditNoteRepository.findByInvoiceIdAndStatus(
+                invoice.getId(), com.voyra.crm.enums.CreditNoteStatus.ISSUED);
+        if (notes.isEmpty()) {
+            return invoice.getCreditNoteTotal() != null && invoice.getCreditNoteTotal().signum() > 0;
+        }
+        return notes.stream().anyMatch(n -> bookingId.equals(n.getBookingId() != null ? n.getBookingId() : invoice.getBookingId()));
     }
 
     /** One invoice's share of what is kept: {@code cancellationFee} is all of it, {@code supplierRetained} the supplier's part. */
@@ -484,18 +519,33 @@ public class BookingCancellationService {
      * Spreads what is kept over the invoices oldest first, each up to its taxable value: the
      * supplier's charge first, then the agency fee. One invoice gets everything it can hold, as before.
      */
-    private static List<Credit> spread(List<Invoice> invoices, BigDecimal charge, BigDecimal fee) {
+    private List<Credit> spread(List<Invoice> invoices, String bookingId, BigDecimal charge, BigDecimal fee) {
         BigDecimal chargeLeft = charge;
         BigDecimal feeLeft = fee;
         List<Credit> credits = new java.util.ArrayList<>();
         for (Invoice invoice : invoices) {
-            BigDecimal retained = chargeLeft.min(invoice.getTaxableValue());
-            BigDecimal agency = feeLeft.min(invoice.getTaxableValue().subtract(retained));
+            // On an invoice billing several bookings, only this booking's part can be credited. The charges
+            // are in rupees; an invoice billed in another currency is worked out in rupees and credited in its own.
+            BigDecimal taxable = toInr(invoice, creditNoteService.shareOf(invoice, bookingId).taxable());
+            BigDecimal retained = chargeLeft.min(taxable);
+            BigDecimal agency = feeLeft.min(taxable.subtract(retained));
             chargeLeft = chargeLeft.subtract(retained);
             feeLeft = feeLeft.subtract(agency);
-            credits.add(new Credit(invoice, retained.add(agency), retained));
+            credits.add(new Credit(invoice, toInvoice(invoice, retained.add(agency)), toInvoice(invoice, retained)));
         }
         return credits;
+    }
+
+    private static BigDecimal fx(Invoice invoice) {
+        return invoice.getFxRateToInr() != null && invoice.getFxRateToInr().signum() > 0 ? invoice.getFxRateToInr() : BigDecimal.ONE;
+    }
+
+    private static BigDecimal toInr(Invoice invoice, BigDecimal amount) {
+        return fx(invoice).compareTo(BigDecimal.ONE) == 0 ? nz(amount) : nz(amount).multiply(fx(invoice)).setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private static BigDecimal toInvoice(Invoice invoice, BigDecimal inr) {
+        return fx(invoice).compareTo(BigDecimal.ONE) == 0 ? inr : inr.divide(fx(invoice), 2, RoundingMode.HALF_UP);
     }
 
     /**

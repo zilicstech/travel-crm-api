@@ -39,4 +39,7 @@ public class AgencyResponse {
 
     @Schema(description = "When the agency was onboarded", example = "2026-08-13T09:15:22")
     private LocalDateTime createdDate;
+
+    @Schema(description = "ISO 4217 code the agency's books are kept in - set at creation, never changed", example = "INR")
+    private String baseCurrencyCode;
 }

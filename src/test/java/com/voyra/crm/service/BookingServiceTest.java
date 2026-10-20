@@ -127,11 +127,19 @@ class BookingServiceTest {
     private ClientCreditService clientCreditService;
 
 
+    @org.mockito.Spy
+
+
+    private com.voyra.crm.service.BaseCurrency baseCurrency = new com.voyra.crm.service.BaseCurrency(null);
+
+
+
     @InjectMocks
     private BookingService bookingService;
 
     @BeforeEach
     void authenticateAsOwner() {
+        TestInvoiceLines.into(bookingService, invoiceRepository, invoiceLineItemRepository, bookingDocumentRepository);
         CustomUserPrincipal principal = new CustomUserPrincipal("O1", "owner", UserType.AGENCY_OWNER, "T1");
         SecurityContextHolder.getContext().setAuthentication(
                 new UsernamePasswordAuthenticationToken(principal, null, java.util.List.of()));
@@ -563,7 +571,9 @@ class BookingServiceTest {
     @Test
     void aPricedVoucherWithAReferenceConfirmsTheBookingAndAddsItsMoney() {
         Booking booking = pendingWithoutFare();
-        when(supplierInvoiceService.draftForVoucher(booking, "V1", new BigDecimal("4000"), "PNR123"))
+        when(vendorRepository.findById("V1")).thenReturn(Optional.of(
+                com.voyra.crm.entity.Vendor.builder().id("V1").name("TripJack").build()));
+        when(supplierInvoiceService.draftForVoucher(booking, "V1", "PNR123", null, new BigDecimal("4000"), null, BigDecimal.ZERO, BigDecimal.ZERO))
                 .thenReturn(com.voyra.crm.dto.SupplierInvoiceResponse.builder().id("S1").build());
         com.voyra.crm.entity.BookingDocument v = voucher("4000", "10", "PNR123");
 
@@ -576,11 +586,188 @@ class BookingServiceTest {
         assertThat(booking.getPnr()).isEqualTo("PNR123");
         assertThat(booking.getBookingStatus()).isEqualTo(BookingStatus.CONFIRMED);
         assertThat(v.getSupplierInvoiceId()).isEqualTo("S1");
+        // Made without a supplier: it takes the voucher's, so it can be invoiced with that supplier's other bookings.
+        assertThat(booking.getVendorId()).isEqualTo("V1");
+        assertThat(booking.getSupplier()).isEqualTo("TripJack");
+    }
+
+    /** A flight voucher's commission is the agency's: it goes on the booking's profit and on the supplier bill. */
+    @Test
+    void aVoucherWithCommissionAddsItToTheBookingsProfitAndItsBill() {
+        Booking booking = pendingWithoutFare();
+        when(vendorRepository.findById("V1")).thenReturn(Optional.of(
+                com.voyra.crm.entity.Vendor.builder().id("V1").name("TripJack").build()));
+        com.voyra.crm.entity.BookingDocument v = voucher("10000", "10", "PNR1");
+        v.setCharges(new java.util.LinkedHashMap<>(java.util.Map.of("basic", new BigDecimal("8200"), "yq", new BigDecimal("1800"))));
+        BookingService.applyCommission(v, MarkupMode.PERCENT, new BigDecimal("5"), null);
+        when(supplierInvoiceService.draftForVoucher(booking, "V1", "PNR1", null, new BigDecimal("10000"), null,
+                new BigDecimal("410.00"), new BigDecimal("8.20")))
+                .thenReturn(com.voyra.crm.dto.SupplierInvoiceResponse.builder().id("S1").build());
+
+        bookingService.applyVoucher(booking, v, "V1", false);
+
+        assertThat(booking.getCommission()).isEqualByComparingTo("410");
+        // 11,000 - 10,000 + 410 commission.
+        assertThat(booking.getProfit()).isEqualByComparingTo("1410");
+        assertThat(v.getSupplierInvoiceId()).isEqualTo("S1");
+
+        bookingService.reverseVoucher(booking, v, false);
+        assertThat(booking.getCommission()).isEqualByComparingTo("0");
+        assertThat(booking.getProfit()).isEqualByComparingTo("0");
+    }
+
+    @Test
+    void commissionIsOnFlightsWithASupplierOnly() {
+        Booking hotel = pendingWithoutFare();
+        hotel.setType(com.voyra.crm.enums.BookingType.HOTEL);
+        com.voyra.crm.entity.BookingDocument v = voucher("10000", "10", "HV1");
+        BookingService.applyCommission(v, MarkupMode.FLAT, new BigDecimal("300"), null);
+        assertThatThrownBy(() -> bookingService.applyVoucher(hotel, v, "V1", false)).hasMessageContaining("flight tickets only");
+
+        Booking flight = pendingWithoutFare();
+        assertThatThrownBy(() -> bookingService.applyVoucher(flight, v, null, false)).hasMessageContaining("Pick the supplier");
+    }
+
+    /** The accountant's commission moves the booking's profit and the voucher's bill; hotels take none. */
+    @Test
+    void theAccountantsCommissionMovesTheProfitAndTheBill() {
+        Booking booking = pendingWithoutFare();
+        booking.setSellingPrice(new BigDecimal("11000"));
+        booking.setNetCost(new BigDecimal("10000"));
+        com.voyra.crm.entity.BookingDocument v = voucher("10000", "10", "PNR1");
+        v.setSupplierInvoiceId("S1");
+        com.voyra.crm.entity.BookingDocument priced = com.voyra.crm.entity.BookingDocument.builder().netCost(new BigDecimal("10000")).build();
+        BookingService.applyCommission(priced, MarkupMode.FLAT, new BigDecimal("410"), null);
+
+        bookingService.changeCommission(booking, v, priced);
+
+        assertThat(booking.getCommission()).isEqualByComparingTo("410");
+        assertThat(booking.getProfit()).isEqualByComparingTo("1410");
+        org.mockito.Mockito.verify(supplierInvoiceService).setDraftCommission("S1", new BigDecimal("410.00"), new BigDecimal("8.20"));
+
+        booking.setType(com.voyra.crm.enums.BookingType.HOTEL);
+        assertThatThrownBy(() -> bookingService.changeCommission(booking, v, priced)).hasMessageContaining("flight tickets only");
+    }
+
+    /** Bought in AED: commission and TDS stay in AED like the bill; the booking gets the commission in base. */
+    @Test
+    void aForeignVouchersCommissionIsInItsCurrencyAndInBaseOnTheBooking() {
+        com.voyra.crm.entity.BookingDocument v = voucher("22850", "10", "PNR1");
+        v.setPurchaseCurrency("AED");
+        v.setPurchasePrice(new BigDecimal("1000"));
+        v.setPurchaseRate(new BigDecimal("22.85"));
+
+        BookingService.applyCommission(v, MarkupMode.FLAT, new BigDecimal("50"), new BigDecimal("5"));
+
+        assertThat(v.getCommission()).isEqualByComparingTo("50");
+        assertThat(v.getSupplierTds()).isEqualByComparingTo("2.50");
+        assertThat(v.getCommissionInr()).isEqualByComparingTo("1142.50");
+    }
+
+    /** One supplier per booking: beside another voucher, a voucher with a different supplier is refused. */
+    @Test
+    void aSecondVoucherWithAnotherSupplierIsRefused() {
+        Booking booking = pendingWithoutFare();
+        booking.setVendorId("V1");
+        booking.setSupplier("TripJack");
+        when(bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc("B1")).thenReturn(List.of(
+                com.voyra.crm.entity.BookingDocument.builder().id("D0").bookingId("B1").vendorId("V1").build()));
+        com.voyra.crm.entity.BookingDocument v = voucher("4000", "10", "PNR2");
+
+        assertThatThrownBy(() -> bookingService.applyVoucher(booking, v, "V2", false))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("with TripJack");
+        assertThat(booking.getNetCost()).isEqualByComparingTo("0");
+    }
+
+    /** The booking's only voucher moved to another supplier: the booking follows it. */
+    @Test
+    void theOnlyVoucherSetsTheBookingsSupplier() {
+        Booking booking = pendingWithoutFare();
+        booking.setVendorId("V1");
+        com.voyra.crm.entity.BookingDocument v = voucher("4000", "10", "PNR1");
+        when(bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc("B1")).thenReturn(List.of(v));
+        when(vendorRepository.findById("V2")).thenReturn(Optional.of(
+                com.voyra.crm.entity.Vendor.builder().id("V2").name("Akbar").build()));
+        when(supplierInvoiceService.draftForVoucher(booking, "V2", "PNR1", null, new BigDecimal("4000"), null, BigDecimal.ZERO, BigDecimal.ZERO))
+                .thenReturn(com.voyra.crm.dto.SupplierInvoiceResponse.builder().id("S1").build());
+
+        bookingService.applyVoucher(booking, v, "V2", false);
+
+        assertThat(booking.getVendorId()).isEqualTo("V2");
+        assertThat(booking.getSupplier()).isEqualTo("Akbar");
+    }
+
+    @Test
+    void aBookingWithVouchersKeepsTheirSupplier() {
+        Booking booking = pendingFlight(null, "0");
+        booking.setVendorId("V1");
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
+        when(bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc("B1")).thenReturn(List.of(live("D1", "PNR1", "4400")));
+        BookingUpdateRequest request = new BookingUpdateRequest();
+        request.setVendorId("V2");
+
+        assertThatThrownBy(() -> bookingService.updateBooking("B1", request))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("change it on its voucher");
+    }
+
+    @Test
+    void aVoucherBoughtInAnotherCurrencyDraftsItsBillInThatCurrency() {
+        Booking booking = pendingWithoutFare();
+        when(vendorRepository.findById("V1")).thenReturn(Optional.of(
+                com.voyra.crm.entity.Vendor.builder().id("V1").name("TripJack").build()));
+        com.voyra.crm.entity.BookingDocument v = voucher("22850", "10", "PNR123");
+        v.setPurchaseCurrency("AED");
+        v.setPurchasePrice(new BigDecimal("1000"));
+        v.setPurchaseRate(new BigDecimal("22.85"));
+        when(supplierInvoiceService.draftForVoucher(booking, "V1", "PNR123", "AED", new BigDecimal("1000"), new BigDecimal("22.85"), BigDecimal.ZERO, BigDecimal.ZERO))
+                .thenReturn(com.voyra.crm.dto.SupplierInvoiceResponse.builder().id("S2").build());
+
+        bookingService.applyVoucher(booking, v, "V1", false);
+
+        assertThat(booking.getNetCost()).isEqualByComparingTo("22850");
+        assertThat(v.getSupplierInvoiceId()).isEqualTo("S2");
+    }
+
+    @Test
+    void theAccountantRemarkIsTrimmedAndABlankOneClearsIt() {
+        Booking booking = pendingWithoutFare();
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
+
+        bookingService.updateAccountantRemark("B1", "  Done (Zohaib) ");
+        assertThat(booking.getAccountantRemark()).isEqualTo("Done (Zohaib)");
+
+        bookingService.updateAccountantRemark("B1", "   ");
+        assertThat(booking.getAccountantRemark()).isNull();
+    }
+
+    @Test
+    void assignByIsTheLeadsCreatorElseTheBookingsCreator() {
+        Booking fromLead = pendingWithoutFare();
+        fromLead.setLeadId("L1");
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(fromLead));
+        when(leadRepository.findById("L1")).thenReturn(Optional.of(com.voyra.crm.entity.Lead.builder().id("L1")
+                .createdBy("A9").createdByName("Ryan Mathew").build()));
+        assertThat(bookingService.getBooking("B1").getAssignedByName()).isEqualTo("Ryan Mathew");
+
+        Booking adHoc = pendingWithoutFare();
+        adHoc.setCreatedBy("T1");
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(adHoc));
+        when(tenantRepository.findById("T1")).thenReturn(Optional.of(com.voyra.crm.entity.Tenant.builder().id("T1").ownerName("Dana Owner").build()));
+        assertThat(bookingService.getBooking("B1").getAssignedByName()).isEqualTo("Dana Owner");
+    }
+
+    @Test
+    void aVoucherWithNoSupplierIsRefused() {
+        Booking booking = pendingWithoutFare();
+        com.voyra.crm.entity.BookingDocument doc = com.voyra.crm.entity.BookingDocument.builder().id("D1").referenceNumber("PNR123").build();
+
+        assertThatThrownBy(() -> bookingService.applyVoucher(booking, doc, null, false)).hasMessage("Pick the supplier of this voucher");
     }
 
     @Test
     void anUnpricedDocumentLeavesTheBookingPendingAndDraftsNoBill() {
         Booking booking = pendingWithoutFare();
+        booking.setVendorId("V1");
         com.voyra.crm.entity.BookingDocument doc = com.voyra.crm.entity.BookingDocument.builder().id("D1").referenceNumber("PNR123").build();
 
         bookingService.applyVoucher(booking, doc, null, false);
@@ -605,6 +792,9 @@ class BookingServiceTest {
     @Test
     void removingTheOnlyPricedVoucherPutsTheBookingBackToPending() {
         Booking booking = pendingFlight("PNR1", "0");
+        booking.setVendorId("V1");
+        org.mockito.Mockito.lenient().when(supplierInvoiceService.draftForVoucher(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(com.voyra.crm.dto.SupplierInvoiceResponse.builder().id("SI9").build());
         bookingService.applyVoucher(booking, voucher("1000", "20", "PNR1"), null, false);
         assertThat(booking.getBookingStatus()).isEqualTo(BookingStatus.CONFIRMED);
         com.voyra.crm.entity.BookingDocument applied = voucher("1000", "20", "PNR1");
@@ -623,9 +813,12 @@ class BookingServiceTest {
                 .createdAt(issued.minusHours(1)).build();
         com.voyra.crm.entity.BookingDocument after = com.voyra.crm.entity.BookingDocument.builder()
                 .createdAt(issued.plusHours(1)).build();
-        assertThat(BookingService.isInvoiced(before, issued)).isTrue();
-        assertThat(BookingService.isInvoiced(after, issued)).isFalse();
-        assertThat(BookingService.isInvoiced(before, null)).isFalse();
+        assertThat(new InvoiceLineSource.Invoiced(BigDecimal.ZERO, java.util.Set.of(), issued).covers(before)).isTrue();
+        assertThat(new InvoiceLineSource.Invoiced(BigDecimal.ZERO, java.util.Set.of(), issued).covers(after)).isFalse();
+        assertThat(new InvoiceLineSource.Invoiced(BigDecimal.ZERO, java.util.Set.of(), null).covers(before)).isFalse();
+        // A voucher an issued invoice line names is invoiced whenever it was added.
+        com.voyra.crm.entity.BookingDocument named = after.toBuilder().id("V1").build();
+        assertThat(new InvoiceLineSource.Invoiced(BigDecimal.ZERO, java.util.Set.of("V1"), null).covers(named)).isTrue();
     }
 
     @Test
@@ -643,6 +836,9 @@ class BookingServiceTest {
     void secondVoucherAddsUpAndAlertsAccountsOnAConfirmedBooking() {
         Booking booking = pendingFlight("PNR1", "5000.00");
         booking.setBookingStatus(BookingStatus.CONFIRMED);
+        booking.setVendorId("V1");
+        org.mockito.Mockito.lenient().when(supplierInvoiceService.draftForVoucher(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(com.voyra.crm.dto.SupplierInvoiceResponse.builder().id("SI9").build());
 
         bookingService.applyVoucher(booking, voucher("1000", "20", "HTL-9"), null, false);
 
@@ -686,13 +882,25 @@ class BookingServiceTest {
         Booking booking = pendingFlight("PNR1", "4400.00");
         com.voyra.crm.entity.BookingDocument v = voucher("4000", "10", "PNR1");
         v.setSellingPrice(new BigDecimal("4400"));
-        Invoice issued = Invoice.builder().id("I1").status(com.voyra.crm.enums.InvoiceLifecycle.ISSUED).build();
+        Invoice issued = Invoice.builder().id("I1").bookingId("B1").status(com.voyra.crm.enums.InvoiceLifecycle.ISSUED).build();
         when(invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc(org.mockito.ArgumentMatchers.eq("B1"),
                 org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any())).thenReturn(List.of(issued));
         when(invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc("I1")).thenReturn(List.of(
                 com.voyra.crm.entity.InvoiceLineItem.builder().lineSubtotal(new BigDecimal("4400")).build()));
 
         assertThatThrownBy(() -> bookingService.reverseVoucher(booking, v)).hasMessageContaining("already invoiced");
+    }
+
+    @Test
+    void aVoucherOnADraftInvoiceCannotBeChangedUntilTheDraftGoes() {
+        com.voyra.crm.entity.BookingDocument v = voucher("4000", "10", "PNR1");
+        when(invoiceRepository.findDraftsForBooking("B1")).thenReturn(List.of(
+                Invoice.builder().id("I9").bookingId("B1").status(com.voyra.crm.enums.InvoiceLifecycle.DRAFT).build()));
+        when(invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc("I9")).thenReturn(List.of(
+                com.voyra.crm.entity.InvoiceLineItem.builder().invoiceId("I9").bookingId("B1").bookingDocumentId("D1")
+                        .lineSubtotal(new BigDecimal("4400")).build()));
+
+        assertThatThrownBy(() -> bookingService.assertNotInvoiced(v)).hasMessageContaining("on a draft invoice");
     }
 
     // ---- CRB-8: the booking's reference follows its live vouchers ------------------------
@@ -713,6 +921,21 @@ class BookingServiceTest {
         assertThat(booking.getPnr()).isEqualTo("ET2");
     }
 
+    /** Many PNRs fit the 100-character reference whole: the ones that don't are counted, never cut mid-PNR. */
+    @Test
+    void manyVoucherReferencesAreShortenedWithACountNotCutOff() {
+        Booking booking = pendingFlight(null, "0");
+        List<com.voyra.crm.entity.BookingDocument> vouchers = new java.util.ArrayList<>();
+        for (int i = 1; i <= 15; i++) vouchers.add(live("D" + i, "PNR-ABCDE" + i, "100"));
+        when(bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc("B1")).thenReturn(vouchers);
+
+        bookingService.syncReference(booking, null);
+
+        assertThat(booking.getPnr()).hasSizeLessThanOrEqualTo(100).startsWith("PNR-ABCDE1, PNR-ABCDE2,").matches(".*PNR-ABCDE\\d+ \\+\\d+ more");
+        int shown = booking.getPnr().split(", ").length;
+        assertThat(booking.getPnr()).endsWith("+" + (15 - shown) + " more");
+    }
+
     @Test
     void anEditedVoucherReferenceIsTheBookingsNewReference() {
         Booking booking = pendingFlight(null, "4400.00");
@@ -723,6 +946,29 @@ class BookingServiceTest {
         bookingService.syncReference(booking, "HV1");
 
         assertThat(booking.getHotelConfirmationNo()).isEqualTo("HV1C");
+    }
+
+    /** A priced voucher saved without its PNR, then edited to add it: the booking is now booked. */
+    @Test
+    void aReferenceAddedToAPricedVoucherConfirmsThePendingBooking() {
+        Booking booking = pendingFlight(null, "11000.00");
+        when(bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc("B1")).thenReturn(List.of(live("D1", "23453453", "11000")));
+
+        bookingService.syncReference(booking, null);
+
+        assertThat(booking.getPnr()).isEqualTo("23453453");
+        assertThat(booking.getBookingStatus()).isEqualTo(com.voyra.crm.enums.BookingStatus.CONFIRMED);
+    }
+
+    /** Saved before the fix above: reference and price already there, still Pending - the next voucher save confirms it. */
+    @Test
+    void aPendingBookingAlreadyHoldingItsReferenceAndPriceIsConfirmedOnTheNextSync() {
+        Booking booking = pendingFlight("23453453", "11000.00");
+        when(bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc("B1")).thenReturn(List.of(live("D1", "23453453", "11000")));
+
+        bookingService.syncReference(booking, "23453453");
+
+        assertThat(booking.getBookingStatus()).isEqualTo(com.voyra.crm.enums.BookingStatus.CONFIRMED);
     }
 
     @Test

@@ -15,7 +15,8 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * Allocates {@code {prefix}/{fy}/{seq}} document numbers (e.g. {@code INV/2026-27/0001}),
+ * Allocates document numbers - {@code ITI00000001} for invoices and credit notes (one running series per
+ * prefix), {@code {prefix}/{fy}/{seq}} (e.g. {@code RCP/2026-27/0001}) for the rest -
  * concurrency-safe under Postgres. The increment is a raw {@code UPDATE ... RETURNING}
  * statement, not a JPA entity save: Postgres takes a row-level lock on the target row for the
  * rest of the caller's transaction, so concurrent issues on the same (kind, financial year)
@@ -37,7 +38,7 @@ public class DocumentNumberService {
 
     @Transactional
     public String next(DocumentKind kind, LocalDate asOf) {
-        String financialYear = FinancialYear.of(asOf);
+        String financialYear = runsAcrossYears(kind) ? ALL_YEARS : FinancialYear.of(asOf);
         String prefix = defaultPrefix(kind);
 
         Long value = incrementAndReturn(kind, financialYear);
@@ -49,7 +50,23 @@ public class DocumentNumberService {
                         "Unable to allocate a document number for " + kind + "/" + financialYear);
             }
         }
-        return "%s/%s/%04d".formatted(prefix, financialYear, value);
+        return format(prefix, financialYear, value);
+    }
+
+    /** The counter key of a series that never resets - invoices and credit notes, numbered as the agency's old software did. */
+    static final String ALL_YEARS = "ALL";
+
+    /** Customer GST documents (every invoice series and credit notes) run on across financial years: ITI00001323. */
+    static boolean runsAcrossYears(DocumentKind kind) {
+        return switch (kind) {
+            case PROFORMA, RECEIPT, PAYMENT_VOUCHER, JOURNAL -> false;
+            default -> true;
+        };
+    }
+
+    static String format(String prefix, String financialYear, long value) {
+        return ALL_YEARS.equals(financialYear) ? "%s%08d".formatted(prefix, value)
+                : "%s/%s/%04d".formatted(prefix, financialYear, value);
     }
 
     /** Null means no row exists yet for this (kind, financialYear) pair. */
@@ -70,10 +87,10 @@ public class DocumentNumberService {
         String id = UniqueIdResolver.resolve(documentNumberSequenceRepository::existsById);
         int inserted = jdbcTemplate.update("""
                 INSERT INTO document_number_sequence (id, document_kind, financial_year, prefix, last_value, padding, updated_at)
-                VALUES (?, ?, ?, ?, 0, 4, ?)
+                VALUES (?, ?, ?, ?, 0, ?, ?)
                 ON CONFLICT (document_kind, financial_year) DO NOTHING
                 """,
-                id, kind.name(), financialYear, prefix, LocalDateTime.now());
+                id, kind.name(), financialYear, prefix, ALL_YEARS.equals(financialYear) ? 8 : 4, LocalDateTime.now());
         if (inserted > 0) {
             log.info("Document number sequence seeded: kind={}, financialYear={}, prefix={}", kind, financialYear, prefix);
         }

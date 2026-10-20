@@ -28,6 +28,11 @@ class PublicProposalExpiryTest {
     @Mock
     private PublicProposalTenantService tenantService;
 
+    @org.mockito.Spy
+
+    private com.voyra.crm.service.BaseCurrency baseCurrency = new com.voyra.crm.service.BaseCurrency(null);
+
+
     @InjectMocks
     private PublicProposalService publicProposalService;
 

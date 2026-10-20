@@ -34,6 +34,7 @@ public class ClientCreditService {
     private final BookingRepository bookingRepository;
     private final CustomerLedgerEntryRepository ledgerRepository;
     private final AuditService auditService;
+    private final BaseCurrency baseCurrency;
 
     @Transactional(readOnly = true)
     public ClientCreditResponse credit(Client client) {
@@ -92,8 +93,8 @@ public class ClientCreditService {
                             .oldValue(available.toPlainString()).newValue(available.subtract(increase).toPlainString()).build()));
             return;
         }
-        throw new IllegalStateException("This takes " + client.getName() + " " + BookingNextStep.rupees(over)
-                + " over their credit limit (" + BookingNextStep.rupees(available.max(BigDecimal.ZERO))
+        throw new IllegalStateException("This takes " + client.getName() + " " + BookingNextStep.money(over, baseCurrency.code())
+                + " over their credit limit (" + BookingNextStep.money(available.max(BigDecimal.ZERO), baseCurrency.code())
                 + " available). Ask the owner to raise the limit.");
     }
 

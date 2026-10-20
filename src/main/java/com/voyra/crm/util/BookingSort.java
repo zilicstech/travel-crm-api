@@ -13,7 +13,10 @@ public final class BookingSort {
             "sellingPrice", "sellingPrice",
             "bookingDate", "bookingDate",
             // "Travel date": each type's own first date (flight departure, check-in, transfer day).
-            "journeyDate", "departureDate");
+            "journeyDate", "departureDate",
+            "agentName", "agentName",
+            "supplier", "supplier",
+            "netCost", "netCost");
 
     private BookingSort() {
     }

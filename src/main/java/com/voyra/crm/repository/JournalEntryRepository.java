@@ -28,5 +28,8 @@ public interface JournalEntryRepository extends JpaRepository<JournalEntry, Stri
 
     List<JournalEntry> findByIdIn(Collection<String> ids);
 
+    /** Every entry one document posted (an invoice: raised, recognised, reversed), oldest first. */
+    List<JournalEntry> findBySourceIdOrderByEntryDateAscEntryNumberAsc(String sourceId);
+
     List<JournalEntry> findByStatus(JournalStatus status);
 }

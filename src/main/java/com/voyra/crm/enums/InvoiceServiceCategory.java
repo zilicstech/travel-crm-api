@@ -68,15 +68,13 @@ public enum InvoiceServiceCategory {
 
     /**
      * The {@link InvoiceBillingModel} a fresh draft in this category starts with when the caller
-     * supplied none - always overridable per invoice, never a stored agency setting. Air tickets
-     * default to the pass-through/commission-agent treatment the client's own demo invoice uses
-     * (no GST, framed as a reimbursement); every other category defaults to the status quo,
-     * principal/full-package taxation.
+     * supplied none - always overridable per invoice, never a stored agency setting. Every category is
+     * billed as commission agent: the supplier's cost passes through to the client and GST is on the
+     * agency's markup only (the client's decision, 2026-10-20 - invoices are generated from vouchers,
+     * each carrying its own cost and markup). An invoice raised before that as principal keeps its model.
      */
     public InvoiceBillingModel defaultBillingModel() {
-        return (this == AIR_INTERNATIONAL || this == AIR_DOMESTIC)
-                ? InvoiceBillingModel.COMMISSION_AGENT
-                : InvoiceBillingModel.PRINCIPAL;
+        return InvoiceBillingModel.COMMISSION_AGENT;
     }
 
     /**

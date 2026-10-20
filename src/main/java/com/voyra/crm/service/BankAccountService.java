@@ -32,6 +32,7 @@ public class BankAccountService {
     private final BankTransactionRepository bankTransactionRepository;
     private final PaymentReceiptRepository paymentReceiptRepository;
     private final SupplierPaymentRepository supplierPaymentRepository;
+    private final BaseCurrency baseCurrency;
 
     @Transactional
     public BankAccountResponse create(BankAccountRequest request) {
@@ -89,12 +90,12 @@ public class BankAccountService {
         }
     }
 
-    private static void apply(BankAccount account, BankAccountRequest request) {
+    private void apply(BankAccount account, BankAccountRequest request) {
         account.setAccountName(request.getAccountName());
         account.setAccountNumber(request.getAccountNumber());
         account.setIfsc(request.getIfsc());
         account.setBranch(request.getBranch());
-        account.setCurrencyCode(request.getCurrencyCode() != null ? request.getCurrencyCode() : "INR");
+        account.setCurrencyCode(request.getCurrencyCode() != null ? request.getCurrencyCode() : baseCurrency.code());
         account.setLedgerAccountCode(request.getLedgerAccountCode());
         account.setOpeningBalance(request.getOpeningBalance() != null ? request.getOpeningBalance() : BigDecimal.ZERO);
     }

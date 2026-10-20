@@ -66,6 +66,11 @@ class LeadBusinessRuleTest {
     @Mock
     private AuditService auditService;
 
+    @org.mockito.Spy
+
+    private com.voyra.crm.service.BaseCurrency baseCurrency = new com.voyra.crm.service.BaseCurrency(null);
+
+
     @InjectMocks
     private LeadService leadService;
 

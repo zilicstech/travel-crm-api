@@ -67,4 +67,13 @@ public class AgencyProfileResponse {
 
     @Schema(example = "MG Road branch, Bengaluru")
     private String bankBranch;
+
+    @Schema(description = "Printed in the invoice header", example = "9993341873")
+    private String contactPhone;
+
+    @Schema(description = "Printed in the invoice header", example = "info@tourwayz.com")
+    private String contactEmail;
+
+    @Schema(description = "Printed in the invoice header", example = "www.tourwayz.com")
+    private String website;
 }

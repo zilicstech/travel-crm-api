@@ -47,6 +47,19 @@ public class BookingResponse {
     @Schema(description = "Denormalized snapshot, live-synced on agent rename", example = "Liam Smith")
     private String agentName;
 
+    @Schema(description = "Who gave the work: the agent or owner who created the booking's lead, or the booking itself when it has no lead",
+            example = "Ryan Mathew")
+    private String assignedByName;
+
+    @Schema(description = "Selling price not on an issued invoice yet, before tax (zero once cancelled)", example = "2000.00")
+    private BigDecimal uninvoicedPrice;
+
+    @Schema(description = "The live draft invoice that bills this booking, if any")
+    private String draftInvoiceId;
+
+    @Schema(description = "The accountant's own short note on the booking", example = "Done (Zohaib)")
+    private String accountantRemark;
+
     @Schema(description = "Null for a standalone booking created directly from the Bookings tab", example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String leadId;
 
@@ -259,6 +272,9 @@ public class BookingResponse {
 
     @Schema(description = "Cancellation: what the customer is owed back in total (refundedTotalInr is what has been paid so far)", example = "7500.00")
     private BigDecimal customerRefundDue;
+
+    @Schema(description = "Cancelled booking, refunds list only: what the client still owes on its invoices (e.g. cancellation charges)", example = "4680.00")
+    private BigDecimal chargesToCollectInr;
 
     @Schema(description = "Cancellation: what the supplier owes the agency back", example = "6000.00")
     private BigDecimal supplierRefundExpected;

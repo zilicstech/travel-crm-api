@@ -52,6 +52,24 @@ public class ProposalItemResponse {
     @Schema(description = "The markup value under markupMode", example = "5.00")
     private BigDecimal markupValue;
 
+    @Schema(description = "Currency the purchase price was typed in; null when typed in base", example = "AED")
+    private String purchaseCurrency;
+
+    @Schema(description = "The purchase price as typed, in purchaseCurrency", example = "1000.00")
+    private java.math.BigDecimal purchasePrice;
+
+    @Schema(description = "1 unit of purchaseCurrency in base, as entered", example = "22.85")
+    private java.math.BigDecimal purchaseRate;
+
+    @Schema(description = "Currency a FLAT markup was typed in", example = "AED")
+    private String markupCurrency;
+
+    @Schema(description = "The FLAT markup as typed, in markupCurrency", example = "100.00")
+    private java.math.BigDecimal markupInput;
+
+    @Schema(description = "1 unit of markupCurrency in base, as entered", example = "22.85")
+    private java.math.BigDecimal markupRate;
+
     @Schema(description = "Null means a plain add-on that always counts. A shared value means "
             + "this line is one of several mutually-exclusive alternatives - exactly one line "
             + "per group is selected and counted.", example = "svc-flight-1")

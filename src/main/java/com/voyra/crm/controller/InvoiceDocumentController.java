@@ -2,6 +2,7 @@ package com.voyra.crm.controller;
 
 import com.voyra.crm.dto.InvoiceCancelRequest;
 import com.voyra.crm.dto.InvoiceDraftRequest;
+import com.voyra.crm.dto.InvoiceDraftsRequest;
 import com.voyra.crm.dto.InvoiceResponse;
 import com.voyra.crm.dto.TaxPreviewRequest;
 import com.voyra.crm.dto.TaxPreviewResponse;
@@ -50,12 +51,22 @@ public class InvoiceDocumentController {
 
     private final TaxEngine taxEngine;
     private final InvoiceDocumentService invoiceDocumentService;
+    private final com.voyra.crm.service.InvoicePurchaseService invoicePurchaseService;
+    private final com.voyra.crm.service.BaseCurrency baseCurrency;
 
     @PostMapping
     @PreAuthorize("hasAnyRole('AGENCY_OWNER', 'ACCOUNTANT')")
     @Operation(summary = "Create a draft invoice for a booking")
     public ResponseEntity<InvoiceResponse> create(@Valid @RequestBody InvoiceDraftRequest request) {
         return ResponseEntity.ok(invoiceDocumentService.createDraft(request));
+    }
+
+    @PostMapping("/drafts")
+    @PreAuthorize("hasAnyRole('AGENCY_OWNER', 'ACCOUNTANT')")
+    @Operation(summary = "Create one draft invoice for several bookings",
+            description = "Bookings of the same client, supplier, agent and invoice type, confirmed, with something left to bill and on no other draft. One line per voucher not yet invoiced; GST on the markup only.")
+    public ResponseEntity<InvoiceResponse> createDrafts(@Valid @RequestBody InvoiceDraftsRequest request) {
+        return ResponseEntity.status(org.springframework.http.HttpStatus.CREATED).body(invoiceDocumentService.createDrafts(request.getBookingIds()));
     }
 
     @GetMapping
@@ -95,9 +106,10 @@ public class InvoiceDocumentController {
 
     @PostMapping("/{id}/issue")
     @PreAuthorize("hasAnyRole('AGENCY_OWNER', 'ACCOUNTANT')")
-    @Operation(summary = "Issue a draft as a tax invoice", description = "Allocates the invoice number and locks the FX rate. Irreversible - the invoice becomes read-only.")
-    public ResponseEntity<InvoiceResponse> issue(@PathVariable String id) {
-        return ResponseEntity.ok(invoiceDocumentService.issue(id));
+    @Operation(summary = "Issue a draft as a tax invoice", description = "Allocates the invoice number and locks the FX rate. Irreversible - the invoice becomes read-only. Each purchase entry books that voucher's supplier bill in the same step.")
+    public ResponseEntity<InvoiceResponse> issue(@PathVariable String id,
+            @jakarta.validation.Valid @RequestBody(required = false) com.voyra.crm.dto.InvoiceIssueRequest request) {
+        return ResponseEntity.ok(invoicePurchaseService.issue(id, request));
     }
 
     @PostMapping("/{id}/cancel")
@@ -144,7 +156,7 @@ public class InvoiceDocumentController {
                 request.getSupplyNature(),
                 request.getPlaceOfSupplyCodeOverride(),
                 Boolean.TRUE.equals(request.getExportOfServiceRequested()),
-                request.getCurrencyCode() != null ? request.getCurrencyCode() : "INR"));
+                request.getCurrencyCode() != null ? request.getCurrencyCode() : baseCurrency.code()));
 
         return ResponseEntity.ok(TaxPreviewResponse.builder()
                 .taxTreatment(result.taxTreatment())
@@ -164,5 +176,19 @@ public class InvoiceDocumentController {
                 .tcsAmount(result.tcsAmount())
                 .grandTotal(result.grandTotal())
                 .build());
+    }
+
+    @GetMapping("/{id}/file")
+    @PreAuthorize("hasAnyRole('AGENCY_OWNER', 'ACCOUNTANT')")
+    @Operation(summary = "View an uploaded invoice's file", description = "The file of an invoice raised in the agency's own software and uploaded on the booking.")
+    public ResponseEntity<org.springframework.core.io.Resource> uploadedFile(@PathVariable String id) {
+        InvoiceDocumentService.UploadedInvoiceFile content = invoiceDocumentService.getUploadedFile(id);
+        org.springframework.http.MediaType mediaType = content.contentType() != null
+                ? org.springframework.http.MediaType.parseMediaType(content.contentType())
+                : org.springframework.http.MediaType.APPLICATION_OCTET_STREAM;
+        return ResponseEntity.ok()
+                .contentType(mediaType)
+                .header(org.springframework.http.HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + content.filename() + "\"")
+                .body(content.resource());
     }
 }

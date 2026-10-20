@@ -24,14 +24,15 @@ import java.time.LocalDate;
 public class ExchangeRateLookupController {
 
     private final ExchangeRateService exchangeRateService;
+    private final com.voyra.crm.service.BaseCurrency baseCurrency;
 
     @GetMapping("/latest")
     @Operation(summary = "Most recent stored rate on or before a date (default today); 204 when none is stored")
     public ResponseEntity<ExchangeRateResponse> latest(
             @RequestParam String base,
-            @RequestParam(defaultValue = "INR") String quote,
+            @RequestParam(required = false) String quote,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
-        return exchangeRateService.latest(base, quote, date != null ? date : LocalDate.now())
+        return exchangeRateService.latest(base, quote != null ? quote : baseCurrency.code(), date != null ? date : LocalDate.now())
                 .map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.noContent().build());
     }

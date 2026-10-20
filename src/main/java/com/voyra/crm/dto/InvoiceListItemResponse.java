@@ -46,7 +46,7 @@ public class InvoiceListItemResponse {
     @Schema(example = "8f2a1c3d-58cc-4372-a567-0e02b2c3d479")
     private String bookingId;
 
-    @Schema(description = "The booking's number, as people know it", example = "BK-00042")
+    @Schema(description = "The numbers of every booking the invoice bills, as people know them", example = "BK-00042, BK-00043")
     private String bookingRef;
 
     @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")

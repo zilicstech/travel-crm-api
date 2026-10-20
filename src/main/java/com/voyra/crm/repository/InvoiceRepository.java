@@ -17,15 +17,35 @@ import java.util.Optional;
 @Repository
 public interface InvoiceRepository extends JpaRepository<Invoice, String>, JpaSpecificationExecutor<Invoice> {
 
-    /** At most one DRAFT tax invoice per booking, mirroring idx_invoice_booking_draft - checked
-     *  here first for a clean 409 instead of surfacing a raw constraint violation. Several
-     *  issued invoices against one booking are legal (advance + balance); only a second
-     *  concurrent draft is not. */
-    boolean existsByBookingIdAndDocumentTypeAndStatus(String bookingId, InvoiceDocumentType documentType, InvoiceLifecycle status);
+    /*
+     * "An invoice of booking X" means any invoice with a line billing X (an invoice may cover several
+     * bookings of one client), or whose first booking is X - every query below that takes a
+     * bookingId reads it that way.
+     */
 
-    List<Invoice> findByBookingId(String bookingId);
+    /** At most one DRAFT tax invoice holds a booking - checked by InvoiceDocumentService under the booking's row lock. */
+    @Query("SELECT COUNT(i) > 0 FROM Invoice i WHERE (i.bookingId = :bookingId OR i.id IN (SELECT l.invoiceId FROM InvoiceLineItem l WHERE l.bookingId = :bookingId)) AND i.documentType = :documentType AND i.status = :status")
+    boolean existsByBookingIdAndDocumentTypeAndStatus(@Param("bookingId") String bookingId,
+                                                       @Param("documentType") InvoiceDocumentType documentType,
+                                                       @Param("status") InvoiceLifecycle status);
 
-    boolean existsByBookingId(String bookingId);
+    @Query("SELECT i FROM Invoice i WHERE (i.bookingId = :bookingId OR i.id IN (SELECT l.invoiceId FROM InvoiceLineItem l WHERE l.bookingId = :bookingId)) ORDER BY i.createdAt ASC")
+    List<Invoice> findByBookingId(@Param("bookingId") String bookingId);
+
+    @Query("SELECT COUNT(i) > 0 FROM Invoice i WHERE (i.bookingId = :bookingId OR i.id IN (SELECT l.invoiceId FROM InvoiceLineItem l WHERE l.bookingId = :bookingId)) ")
+    boolean existsByBookingId(@Param("bookingId") String bookingId);
+
+    /** The live DRAFT tax invoice holding this booking, if any. */
+    @Query("SELECT i FROM Invoice i WHERE (i.bookingId = :bookingId OR i.id IN (SELECT l.invoiceId FROM InvoiceLineItem l WHERE l.bookingId = :bookingId)) AND i.documentType = com.voyra.crm.enums.InvoiceDocumentType.TAX_INVOICE "
+            + "AND i.status = com.voyra.crm.enums.InvoiceLifecycle.DRAFT ORDER BY i.createdAt ASC")
+    List<Invoice> findDraftsForBooking(@Param("bookingId") String bookingId);
+
+    /** The latest date already issued in a series (category + financial year) - a new invoice is never dated before it. */
+    @Query("SELECT MAX(i.invoiceDate) FROM Invoice i WHERE i.serviceCategory = :category AND i.financialYear = :financialYear "
+            + "AND i.documentType = com.voyra.crm.enums.InvoiceDocumentType.TAX_INVOICE AND i.invoiceNumber IS NOT NULL "
+            + "AND i.uploadedFileName IS NULL")
+    LocalDate latestIssuedDate(@Param("category") com.voyra.crm.enums.InvoiceServiceCategory category,
+                               @Param("financialYear") String financialYear);
 
     Optional<Invoice> findByInvoiceNumber(String invoiceNumber);
 
@@ -49,12 +69,18 @@ public interface InvoiceRepository extends JpaRepository<Invoice, String>, JpaSp
      *  null until ISSUED (V19's own comment), which a DRAFT row in this set can still be. Oldest
      *  first, so {@code primaryInvoiceId} deterministically picks the earliest (the advance)
      *  rather than depending on undefined row order. */
+    @Query("SELECT i FROM Invoice i WHERE (i.bookingId = :bookingId OR i.id IN (SELECT l.invoiceId FROM InvoiceLineItem l WHERE l.bookingId = :bookingId)) AND i.documentType = :documentType AND i.status <> :excludedStatus "
+            + "ORDER BY i.createdAt ASC")
     List<Invoice> findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc(
-            String bookingId, InvoiceDocumentType documentType, InvoiceLifecycle excludedStatus);
+            @Param("bookingId") String bookingId, @Param("documentType") InvoiceDocumentType documentType,
+            @Param("excludedStatus") InvoiceLifecycle excludedStatus);
 
     /** Revenue recognition job input (ACCOUNTING_EXPANSION_ARCHITECTURE.md Rule 2.3/2.4) - every
      *  live, invoiced sale against a booking whose departure has arrived. */
-    List<Invoice> findByBookingIdInAndStatusIn(List<String> bookingIds, List<InvoiceLifecycle> statuses);
+    @Query("SELECT i FROM Invoice i WHERE (i.bookingId IN :bookingIds OR i.id IN "
+            + "(SELECT l.invoiceId FROM InvoiceLineItem l WHERE l.bookingId IN :bookingIds)) AND i.status IN :statuses")
+    List<Invoice> findByBookingIdInAndStatusIn(@Param("bookingIds") List<String> bookingIds,
+                                               @Param("statuses") List<InvoiceLifecycle> statuses);
 
     /**
      * TCS threshold accumulation input ({@code TaxEngine#compute}): this client's overseas-package
