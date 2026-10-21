@@ -38,6 +38,8 @@ class HotelSearchControllerTest {
 
     @MockBean
     private HotelSearchProvider hotelSearchProvider;
+    @MockBean
+    private com.voyra.crm.service.HotelSearchService hotelSearchService;
 
     private HotelSearchQuery searchQuery() {
         HotelSearchQuery query = new HotelSearchQuery();
@@ -59,7 +61,7 @@ class HotelSearchControllerTest {
 
     @Test
     void search_agentAllowed() throws Exception {
-        when(hotelSearchProvider.search(any())).thenReturn(List.of());
+        when(hotelSearchService.search(any())).thenReturn(new com.voyra.crm.dto.HotelSearchPageResponse());
         mockMvc.perform(post("/api/hotels/search")
                         .with(SecurityMockMvcRequestPostProcessors.user("agent1").roles("AGENT"))
                         .contentType(MediaType.APPLICATION_JSON)
@@ -69,7 +71,7 @@ class HotelSearchControllerTest {
 
     @Test
     void search_ownerAllowed() throws Exception {
-        when(hotelSearchProvider.search(any())).thenReturn(List.of());
+        when(hotelSearchService.search(any())).thenReturn(new com.voyra.crm.dto.HotelSearchPageResponse());
         mockMvc.perform(post("/api/hotels/search")
                         .with(SecurityMockMvcRequestPostProcessors.user("owner1").roles("AGENCY_OWNER"))
                         .contentType(MediaType.APPLICATION_JSON)

@@ -43,4 +43,11 @@ public class HotelSearchQuery {
 
     @Schema(description = "Opening a hotel from a search: the search's correlationId, which the supplier ties its rates to")
     private String correlationId;
+
+    @Schema(description = "A later page of an earlier search: its searchId. Blank runs a new search")
+    private String searchId;
+
+    @jakarta.validation.constraints.Min(value = 0, message = "Page can't be negative")
+    @Schema(description = "0-based page of 20 hotels, cheapest first", example = "0")
+    private int page;
 }

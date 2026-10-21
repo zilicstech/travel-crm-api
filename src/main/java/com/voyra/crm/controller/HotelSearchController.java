@@ -1,6 +1,5 @@
 package com.voyra.crm.controller;
 
-import com.voyra.crm.dto.HotelOfferResponse;
 import com.voyra.crm.dto.HotelSearchQuery;
 import com.voyra.crm.service.HotelSearchProvider;
 import io.swagger.v3.oas.annotations.Operation;
@@ -31,12 +30,14 @@ import java.util.List;
 public class HotelSearchController {
 
     private final HotelSearchProvider hotelSearchProvider;
+    private final com.voyra.crm.service.HotelSearchService hotelSearchService;
 
     @PostMapping("/search")
-    @Operation(summary = "Search hotel offers", description = "Results are not persisted - "
-            + "add the chosen ones to a service's proposal via POST /api/leads/{id}/proposal-items/batch.")
-    public ResponseEntity<List<HotelOfferResponse>> search(@Valid @RequestBody HotelSearchQuery query) {
-        return ResponseEntity.ok(hotelSearchProvider.search(query));
+    @Operation(summary = "Search hotel offers, 20 at a time", description = "Cheapest first. For another page send the same "
+            + "search with its searchId and page - it is read from the first search, not searched again. Add the chosen "
+            + "offers to a service's proposal via POST /api/leads/{id}/proposal-items/batch.")
+    public ResponseEntity<com.voyra.crm.dto.HotelSearchPageResponse> search(@Valid @RequestBody HotelSearchQuery query) {
+        return ResponseEntity.ok(hotelSearchService.search(query));
     }
 
     @PostMapping("/{hotelId}/detail")

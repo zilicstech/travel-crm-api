@@ -59,7 +59,8 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
 
     static final int LISTING_BATCH = 100;
     static final int MAX_BATCHES = 3;
-    static final int MAX_OFFERS = 60;
+    /** Content is asked a few hotels per call, all calls at once - a small call answers sooner than one of 20. */
+    static final int CONTENT_BATCH = 5;
     static final int DEFAULT_CHILD_AGE = 8;
     static final Duration STATIC_DATA_TTL = Duration.ofDays(7);
     private static final Duration HOTEL_IDS_TTL = Duration.ofDays(1);
@@ -94,7 +95,7 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
     private final Map<String, Cached<JsonNode>> statics = new ConcurrentHashMap<>();
     private static final Duration STATIC_DETAIL_TTL = Duration.ofHours(24);
     /** Listing and content batches go out side by side, not one after another - most of a search's wait. */
-    private static final java.util.concurrent.ExecutorService CALLS = java.util.concurrent.Executors.newFixedThreadPool(6, r -> {
+    private static final java.util.concurrent.ExecutorService CALLS = java.util.concurrent.Executors.newFixedThreadPool(16, r -> {
         Thread t = new Thread(r, "tripjack-hotel");
         t.setDaemon(true);
         return t;
@@ -166,7 +167,6 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
         List<HotelOfferResponse> offers = withOptions.stream()
                 .map(h -> toOffer(h, query.getCity(), nights, correlationId))
                 .sorted(Comparator.comparing(HotelOfferResponse::getPrice))
-                .limit(MAX_OFFERS)
                 .toList();
         log.info("Tripjack hotel search ok: {} hotels from {} ids in {} ms", offers.size(), hids.size(), System.currentTimeMillis() - startedAt);
         return offers;
@@ -627,8 +627,8 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
             if (c != null && c.at().plus(STATIC_DATA_TTL).isAfter(Instant.now())) out.put(hid, c.value()); else missing.add(hid);
         }
         List<java.util.concurrent.CompletableFuture<Void>> calls = new ArrayList<>();
-        for (int i = 0; i < missing.size(); i += LISTING_BATCH) {
-            List<String> batch = missing.subList(i, Math.min(i + LISTING_BATCH, missing.size()));
+        for (int i = 0; i < missing.size(); i += CONTENT_BATCH) {
+            List<String> batch = missing.subList(i, Math.min(i + CONTENT_BATCH, missing.size()));
             calls.add(java.util.concurrent.CompletableFuture.runAsync(() -> {
                 try {
                     JsonNode res = call(client, "POST", "/hms/v3/content/fetch-hotel-content", Map.of("hotelIds", batch));
