@@ -46,6 +46,7 @@ public class PublicProposalTenantService {
     private final LeadTimelineService leadTimelineService;
     private final LeadTimelineRepository leadTimelineRepository;
     private final BaseCurrency baseCurrency;
+    private final LeadService leadService;
 
     /** Events that change what the customer approved - a later one of these reopens approval. */
     private static final Set<LeadTimelineEventType> PROPOSAL_CHANGES = Set.of(
@@ -118,7 +119,8 @@ public class PublicProposalTenantService {
         }
         leadProposalRepository.saveAll(changed);
         lead.setProposalLocked(true);
-        leadRepository.save(lead);
+        // The lead's and its services' totals follow the options the client picked.
+        leadService.recomputeQuotedTotals(lead);
         leadTimelineService.recordCustomerAction(leadId, null, LeadTimelineEventType.PROPOSAL_OPTION_SELECTED,
                 "Customer selected " + selectedItemIds.size() + " option(s) on the shared proposal");
         leadTimelineService.recordCustomerAction(leadId, null, LeadTimelineEventType.PROPOSAL_LOCKED,

@@ -36,6 +36,7 @@ class PublicProposalTenantServiceTest {
     @Mock private LeadServiceRepository leadServiceRepository;
     @Mock private LeadTimelineService leadTimelineService;
     @Mock private LeadTimelineRepository leadTimelineRepository;
+    @Mock private LeadService leadService;
     @org.mockito.Spy
     private com.voyra.crm.service.BaseCurrency baseCurrency = new com.voyra.crm.service.BaseCurrency(null);
 
@@ -85,6 +86,17 @@ class PublicProposalTenantServiceTest {
 
         assertThat(service.approve("L1")).isTrue();
         verify(leadTimelineService, never()).recordCustomerAction(any(), any(), any(), any());
+    }
+
+    /** The client's pick on the shared link changes what the lead is worth, so its totals are worked out again. */
+    @Test
+    void theClientsPickUpdatesTheLeadsTotals() {
+        Lead lead = lead();
+        when(leadRepository.findByIdForUpdate("L1")).thenReturn(Optional.of(lead));
+        when(leadProposalRepository.findByLeadId("L1")).thenReturn(List.of(option("A", true), option("B", false)));
+
+        assertThat(service.selectOptions("L1", List.of("B"))).isTrue();
+        verify(leadService).recomputeQuotedTotals(lead);
     }
 
     /** Round 2, R2-7: the double-clicked Approve re-sends the same pick - no second timeline entry, no "locked" error. */

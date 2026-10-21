@@ -316,6 +316,38 @@ class SupplierInvoiceServiceTest {
         assertThat(saved.getValue().getGrandTotalInr()).isEqualByComparingTo("4000.00");
     }
 
+    /** A bill over the booking's cost cap that an accountant sent up is booked when the owner approves it with a reason. */
+    @Test
+    void theOwnerApprovesABillWaitingForOverride() {
+        SupplierInvoice invoice = SupplierInvoice.builder()
+                .id("SI1").vendorId("V1").vendorName("Skyline").bookingId("B1").category(com.voyra.crm.enums.BookingType.HOTEL)
+                .status(SupplierInvoiceStatus.PENDING_APPROVAL).itcEligibility(ItcEligibility.INELIGIBLE)
+                .currencyCode("INR").fxRateToInr(BigDecimal.ONE)
+                .taxableValue(new BigDecimal("5600.00")).taxableValueInr(new BigDecimal("5600.00"))
+                .gstTotal(BigDecimal.ZERO).gstTotalInr(BigDecimal.ZERO)
+                .grandTotal(new BigDecimal("5600.00")).grandTotalInr(new BigDecimal("5600.00"))
+                .roundOff(BigDecimal.ZERO).amountPaid(BigDecimal.ZERO).creditNoteTotal(BigDecimal.ZERO)
+                .build();
+        SupplierInvoiceLineItem line = SupplierInvoiceLineItem.builder()
+                .id("L1").supplierInvoiceId("SI1").sortOrder(0).description("Hotel stay")
+                .quantity(BigDecimal.ONE).unitPrice(new BigDecimal("5600.00"))
+                .taxableValue(new BigDecimal("5600.00")).lineTotal(new BigDecimal("5600.00"))
+                .cgstAmount(BigDecimal.ZERO).sgstAmount(BigDecimal.ZERO).igstAmount(BigDecimal.ZERO)
+                .build();
+        when(supplierInvoiceRepository.findById("SI1")).thenReturn(Optional.of(invoice));
+        when(lineItemRepository.findBySupplierInvoiceIdOrderBySortOrder("SI1")).thenReturn(List.of(line));
+        when(vendorRepository.findById("V1")).thenReturn(Optional.of(Vendor.builder().id("V1").name("Skyline").build()));
+        when(bookingCostComponentRepository.findByBookingIdAndVendorId("B1", "V1")).thenReturn(List.of(
+                com.voyra.crm.entity.BookingCostComponent.builder().bookingId("B1").vendorId("V1").netCost(new BigDecimal("5000.00")).build()));
+        org.mockito.Mockito.lenient().when(bookingRepository.findById("B1")).thenReturn(Optional.empty());
+        stubAgency();
+
+        supplierInvoiceService.approve("SI1", "Fare increased before ticketing");
+
+        assertThat(invoice.getStatus()).isEqualTo(SupplierInvoiceStatus.APPROVED);
+        org.mockito.Mockito.verify(journalService).post(any(JournalPosting.class));
+    }
+
     /** BUG-CRX-15: a hand-made bill (no booking) posts to its own category's purchase account, not Miscellaneous. */
     @Test
     void approvingAHandMadeHotelBillPostsToHotelPurchases() {

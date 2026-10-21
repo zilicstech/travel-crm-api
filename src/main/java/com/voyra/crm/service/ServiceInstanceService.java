@@ -75,6 +75,7 @@ public class ServiceInstanceService {
 
     private final LeadServiceRepository leadServiceRepository;
     private final LeadRepository leadRepository;
+    private final com.voyra.crm.repository.LeadMemberRepository leadMemberRepository;
     private final LeadProposalRepository leadProposalRepository;
     private final AgentRepository agentRepository;
     private final LeadTimelineService leadTimelineService;
@@ -436,6 +437,9 @@ public class ServiceInstanceService {
         assertEditAccess(service);
         if (service.getType() != ServiceType.VISA) {
             throw new IllegalArgumentException("Only a Visa service carries a visa checklist");
+        }
+        if (!leadMemberRepository.existsByLeadIdAndMemberId(leadId, request.getMemberId())) {
+            throw new IllegalArgumentException("That person isn't a traveller on this lead");
         }
 
         Map<String, VisaChecklistEntry> checklists = new HashMap<>(

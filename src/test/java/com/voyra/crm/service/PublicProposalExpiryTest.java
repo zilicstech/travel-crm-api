@@ -41,7 +41,7 @@ class PublicProposalExpiryTest {
         when(proposalLinkRepository.findById("UNKNOWN")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> publicProposalService.getProposal("UNKNOWN"))
-                .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(com.voyra.crm.exception.NotFoundException.class);
     }
 
     @Test
@@ -53,7 +53,7 @@ class PublicProposalExpiryTest {
         when(proposalLinkRepository.findById("EXPIRED")).thenReturn(Optional.of(expired));
 
         assertThatThrownBy(() -> publicProposalService.getProposal("EXPIRED"))
-                .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(com.voyra.crm.exception.NotFoundException.class);
     }
 
     @Test

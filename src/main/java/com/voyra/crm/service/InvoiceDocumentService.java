@@ -612,6 +612,10 @@ public class InvoiceDocumentService {
             throw new IllegalStateException("At least one line is required to issue an invoice");
         }
 
+        if (invoice.getSupplyNature() == null) {
+            // Without it the invoice has no GST slab or place of supply - it would go out tax-free by accident.
+            throw new IllegalStateException("Choose the nature of supply before generating the invoice");
+        }
         assertMatchesVouchers(invoice, lines);
         assertFareBreakdowns(lines);
         assertTravellers(lines);
@@ -993,7 +997,25 @@ public class InvoiceDocumentService {
 
         journalService.post(new com.voyra.crm.models.JournalPosting(
                 invoice.getInvoiceDate(), com.voyra.crm.enums.JournalSourceType.INVOICE, invoice.getId(), purpose,
-                narration, invoice.getBookingId(), invoice.getBranchId(), lines));
+                narration, invoice.getBookingId(), invoice.getBranchId(), withConversionPaisa(lines)));
+    }
+
+    /**
+     * Each figure of a foreign-currency invoice is converted at its rate on its own, so the credits can miss the
+     * converted grand total (the debit, first line) by a paisa or two; the first credit, the base amount, takes it.
+     * A larger gap is a real error and is left for the journal's own balance check to refuse.
+     */
+    static List<com.voyra.crm.models.JournalLinePosting> withConversionPaisa(List<com.voyra.crm.models.JournalLinePosting> lines) {
+        BigDecimal gap = lines.get(0).debitAmount().subtract(lines.stream().skip(1)
+                .map(com.voyra.crm.models.JournalLinePosting::creditAmount).reduce(BigDecimal.ZERO, BigDecimal::add));
+        if (gap.signum() == 0 || gap.abs().compareTo(new BigDecimal("0.05")) > 0) {
+            return lines;
+        }
+        List<com.voyra.crm.models.JournalLinePosting> out = new ArrayList<>(lines);
+        com.voyra.crm.models.JournalLinePosting first = out.get(1);
+        out.set(1, new com.voyra.crm.models.JournalLinePosting(first.accountCode(), first.partyType(), first.partyId(),
+                first.currencyCode(), first.fxRateToInr(), first.debitAmount(), first.creditAmount().add(gap), first.narration()));
+        return out;
     }
 
     /** Reverses whichever of the three INVOICE_RAISED_* purposes was actually posted for this invoice - at most one exists. */
@@ -1195,9 +1217,11 @@ public class InvoiceDocumentService {
                         : null;
                 TaxKind kind = config != null ? config.getTaxKind() : null;
 
+                // TCS on an overseas package is on the whole package the client pays for, never just the agency's markup.
+                BigDecimal base = kind == TaxKind.TCS ? invoice.getTaxableValue() : taxableBase;
                 BigDecimal amount = req.getMode() == TaxLineMode.FLAT
                         ? (req.getFlatAmount() != null ? req.getFlatAmount() : BigDecimal.ZERO)
-                        : pct(taxableBase, req.getRatePercent() != null ? req.getRatePercent() : BigDecimal.ZERO);
+                        : pct(base, req.getRatePercent() != null ? req.getRatePercent() : BigDecimal.ZERO);
 
                 BigDecimal rowCgst = BigDecimal.ZERO;
                 BigDecimal rowSgst = BigDecimal.ZERO;

@@ -48,6 +48,29 @@ public final class InvoiceShares {
         return shares;
     }
 
+    /**
+     * Shares re-weighted by what each booking is billed: its own lines plus the tax on its own fee. Under GST on the
+     * markup a booking's tax follows its markup, not its price, so weighting the grand total by price would move tax
+     * between bookings. {@code passThrough} is each booking's supplier cost on the invoice; with no fee to go on the
+     * price weights stand.
+     */
+    public static Map<String, Share> byBilled(Map<String, Share> shares, BigDecimal grand, Map<String, BigDecimal> passThrough) {
+        BigDecimal taxable = shares.values().stream().map(Share::taxable).reduce(BigDecimal.ZERO, BigDecimal::add);
+        Map<String, BigDecimal> fee = new LinkedHashMap<>();
+        shares.values().forEach(s -> fee.put(s.bookingId(), s.taxable().subtract(passThrough.getOrDefault(s.bookingId(), BigDecimal.ZERO)).max(BigDecimal.ZERO)));
+        BigDecimal feeTotal = fee.values().stream().reduce(BigDecimal.ZERO, BigDecimal::add);
+        if (grand == null || grand.signum() <= 0 || feeTotal.signum() <= 0) {
+            return shares;
+        }
+        BigDecimal tax = grand.subtract(taxable);
+        Map<String, Share> out = new LinkedHashMap<>();
+        for (Share s : shares.values()) {
+            BigDecimal billed = s.taxable().add(tax.multiply(fee.get(s.bookingId())).divide(feeTotal, 10, RoundingMode.HALF_UP));
+            out.put(s.bookingId(), new Share(s.bookingId(), s.taxable(), billed.divide(grand, 10, RoundingMode.HALF_UP)));
+        }
+        return out;
+    }
+
     /** {@code amount} split by weight to 2dp; the rounding remainder goes to the largest share, so the parts always add up to it. */
     public static Map<String, BigDecimal> split(BigDecimal amount, Map<String, Share> shares) {
         Map<String, BigDecimal> parts = new LinkedHashMap<>();

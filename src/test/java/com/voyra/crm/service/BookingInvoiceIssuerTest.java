@@ -65,6 +65,21 @@ class BookingInvoiceIssuerTest {
         });
     }
 
+    /** An overseas tour package gets its GST and the TCS section 206C(1G) asks the agency to collect. */
+    @Test
+    void anOverseasPackageGetsItsDefaultTcsToo() {
+        when(taxRateConfigRepository.findByTaxKindAndSupplyNatureAndIsDefaultTrueAndIsActiveTrue(TaxKind.GST, SupplyNature.OVERSEAS_PACKAGE))
+                .thenReturn(Optional.of(TaxRateConfig.builder().id("G1").label("GST 5%").ratePercent(new BigDecimal("5")).build()));
+        when(taxRateConfigRepository.findByTaxKindAndSupplyNatureAndIsDefaultTrueAndIsActiveTrue(TaxKind.TCS, SupplyNature.OVERSEAS_PACKAGE))
+                .thenReturn(Optional.of(TaxRateConfig.builder().id("C1").label("TCS 5%").ratePercent(new BigDecimal("5")).build()));
+        InvoiceDraftRequest draft = new InvoiceDraftRequest();
+
+        issuer.applyDefaultGst(draft, Booking.builder().type(BookingType.PACKAGE).internationalTrip(true).build());
+
+        assertThat(draft.getSupplyNature()).isEqualTo(SupplyNature.OVERSEAS_PACKAGE);
+        assertThat(draft.getTaxes()).extracting(t -> t.getTaxRateConfigId()).containsExactly("G1", "C1");
+    }
+
     @Test
     void noDefaultConfiguredMeansNoTax() {
         InvoiceDraftRequest draft = new InvoiceDraftRequest();

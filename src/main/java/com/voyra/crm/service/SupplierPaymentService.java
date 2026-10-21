@@ -66,6 +66,9 @@ public class SupplierPaymentService {
 
     @Transactional
     public SupplierPaymentResponse pay(SupplierPaymentRequest request) {
+        if (request.getPaidOn() != null && request.getPaidOn().isAfter(FinancialYear.today())) {
+            throw new IllegalArgumentException("The payment date can't be in the future");
+        }
         Vendor vendor = findVendor(request.getVendorId());
         SupplierInvoice invoice = null;
         boolean isAdvance = request.getSupplierInvoiceId() == null || request.getSupplierInvoiceId().isBlank();
@@ -281,6 +284,16 @@ public class SupplierPaymentService {
             throw new IllegalStateException("This payment has already been reversed");
         }
 
+        if (Boolean.TRUE.equals(original.getIsAdvance())) {
+            // An advance taken back can't stay spent on bills: undo what was applied from it, reopening those bills.
+            String tag = "Applied from advance " + original.getId();
+            for (SupplierPayment applied : supplierPaymentRepository.findByVendorIdAndAppliedFromAdvanceTrueAndReversedAtIsNull(original.getVendorId())) {
+                if (applied.getReversesPaymentId() == null && tag.equals(applied.getNotes())) {
+                    reverse(applied.getId(), reason);
+                }
+            }
+        }
+
         LocalDate today = LocalDate.now();
         String actor = currentUserId();
         LocalDateTime now = LocalDateTime.now();
@@ -440,7 +453,9 @@ public class SupplierPaymentService {
     private void postForPayment(SupplierPayment payment, boolean clearsBills) {
         boolean isDebit = payment.getAmountInr().compareTo(BigDecimal.ZERO) >= 0;
         BigDecimal amount = payment.getAmount().abs();
-        BigDecimal amountInr = payment.getAmountInr().abs();
+        // What the payment clears of the bill, at the bill's own rate: a foreign bill settled at another rate leaves the
+        // difference as forex gain/loss in the GL, not as money the supplier is still owed or was overpaid.
+        BigDecimal amountInr = payment.getAmountInr().subtract(payment.getFxVarianceInr() != null ? payment.getFxVarianceInr() : BigDecimal.ZERO).abs();
         SupplierLedgerEntryType type = payment.getIsAdvance() ? SupplierLedgerEntryType.ADVANCE_PAID : SupplierLedgerEntryType.PAYMENT_MADE;
         String narration = payment.getReversesPaymentId() != null
                 ? "Payment " + orId(payment.getVoucherNumber(), payment.getId()) + " reverses "

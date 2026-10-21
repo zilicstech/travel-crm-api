@@ -67,6 +67,11 @@ public class SupplierCreditNoteService {
             throw new IllegalStateException("Only an approved bill can carry a credit note");
         }
 
+        if (request.getSupplierNoteNumber() != null && !request.getSupplierNoteNumber().isBlank()
+                && supplierCreditNoteRepository.existsByVendorIdAndSupplierNoteNumberAndStatusNot(
+                        invoice.getVendorId(), request.getSupplierNoteNumber().trim(), SupplierCreditNoteStatus.CANCELLED)) {
+            throw new IllegalStateException("Credit note " + request.getSupplierNoteNumber().trim() + " from this supplier is already recorded");
+        }
         BigDecimal retentionFee = request.getRetentionFee() != null ? request.getRetentionFee() : BigDecimal.ZERO;
         BigDecimal totalAmount = request.getTaxableValue().add(request.getCgstAmount())
                 .add(request.getSgstAmount()).add(request.getIgstAmount());

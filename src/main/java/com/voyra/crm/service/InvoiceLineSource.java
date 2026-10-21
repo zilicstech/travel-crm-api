@@ -224,7 +224,12 @@ public class InvoiceLineSource {
     /** A voucher in a few words: what, when and its reference, e.g. "BOM to DEL 20/12/26 (RET1)". */
     static String voucherLabel(BookingDocument d) {
         Map<String, String> x = d.getDetails() == null ? Map.of() : d.getDetails();
-        String what = x.get("flightFrom") != null && x.get("flightTo") != null ? x.get("flightFrom") + " to " + x.get("flightTo")
+        // Every stop of the trip from its legs, so a return BOM-DXB-BOM doesn't read "BOM to BOM".
+        List<String> stops = d.getLegs() == null || d.getLegs().isEmpty() ? List.of()
+                : Stream.concat(Stream.of(d.getLegs().get(0).getFrom()), d.getLegs().stream().map(com.voyra.crm.dto.VoucherLeg::getTo))
+                        .filter(c -> c != null && !c.isBlank()).toList();
+        String what = stops.size() > 2 ? String.join(" - ", stops)
+                : x.get("flightFrom") != null && x.get("flightTo") != null ? x.get("flightFrom") + " to " + x.get("flightTo")
                 : x.getOrDefault("hotelName", x.getOrDefault("transferPickup", x.getOrDefault("visaCountry", "")));
         String when = x.getOrDefault("journeyDate", x.getOrDefault("hotelCheckIn", x.getOrDefault("transferDate", "")));
         when = when.isBlank() ? when : BookingInvoiceLineBuilder.lineDate(when);

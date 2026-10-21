@@ -102,10 +102,17 @@ public class ControlAccountReconciliationService {
      * control-account reconciliation move by the advance amount.
      */
     private BigDecimal accountsPayableSubsidiaryTotal() {
-        return supplierLedgerEntryRepository.findAll().stream()
+        BigDecimal ledger = supplierLedgerEntryRepository.findAll().stream()
                 .filter((SupplierLedgerEntry e) -> e.getEntryType() != SupplierLedgerEntryType.ADVANCE_PAID)
                 .map((SupplierLedgerEntry e) -> e.getCreditAmountInr().subtract(e.getDebitAmountInr()))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
+        // An advance applied to a bill has no ledger row (the vendor's net is unchanged), but it clears the bill's payable
+        // in the GL (Dr 2200 / Cr 1300) - the same applied total the advances row takes off its pool.
+        BigDecimal applied = supplierPaymentRepository.findAll().stream()
+                .filter((SupplierPayment p) -> Boolean.TRUE.equals(p.getAppliedFromAdvance()) && isLive(p))
+                .map(SupplierPayment::getAmountInr)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        return ledger.subtract(applied);
     }
 
     /** The customer wallet, globally: cash held with no invoice against it, minus what has already been drawn down - same shape as the supplier-side advance pool. */

@@ -297,6 +297,36 @@ class SupplierPaymentServiceTest {
         assertThat(invoice.getAmountPaid()).isEqualByComparingTo("0.00");
     }
 
+    /** Reversing a Pay supplier advance also undoes what it paid on bills, so those bills open again. */
+    @Test
+    void reversingAnAdvanceReopensTheBillsItWasAppliedTo() {
+        SupplierPayment advance = SupplierPayment.builder().id("P9").vendorId("V1").vendorName("Novotel Goa")
+                .direction(SupplierPaymentDirection.PAYMENT).currencyCode("INR").fxRateToInr(BigDecimal.ONE)
+                .amount(new BigDecimal("400.00")).amountInr(new BigDecimal("400.00"))
+                .paymentMode(PaymentMode.BANK_TRANSFER).isAdvance(true).appliedFromAdvance(false).build();
+        SupplierPayment applied = SupplierPayment.builder().id("A1").vendorId("V1").vendorName("Novotel Goa")
+                .supplierInvoiceId("SI1").direction(SupplierPaymentDirection.PAYMENT).currencyCode("INR").fxRateToInr(BigDecimal.ONE)
+                .amount(new BigDecimal("400.00")).amountInr(new BigDecimal("400.00"))
+                .paymentMode(PaymentMode.ADJUSTMENT).isAdvance(false).appliedFromAdvance(true)
+                .notes("Applied from advance P9").build();
+        SupplierInvoice invoice = approvedBill(new BigDecimal("1000.00"));
+        invoice.setAmountPaid(new BigDecimal("400.00"));
+
+        when(supplierPaymentRepository.findById("P9")).thenReturn(Optional.of(advance));
+        when(supplierPaymentRepository.findById("A1")).thenReturn(Optional.of(applied));
+        when(supplierPaymentRepository.findByVendorIdAndAppliedFromAdvanceTrueAndReversedAtIsNull("V1")).thenReturn(List.of(applied));
+        when(supplierPaymentRepository.existsById(any())).thenReturn(false);
+        when(documentNumberService.next(any(), any())).thenReturn("PAY/2026-27/0009");
+        when(supplierInvoiceRepository.findById("SI1")).thenReturn(Optional.of(invoice));
+        when(journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(any(), any(), any())).thenReturn(Optional.empty());
+
+        supplierPaymentService.reverse("P9", "paid the wrong supplier");
+
+        assertThat(applied.getReversedAt()).isNotNull();
+        assertThat(advance.getReversedAt()).isNotNull();
+        assertThat(invoice.getAmountPaid()).isEqualByComparingTo("0.00");
+    }
+
     /**
      * Decision 3.4 - the blocker's actual fix. A settlement rate HIGHER than the bill's own rate
      * costs more INR than AP cleared at - a realized LOSS, debited, and the three lines balance

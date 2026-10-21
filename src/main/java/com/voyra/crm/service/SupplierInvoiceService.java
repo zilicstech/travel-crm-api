@@ -372,8 +372,10 @@ public class SupplierInvoiceService {
         Vendor vendor = invoice.getVendorId() != null ? findVendor(invoice.getVendorId()) : null;
         assertRecordedTaxIsConsistent(invoice, lines);
 
+        boolean wasPending = invoice.getStatus() == SupplierInvoiceStatus.PENDING_APPROVAL;
         List<AuditChange> overrideChange = applyCostCapGate(invoice, overrideReason);
-        if (invoice.getStatus() == SupplierInvoiceStatus.PENDING_APPROVAL) {
+        // Only a bill the gate has just sent up stops here; an owner approving a pending bill books it.
+        if (!wasPending && invoice.getStatus() == SupplierInvoiceStatus.PENDING_APPROVAL) {
             // Sent to an owner for override - nothing is booked to the ledger until they approve it.
             supplierInvoiceRepository.save(invoice);
             log.info("Supplier bill sent for owner approval (over cost cap): id={}, grandTotal={}", id, invoice.getGrandTotal());

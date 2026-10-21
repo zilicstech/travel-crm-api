@@ -29,4 +29,7 @@ public interface SupplierPaymentRepository extends JpaRepository<SupplierPayment
     boolean existsBySupplierInvoiceId(String supplierInvoiceId);
 
     boolean existsByBankAccountId(String bankAccountId);
+
+    /** Live applications of advances to a vendor's bills (reversal rows included - callers skip those). */
+    List<SupplierPayment> findByVendorIdAndAppliedFromAdvanceTrueAndReversedAtIsNull(String vendorId);
 }

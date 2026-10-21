@@ -143,6 +143,24 @@ class InvoiceDocumentServiceTest {
         return line;
     }
 
+    /** EUR 103.04 at 90.5: the converted grand total is 9325.12 but taxable 9050.91 + GST 274.22 is 9325.13. */
+    @Test
+    void aForeignInvoicesConversionPaisaIsAbsorbedSoTheJournalBalances() {
+        List<com.voyra.crm.models.JournalLinePosting> lines = List.of(
+                com.voyra.crm.models.JournalLinePosting.debitParty("1200", "CLIENT", "K1", new BigDecimal("9325.12"), "n"),
+                com.voyra.crm.models.JournalLinePosting.credit("4010", new BigDecimal("9050.91"), "n"),
+                com.voyra.crm.models.JournalLinePosting.credit("2300", new BigDecimal("274.22"), "n"));
+
+        List<com.voyra.crm.models.JournalLinePosting> fixed = InvoiceDocumentService.withConversionPaisa(lines);
+
+        assertThat(fixed.get(1).creditAmount()).isEqualByComparingTo("9050.90");
+        assertThat(fixed.get(2).creditAmount()).isEqualByComparingTo("274.22");
+        // A real error is not papered over.
+        List<com.voyra.crm.models.JournalLinePosting> wrong = List.of(lines.get(0),
+                com.voyra.crm.models.JournalLinePosting.credit("4010", new BigDecimal("9000.00"), "n"));
+        assertThat(InvoiceDocumentService.withConversionPaisa(wrong)).isSameAs(wrong);
+    }
+
     @Test
     void addingNoTaxLeavesTheGrandTotalAtTheLineTotalAlone() {
         when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking()));
@@ -394,7 +412,7 @@ class InvoiceDocumentServiceTest {
     void issuingAPrincipalInvoiceForAFutureDepartureDefersRevenueInTheJournal() {
         Booking futureBooking = Booking.builder().id("B1").departureDate(LocalDate.now().plusDays(30)).build();
         Invoice draft = Invoice.builder()
-                .id("I1").documentType(InvoiceDocumentType.TAX_INVOICE).status(InvoiceLifecycle.DRAFT)
+                .id("I1").documentType(InvoiceDocumentType.TAX_INVOICE).status(InvoiceLifecycle.DRAFT).supplyNature(SupplyNature.AIR_TICKET)
                 .clientId("K1").clientName("Arjun Mehta").agentId("A1").bookingId("B1")
                 .serviceCategory(InvoiceServiceCategory.PACKAGE)
                 .currencyCode("INR").fxRateToInr(BigDecimal.ONE)
@@ -426,7 +444,7 @@ class InvoiceDocumentServiceTest {
     @Test
     void issuingAPrincipalInvoiceWithNoDepartureDateRecognisesRevenueImmediately() {
         Invoice draft = Invoice.builder()
-                .id("I1").documentType(InvoiceDocumentType.TAX_INVOICE).status(InvoiceLifecycle.DRAFT)
+                .id("I1").documentType(InvoiceDocumentType.TAX_INVOICE).status(InvoiceLifecycle.DRAFT).supplyNature(SupplyNature.AIR_TICKET)
                 .clientId("K1").clientName("Arjun Mehta").agentId("A1")
                 .serviceCategory(InvoiceServiceCategory.HOTEL)
                 .currencyCode("INR").fxRateToInr(BigDecimal.ONE)
@@ -669,7 +687,7 @@ class InvoiceDocumentServiceTest {
     void generatingADraftOfTwoBookingsSyncsBothAndRecognisesOnIssue() {
         twoFlights(flight("B1", 42, "K1", "V1", "107800", "105800"), flight("B2", 43, "K1", "V1", "10000", "9000"));
         Invoice draft = Invoice.builder().id("I1").bookingId("B1").clientId("K1").documentType(InvoiceDocumentType.TAX_INVOICE)
-                .status(InvoiceLifecycle.DRAFT).serviceCategory(InvoiceServiceCategory.AIR_INTERNATIONAL)
+                .status(InvoiceLifecycle.DRAFT).supplyNature(SupplyNature.AIR_TICKET).serviceCategory(InvoiceServiceCategory.AIR_INTERNATIONAL)
                 .billingModel(com.voyra.crm.enums.InvoiceBillingModel.COMMISSION_AGENT).passThroughAmount(new BigDecimal("114800"))
                 .currencyCode("INR").fxRateToInr(BigDecimal.ONE).taxableValue(new BigDecimal("117800")).taxableValueInr(new BigDecimal("117800"))
                 .grandTotal(new BigDecimal("117800")).grandTotalInr(new BigDecimal("117800")).balanceDue(new BigDecimal("117800")).build();
@@ -698,7 +716,7 @@ class InvoiceDocumentServiceTest {
     @Test
     void aFlightVoucherWithNoFareBreakdownIsNotInvoiced() {
         twoFlights(flight("B1", 42, "K1", "V1", "107800", "105800"), flight("B2", 43, "K1", "V1", "10000", "9000"));
-        Invoice draft = Invoice.builder().id("I1").bookingId("B1").status(InvoiceLifecycle.DRAFT)
+        Invoice draft = Invoice.builder().id("I1").bookingId("B1").status(InvoiceLifecycle.DRAFT).supplyNature(SupplyNature.AIR_TICKET)
                 .serviceCategory(InvoiceServiceCategory.AIR_INTERNATIONAL).build();
         when(invoiceRepository.findById("I1")).thenReturn(Optional.of(draft));
         when(invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc("I1")).thenReturn(List.of(
@@ -732,7 +750,7 @@ class InvoiceDocumentServiceTest {
     @Test
     void anAirTicketWithNoTravellersIsNotInvoiced() {
         twoFlights(flight("B1", 42, "K1", "V1", "107800", "105800"), flight("B2", 43, "K1", "V1", "10000", "9000"));
-        Invoice draft = Invoice.builder().id("I1").bookingId("B1").status(InvoiceLifecycle.DRAFT)
+        Invoice draft = Invoice.builder().id("I1").bookingId("B1").status(InvoiceLifecycle.DRAFT).supplyNature(SupplyNature.AIR_TICKET)
                 .serviceCategory(InvoiceServiceCategory.AIR_INTERNATIONAL).build();
         when(invoiceRepository.findById("I1")).thenReturn(Optional.of(draft));
         when(invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc("I1")).thenReturn(List.of(
@@ -749,7 +767,7 @@ class InvoiceDocumentServiceTest {
     @Test
     void aDraftWhoseVouchersChangedIsNotIssued() {
         twoFlights(flight("B1", 42, "K1", "V1", "107800", "105800"), flight("B2", 43, "K1", "V1", "10000", "9000"));
-        Invoice draft = Invoice.builder().id("I1").bookingId("B1").status(InvoiceLifecycle.DRAFT)
+        Invoice draft = Invoice.builder().id("I1").bookingId("B1").status(InvoiceLifecycle.DRAFT).supplyNature(SupplyNature.AIR_TICKET)
                 .serviceCategory(InvoiceServiceCategory.AIR_INTERNATIONAL).build();
         when(invoiceRepository.findById("I1")).thenReturn(Optional.of(draft));
         // Saved when B1's voucher was priced lower.
@@ -762,7 +780,7 @@ class InvoiceDocumentServiceTest {
 
     @Test
     void anInvoiceIsNotDatedAheadOrBeforeItsSeries() {
-        Invoice future = Invoice.builder().id("I1").bookingId("B1").status(InvoiceLifecycle.DRAFT)
+        Invoice future = Invoice.builder().id("I1").bookingId("B1").status(InvoiceLifecycle.DRAFT).supplyNature(SupplyNature.AIR_TICKET)
                 .serviceCategory(InvoiceServiceCategory.HOTEL).invoiceDate(LocalDate.now().plusDays(1)).build();
         when(invoiceRepository.findById("I1")).thenReturn(Optional.of(future));
         when(invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc("I1")).thenReturn(List.of(

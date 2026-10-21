@@ -60,4 +60,20 @@ class InvoiceSharesTest {
         // An invoice of one booking: everything is that booking's.
         assertThat(InvoiceShares.attributed("A", InvoiceShares.of("A", List.of(line("A", "10"))), amounts)).isEqualByComparingTo("1700");
     }
+
+    /** Three flights, each 500 markup with 90 GST, on one GST-on-markup invoice: each booking is billed its own 90. */
+    @Test
+    void underGstOnMarkupEachBookingCarriesTheTaxOnItsOwnMarkup() {
+        Map<String, InvoiceShares.Share> shares = InvoiceShares.of("B1", List.of(line("B1", "6500.00"), line("B2", "7500.00"), line("B3", "8500.00")));
+        Map<String, InvoiceShares.Share> billed = InvoiceShares.byBilled(shares, new BigDecimal("22770.00"),
+                Map.of("B1", new BigDecimal("6000.00"), "B2", new BigDecimal("7000.00"), "B3", new BigDecimal("8000.00")));
+
+        Map<String, BigDecimal> parts = InvoiceShares.split(new BigDecimal("22770.00"), billed);
+        assertThat(parts.get("B1")).isEqualByComparingTo("6590.00");
+        assertThat(parts.get("B2")).isEqualByComparingTo("7590.00");
+        assertThat(parts.get("B3")).isEqualByComparingTo("8590.00");
+        // No fee to go on: the price weights stand.
+        assertThat(InvoiceShares.byBilled(shares, new BigDecimal("22770.00"), Map.of("B1", new BigDecimal("6500.00"),
+                "B2", new BigDecimal("7500.00"), "B3", new BigDecimal("8500.00")))).isSameAs(shares);
+    }
 }

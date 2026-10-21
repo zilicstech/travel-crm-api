@@ -104,6 +104,10 @@ public class LeadService {
 
     @Transactional
     public LeadDetailResponse createLead(LeadCreateRequest request) {
+        if (request.getTravelDateFrom() != null && request.getTravelDateTo() != null
+                && request.getTravelDateTo().isBefore(request.getTravelDateFrom())) {
+            throw new IllegalArgumentException("The return date can't be before the travel date");
+        }
         AuthorResolver.AuthorInfo author = authorResolver.resolveCurrentAuthor();
         Client client = clientService.findAccessibleClient(request.getClientId());
         GuestDetails guests = request.getGuestDetails() != null ? request.getGuestDetails() : new GuestDetails();
@@ -636,7 +640,8 @@ public class LeadService {
      * each affected service's own net/selling snapshot, since that is the only write path that
      * touches a lead's proposal lines.
      */
-    private void recomputeQuotedTotals(Lead lead) {
+    /** Also called when the client picks options on the public proposal link - see PublicProposalTenantService. */
+    public void recomputeQuotedTotals(Lead lead) {
         List<com.voyra.crm.entity.LeadService> services =
                 leadServiceRepository.findByLeadIdOrderBySortOrderAsc(lead.getId());
         Map<String, ServiceStatus> statusByServiceId = services.stream()

@@ -127,6 +127,12 @@ public class GlobalExceptionHandler {
                         HttpStatus.NOT_FOUND.value(), path));
     }
 
+    @ExceptionHandler(NotFoundException.class)
+    public ResponseEntity<ApiErrorResponse> handleNotFound(NotFoundException ex, HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(
+                ApiErrorResponse.of(ex.getMessage(), "Not found", null, HttpStatus.NOT_FOUND.value(), getPath(request)));
+    }
+
     @ExceptionHandler(StoredFileNotFoundException.class)
     public ResponseEntity<ApiErrorResponse> handleStoredFileNotFound(StoredFileNotFoundException ex,
                                                                      HttpServletRequest request) {
@@ -227,10 +233,11 @@ public class GlobalExceptionHandler {
         log.error("Unhandled exception - message: {}, reason: {}, cause: {}, path: {}",
                 ex.getMessage(), ex.getClass().getSimpleName(), cause, path, ex);
 
+        // The detail stays in the log: an unexpected error's message can carry internals (a storage bucket and object
+        // path, SQL, a stack frame) that must not reach the browser.
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(
-                ApiErrorResponse.of(
-                        ex.getMessage() != null ? ex.getMessage() : "Internal server error",
-                        ex.getClass().getSimpleName(), cause,
+                ApiErrorResponse.of("Something went wrong on our side - please try again, or contact support if it keeps happening",
+                        "Internal server error", null,
                         HttpStatus.INTERNAL_SERVER_ERROR.value(), path));
     }
 }

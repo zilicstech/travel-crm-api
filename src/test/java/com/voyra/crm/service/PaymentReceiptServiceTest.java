@@ -111,7 +111,7 @@ class PaymentReceiptServiceTest {
     @Test
     void aPartPaymentOnAnInvoiceOfSeveralBookingsMustNameTheBooking() {
         Invoice invoice = issuedInvoice(new BigDecimal("1000.00"));
-        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(invoice));
+        when(invoiceRepository.findByIdForUpdate("I1")).thenReturn(Optional.of(invoice));
         when(invoiceLineSource.bookingIdsOf(any())).thenReturn(List.of("B1", "B2"));
         org.springframework.test.util.ReflectionTestUtils.setField(paymentReceiptService, "invoiceLineSource", invoiceLineSource);
 
@@ -126,7 +126,7 @@ class PaymentReceiptServiceTest {
     @Test
     void aPaymentNamedForOneBookingIsCappedAtWhatThatBookingOwes() {
         Invoice invoice = issuedInvoice(new BigDecimal("17860.00"));
-        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(invoice));
+        when(invoiceRepository.findByIdForUpdate("I1")).thenReturn(Optional.of(invoice));
         when(invoiceLineSource.bookingIdsOf(any())).thenReturn(List.of("B1", "B2"));
         org.springframework.test.util.ReflectionTestUtils.setField(paymentReceiptService, "invoiceLineSource", invoiceLineSource);
         when(bookingAccountingSync.positionOn(invoice, "B2", null))
@@ -144,7 +144,7 @@ class PaymentReceiptServiceTest {
         Invoice invoice = issuedInvoice(new BigDecimal("33540.00"));
         invoice.setStatus(InvoiceLifecycle.PAID);
         invoice.setBalanceDue(new BigDecimal("-9140.00"));
-        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(invoice));
+        when(invoiceRepository.findByIdForUpdate("I1")).thenReturn(Optional.of(invoice));
         when(invoiceLineSource.bookingIdsOf(any())).thenReturn(List.of("B1", "B2"));
         org.springframework.test.util.ReflectionTestUtils.setField(paymentReceiptService, "invoiceLineSource", invoiceLineSource);
         when(creditNoteRepository.findByInvoiceIdAndStatus("I1", com.voyra.crm.enums.CreditNoteStatus.ISSUED)).thenReturn(List.of(
@@ -165,7 +165,7 @@ class PaymentReceiptServiceTest {
     @Test
     void recordingAgainstADraftIsRejected() {
         Invoice draft = Invoice.builder().id("I1").status(InvoiceLifecycle.DRAFT).build();
-        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(draft));
+        when(invoiceRepository.findByIdForUpdate("I1")).thenReturn(Optional.of(draft));
 
         assertThatThrownBy(() -> paymentReceiptService.record(request(new BigDecimal("100"))))
                 .isInstanceOf(IllegalStateException.class);
@@ -174,7 +174,7 @@ class PaymentReceiptServiceTest {
     @Test
     void aPartialReceiptMovesTheInvoiceToPartiallyPaid() {
         Invoice invoice = issuedInvoice(new BigDecimal("1000.00"));
-        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(invoice));
+        when(invoiceRepository.findByIdForUpdate("I1")).thenReturn(Optional.of(invoice));
         when(paymentReceiptRepository.existsById(any())).thenReturn(false);
         when(documentNumberService.next(DocumentKind.RECEIPT, LocalDate.of(2026, 9, 19))).thenReturn("RCP/2026-27/0001");
         when(paymentReceiptRepository.findByInvoiceIdOrderByReceivedOnAscCreatedAtAsc("I1"))
@@ -194,7 +194,7 @@ class PaymentReceiptServiceTest {
     @Test
     void recordingAgainstAnInvoicePostsTheReceiptAgainstInvoiceJournal() {
         Invoice invoice = issuedInvoice(new BigDecimal("1000.00"));
-        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(invoice));
+        when(invoiceRepository.findByIdForUpdate("I1")).thenReturn(Optional.of(invoice));
         when(paymentReceiptRepository.existsById(any())).thenReturn(false);
         when(documentNumberService.next(DocumentKind.RECEIPT, LocalDate.of(2026, 9, 19))).thenReturn("RCP/2026-27/0001");
         when(paymentReceiptRepository.findByInvoiceIdOrderByReceivedOnAscCreatedAtAsc("I1"))
@@ -221,7 +221,7 @@ class PaymentReceiptServiceTest {
     @Test
     void aReceiptLargerThanTheBalanceDueIsRejected() {
         Invoice invoice = issuedInvoice(new BigDecimal("1000.00"));
-        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(invoice));
+        when(invoiceRepository.findByIdForUpdate("I1")).thenReturn(Optional.of(invoice));
 
         assertThatThrownBy(() -> paymentReceiptService.record(request(new BigDecimal("1000.01"))))
                 .isInstanceOf(IllegalStateException.class)
@@ -232,7 +232,7 @@ class PaymentReceiptServiceTest {
     @Test
     void aReceiptThatClearsTheBalanceMovesTheInvoiceToPaid() {
         Invoice invoice = issuedInvoice(new BigDecimal("1000.00"));
-        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(invoice));
+        when(invoiceRepository.findByIdForUpdate("I1")).thenReturn(Optional.of(invoice));
         when(paymentReceiptRepository.existsById(any())).thenReturn(false);
         when(documentNumberService.next(DocumentKind.RECEIPT, LocalDate.of(2026, 9, 19))).thenReturn("RCP/2026-27/0001");
         when(paymentReceiptRepository.findByInvoiceIdOrderByReceivedOnAscCreatedAtAsc("I1"))
@@ -250,7 +250,7 @@ class PaymentReceiptServiceTest {
         Invoice proforma = Invoice.builder().id("I1").documentType(InvoiceDocumentType.PROFORMA)
                 .status(InvoiceLifecycle.PROFORMA_ISSUED).clientId("K1").currencyCode("INR")
                 .fxRateToInr(BigDecimal.ONE).grandTotal(new BigDecimal("1000.00")).build();
-        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(proforma));
+        when(invoiceRepository.findByIdForUpdate("I1")).thenReturn(Optional.of(proforma));
         when(paymentReceiptRepository.existsById(any())).thenReturn(false);
         when(documentNumberService.next(DocumentKind.RECEIPT, LocalDate.of(2026, 9, 19))).thenReturn("RCP/2026-27/0001");
 
@@ -312,7 +312,7 @@ class PaymentReceiptServiceTest {
     @Test
     void recordAuditsAsAPaymentReceiptCreate() {
         Invoice invoice = issuedInvoice(new BigDecimal("1000.00"));
-        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(invoice));
+        when(invoiceRepository.findByIdForUpdate("I1")).thenReturn(Optional.of(invoice));
         when(paymentReceiptRepository.existsById(any())).thenReturn(false);
         when(documentNumberService.next(any(), any())).thenReturn("RCP/2026-27/0001");
         when(paymentReceiptRepository.findByInvoiceIdOrderByReceivedOnAscCreatedAtAsc("I1")).thenReturn(List.of());
@@ -563,7 +563,7 @@ class PaymentReceiptServiceTest {
     @Test
     void recordingAGatewayReceiptSplitsTheDebitBetweenNetDepositAndTheFeeWhileCreditingTheGrossAmount() {
         Invoice invoice = issuedInvoice(new BigDecimal("1000.00"));
-        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(invoice));
+        when(invoiceRepository.findByIdForUpdate("I1")).thenReturn(Optional.of(invoice));
         when(paymentReceiptRepository.existsById(any())).thenReturn(false);
         when(documentNumberService.next(DocumentKind.RECEIPT, LocalDate.of(2026, 9, 19))).thenReturn("RCP/2026-27/0001");
         when(paymentReceiptRepository.findByInvoiceIdOrderByReceivedOnAscCreatedAtAsc("I1"))
@@ -603,7 +603,7 @@ class PaymentReceiptServiceTest {
     @Test
     void recordingAReceiptWithNoGatewayFeeKeepsTheOriginalTwoLineShape() {
         Invoice invoice = issuedInvoice(new BigDecimal("1000.00"));
-        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(invoice));
+        when(invoiceRepository.findByIdForUpdate("I1")).thenReturn(Optional.of(invoice));
         when(paymentReceiptRepository.existsById(any())).thenReturn(false);
         when(documentNumberService.next(DocumentKind.RECEIPT, LocalDate.of(2026, 9, 19))).thenReturn("RCP/2026-27/0001");
         when(paymentReceiptRepository.findByInvoiceIdOrderByReceivedOnAscCreatedAtAsc("I1"))

@@ -80,15 +80,19 @@ class ControlAccountReconciliationServiceTest {
                 CustomerLedgerEntry.builder().id("C3").debitAmountInr(new BigDecimal("20000.00")).creditAmountInr(BigDecimal.ZERO).build(),
                 CustomerLedgerEntry.builder().id("C4").debitAmountInr(BigDecimal.ZERO).creditAmountInr(new BigDecimal("50000.00")).build()));
 
-        // 2200 Accounts Payable (LIABILITY): a bill booked (credit 500) then partly paid (debit 200) -> GL 300.
+        // 2200 Accounts Payable (LIABILITY): a bill booked (credit 500) then partly paid (debit 200), and a 4000 bill
+        // cleared by the advance below (credit 4000, then Dr 2200 when the advance is applied - no ledger row) -> GL 300.
         when(ledgerAccountRepository.findByCode("2200"))
                 .thenReturn(Optional.of(LedgerAccount.builder().code("2200").accountType(LedgerAccountType.LIABILITY).build()));
         when(journalLineRepository.findByAccountCode("2200")).thenReturn(List.of(
                 line("2200", BigDecimal.ZERO, new BigDecimal("500.00")),
-                line("2200", new BigDecimal("200.00"), BigDecimal.ZERO)));
+                line("2200", new BigDecimal("200.00"), BigDecimal.ZERO),
+                line("2200", BigDecimal.ZERO, new BigDecimal("4000.00")),
+                line("2200", new BigDecimal("4000.00"), BigDecimal.ZERO)));
         when(supplierLedgerEntryRepository.findAll()).thenReturn(List.of(
                 SupplierLedgerEntry.builder().id("S1").creditAmountInr(new BigDecimal("500.00")).debitAmountInr(BigDecimal.ZERO).build(),
-                SupplierLedgerEntry.builder().id("S2").creditAmountInr(BigDecimal.ZERO).debitAmountInr(new BigDecimal("200.00")).build()));
+                SupplierLedgerEntry.builder().id("S2").creditAmountInr(BigDecimal.ZERO).debitAmountInr(new BigDecimal("200.00")).build(),
+                SupplierLedgerEntry.builder().id("S4").creditAmountInr(new BigDecimal("4000.00")).debitAmountInr(BigDecimal.ZERO).build()));
 
         // 2110 Client Advances Held (LIABILITY): a 50000 deposit, 20000 of it applied to an invoice -> GL 30000.
         when(ledgerAccountRepository.findByCode("2110"))
@@ -191,7 +195,9 @@ class ControlAccountReconciliationServiceTest {
                 SupplierLedgerEntry.builder().id("S2").entryType(SupplierLedgerEntryType.PAYMENT_MADE)
                         .creditAmountInr(BigDecimal.ZERO).debitAmountInr(new BigDecimal("200.00")).build(),
                 SupplierLedgerEntry.builder().id("S3").entryType(SupplierLedgerEntryType.ADVANCE_PAID)
-                        .creditAmountInr(BigDecimal.ZERO).debitAmountInr(new BigDecimal("5000.00")).build()));
+                        .creditAmountInr(BigDecimal.ZERO).debitAmountInr(new BigDecimal("5000.00")).build(),
+                SupplierLedgerEntry.builder().id("S4").entryType(SupplierLedgerEntryType.BILL_BOOKED)
+                        .creditAmountInr(new BigDecimal("4000.00")).debitAmountInr(BigDecimal.ZERO).build()));
 
         List<ControlAccountReconciliationRowResponse> rows = reconciliationService.reconcile();
 

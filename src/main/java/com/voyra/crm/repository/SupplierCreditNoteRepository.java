@@ -19,4 +19,6 @@ public interface SupplierCreditNoteRepository extends JpaRepository<SupplierCred
     List<SupplierCreditNote> findByBookingIdAndStatus(String bookingId, SupplierCreditNoteStatus status);
 
     boolean existsByBookingId(String bookingId);
+
+    boolean existsByVendorIdAndSupplierNoteNumberAndStatusNot(String vendorId, String supplierNoteNumber, com.voyra.crm.enums.SupplierCreditNoteStatus status);
 }

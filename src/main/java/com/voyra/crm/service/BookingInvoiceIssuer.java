@@ -58,16 +58,21 @@ public class BookingInvoiceIssuer {
         SupplyNature nature = supplyNature(category, international);
         draft.setSupplyNature(nature);
         if (!gstEnabled) return;
-        taxRateConfigRepository.findByTaxKindAndSupplyNatureAndIsDefaultTrueAndIsActiveTrue(TaxKind.GST, nature)
-                .ifPresent(gst -> {
-                    InvoiceTaxRequest tax = new InvoiceTaxRequest();
-                    tax.setLabel(gst.getLabel());
-                    tax.setTaxRateConfigId(gst.getId());
-                    tax.setMode(TaxLineMode.PERCENT);
-                    tax.setRatePercent(gst.getRatePercent());
-                    tax.setVisibleToCustomer(true);
-                    draft.setTaxes(List.of(tax));
-                });
+        // The default GST, and the default TCS where the nature has one (an overseas tour package, section 206C(1G)).
+        List<InvoiceTaxRequest> taxes = new java.util.ArrayList<>();
+        for (TaxKind kind : List.of(TaxKind.GST, TaxKind.TCS)) {
+            taxRateConfigRepository.findByTaxKindAndSupplyNatureAndIsDefaultTrueAndIsActiveTrue(kind, nature)
+                    .ifPresent(config -> {
+                        InvoiceTaxRequest tax = new InvoiceTaxRequest();
+                        tax.setLabel(config.getLabel());
+                        tax.setTaxRateConfigId(config.getId());
+                        tax.setMode(TaxLineMode.PERCENT);
+                        tax.setRatePercent(config.getRatePercent());
+                        tax.setVisibleToCustomer(true);
+                        taxes.add(tax);
+                    });
+        }
+        if (!taxes.isEmpty()) draft.setTaxes(taxes);
     }
 
     /**

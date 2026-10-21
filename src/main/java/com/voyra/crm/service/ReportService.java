@@ -211,7 +211,7 @@ public class ReportService {
         List<String> header = List.of("id", "name", "department", "leadsAssigned", "bookingsCount",
                 "revenueGenerated", "conversionPercent", "commission");
         List<List<String>> rows = agents.stream()
-                .map(a -> List.of(a.getId(), a.getName(), a.getDepartment().name(), str(a.getLeadsAssigned()),
+                .map(a -> List.of(a.getId(), a.getName(), a.getDepartment() != null ? a.getDepartment().name() : "", str(a.getLeadsAssigned()),
                         str(a.getBookingsCount()), str(a.getRevenueGenerated()), str(a.getConversionPercent()),
                         str(a.getCommission())))
                 .toList();

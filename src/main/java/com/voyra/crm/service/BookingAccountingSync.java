@@ -46,6 +46,7 @@ public class BookingAccountingSync {
     private final PaymentReceiptRepository paymentReceiptRepository;
     private final CreditNoteRepository creditNoteRepository;
     private final com.voyra.crm.repository.InvoiceLineItemRepository invoiceLineItemRepository;
+    private final com.voyra.crm.repository.BookingDocumentRepository bookingDocumentRepository;
 
     /**
      * {@code paymentStatusSource} flips MANUAL -&gt; DERIVED the moment a live tax invoice first
@@ -72,8 +73,7 @@ public class BookingAccountingSync {
         BigDecimal sharedReceivedInr = BigDecimal.ZERO;
         java.util.Set<String> shared = new java.util.HashSet<>();
         for (Invoice invoice : liveInvoices) {
-            java.util.Map<String, com.voyra.crm.util.InvoiceShares.Share> shares = com.voyra.crm.util.InvoiceShares.of(
-                    invoice.getBookingId(), invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc(invoice.getId()));
+            java.util.Map<String, com.voyra.crm.util.InvoiceShares.Share> shares = sharesOf(invoice);
             BigDecimal grand = invoice.getGrandTotalInr() != null ? invoice.getGrandTotalInr() : BigDecimal.ZERO;
             if (shares.size() <= 1) {
                 invoicedTotalInr = invoicedTotalInr.add(grand);
@@ -167,8 +167,7 @@ public class BookingAccountingSync {
      * is simply the invoice. {@code excludeCreditNoteId} leaves out a note being issued right now.
      */
     public Position positionOn(Invoice invoice, String bookingId, String excludeCreditNoteId) {
-        java.util.Map<String, com.voyra.crm.util.InvoiceShares.Share> shares = com.voyra.crm.util.InvoiceShares.of(
-                invoice.getBookingId(), invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc(invoice.getId()));
+        java.util.Map<String, com.voyra.crm.util.InvoiceShares.Share> shares = sharesOf(invoice);
         List<java.util.Map.Entry<String, BigDecimal>> credits = creditNoteRepository.findByInvoiceIdAndStatus(invoice.getId(), CreditNoteStatus.ISSUED).stream()
                 .filter(n -> !n.getId().equals(excludeCreditNoteId))
                 .map(n -> java.util.Map.entry(n.getBookingId() != null ? n.getBookingId() : "", n.getTotalAmount())).toList();
@@ -179,6 +178,28 @@ public class BookingAccountingSync {
         BigDecimal share = shares.size() <= 1 ? grand : com.voyra.crm.util.InvoiceShares.part(grand, shares, bookingId);
         return new Position(share.subtract(com.voyra.crm.util.InvoiceShares.attributed(bookingId, shares, credits)),
                 com.voyra.crm.util.InvoiceShares.attributed(bookingId, shares, paid));
+    }
+
+    /**
+     * Each booking's share of an invoice. On a combined GST-on-markup invoice it is what the booking is billed (its
+     * lines plus the tax on its own markup), worked out from the supplier cost of its vouchers; a line with no
+     * voucher has no cost to go on, so that invoice keeps the price weights.
+     */
+    private java.util.Map<String, com.voyra.crm.util.InvoiceShares.Share> sharesOf(Invoice invoice) {
+        List<com.voyra.crm.entity.InvoiceLineItem> lines = invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc(invoice.getId());
+        java.util.Map<String, com.voyra.crm.util.InvoiceShares.Share> shares = com.voyra.crm.util.InvoiceShares.of(invoice.getBookingId(), lines);
+        if (shares.size() <= 1 || invoice.getBillingModel() != com.voyra.crm.enums.InvoiceBillingModel.COMMISSION_AGENT
+                || lines.stream().anyMatch(l -> l.getBookingDocumentId() == null)) {
+            return shares;
+        }
+        BigDecimal fx = invoice.getFxRateToInr() != null && invoice.getFxRateToInr().signum() > 0 ? invoice.getFxRateToInr() : BigDecimal.ONE;
+        java.util.Map<String, BigDecimal> passThrough = new java.util.HashMap<>();
+        for (com.voyra.crm.entity.InvoiceLineItem line : lines) {
+            bookingDocumentRepository.findById(line.getBookingDocumentId()).ifPresent(d -> passThrough.merge(
+                    line.getBookingId() != null ? line.getBookingId() : invoice.getBookingId(),
+                    d.getNetCost().divide(fx, 2, java.math.RoundingMode.HALF_UP), BigDecimal::add));
+        }
+        return com.voyra.crm.util.InvoiceShares.byBilled(shares, invoice.getGrandTotal(), passThrough);
     }
 
     private BigDecimal sumReceiptsInr(String bookingId, ReceiptDirection direction) {

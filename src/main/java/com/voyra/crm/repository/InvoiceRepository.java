@@ -17,6 +17,12 @@ import java.util.Optional;
 @Repository
 public interface InvoiceRepository extends JpaRepository<Invoice, String>, JpaSpecificationExecutor<Invoice> {
 
+    /** Row lock for money landing on the invoice, so two receipts at once can't both settle the same balance. */
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("select i from Invoice i where i.id = :id")
+    java.util.Optional<Invoice> findByIdForUpdate(@Param("id") String id);
+
+
     /*
      * "An invoice of booking X" means any invoice with a line billing X (an invoice may cover several
      * bookings of one client), or whose first booking is X - every query below that takes a

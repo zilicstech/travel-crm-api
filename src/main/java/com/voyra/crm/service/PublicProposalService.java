@@ -37,7 +37,7 @@ public class PublicProposalService {
     public PublicProposalResponse getProposal(String token) {
         ProposalLink link = resolveLink(token);
         return withTenant(link.getTenantId(), () -> tenantService.fetchProposal(link.getLeadId()))
-                .orElseThrow(() -> new IllegalArgumentException(NOT_FOUND_MESSAGE));
+                .orElseThrow(() -> new com.voyra.crm.exception.NotFoundException(NOT_FOUND_MESSAGE));
     }
 
     /**
@@ -49,7 +49,7 @@ public class PublicProposalService {
         ProposalLink link = resolveLink(token);
         boolean approved = withTenant(link.getTenantId(), () -> tenantService.approve(link.getLeadId()));
         if (!approved) {
-            throw new IllegalArgumentException(NOT_FOUND_MESSAGE);
+            throw new com.voyra.crm.exception.NotFoundException(NOT_FOUND_MESSAGE);
         }
     }
 
@@ -62,7 +62,7 @@ public class PublicProposalService {
         ProposalLink link = resolveLink(token);
         boolean applied = withTenant(link.getTenantId(), () -> tenantService.selectOptions(link.getLeadId(), selectedItemIds));
         if (!applied) {
-            throw new IllegalArgumentException(NOT_FOUND_MESSAGE);
+            throw new com.voyra.crm.exception.NotFoundException(NOT_FOUND_MESSAGE);
         }
     }
 
@@ -73,9 +73,9 @@ public class PublicProposalService {
      */
     private ProposalLink resolveLink(String token) {
         ProposalLink link = proposalLinkRepository.findById(token)
-                .orElseThrow(() -> new IllegalArgumentException(NOT_FOUND_MESSAGE));
+                .orElseThrow(() -> new com.voyra.crm.exception.NotFoundException(NOT_FOUND_MESSAGE));
         if (link.getExpiresAt() != null && link.getExpiresAt().isBefore(LocalDateTime.now())) {
-            throw new IllegalArgumentException(NOT_FOUND_MESSAGE);
+            throw new com.voyra.crm.exception.NotFoundException(NOT_FOUND_MESSAGE);
         }
         return link;
     }

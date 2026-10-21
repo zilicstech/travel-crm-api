@@ -67,13 +67,16 @@ public class PaymentReceiptService {
 
     @Transactional
     public PaymentReceiptResponse record(PaymentReceiptRequest request) {
+        if (request.getReceivedOn() != null && request.getReceivedOn().isAfter(FinancialYear.today())) {
+            throw new IllegalArgumentException("The date received can't be in the future");
+        }
         boolean hasInvoice = request.getInvoiceId() != null && !request.getInvoiceId().isBlank();
         return hasInvoice ? recordAgainstInvoice(request, true) : recordDeposit(request);
     }
 
     /** @param capToBooking false only for the per-booking split, whose last part takes any rounding paisa */
     private PaymentReceiptResponse recordAgainstInvoice(PaymentReceiptRequest request, boolean capToBooking) {
-        Invoice invoice = invoiceRepository.findById(request.getInvoiceId())
+        Invoice invoice = invoiceRepository.findByIdForUpdate(request.getInvoiceId())
                 .orElseThrow(() -> new IllegalArgumentException("Invoice not found: " + request.getInvoiceId()));
         boolean isProforma = invoice.getStatus() == InvoiceLifecycle.PROFORMA_ISSUED;
         List<String> bookings = invoiceLineSource.bookingIdsOf(invoice);
