@@ -80,4 +80,13 @@ class TripjackHotelDetailMappingTest {
         assertThat(d.getOptions()).singleElement().satisfies(o -> assertThat(o.getRooms().get(0).getName()).isEqualTo("Std"));
         assertThat(d.getCity()).isEqualTo("Goa");
     }
+
+    /** Live listings have come back without tjHotelId: the id is read from whichever name it has, never sent on blank. */
+    @Test
+    void aHotelsIdIsReadWhateverItIsCalled() throws Exception {
+        assertThat(TripjackHotelSearchProvider.hotelIdOf(M.readTree("{\"tjHotelId\":\"100\"}"))).isEqualTo("100");
+        assertThat(TripjackHotelSearchProvider.hotelIdOf(M.readTree("{\"hid\":200}"))).isEqualTo("200");
+        assertThat(TripjackHotelSearchProvider.hotelIdOf(M.readTree("{\"id\":\"300\",\"name\":\"X\"}"))).isEqualTo("300");
+        assertThat(TripjackHotelSearchProvider.hotelIdOf(M.readTree("{\"name\":\"X\"}"))).isEmpty();
+    }
 }

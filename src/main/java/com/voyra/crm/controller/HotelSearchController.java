@@ -45,4 +45,12 @@ public class HotelSearchController {
     public ResponseEntity<com.voyra.crm.dto.HotelDetailResponse> detail(@PathVariable String hotelId, @Valid @RequestBody HotelSearchQuery query) {
         return ResponseEntity.ok(hotelSearchProvider.detail(hotelId, query));
     }
+
+    @PostMapping("/warm")
+    @Operation(summary = "Warm the supplier's hotel data", description = "Called when a hotel search opens: the supplier's city "
+            + "list is loaded in the background so the first search doesn't wait for it. Returns at once.")
+    public ResponseEntity<Void> warm() {
+        hotelSearchProvider.warm();
+        return ResponseEntity.accepted().build();
+    }
 }

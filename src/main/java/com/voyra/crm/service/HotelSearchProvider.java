@@ -20,4 +20,8 @@ public interface HotelSearchProvider {
      * for the same dates and guests. {@code query.correlationId} ties it to that search.
      */
     com.voyra.crm.dto.HotelDetailResponse detail(String hotelId, HotelSearchQuery query);
+
+    /** Gets the supplier's slow static data ready in the background when someone opens a hotel search. */
+    default void warm() {
+    }
 }

@@ -89,6 +89,13 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
     private final Map<String, Cached<JsonNode>> content = new ConcurrentHashMap<>();
     private final Map<String, Cached<JsonNode>> statics = new ConcurrentHashMap<>();
     private static final Duration STATIC_DETAIL_TTL = Duration.ofHours(24);
+    /** Listing and content batches go out side by side, not one after another - most of a search's wait. */
+    private static final java.util.concurrent.ExecutorService CALLS = java.util.concurrent.Executors.newFixedThreadPool(6, r -> {
+        Thread t = new Thread(r, "tripjack-hotel");
+        t.setDaemon(true);
+        return t;
+    });
+    private final java.util.concurrent.atomic.AtomicBoolean shapeLogged = new java.util.concurrent.atomic.AtomicBoolean();
 
     public TripjackHotelSearchProvider(SupplierCredentialService supplierCredentialService,
                                        @Qualifier("tripjackRestClientBuilder") RestClient.Builder restClientBuilder,
@@ -117,8 +124,7 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
         String correlationId = UUID.randomUUID().toString().replace("-", "");
         List<Map<String, Object>> rooms = rooms(query);
 
-        List<JsonNode> listed = new ArrayList<>();
-        SupplierException firstError = null;
+        List<java.util.concurrent.CompletableFuture<JsonNode>> batches = new ArrayList<>();
         for (int i = 0; i < hids.size() && i < LISTING_BATCH * MAX_BATCHES; i += LISTING_BATCH) {
             List<Long> batch = hids.subList(i, Math.min(i + LISTING_BATCH, hids.size())).stream().map(Long::valueOf).toList();
             Map<String, Object> body = new LinkedHashMap<>();
@@ -129,22 +135,32 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
             body.put("correlationId", correlationId);
             body.put("nationality", nationality);
             body.put("hids", batch);
+            batches.add(java.util.concurrent.CompletableFuture.supplyAsync(() -> call(client, "POST", "/hms/v3/hotel/listing", body), CALLS));
+        }
+        List<JsonNode> listed = new ArrayList<>();
+        SupplierException firstError = null;
+        for (var batch : batches) {
             try {
-                call(client, "POST", "/hms/v3/hotel/listing", body).path("hotels").forEach(listed::add);
-            } catch (SupplierException e) {
+                batch.join().path("hotels").forEach(listed::add);
+            } catch (java.util.concurrent.CompletionException e) {
                 // One failed batch must not lose the others' results.
-                if (firstError == null) firstError = e;
+                if (firstError == null) firstError = e.getCause() instanceof SupplierException se ? se : new SupplierException("Tripjack hotel search failed", e.getCause());
             }
         }
         if (listed.isEmpty() && firstError != null) {
             throw firstError;
         }
+        if (!listed.isEmpty() && shapeLogged.compareAndSet(false, true)) {
+            List<String> fields = new ArrayList<>();
+            listed.get(0).fieldNames().forEachRemaining(fields::add);
+            log.info("Tripjack hotel listing fields: {}", fields);
+        }
 
         List<JsonNode> withOptions = listed.stream().filter(h -> h.path("options").size() > 0).toList();
-        Map<String, JsonNode> info = contentFor(client, host, withOptions.stream().map(h -> h.path("tjHotelId").asText()).toList());
+        Map<String, JsonNode> info = contentFor(client, host, withOptions.stream().map(TripjackHotelSearchProvider::hotelIdOf).filter(id -> !id.isBlank()).toList());
         int nights = (int) Math.max(1, ChronoUnit.DAYS.between(query.getCheckIn(), query.getCheckOut()));
         List<HotelOfferResponse> offers = withOptions.stream()
-                .map(h -> toOffer(h, info.get(h.path("tjHotelId").asText()), query.getCity(), nights, correlationId))
+                .map(h -> toOffer(h, info.get(hotelIdOf(h)), query.getCity(), nights, correlationId))
                 .sorted(Comparator.comparing(HotelOfferResponse::getPrice))
                 .limit(MAX_OFFERS)
                 .toList();
@@ -201,7 +217,7 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
         boolean refundable = best.path("cancellation").path("isRefundable").asBoolean(false);
         return HotelOfferResponse.builder()
                 .offerId(best.path("optionId").asText())
-                .hotelId(hotel.path("tjHotelId").asText())
+                .hotelId(hotelIdOf(hotel).isBlank() ? null : hotelIdOf(hotel))
                 .imageUrl(info == null ? null : images(info.path("images")).stream().findFirst().map(HotelDetailResponse.Image::getThumbUrl).orElse(null))
                 .correlationId(correlationId)
                 .hotelName(info != null && !info.path("name").asText("").isBlank() ? info.path("name").asText() : hotel.path("name").asText())
@@ -511,29 +527,60 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
         return id;
     }
 
-    /** Star rating and address; a failure only costs the listing its stars, never the search. */
+    /** Star rating, address and photos; a failure only costs the listing those, never the search. Batches go out together. */
     private Map<String, JsonNode> contentFor(RestClient client, String host, List<String> hids) {
-        Map<String, JsonNode> out = new HashMap<>();
+        Map<String, JsonNode> out = new java.util.concurrent.ConcurrentHashMap<>();
         List<String> missing = new ArrayList<>();
         for (String hid : hids) {
+            if (hid == null || hid.isBlank()) continue;
             Cached<JsonNode> c = content.get(host + "|" + hid);
             if (c != null && c.at().plus(CITY_INDEX_TTL).isAfter(Instant.now())) out.put(hid, c.value()); else missing.add(hid);
         }
+        List<java.util.concurrent.CompletableFuture<Void>> calls = new ArrayList<>();
         for (int i = 0; i < missing.size(); i += LISTING_BATCH) {
-            try {
-                JsonNode res = call(client, "POST", "/hms/v3/content/fetch-hotel-content",
-                        Map.of("hotelIds", missing.subList(i, Math.min(i + LISTING_BATCH, missing.size()))));
-                for (JsonNode h : res.path("hotels")) {
-                    String hid = h.path("tjHotelId").asText("");
-                    if (hid.isBlank()) continue;
-                    out.put(hid, h);
-                    content.put(host + "|" + hid, new Cached<>(h, Instant.now()));
+            List<String> batch = missing.subList(i, Math.min(i + LISTING_BATCH, missing.size()));
+            calls.add(java.util.concurrent.CompletableFuture.runAsync(() -> {
+                try {
+                    JsonNode res = call(client, "POST", "/hms/v3/content/fetch-hotel-content", Map.of("hotelIds", batch));
+                    for (JsonNode h : res.path("hotels")) {
+                        String hid = hotelIdOf(h);
+                        if (hid.isBlank()) continue;
+                        out.put(hid, h);
+                        content.put(host + "|" + hid, new Cached<>(h, Instant.now()));
+                    }
+                } catch (SupplierException e) {
+                    log.warn("Tripjack hotel content failed, listing without stars/address/photos: {}", e.getMessage());
                 }
-            } catch (SupplierException e) {
-                log.warn("Tripjack hotel content failed, listing without stars/address: {}", e.getMessage());
-            }
+            }, CALLS));
         }
+        calls.forEach(java.util.concurrent.CompletableFuture::join);
         return out;
+    }
+
+    /**
+     * A hotel's Tripjack id. The docs name it tjHotelId, but live responses have come back without it - so the
+     * other names it goes by are tried too, never sending a blank id on.
+     */
+    static String hotelIdOf(JsonNode hotel) {
+        for (String key : List.of("tjHotelId", "hid", "hotelId", "id", "tjHotelID")) {
+            String v = hotel.path(key).asText("");
+            if (!v.isBlank()) return v;
+        }
+        return "";
+    }
+
+    /** Builds the city index (the slow part of a cold start) in the background, so the first search doesn't wait on it. */
+    @Override
+    public void warm() {
+        Conn conn = connect();
+        CALLS.execute(() -> {
+            try {
+                cityIndex(conn.client(), conn.host());
+                nationalityId(conn.client(), conn.host(), "IN");
+            } catch (RuntimeException e) {
+                log.warn("Tripjack hotel warm-up failed: {}", e.getMessage());
+            }
+        });
     }
 
     // ── HTTP ────────────────────────────────────────────────────────────────
