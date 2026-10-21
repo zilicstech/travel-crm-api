@@ -43,7 +43,7 @@ class TripjackHotelDetailMappingTest {
 
         assertThat(d.getName()).isEqualTo("Pride Plaza");
         assertThat(d.getStarRating()).isEqualTo(5);
-        assertThat(d.getCity()).isEqualTo("New Delhi");
+        assertThat(d.getCity()).isEqualTo("Delhi"); // the searched city, not the hotel's locality
         // Every photo, the main one first, then the rooms' own; largest size, a mid size as the thumbnail.
         assertThat(d.getImages()).extracting(HotelDetailResponse.Image::getUrl)
                 .containsExactly("https://img/hero.jpg", "https://img/lobby-1000.jpg", "https://img/r1.jpg");
@@ -88,5 +88,37 @@ class TripjackHotelDetailMappingTest {
         assertThat(TripjackHotelSearchProvider.hotelIdOf(M.readTree("{\"hid\":200}"))).isEqualTo("200");
         assertThat(TripjackHotelSearchProvider.hotelIdOf(M.readTree("{\"id\":\"300\",\"name\":\"X\"}"))).isEqualTo("300");
         assertThat(TripjackHotelSearchProvider.hotelIdOf(M.readTree("{\"name\":\"X\"}"))).isEmpty();
+    }
+
+    /** Tripjack repeats its overview across sections: each paragraph shows once, under a plain title, in reading order. */
+    @Test
+    void descriptionsReadInOrderUnderPlainTitlesWithNoRepeats() throws Exception {
+        JsonNode d = M.readTree("""
+                {"default":"Take in the views from a garden.<br/>Make yourself at home in one of 3 rooms.",
+                 "headline":"With a stay at Krishna Apartments you'll be near Palolem Beach.<br/>Take in the views from a garden.",
+                 "spoken_languages":"Hindi, English",
+                 "dining":"<p>A cafe serves breakfast.</p>"}
+                """);
+        var sections = TripjackHotelSearchProvider.descriptions(d);
+        assertThat(sections).extracting(com.voyra.crm.dto.HotelDetailResponse.Section::getTitle)
+                .containsExactly("Overview", "About the hotel", "Dining", "Languages spoken");
+        assertThat(sections.get(0).getText()).isEqualTo("With a stay at Krishna Apartments you'll be near Palolem Beach.\nTake in the views from a garden.");
+        assertThat(sections.get(1).getText()).isEqualTo("Make yourself at home in one of 3 rooms.");
+        // A short labelled part of a JSON description keeps its label.
+        assertThat(TripjackHotelSearchProvider.flatText(M.readTree("{\"spoken_languages\":\"Hindi, English\"}"))).isEqualTo("Languages spoken: Hindi, English");
+    }
+
+    /** A listing that does carry a hero image, stars or an address shows them; one that doesn't, doesn't. */
+    @Test
+    void theListShowsWhatTheListingItselfCarries() throws Exception {
+        JsonNode hotel = M.readTree("""
+                {"hid":"77","name":"Sea View","rating":"4","heroImage":"https://img/77.jpg","address":"Calangute",
+                 "options":[{"optionId":"O1","roomInfo":[{"name":"Std"}],"mealBasis":"Room Only","pricing":{"totalPrice":5000}}]}
+                """);
+        var o = TripjackHotelSearchProvider.toOffer(hotel, "Goa", 2, "C1");
+        assertThat(o.getHotelId()).isEqualTo("77");
+        assertThat(o.getImageUrl()).isEqualTo("https://img/77.jpg");
+        assertThat(o.getStarRating()).isEqualTo(4);
+        assertThat(o.getAddress()).isEqualTo("Calangute");
     }
 }

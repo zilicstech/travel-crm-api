@@ -52,7 +52,6 @@ public class MockHotelSearchProvider implements HotelSearchProvider {
                 .map(t -> HotelOfferResponse.builder()
                         .offerId("mock-" + t.hotelName().toLowerCase().replace(" ", "") + "-" + query.getCheckIn())
                         .hotelId(t.id())
-                        .imageUrl(photo(1))
                         .correlationId("mock-search")
                         .hotelName(t.hotelName())
                         .starRating(t.starRating())
@@ -68,6 +67,19 @@ public class MockHotelSearchProvider implements HotelSearchProvider {
                         .cancellationPolicy(t.refundable()
                                 ? "Free cancellation until 48 hours before check-in"
                                 : "Non-refundable")
+                        .build())
+                .toList();
+    }
+
+    /** Like the real supplier, the list's photos come after the list itself - one per hotel, from the template's place. */
+    @Override
+    public List<com.voyra.crm.dto.HotelThumbnailResponse> thumbnails(List<String> hotelIds) {
+        return IntStream.range(0, TEMPLATES.size())
+                .filter(i -> hotelIds.contains(TEMPLATES.get(i).id()))
+                .mapToObj(i -> com.voyra.crm.dto.HotelThumbnailResponse.builder()
+                        .hotelId(TEMPLATES.get(i).id())
+                        .imageUrl(photo(i + 1))
+                        .starRating(TEMPLATES.get(i).starRating())
                         .build())
                 .toList();
     }
@@ -94,9 +106,12 @@ public class MockHotelSearchProvider implements HotelSearchProvider {
                 .city(query.getCity())
                 .images(images)
                 .descriptions(List.of(
-                        HotelDetailResponse.Section.builder().title("Overview").text(t.hotelName() + " is a " + t.starRating()
-                                + "-star stay in " + query.getCity() + ", a short drive from the centre.").build(),
-                        HotelDetailResponse.Section.builder().title("Rooms").text("Air-conditioned rooms with free Wi-Fi, a minibar and a safe.").build()))
+                        HotelDetailResponse.Section.builder().title("Overview").text("With a stay at " + t.hotelName() + " in " + query.getCity()
+                                + ", you'll be within a 15-minute walk of the beach and close to the old town.\n"
+                                + "Take in the views from a garden and make use of amenities such as concierge services and a pool.\n"
+                                + "Make yourself at home in one of the air-conditioned rooms with a minibar and a safe. Free Wi-Fi keeps you connected.").build(),
+                        HotelDetailResponse.Section.builder().title("Dining").text("A restaurant serves breakfast and dinner; a poolside bar is open until late.").build(),
+                        HotelDetailResponse.Section.builder().title("Languages spoken").text("Hindi, English").build()))
                 .amenities(List.of("Free Wi-Fi", "Swimming pool", "Fitness centre", "Restaurant", "Airport shuttle", "24-hour front desk"))
                 .checkInFrom("14:00")
                 .checkOutTill("12:00")

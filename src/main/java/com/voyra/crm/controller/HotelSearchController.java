@@ -46,11 +46,10 @@ public class HotelSearchController {
         return ResponseEntity.ok(hotelSearchProvider.detail(hotelId, query));
     }
 
-    @PostMapping("/warm")
-    @Operation(summary = "Warm the supplier's hotel data", description = "Called when a hotel search opens: the supplier's city "
-            + "list is loaded in the background so the first search doesn't wait for it. Returns at once.")
-    public ResponseEntity<Void> warm() {
-        hotelSearchProvider.warm();
-        return ResponseEntity.accepted().build();
+    @PostMapping("/thumbnails")
+    @Operation(summary = "Photos, stars and address for listed hotels", description = "Asked after a search is shown, a page "
+            + "of hotel ids at a time, so the list never waits on the supplier's content call.")
+    public ResponseEntity<List<com.voyra.crm.dto.HotelThumbnailResponse>> thumbnails(@Valid @RequestBody com.voyra.crm.dto.HotelThumbnailsRequest request) {
+        return ResponseEntity.ok(hotelSearchProvider.thumbnails(request.getHotelIds()));
     }
 }

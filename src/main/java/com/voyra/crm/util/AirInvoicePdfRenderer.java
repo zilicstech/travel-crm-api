@@ -37,6 +37,9 @@ import java.util.Set;
  * Other, so each row's Basic + YQ + Other is its Total and the rows add up to the Gross Total.
  * Everything printed is frozen on the invoice and its lines, except the agency's contact details and
  * logo (read fresh, as the bank details are).
+ *
+ * <p>A hotel invoice is printed the same way, with a stay table instead of the flights: one block per
+ * hotel voucher - guests, hotel, check-in, check-out, nights, rooms and its confirmation number.
  */
 public final class AirInvoicePdfRenderer {
 
@@ -62,6 +65,33 @@ public final class AirInvoicePdfRenderer {
      */
     public static byte[] write(Invoice invoice, List<InvoiceLineItem> lines, List<InvoiceTax> taxes, Tenant agency,
                                Map<String, String> references, byte[] logo, String preparedBy) {
+        Set<String> airlines = new LinkedHashSet<>();
+        lines.stream().filter(AirInvoicePdfRenderer::hasLegs).flatMap(l -> l.getLegs().stream())
+                .map(VoucherLeg::getAirline).filter(a -> a != null && !a.isBlank()).forEach(airlines::add);
+        return render(invoice, lines, taxes, agency, references, logo, preparedBy, "Airline PNR",
+                airlines.isEmpty() ? null : "Airline: " + String.join(", ", airlines),
+                body -> flights(lines, references, body), "(Reimbursement of air ticket issued by airlines)");
+    }
+
+    /** A hotel invoice drafted from hotel vouchers; one typed by hand keeps the general layout. */
+    public static boolean appliesToHotel(InvoiceServiceCategory category, List<InvoiceLineItem> lines) {
+        return category == InvoiceServiceCategory.HOTEL && lines.stream().anyMatch(l -> l.getBookingDocumentId() != null);
+    }
+
+    /**
+     * @param details each voucher's details (hotelName, hotelCity, hotelCheckIn, hotelCheckOut, hotelRooms,
+     *                hotelRoomType, hotelBoardBasis), by voucher id
+     */
+    public static byte[] writeHotel(Invoice invoice, List<InvoiceLineItem> lines, List<InvoiceTax> taxes, Tenant agency,
+                                    Map<String, String> references, Map<String, Map<String, String>> details,
+                                    byte[] logo, String preparedBy) {
+        return render(invoice, lines, taxes, agency, references, logo, preparedBy, "Confirmation No.", null,
+                body -> stays(invoice, lines, references, details, body), "(Reimbursement of hotel accommodation)");
+    }
+
+    private static byte[] render(Invoice invoice, List<InvoiceLineItem> lines, List<InvoiceTax> taxes, Tenant agency,
+                                 Map<String, String> references, byte[] logo, String preparedBy, String referenceLabel,
+                                 String aboveTable, java.util.function.Function<Font, PdfPTable> table, String reimbursement) {
         Document document = new Document(PageSize.A4, 28, 28, 28, 28);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         Font bold = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 8);
@@ -76,58 +106,17 @@ public final class AirInvoicePdfRenderer {
             document.open();
 
             document.add(header(invoice, agency, logo, name, body));
-            List<String> pnrs = lines.stream().map(l -> references.get(l.getBookingDocumentId()))
+            List<String> refs = lines.stream().map(l -> references.get(l.getBookingDocumentId()))
                     .filter(r -> r != null && !r.isBlank()).distinct().toList();
-            document.add(billTo(invoice, pnrs, bold, body, title, pnr));
-
-            Set<String> airlines = new LinkedHashSet<>();
-            lines.stream().filter(AirInvoicePdfRenderer::hasLegs).flatMap(l -> l.getLegs().stream())
-                    .map(VoucherLeg::getAirline).filter(a -> a != null && !a.isBlank()).forEach(airlines::add);
-            if (!airlines.isEmpty()) {
-                document.add(single("Airline: " + String.join(", ", airlines), bold, 0));
+            document.add(billTo(invoice, referenceLabel, refs, bold, body, title, pnr));
+            if (aboveTable != null) {
+                document.add(single(aboveTable, bold, 0));
             }
-
-            BigDecimal gross = BigDecimal.ZERO;
-            PdfPTable table = new PdfPTable(new float[]{3.2f, 1.9f, 1f, 1f, 1.1f, 1.1f, 0.9f, 1f, 1.3f});
-            table.setWidthPercentage(100);
-            table.setSpacingBefore(4);
-            for (String h : List.of("Passenger", "Sector", "Flight", "Travel On", "Airline PNR", "Basic", "YQ", "Other", "Total")) {
-                PdfPCell c = cell(h, body, h.equals("Basic") || h.equals("YQ") || h.equals("Other") || h.equals("Total"));
-                c.setBackgroundColor(BAND);
-                table.addCell(c);
-            }
-            int passenger = 0;
-            for (InvoiceLineItem line : lines) {
-                BigDecimal total = nz(line.getTaxableValue());
-                gross = gross.add(total);
-                Map<String, BigDecimal> charges = line.getCharges();
-                BigDecimal basic = charges != null ? nz(charges.get("basic")) : total;
-                BigDecimal yq = charges != null ? nz(charges.get("yq")) : BigDecimal.ZERO;
-                BigDecimal other = total.subtract(basic).subtract(yq);
-                List<VoucherTraveller> travellers = line.getTravellers() != null ? line.getTravellers() : List.of();
-                List<VoucherLeg> legs = line.getLegs() != null ? line.getLegs() : List.of();
-                String reference = valueOr(references.get(line.getBookingDocumentId()));
-                int rows = Math.max(1, Math.max(travellers.size(), legs.size()));
-                for (int i = 0; i < rows; i++) {
-                    String who = i < travellers.size() ? "%03d %s".formatted(++passenger, upper(travellers.get(i).getName()))
-                            : (i == 0 && travellers.isEmpty() ? valueOr(line.getDescription()) : "");
-                    VoucherLeg leg = i < legs.size() ? legs.get(i) : null;
-                    table.addCell(cell(who, body, false));
-                    table.addCell(cell(leg == null ? "" : String.join("  ", nn(leg.getFrom()), nn(leg.getTo()), cabin(leg.getCabin())).trim(), body, false));
-                    table.addCell(cell(leg == null ? "" : nn(leg.getFlightNumber()), body, false));
-                    table.addCell(cell(leg == null || leg.getTravelDate() == null ? "" : leg.getTravelDate().format(TRAVEL_DATE), body, false));
-                    table.addCell(cell(leg == null ? "" : reference, body, false));
-                    boolean first = i == 0;
-                    table.addCell(cell(first ? amount(basic) : "", body, true));
-                    table.addCell(cell(first && yq.signum() != 0 ? amount(yq) : "", body, true));
-                    table.addCell(cell(first && other.signum() != 0 ? amount(other) : "", body, true));
-                    table.addCell(cell(first ? InvoicePdfRenderer.money(total) : "", body, true));
-                }
-            }
-            document.add(table);
+            document.add(table.apply(body));
             document.add(spacer(28));
 
-            document.add(totals(invoice, taxes, gross, base, agency, lines, bold, body));
+            BigDecimal gross = lines.stream().map(l -> nz(l.getTaxableValue())).reduce(BigDecimal.ZERO, BigDecimal::add);
+            document.add(totals(invoice, taxes, gross, base, agency, reimbursement, bold, body));
             document.add(terms(invoice, agency, bold, small, body));
             document.add(footer(invoice, preparedBy, body, small));
         } finally {
@@ -136,6 +125,99 @@ public final class AirInvoicePdfRenderer {
             }
         }
         return out.toByteArray();
+    }
+
+    private static PdfPTable flights(List<InvoiceLineItem> lines, Map<String, String> references, Font body) {
+        PdfPTable table = new PdfPTable(new float[]{3.2f, 1.9f, 1f, 1f, 1.1f, 1.1f, 0.9f, 1f, 1.3f});
+        table.setWidthPercentage(100);
+        table.setSpacingBefore(4);
+        for (String h : List.of("Passenger", "Sector", "Flight", "Travel On", "Airline PNR", "Basic", "YQ", "Other", "Total")) {
+            PdfPCell c = cell(h, body, h.equals("Basic") || h.equals("YQ") || h.equals("Other") || h.equals("Total"));
+            c.setBackgroundColor(BAND);
+            table.addCell(c);
+        }
+        int passenger = 0;
+        for (InvoiceLineItem line : lines) {
+            BigDecimal total = nz(line.getTaxableValue());
+            Map<String, BigDecimal> charges = line.getCharges();
+            BigDecimal basic = charges != null ? nz(charges.get("basic")) : total;
+            BigDecimal yq = charges != null ? nz(charges.get("yq")) : BigDecimal.ZERO;
+            BigDecimal other = total.subtract(basic).subtract(yq);
+            List<VoucherTraveller> travellers = line.getTravellers() != null ? line.getTravellers() : List.of();
+            List<VoucherLeg> legs = line.getLegs() != null ? line.getLegs() : List.of();
+            String reference = valueOr(references.get(line.getBookingDocumentId()));
+            int rows = Math.max(1, Math.max(travellers.size(), legs.size()));
+            for (int i = 0; i < rows; i++) {
+                String who = i < travellers.size() ? "%03d %s".formatted(++passenger, upper(travellers.get(i).getName()))
+                        : (i == 0 && travellers.isEmpty() ? valueOr(line.getDescription()) : "");
+                VoucherLeg leg = i < legs.size() ? legs.get(i) : null;
+                table.addCell(cell(who, body, false));
+                table.addCell(cell(leg == null ? "" : String.join("  ", nn(leg.getFrom()), nn(leg.getTo()), cabin(leg.getCabin())).trim(), body, false));
+                table.addCell(cell(leg == null ? "" : nn(leg.getFlightNumber()), body, false));
+                table.addCell(cell(leg == null || leg.getTravelDate() == null ? "" : leg.getTravelDate().format(TRAVEL_DATE), body, false));
+                table.addCell(cell(leg == null ? "" : reference, body, false));
+                boolean first = i == 0;
+                table.addCell(cell(first ? amount(basic) : "", body, true));
+                table.addCell(cell(first && yq.signum() != 0 ? amount(yq) : "", body, true));
+                table.addCell(cell(first && other.signum() != 0 ? amount(other) : "", body, true));
+                table.addCell(cell(first ? InvoicePdfRenderer.money(total) : "", body, true));
+            }
+        }
+        return table;
+    }
+
+    /** One block per hotel voucher: its guests down the first column, the stay on the first row. */
+    private static PdfPTable stays(Invoice invoice, List<InvoiceLineItem> lines, Map<String, String> references,
+                                   Map<String, Map<String, String>> details, Font body) {
+        PdfPTable table = new PdfPTable(new float[]{2.8f, 2.6f, 1f, 1f, 0.7f, 2.6f, 1.1f, 1.3f});
+        table.setWidthPercentage(100);
+        table.setSpacingBefore(4);
+        for (String h : List.of("Guest", "Hotel", "Check-in", "Check-out", "Nights", "Room", "Conf. No.", "Total")) {
+            PdfPCell c = cell(h, body, h.equals("Total") || h.equals("Nights"));
+            if (h.equals("Room")) c.setPaddingLeft(8);
+            c.setBackgroundColor(BAND);
+            table.addCell(c);
+        }
+        int guest = 0;
+        for (InvoiceLineItem line : lines) {
+            Map<String, String> d = line.getBookingDocumentId() != null && details.get(line.getBookingDocumentId()) != null
+                    ? details.get(line.getBookingDocumentId()) : Map.of();
+            String hotel = String.join(", ", java.util.stream.Stream.of(d.get("hotelName"), d.get("hotelCity"))
+                    .filter(v -> v != null && !v.isBlank()).toList());
+            java.time.LocalDate in = date(d.get("hotelCheckIn"));
+            java.time.LocalDate outDate = date(d.get("hotelCheckOut"));
+            String nights = in != null && outDate != null && outDate.isAfter(in)
+                    ? String.valueOf(java.time.temporal.ChronoUnit.DAYS.between(in, outDate)) : "";
+            String rooms = nn(d.get("hotelRooms")).isBlank() ? "" : d.get("hotelRooms") + " x ";
+            String room = (rooms + String.join(" · ", java.util.stream.Stream.of(d.get("hotelRoomType"), d.get("hotelBoardBasis"))
+                    .filter(v -> v != null && !v.isBlank()).toList())).trim();
+            List<VoucherTraveller> travellers = line.getTravellers() != null ? line.getTravellers() : List.of();
+            int rows = Math.max(1, travellers.size());
+            for (int i = 0; i < rows; i++) {
+                boolean first = i == 0;
+                String who = i < travellers.size() ? "%03d %s".formatted(++guest, upper(travellers.get(i).getName()))
+                        : hotel.isBlank() ? valueOr(line.getDescription()) : upper(invoice.getClientName());
+                table.addCell(cell(who, body, false));
+                table.addCell(cell(first ? (hotel.isBlank() ? "" : hotel) : "", body, false));
+                table.addCell(cell(first && in != null ? in.format(TRAVEL_DATE) : "", body, false));
+                table.addCell(cell(first && outDate != null ? outDate.format(TRAVEL_DATE) : "", body, false));
+                table.addCell(cell(first ? nights : "", body, true));
+                PdfPCell roomCell = cell(first ? room : "", body, false);
+                roomCell.setPaddingLeft(8);
+                table.addCell(roomCell);
+                table.addCell(cell(first ? valueOr(references.get(line.getBookingDocumentId())) : "", body, false));
+                table.addCell(cell(first ? InvoicePdfRenderer.money(nz(line.getTaxableValue())) : "", body, true));
+            }
+        }
+        return table;
+    }
+
+    private static java.time.LocalDate date(String iso) {
+        try {
+            return iso == null || iso.isBlank() ? null : java.time.LocalDate.parse(iso.trim().substring(0, Math.min(10, iso.trim().length())));
+        } catch (java.time.format.DateTimeParseException e) {
+            return null;
+        }
     }
 
     // ---------------------------------------------------------------- blocks
@@ -184,7 +266,7 @@ public final class AirInvoicePdfRenderer {
         return t;
     }
 
-    private static PdfPTable billTo(Invoice invoice, List<String> pnrs, Font bold, Font body, Font title, Font pnr) {
+    private static PdfPTable billTo(Invoice invoice, String referenceLabel, List<String> pnrs, Font bold, Font body, Font title, Font pnr) {
         PdfPTable t = new PdfPTable(new float[]{3.4f, 2.2f});
         t.setWidthPercentage(100);
         t.setSpacingBefore(12);
@@ -210,7 +292,7 @@ public final class AirInvoicePdfRenderer {
         date.setHorizontalAlignment(Element.ALIGN_RIGHT);
         box.addCell(date);
         if (!pnrs.isEmpty()) {
-            PdfPCell ref = new PdfPCell(new Phrase("Airline PNR (" + String.join(", ", pnrs) + ")", pnr));
+            PdfPCell ref = new PdfPCell(new Phrase(referenceLabel + " (" + String.join(", ", pnrs) + ")", pnr));
             ref.setColspan(2);
             ref.setBorder(0);
             box.addCell(ref);
@@ -234,10 +316,10 @@ public final class AirInvoicePdfRenderer {
     }
 
     private static PdfPTable totals(Invoice invoice, List<InvoiceTax> taxes, BigDecimal gross, String base, Tenant agency,
-                                    List<InvoiceLineItem> lines, Font bold, Font body) {
+                                    String reimbursement, Font bold, Font body) {
         PdfPTable t = new PdfPTable(new float[]{3.6f, 1.6f, 1.2f});
         t.setWidthPercentage(100);
-        PdfPCell reimb = new PdfPCell(new Phrase("(Reimbursement of air ticket issued by airlines)", bold));
+        PdfPCell reimb = new PdfPCell(new Phrase(reimbursement, bold));
         reimb.setBorder(Rectangle.TOP);
         reimb.setHorizontalAlignment(Element.ALIGN_RIGHT);
         t.addCell(reimb);

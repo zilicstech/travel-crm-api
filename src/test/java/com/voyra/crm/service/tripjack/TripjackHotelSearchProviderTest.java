@@ -80,15 +80,20 @@ class TripjackHotelSearchProviderTest {
                 {"hotelCityRegionIds":[{"cityName":"Paris","cityRegionId":31,"countryName":"United States"}],"hasMore":false}""");
     }
 
+    /** What the startup job loads: the city list and nationalities, before any search. */
+    private void staticData() {
+        cityList();
+        json("/hms/v3/nationality-info", HttpMethod.GET, """
+                {"nationalityInfos":[{"countryId":"106","code":"IN","name":"India"}]}""");
+    }
+
     @Test
     void cityBecomesHotelIdsAndTheCheapestOptionOfEachHotelIsOffered() {
-        cityList();
+        staticData();
         server.expect(requestTo(HOST + "/hms/v3/content/fetch-hotel-mapping")).andExpect(method(HttpMethod.POST))
                 .andExpect(jsonPath("$.regionIds[0]").value("21"))
                 .andRespond(withSuccess("""
                         {"hotels":[{"tjHotelId":"1001"},{"tjHotelId":"1002"}]}""", MediaType.APPLICATION_JSON));
-        json("/hms/v3/nationality-info", HttpMethod.GET, """
-                {"nationalityInfos":[{"countryId":"106","code":"IN","name":"India"}]}""");
         server.expect(requestTo(HOST + "/hms/v3/hotel/listing")).andExpect(method(HttpMethod.POST))
                 .andExpect(jsonPath("$.checkIn").value("2026-12-01"))
                 .andExpect(jsonPath("$.nationality").value("106"))
@@ -103,20 +108,20 @@ class TripjackHotelSearchProviderTest {
                             {"optionId":"A-1","roomInfo":[{"name":"Deluxe Room"}],"mealBasis":"Room Only","pricing":{"totalPrice":21000.5,"currency":"INR"},
                              "cancellation":{"isRefundable":true,"deadlineDateTime":"2026-11-28T12:00"}}]},
                           {"tjHotelId":"1002","name":"Hotel B","options":[]}]}""", MediaType.APPLICATION_JSON));
-        server.expect(requestTo(HOST + "/hms/v3/content/fetch-hotel-content")).andExpect(jsonPath("$.hotelIds[0]").value("1001"))
-                .andRespond(withSuccess("""
-                        {"hotels":[{"tjHotelId":"1001","name":"Hotel A Paris","star_rating":4,"locale":{"address":{"fulladdr":"1 Rue X, Paris"}}}]}""",
-                        MediaType.APPLICATION_JSON));
+        // No city list, nationality or content call during the search (server.verify() fails on any unexpected call).
 
+        provider.refreshStaticData();
         List<HotelOfferResponse> offers = provider.search(query("Paris", "FR"));
 
         server.verify();
         assertThat(offers).hasSize(1);
         HotelOfferResponse o = offers.get(0);
         assertThat(o.getOfferId()).isEqualTo("A-1");
-        assertThat(o.getHotelName()).isEqualTo("Hotel A Paris");
-        assertThat(o.getStarRating()).isEqualTo(4);
-        assertThat(o.getAddress()).isEqualTo("1 Rue X, Paris");
+        assertThat(o.getHotelName()).isEqualTo("Hotel A");
+        assertThat(o.getHotelId()).isEqualTo("1001");
+        // The listing carries no photo, stars or address here, so the card goes without them.
+        assertThat(o.getImageUrl()).isNull();
+        assertThat(o.getStarRating()).isZero();
         assertThat(o.getRoomType()).isEqualTo("Deluxe Room");
         assertThat(o.getBoardBasis()).isEqualTo("Room Only");
         assertThat(o.getNights()).isEqualTo(3);
@@ -128,7 +133,8 @@ class TripjackHotelSearchProviderTest {
 
     @Test
     void anUnknownCityIsAClearError() {
-        cityList();
+        staticData();
+        provider.refreshStaticData();
         assertThatThrownBy(() -> provider.search(query("Atlantis", null)))
                 .isInstanceOf(SupplierException.class)
                 .hasMessageContaining("no hotels listed for \"Atlantis\"");
@@ -139,9 +145,47 @@ class TripjackHotelSearchProviderTest {
         server.expect(requestTo(HOST + "/hms/v3/content/fetch-city-regionIds?limit=2000"))
                 .andRespond(withStatus(HttpStatus.FORBIDDEN).contentType(MediaType.APPLICATION_JSON)
                         .body("{\"errors\":[{\"message\":\"IP not whitelisted\"}]}"));
-        assertThatThrownBy(() -> provider.search(query("Goa", "IN")))
+        assertThatThrownBy(provider::refreshStaticData)
                 .isInstanceOf(SupplierException.class)
                 .hasMessageContaining("HTTP 403").hasMessageContaining("IP not whitelisted");
+    }
+
+    @Test
+    void aSearchNeverLoadsTheCityListItselfAndAsksToRetryUntilItIsLoaded() {
+        server.expect(org.springframework.test.web.client.ExpectedCount.manyTimes(), requestTo(org.hamcrest.Matchers.startsWith(HOST)))
+                .andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
+        assertThatThrownBy(() -> provider.search(query("Goa", "IN")))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("still loading");
+    }
+
+    @Test
+    void aFreshCopyIsNotLoadedAgain() {
+        staticData();
+        provider.refreshStaticData();
+        provider.refreshStaticData(); // A second load would hit an unexpected request and fail.
+        server.verify();
+    }
+
+    @Test
+    void thumbnailsComeFromTheContentCallAtListCardSizeAndAreCached() {
+        server.expect(requestTo(HOST + "/hms/v3/content/fetch-hotel-content")).andExpect(method(HttpMethod.POST))
+                .andExpect(jsonPath("$.hotelIds[0]").value("1001"))
+                .andRespond(withSuccess("""
+                        {"hotels":[{"tjHotelId":"1001","star_rating":"4.0",
+                          "locale":{"address":{"fulladdr":"Beach Road, Goa"}},
+                          "images":[{"links":{"1000px":{"href":"https://i.travelapi.com/lodging/1/abc_z.jpg"}}}]}]}""", MediaType.APPLICATION_JSON));
+
+        var first = provider.thumbnails(List.of("1001", "1002"));
+        var again = provider.thumbnails(List.of("1001"));
+
+        server.verify();
+        assertThat(first).hasSize(1);
+        assertThat(first.get(0).getHotelId()).isEqualTo("1001");
+        assertThat(first.get(0).getImageUrl()).isEqualTo("https://i.travelapi.com/lodging/1/abc_b.jpg");
+        assertThat(first.get(0).getStarRating()).isEqualTo(4);
+        assertThat(first.get(0).getAddress()).isEqualTo("Beach Road, Goa");
+        assertThat(again).hasSize(1);
     }
 
     @Test

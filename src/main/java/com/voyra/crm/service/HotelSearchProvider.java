@@ -21,7 +21,9 @@ public interface HotelSearchProvider {
      */
     com.voyra.crm.dto.HotelDetailResponse detail(String hotelId, HotelSearchQuery query);
 
-    /** Gets the supplier's slow static data ready in the background when someone opens a hotel search. */
-    default void warm() {
-    }
+    /**
+     * Photo, stars and address for hotels already listed - the list is shown first, from the search alone, and these
+     * fill in as they arrive. Hotels the supplier has nothing for are left out.
+     */
+    List<com.voyra.crm.dto.HotelThumbnailResponse> thumbnails(List<String> hotelIds);
 }

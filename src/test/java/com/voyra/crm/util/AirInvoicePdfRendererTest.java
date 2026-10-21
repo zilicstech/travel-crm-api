@@ -137,6 +137,27 @@ class AirInvoicePdfRendererTest {
     }
 
     @Test
+    void aHotelInvoicePrintsTheStayInTheSameLayout() throws Exception {
+        Invoice hotel = invoice();
+        hotel.setServiceCategory(InvoiceServiceCategory.HOTEL);
+        hotel.setInvoiceNumber("HTL00000001");
+        InvoiceLineItem stay = InvoiceLineItem.builder().id("L1").bookingDocumentId("V1").description("Hotel stay")
+                .taxableValue(new BigDecimal("140996.00"))
+                .travellers(List.of(new VoucherTraveller("M1", "Abhishek Kumar Singh", PaxType.ADULT))).build();
+        Map<String, String> details = Map.of("hotelName", "Aqua Wave", "hotelCity", "Goa", "hotelCheckIn", "2026-12-01",
+                "hotelCheckOut", "2026-12-04", "hotelRooms", "2", "hotelRoomType", "Deluxe Room", "hotelBoardBasis", "Breakfast");
+
+        assertThat(AirInvoicePdfRenderer.appliesToHotel(InvoiceServiceCategory.HOTEL, List.of(stay))).isTrue();
+        String t = text(AirInvoicePdfRenderer.writeHotel(hotel, List.of(stay), gstOnMarkup(), agency(),
+                Map.of("V1", "HC-778"), Map.of("V1", details), null, "Sandli"));
+
+        assertThat(t).contains("SKYTOURWAYZ ADVENTURE LLP", "Hotel Invoice", "HTL00000001", "Confirmation No. (HC-778)",
+                "001 ABHISHEK KUMAR", "Aqua Wave, Goa", "01/12/26", "04/12/26", "2 x Deluxe Room", "Breakfast",
+                "Gross Total", "CGST 9%", "SGST 9%", "Total Amount in INR", "141356.00", "(Reimbursement of hotel accommodation)");
+        assertThat(t).doesNotContain("Airline");
+    }
+
+    @Test
     void thePanIsReadFromTheGstin() {
         assertThat(AirInvoicePdfRenderer.pan("23AFFFS1126P1ZV")).isEqualTo("AFFFS1126P");
         assertThat(AirInvoicePdfRenderer.pan(null)).isNull();

@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.voyra.crm.dto.HotelDetailResponse;
 import com.voyra.crm.dto.HotelOfferResponse;
 import com.voyra.crm.dto.HotelSearchQuery;
+import com.voyra.crm.dto.HotelThumbnailResponse;
 import com.voyra.crm.dto.SupplierCredentialRevealResponse;
 import com.voyra.crm.enums.SupplierEnvironment;
 import com.voyra.crm.enums.SupplierProvider;
@@ -47,7 +48,9 @@ import java.util.concurrent.ConcurrentHashMap;
  * {@code docs/superpowers/plans/2026-10-18-tripjack-hotel-search.md}.
  *
  * <p>Everything cached here is Tripjack's static data (cities, hotel ids, nationalities, hotel
- * content), the same for every agency, keyed by host - never a price and never a credential.
+ * content), the same for every agency, keyed by host - never a price and never a credential. The city list and
+ * nationalities are never fetched while someone waits: {@link com.voyra.crm.scheduler.TripjackHotelStaticDataJob}
+ * loads them at startup and again once they are a week old, and a search reads whatever is loaded.
  */
 @Service
 @ConditionalOnProperty(name = "app.hotel-supplier.provider", havingValue = "tripjack")
@@ -58,7 +61,7 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
     static final int MAX_BATCHES = 3;
     static final int MAX_OFFERS = 60;
     static final int DEFAULT_CHILD_AGE = 8;
-    private static final Duration CITY_INDEX_TTL = Duration.ofDays(7);
+    static final Duration STATIC_DATA_TTL = Duration.ofDays(7);
     private static final Duration HOTEL_IDS_TTL = Duration.ofDays(1);
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
@@ -75,7 +78,8 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
             Map.entry("GOA", List.of("GOA", "NORTH GOA", "SOUTH GOA", "PANAJI", "CALANGUTE", "CANDOLIM", "BAGA")));
 
     private record Region(String id, String countryName) { }
-    private record CityIndex(Map<String, List<Region>> cities, Instant builtAt) { }
+    /** The city list and nationalities of one Tripjack host. */
+    private record StaticData(Map<String, List<Region>> cities, Map<String, String> nationalities, Instant builtAt) { }
     private record Cached<T>(T value, Instant at) { }
 
     private final SupplierCredentialService supplierCredentialService;
@@ -83,9 +87,9 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
     private final String uatBaseUrl;
     private final String prodBaseUrl;
 
-    private final Map<String, CityIndex> cityIndexes = new ConcurrentHashMap<>();
+    private final Map<String, StaticData> staticData = new ConcurrentHashMap<>();
+    private final Set<String> loading = ConcurrentHashMap.newKeySet();
     private final Map<String, Cached<List<String>>> hotelIds = new ConcurrentHashMap<>();
-    private final Map<String, Cached<Map<String, String>>> nationalities = new ConcurrentHashMap<>();
     private final Map<String, Cached<JsonNode>> content = new ConcurrentHashMap<>();
     private final Map<String, Cached<JsonNode>> statics = new ConcurrentHashMap<>();
     private static final Duration STATIC_DETAIL_TTL = Duration.ofHours(24);
@@ -115,12 +119,13 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
         String host = conn.host();
         long startedAt = System.currentTimeMillis();
 
-        List<String> regions = regionIds(client, host, query.getCity(), query.getCountryCode());
+        StaticData data = loaded(conn);
+        List<String> regions = regionIds(data, query.getCity(), query.getCountryCode());
         List<String> hids = hotelIdsFor(client, host, regions);
         if (hids.isEmpty()) {
             return List.of();
         }
-        String nationality = nationalityId(client, host, "IN");
+        String nationality = nationalityId(data, "IN");
         String correlationId = UUID.randomUUID().toString().replace("-", "");
         List<Map<String, Object>> rooms = rooms(query);
 
@@ -157,10 +162,9 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
         }
 
         List<JsonNode> withOptions = listed.stream().filter(h -> h.path("options").size() > 0).toList();
-        Map<String, JsonNode> info = contentFor(client, host, withOptions.stream().map(TripjackHotelSearchProvider::hotelIdOf).filter(id -> !id.isBlank()).toList());
         int nights = (int) Math.max(1, ChronoUnit.DAYS.between(query.getCheckIn(), query.getCheckOut()));
         List<HotelOfferResponse> offers = withOptions.stream()
-                .map(h -> toOffer(h, info.get(hotelIdOf(h)), query.getCity(), nights, correlationId))
+                .map(h -> toOffer(h, query.getCity(), nights, correlationId))
                 .sorted(Comparator.comparing(HotelOfferResponse::getPrice))
                 .limit(MAX_OFFERS)
                 .toList();
@@ -202,7 +206,11 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
         return new Conn(restClientBuilder.clone().baseUrl(host).defaultHeader("apikey", credential.getApiKey()).build(), host);
     }
 
-    private HotelOfferResponse toOffer(JsonNode hotel, JsonNode info, String city, int nights, String correlationId) {
+    /**
+     * One hotel of the listing, from the listing alone: the list never waits on Tripjack's content call. A photo, stars or
+     * address show only when the listing itself carries them; the hotel's own page fetches everything else.
+     */
+    static HotelOfferResponse toOffer(JsonNode hotel, String city, int nights, String correlationId) {
         JsonNode best = null;
         for (JsonNode o : hotel.path("options")) {
             if (best == null || o.path("pricing").path("totalPrice").asDouble() < best.path("pricing").path("totalPrice").asDouble()) {
@@ -211,19 +219,17 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
         }
         Set<String> roomNames = new LinkedHashSet<>();
         best.path("roomInfo").forEach(r -> roomNames.add(r.path("name").asText()));
-        JsonNode address = info == null ? null : info.path("locale").path("address");
-        String fullAddress = address == null ? "" : address.path("fulladdr").asText(
-                String.join(", ", List.of(address.path("line_1").asText(""), address.path("city").asText("")).stream().filter(s -> !s.isBlank()).toList()));
         boolean refundable = best.path("cancellation").path("isRefundable").asBoolean(false);
+        JsonNode address = hotel.path("address");
         return HotelOfferResponse.builder()
                 .offerId(best.path("optionId").asText())
                 .hotelId(hotelIdOf(hotel).isBlank() ? null : hotelIdOf(hotel))
-                .imageUrl(info == null ? null : images(info.path("images")).stream().findFirst().map(HotelDetailResponse.Image::getThumbUrl).orElse(null))
+                .imageUrl(listingImage(hotel))
                 .correlationId(correlationId)
-                .hotelName(info != null && !info.path("name").asText("").isBlank() ? info.path("name").asText() : hotel.path("name").asText())
-                .starRating(info == null ? 0 : (int) Math.round(info.path("star_rating").asDouble(0)))
+                .hotelName(hotel.path("name").asText())
+                .starRating((int) Math.round(firstNumber(hotel, "starRating", "star_rating", "rating")))
                 .city(city)
-                .address(fullAddress)
+                .address(address.isObject() ? address.path("fulladdr").asText(address.path("line_1").asText("")) : address.asText(""))
                 .roomType(String.join(" / ", roomNames))
                 .boardBasis(best.path("mealBasis").asText(""))
                 .nights(nights)
@@ -233,6 +239,28 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
                 .refundable(refundable)
                 .cancellationPolicy(cancellationPolicy(best.path("cancellation"), refundable))
                 .build();
+    }
+
+    /** The listing's hero image, if it has one - an images array, or a plain url under one of the names it goes by. */
+    static String listingImage(JsonNode hotel) {
+        if (hotel.path("images").isArray() && hotel.path("images").size() > 0) {
+            return images(hotel.path("images")).stream().findFirst().map(HotelDetailResponse.Image::getThumbUrl).orElse(null);
+        }
+        for (String key : List.of("heroImage", "hero_image", "image", "img", "imageUrl", "thumbnail", "thumbnailUrl")) {
+            JsonNode v = hotel.path(key);
+            String url = v.isObject() ? link(v.path("links").isObject() ? v.path("links") : v, false) : v.asText("");
+            if (url == null && v.isObject()) url = v.path("href").asText(v.path("url").asText(""));
+            if (url != null && url.startsWith("http")) return url;
+        }
+        return null;
+    }
+
+    private static double firstNumber(JsonNode node, String... keys) {
+        for (String k : keys) {
+            JsonNode v = node.path(k);
+            if (v.isNumber() || (v.isTextual() && v.asText().matches("\\d+(\\.\\d+)?"))) return v.asDouble();
+        }
+        return 0;
     }
 
     static String cancellationPolicy(JsonNode cancellation, boolean refundable) {
@@ -264,7 +292,7 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
         body.put("checkOut", query.getCheckOut().toString());
         body.put("rooms", rooms(query));
         body.put("currency", "INR");
-        body.put("nationality", nationalityId(conn.client(), conn.host(), "IN"));
+        body.put("nationality", nationalityId(loaded(conn), "IN"));
         JsonNode pricing = call(conn.client(), "POST", "/hms/v3/hotel/pricing", body);
         JsonNode stat = staticDetail(conn.client(), conn.host(), hotelId);
         JsonNode info = stat != null ? stat : contentFor(conn.client(), conn.host(), List.of(hotelId)).get(hotelId);
@@ -315,11 +343,7 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
             String t = flatText(i.path("policies").path(p[0]));
             if (!t.isBlank()) policies.add(HotelDetailResponse.Section.builder().title(p[1]).text(t).build());
         }
-        List<HotelDetailResponse.Section> descriptions = new ArrayList<>();
-        i.path("descriptions").fields().forEachRemaining(e -> {
-            String t = flatText(e.getValue());
-            if (!t.isBlank()) descriptions.add(HotelDetailResponse.Section.builder().title(title(e.getKey())).text(t).build());
-        });
+        List<HotelDetailResponse.Section> descriptions = descriptions(i.path("descriptions"));
         List<String> amenities = new ArrayList<>();
         i.path("amenities").forEach(a -> { String n = a.path("name").asText(""); if (!n.isBlank()) amenities.add(n); });
 
@@ -328,7 +352,8 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
                 .name(!pricing.path("hotelName").asText("").isBlank() ? pricing.path("hotelName").asText() : i.path("name").asText(""))
                 .starRating((int) Math.round(i.path("star_rating").asDouble(0)))
                 .address(address.path("fulladdr").asText(""))
-                .city(!address.path("city").asText("").isBlank() ? address.path("city").asText() : city)
+                // The city searched, not Tripjack's locality (Morjim for a Goa hotel) - it fills the voucher's city.
+                .city(city)
                 .latitude(coords.has("lat") ? coords.path("lat").decimalValue() : null)
                 .longitude(coords.has("long") ? coords.path("long").decimalValue() : null)
                 .images(images)
@@ -406,12 +431,57 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
         }
     }
 
-    /** Supplier text is HTML (and sometimes a JSON object of named paragraphs); the page shows plain text only. */
+    private static final Map<String, String> DESCRIPTION_TITLES = Map.ofEntries(
+            Map.entry("headline", "Overview"), Map.entry("default", "About the hotel"), Map.entry("location", "Location"),
+            Map.entry("attractions", "What's nearby"), Map.entry("rooms", "Rooms"), Map.entry("amenities", "Facilities"),
+            Map.entry("dining", "Dining"), Map.entry("business_amenities", "Business facilities"),
+            Map.entry("spoken_languages", "Languages spoken"), Map.entry("renovations", "Renovations"),
+            Map.entry("national_ratings", "Ratings"));
+    private static final List<String> DESCRIPTION_ORDER = List.of("headline", "default", "location", "attractions", "rooms",
+            "amenities", "dining", "business_amenities", "spoken_languages", "renovations", "national_ratings");
+
+    /**
+     * The hotel's description sections in reading order, each under a plain title. Tripjack repeats paragraphs across
+     * its sections (the headline often holds the whole overview again), so a paragraph is shown once, where it first
+     * appears; a section left empty is dropped.
+     */
+    static List<HotelDetailResponse.Section> descriptions(JsonNode node) {
+        List<Map.Entry<String, JsonNode>> fields = new ArrayList<>();
+        node.fields().forEachRemaining(fields::add);
+        fields.sort(Comparator.comparingInt(e -> {
+            int at = DESCRIPTION_ORDER.indexOf(e.getKey());
+            return at < 0 ? DESCRIPTION_ORDER.size() : at;
+        }));
+        Set<String> seen = new java.util.HashSet<>();
+        List<HotelDetailResponse.Section> out = new ArrayList<>();
+        for (Map.Entry<String, JsonNode> e : fields) {
+            List<String> fresh = new ArrayList<>();
+            for (String paragraph : flatText(e.getValue()).split("\n")) {
+                String p = paragraph.trim();
+                if (!p.isEmpty() && seen.add(p.toLowerCase(Locale.ROOT).replaceAll("\\s+", " "))) fresh.add(p);
+            }
+            if (!fresh.isEmpty()) {
+                out.add(HotelDetailResponse.Section.builder()
+                        .title(DESCRIPTION_TITLES.getOrDefault(e.getKey(), title(e.getKey()))).text(String.join("\n", fresh)).build());
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Supplier text is HTML (and sometimes a JSON object of named paragraphs); the page shows plain text only. A short
+     * one-line part of such an object keeps its name ("Languages spoken: Hindi, English"), so it isn't a stray line.
+     */
     static String flatText(JsonNode value) {
         if (value == null || value.isMissingNode() || value.isNull()) return "";
         if (value.isObject()) {
             List<String> parts = new ArrayList<>();
-            value.fields().forEachRemaining(e -> { String t = flatText(e.getValue()); if (!t.isBlank()) parts.add(t); });
+            value.fields().forEachRemaining(e -> {
+                String t = flatText(e.getValue());
+                if (t.isBlank()) return;
+                boolean label = !t.contains("\n") && t.length() <= 80;
+                parts.add(label ? DESCRIPTION_TITLES.getOrDefault(e.getKey(), title(e.getKey())) + ": " + t : t);
+            });
             return String.join("\n", parts);
         }
         String raw = value.asText("").trim();
@@ -445,11 +515,10 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
 
     // ── City → region ids → hotel ids ───────────────────────────────────────
 
-    private List<String> regionIds(RestClient client, String host, String city, String countryCode) {
-        CityIndex index = cityIndex(client, host);
+    private static List<String> regionIds(StaticData data, String city, String countryCode) {
         String key = city.trim().toUpperCase(Locale.ROOT);
         List<Region> matches = CITY_ALIASES.getOrDefault(key, List.of(key)).stream()
-                .flatMap(name -> index.cities().getOrDefault(name, List.of()).stream()).toList();
+                .flatMap(name -> data.cities().getOrDefault(name, List.of()).stream()).toList();
         if (countryCode != null && !countryCode.isBlank()) {
             String country = new Locale("", countryCode.toUpperCase(Locale.ROOT)).getDisplayCountry(Locale.ENGLISH).toUpperCase(Locale.ROOT);
             List<Region> inCountry = matches.stream().filter(r -> r.countryName().equals(country)).toList();
@@ -461,22 +530,47 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
         return matches.stream().map(Region::id).distinct().toList();
     }
 
-    /** The whole paged city list, built once per host and rebuilt weekly - the slow part of a cold start. */
-    private CityIndex cityIndex(RestClient client, String host) {
-        CityIndex current = cityIndexes.get(host);
-        if (current != null && current.builtAt().plus(CITY_INDEX_TTL).isAfter(Instant.now())) {
-            return current;
+    /**
+     * This host's city list and nationalities, however old - a week-old copy is replaced in the background, never
+     * while a search waits. Not loaded yet (just started, or the agency moved to another Tripjack environment): the
+     * load starts in the background and the search is asked to retry.
+     */
+    private StaticData loaded(Conn conn) {
+        StaticData data = staticData.get(conn.host());
+        if (data != null) return data;
+        if (loading.add(conn.host())) {
+            CALLS.execute(() -> {
+                try {
+                    load(conn);
+                } catch (RuntimeException e) {
+                    log.warn("Tripjack hotel static data load failed for {}: {}", conn.host(), e.getMessage());
+                }
+            });
         }
-        synchronized (cityIndexes) {
-            current = cityIndexes.get(host);
-            if (current != null && current.builtAt().plus(CITY_INDEX_TTL).isAfter(Instant.now())) {
-                return current;
-            }
+        throw new IllegalStateException("Hotel search is still loading Tripjack's city list - try again in a minute");
+    }
+
+    /**
+     * Loads this agency's Tripjack host's city list and nationalities unless a copy under a week old is already held.
+     * Called by the scheduled job, with the agency's tenant set so its credential can be read.
+     */
+    public void refreshStaticData() {
+        Conn conn = connect();
+        StaticData current = staticData.get(conn.host());
+        if (current != null && current.builtAt().plus(STATIC_DATA_TTL).isAfter(Instant.now())) return;
+        if (!loading.add(conn.host())) return;
+        load(conn);
+    }
+
+    /** The whole paged city list (Tripjack has no name filter) and the nationality ids; swapped in only once complete. */
+    private void load(Conn conn) {
+        try {
+            long startedAt = System.currentTimeMillis();
             Map<String, List<Region>> cities = new HashMap<>();
             String cursor = null;
             int pages = 0;
             do {
-                JsonNode page = call(client, "GET", "/hms/v3/content/fetch-city-regionIds?limit=2000" + (cursor == null ? "" : "&cursor=" + cursor), null);
+                JsonNode page = call(conn.client(), "GET", "/hms/v3/content/fetch-city-regionIds?limit=2000" + (cursor == null ? "" : "&cursor=" + cursor), null);
                 for (JsonNode r : page.path("hotelCityRegionIds")) {
                     String name = r.path("cityName").asText("").trim().toUpperCase(Locale.ROOT);
                     if (!name.isEmpty()) {
@@ -487,10 +581,14 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
                 cursor = page.path("hasMore").asBoolean(false) ? page.path("nextCursor").asText(null) : null;
                 pages++;
             } while (cursor != null && !cursor.isBlank() && pages < 500);
-            log.info("Tripjack hotel city index built: {} cities from {} pages ({})", cities.size(), pages, host);
-            CityIndex built = new CityIndex(cities, Instant.now());
-            cityIndexes.put(host, built);
-            return built;
+            Map<String, String> nationalities = new HashMap<>();
+            call(conn.client(), "GET", "/hms/v3/nationality-info", null).path("nationalityInfos")
+                    .forEach(n -> nationalities.put(n.path("code").asText("").toUpperCase(Locale.ROOT), n.path("countryId").asText()));
+            staticData.put(conn.host(), new StaticData(cities, nationalities, Instant.now()));
+            log.info("Tripjack hotel static data loaded: {} cities from {} pages, {} nationalities in {} ms ({})",
+                    cities.size(), pages, nationalities.size(), System.currentTimeMillis() - startedAt, conn.host());
+        } finally {
+            loading.remove(conn.host());
         }
     }
 
@@ -511,30 +609,22 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
         return ids;
     }
 
-    private String nationalityId(RestClient client, String host, String iso2) {
-        Cached<Map<String, String>> cached = nationalities.get(host);
-        if (cached == null || cached.at().plus(CITY_INDEX_TTL).isBefore(Instant.now())) {
-            Map<String, String> map = new HashMap<>();
-            call(client, "GET", "/hms/v3/nationality-info", null).path("nationalityInfos")
-                    .forEach(n -> map.put(n.path("code").asText("").toUpperCase(Locale.ROOT), n.path("countryId").asText()));
-            cached = new Cached<>(map, Instant.now());
-            nationalities.put(host, cached);
-        }
-        String id = cached.value().get(iso2);
+    private static String nationalityId(StaticData data, String iso2) {
+        String id = data.nationalities().get(iso2);
         if (id == null) {
             throw new SupplierException("Tripjack hotels don't support nationality " + iso2, null);
         }
         return id;
     }
 
-    /** Star rating, address and photos; a failure only costs the listing those, never the search. Batches go out together. */
+    /** Star rating, address and photos, cached a week; a failure only costs the list those. Batches go out together. */
     private Map<String, JsonNode> contentFor(RestClient client, String host, List<String> hids) {
         Map<String, JsonNode> out = new java.util.concurrent.ConcurrentHashMap<>();
         List<String> missing = new ArrayList<>();
         for (String hid : hids) {
             if (hid == null || hid.isBlank()) continue;
             Cached<JsonNode> c = content.get(host + "|" + hid);
-            if (c != null && c.at().plus(CITY_INDEX_TTL).isAfter(Instant.now())) out.put(hid, c.value()); else missing.add(hid);
+            if (c != null && c.at().plus(STATIC_DATA_TTL).isAfter(Instant.now())) out.put(hid, c.value()); else missing.add(hid);
         }
         List<java.util.concurrent.CompletableFuture<Void>> calls = new ArrayList<>();
         for (int i = 0; i < missing.size(); i += LISTING_BATCH) {
@@ -569,18 +659,27 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
         return "";
     }
 
-    /** Builds the city index (the slow part of a cold start) in the background, so the first search doesn't wait on it. */
     @Override
-    public void warm() {
+    public List<HotelThumbnailResponse> thumbnails(List<String> hids) {
         Conn conn = connect();
-        CALLS.execute(() -> {
-            try {
-                cityIndex(conn.client(), conn.host());
-                nationalityId(conn.client(), conn.host(), "IN");
-            } catch (RuntimeException e) {
-                log.warn("Tripjack hotel warm-up failed: {}", e.getMessage());
-            }
-        });
+        Map<String, JsonNode> info = contentFor(conn.client(), conn.host(), hids);
+        return hids.stream().filter(info::containsKey).map(hid -> toThumbnail(hid, info.get(hid))).toList();
+    }
+
+    static HotelThumbnailResponse toThumbnail(String hid, JsonNode info) {
+        JsonNode address = info.path("locale").path("address");
+        return HotelThumbnailResponse.builder()
+                .hotelId(hid)
+                .imageUrl(images(info.path("images")).stream().findFirst().map(i -> small(i.getThumbUrl())).orElse(null))
+                .starRating((int) Math.round(info.path("star_rating").asDouble(0)))
+                .address(address.path("fulladdr").asText(String.join(", ", java.util.stream.Stream.of(
+                        address.path("line_1").asText(""), address.path("city").asText("")).filter(v -> !v.isBlank()).toList())))
+                .build();
+    }
+
+    /** Tripjack's photo host serves each photo in sizes by suffix: _z is ~1000px (~280 KB), _b 350px (~25 KB) - enough for a list card. */
+    static String small(String url) {
+        return url == null ? null : url.replaceFirst("^(https://i\\.travelapi\\.com/.+)_[a-z](\\.jpe?g)$", "$1_b$2");
     }
 
     // ── HTTP ────────────────────────────────────────────────────────────────

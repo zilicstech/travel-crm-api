@@ -52,7 +52,10 @@ class MockHotelSearchProviderTest {
     void eachOfferOpensAHotelPageWithItsPhotosAndThreeRoomOptions() {
         HotelOfferResponse offer = provider.search(query(1)).get(0);
         assertThat(offer.getHotelId()).isNotBlank();
-        assertThat(offer.getImageUrl()).isNotBlank();
+        // The photo follows the list, as with the real supplier.
+        assertThat(offer.getImageUrl()).isNull();
+        assertThat(provider.thumbnails(List.of(offer.getHotelId(), "unknown")))
+                .singleElement().satisfies(t -> assertThat(t.getImageUrl()).isNotBlank());
 
         com.voyra.crm.dto.HotelDetailResponse d = provider.detail(offer.getHotelId(), query(1));
         assertThat(d.getName()).isEqualTo(offer.getHotelName());

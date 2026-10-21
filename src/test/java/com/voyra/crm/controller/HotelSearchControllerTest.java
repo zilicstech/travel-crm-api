@@ -86,4 +86,19 @@ class HotelSearchControllerTest {
                         .content(objectMapper.writeValueAsString(searchQuery())))
                 .andExpect(status().isForbidden());
     }
+
+    @Test
+    void thumbnails_agentGetsThemAndAnEmptyListIsRejected() throws Exception {
+        when(hotelSearchProvider.thumbnails(any())).thenReturn(List.of());
+        mockMvc.perform(post("/api/hotels/thumbnails")
+                        .with(SecurityMockMvcRequestPostProcessors.user("agent1").roles("AGENT"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"hotelIds\":[\"1001\"]}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/hotels/thumbnails")
+                        .with(SecurityMockMvcRequestPostProcessors.user("agent1").roles("AGENT"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"hotelIds\":[]}"))
+                .andExpect(status().isBadRequest());
+    }
 }

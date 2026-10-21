@@ -518,13 +518,20 @@ public class InvoiceDocumentService {
         // fresh at print time, never frozen on the invoice - they're presentational only and
         // never feed a money figure, unlike everything InvoicePdfRenderer otherwise reads.
         Tenant agency = currentAgency();
-        if (AirInvoicePdfRenderer.applies(invoice.getServiceCategory(), lines)) {
+        boolean air = AirInvoicePdfRenderer.applies(invoice.getServiceCategory(), lines);
+        if (air || AirInvoicePdfRenderer.appliesToHotel(invoice.getServiceCategory(), lines)) {
             Map<String, String> references = new java.util.HashMap<>();
+            Map<String, Map<String, String>> details = new java.util.HashMap<>();
             bookingDocumentRepository.findAllById(lines.stream().map(InvoiceLineItem::getBookingDocumentId)
                             .filter(java.util.Objects::nonNull).distinct().toList())
-                    .forEach(d -> references.put(d.getId(), d.getReferenceNumber()));
-            return AirInvoicePdfRenderer.write(invoice, lines, taxes, agency, references, logoOf(agency),
-                    userName(invoice.getIssuedBy() != null ? invoice.getIssuedBy() : invoice.getCreatedBy()));
+                    .forEach(d -> {
+                        references.put(d.getId(), d.getReferenceNumber());
+                        if (d.getDetails() != null) details.put(d.getId(), d.getDetails());
+                    });
+            String preparedBy = userName(invoice.getIssuedBy() != null ? invoice.getIssuedBy() : invoice.getCreatedBy());
+            return air
+                    ? AirInvoicePdfRenderer.write(invoice, lines, taxes, agency, references, logoOf(agency), preparedBy)
+                    : AirInvoicePdfRenderer.writeHotel(invoice, lines, taxes, agency, references, details, logoOf(agency), preparedBy);
         }
         Booking booking = invoice.getBookingId() != null
                 ? bookingRepository.findById(invoice.getBookingId()).orElse(null) : null;
