@@ -10,6 +10,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -36,5 +37,12 @@ public class HotelSearchController {
             + "add the chosen ones to a service's proposal via POST /api/leads/{id}/proposal-items/batch.")
     public ResponseEntity<List<HotelOfferResponse>> search(@Valid @RequestBody HotelSearchQuery query) {
         return ResponseEntity.ok(hotelSearchProvider.search(query));
+    }
+
+    @PostMapping("/{hotelId}/detail")
+    @Operation(summary = "Open one hotel from a search", description = "Photos, description, amenities, policies and every "
+            + "bookable room option for the searched dates and guests. Send the search again with its correlationId.")
+    public ResponseEntity<com.voyra.crm.dto.HotelDetailResponse> detail(@PathVariable String hotelId, @Valid @RequestBody HotelSearchQuery query) {
+        return ResponseEntity.ok(hotelSearchProvider.detail(hotelId, query));
     }
 }

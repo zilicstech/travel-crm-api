@@ -40,4 +40,7 @@ public class HotelSearchQuery {
 
     @Schema(description = "Age of each child at check-in; a missing age is sent to the supplier as 8", example = "[6, 9]")
     private java.util.List<Integer> childAges;
+
+    @Schema(description = "Opening a hotel from a search: the search's correlationId, which the supplier ties its rates to")
+    private String correlationId;
 }

@@ -47,4 +47,18 @@ class MockHotelSearchProviderTest {
         List<HotelOfferResponse> offers = provider.search(query(1));
         assertThat(offers).allMatch(o -> o.getCity().equals("Phuket"));
     }
+
+    @Test
+    void eachOfferOpensAHotelPageWithItsPhotosAndThreeRoomOptions() {
+        HotelOfferResponse offer = provider.search(query(1)).get(0);
+        assertThat(offer.getHotelId()).isNotBlank();
+        assertThat(offer.getImageUrl()).isNotBlank();
+
+        com.voyra.crm.dto.HotelDetailResponse d = provider.detail(offer.getHotelId(), query(1));
+        assertThat(d.getName()).isEqualTo(offer.getHotelName());
+        assertThat(d.getImages()).hasSizeGreaterThan(5);
+        assertThat(d.getOptions()).hasSize(3);
+        // The searched room is the page's cheapest option at the same price.
+        assertThat(d.getOptions().get(0).getPrice()).isEqualByComparingTo(offer.getPrice());
+    }
 }

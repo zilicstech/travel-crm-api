@@ -2,6 +2,7 @@ package com.voyra.crm.service.tripjack;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.voyra.crm.dto.HotelDetailResponse;
 import com.voyra.crm.dto.HotelOfferResponse;
 import com.voyra.crm.dto.HotelSearchQuery;
 import com.voyra.crm.dto.SupplierCredentialRevealResponse;
@@ -86,6 +87,8 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
     private final Map<String, Cached<List<String>>> hotelIds = new ConcurrentHashMap<>();
     private final Map<String, Cached<Map<String, String>>> nationalities = new ConcurrentHashMap<>();
     private final Map<String, Cached<JsonNode>> content = new ConcurrentHashMap<>();
+    private final Map<String, Cached<JsonNode>> statics = new ConcurrentHashMap<>();
+    private static final Duration STATIC_DETAIL_TTL = Duration.ofHours(24);
 
     public TripjackHotelSearchProvider(SupplierCredentialService supplierCredentialService,
                                        @Qualifier("tripjackRestClientBuilder") RestClient.Builder restClientBuilder,
@@ -100,9 +103,9 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
     @Override
     public List<HotelOfferResponse> search(HotelSearchQuery query) {
         log.info("Tripjack hotel search start: {} ({}) {} -> {}", query.getCity(), query.getCountryCode(), query.getCheckIn(), query.getCheckOut());
-        SupplierCredentialRevealResponse credential = supplierCredentialService.resolveActive(SupplierProvider.TRIPJACK);
-        String host = credential.getEnvironment() == SupplierEnvironment.PROD ? prodBaseUrl : uatBaseUrl;
-        RestClient client = restClientBuilder.clone().baseUrl(host).defaultHeader("apikey", credential.getApiKey()).build();
+        Conn conn = connect();
+        RestClient client = conn.client();
+        String host = conn.host();
         long startedAt = System.currentTimeMillis();
 
         List<String> regions = regionIds(client, host, query.getCity(), query.getCountryCode());
@@ -141,7 +144,7 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
         Map<String, JsonNode> info = contentFor(client, host, withOptions.stream().map(h -> h.path("tjHotelId").asText()).toList());
         int nights = (int) Math.max(1, ChronoUnit.DAYS.between(query.getCheckIn(), query.getCheckOut()));
         List<HotelOfferResponse> offers = withOptions.stream()
-                .map(h -> toOffer(h, info.get(h.path("tjHotelId").asText()), query.getCity(), nights))
+                .map(h -> toOffer(h, info.get(h.path("tjHotelId").asText()), query.getCity(), nights, correlationId))
                 .sorted(Comparator.comparing(HotelOfferResponse::getPrice))
                 .limit(MAX_OFFERS)
                 .toList();
@@ -175,7 +178,15 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
         return rooms;
     }
 
-    private HotelOfferResponse toOffer(JsonNode hotel, JsonNode info, String city, int nights) {
+    private record Conn(RestClient client, String host) { }
+
+    private Conn connect() {
+        SupplierCredentialRevealResponse credential = supplierCredentialService.resolveActive(SupplierProvider.TRIPJACK);
+        String host = credential.getEnvironment() == SupplierEnvironment.PROD ? prodBaseUrl : uatBaseUrl;
+        return new Conn(restClientBuilder.clone().baseUrl(host).defaultHeader("apikey", credential.getApiKey()).build(), host);
+    }
+
+    private HotelOfferResponse toOffer(JsonNode hotel, JsonNode info, String city, int nights, String correlationId) {
         JsonNode best = null;
         for (JsonNode o : hotel.path("options")) {
             if (best == null || o.path("pricing").path("totalPrice").asDouble() < best.path("pricing").path("totalPrice").asDouble()) {
@@ -190,6 +201,9 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
         boolean refundable = best.path("cancellation").path("isRefundable").asBoolean(false);
         return HotelOfferResponse.builder()
                 .offerId(best.path("optionId").asText())
+                .hotelId(hotel.path("tjHotelId").asText())
+                .imageUrl(info == null ? null : images(info.path("images")).stream().findFirst().map(HotelDetailResponse.Image::getThumbUrl).orElse(null))
+                .correlationId(correlationId)
                 .hotelName(info != null && !info.path("name").asText("").isBlank() ? info.path("name").asText() : hotel.path("name").asText())
                 .starRating(info == null ? 0 : (int) Math.round(info.path("star_rating").asDouble(0)))
                 .city(city)
@@ -205,10 +219,212 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
                 .build();
     }
 
-    private static String cancellationPolicy(JsonNode cancellation, boolean refundable) {
+    static String cancellationPolicy(JsonNode cancellation, boolean refundable) {
         if (!refundable) return "Non-refundable";
         String deadline = cancellation.path("deadlineDateTime").asText("");
-        return deadline.isBlank() ? "Refundable" : "Free cancellation until " + deadline.replace('T', ' ');
+        // The last free slab ends where the penalty starts.
+        for (JsonNode p : cancellation.path("penalties")) {
+            if (p.path("amount").asDouble(-1) == 0 && !p.path("to").asText("").isBlank()) deadline = p.path("to").asText();
+        }
+        return deadline.isBlank() ? "Refundable" : "Free cancellation until " + deadline.replace('T', ' ').replaceAll("(\\d\\d:\\d\\d):\\d\\d$", "$1");
+    }
+
+    // ── One hotel's page ────────────────────────────────────────────────────
+
+    /**
+     * Every bookable option from the pricing API (tied to the search by its correlationId) and the hotel's static
+     * detail - every photo, descriptions, amenities, policies and each room type's own photos and facts, joined to an
+     * option's rooms by room id. Static detail is cached for a day, as Tripjack asks; without it the page still lists
+     * the options, with the photos the search's content call gave.
+     */
+    @Override
+    public HotelDetailResponse detail(String hotelId, HotelSearchQuery query) {
+        Conn conn = connect();
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("correlationId", query.getCorrelationId() != null && !query.getCorrelationId().isBlank()
+                ? query.getCorrelationId() : UUID.randomUUID().toString().replace("-", ""));
+        body.put("hid", hotelId);
+        body.put("checkIn", query.getCheckIn().toString());
+        body.put("checkOut", query.getCheckOut().toString());
+        body.put("rooms", rooms(query));
+        body.put("currency", "INR");
+        body.put("nationality", nationalityId(conn.client(), conn.host(), "IN"));
+        JsonNode pricing = call(conn.client(), "POST", "/hms/v3/hotel/pricing", body);
+        JsonNode stat = staticDetail(conn.client(), conn.host(), hotelId);
+        JsonNode info = stat != null ? stat : contentFor(conn.client(), conn.host(), List.of(hotelId)).get(hotelId);
+        int nights = (int) Math.max(1, ChronoUnit.DAYS.between(query.getCheckIn(), query.getCheckOut()));
+        return toDetail(hotelId, pricing, info, query.getCity(), nights);
+    }
+
+    static HotelDetailResponse toDetail(String hotelId, JsonNode pricing, JsonNode info, String city, int nights) {
+        JsonNode none = OBJECT_MAPPER.createObjectNode();
+        JsonNode i = info != null ? info : none;
+        Map<String, JsonNode> roomTypes = new HashMap<>();
+        i.path("rooms").forEach(r -> roomTypes.put(r.path("id").asText(), r));
+
+        List<HotelDetailResponse.Image> images = new ArrayList<>(images(i.path("images")));
+        Set<String> seen = new java.util.HashSet<>(images.stream().map(HotelDetailResponse.Image::getUrl).toList());
+        roomTypes.values().forEach(r -> images(r.path("images")).forEach(img -> { if (seen.add(img.getUrl())) images.add(img); }));
+
+        JsonNode address = i.path("locale").path("address");
+        JsonNode coords = i.path("locale").path("coordinates");
+        JsonNode times = i.path("policies").path("checkInCheckOut");
+        List<HotelDetailResponse.RoomOption> options = new ArrayList<>();
+        for (JsonNode o : pricing.path("options")) {
+            Map<String, HotelDetailResponse.Room> rooms = new LinkedHashMap<>();
+            for (JsonNode ri : o.path("roomInfo")) {
+                String id = ri.path("id").asText();
+                HotelDetailResponse.Room known = rooms.get(id + "|" + ri.path("name").asText());
+                if (known != null) { known.setCount(known.getCount() + 1); continue; }
+                rooms.put(id + "|" + ri.path("name").asText(), room(id, ri.path("name").asText(), roomTypes.get(id)));
+            }
+            boolean refundable = o.path("cancellation").path("isRefundable").asBoolean(false);
+            options.add(HotelDetailResponse.RoomOption.builder()
+                    .optionId(o.path("optionId").asText())
+                    .rooms(new ArrayList<>(rooms.values()))
+                    .mealBasis(o.path("mealBasis").asText(""))
+                    .inclusions(strings(o.path("inclusions")))
+                    .bookingNotes(text(o.path("bookingNotes").asText("")))
+                    .price(new BigDecimal(o.path("pricing").path("totalPrice").asText("0")).setScale(2, java.math.RoundingMode.HALF_UP))
+                    .currency(o.path("pricing").path("currency").asText("INR"))
+                    .refundable(refundable)
+                    .cancellationPolicy(cancellationPolicy(o.path("cancellation"), refundable))
+                    .build());
+        }
+        options.sort(Comparator.comparing(HotelDetailResponse.RoomOption::getPrice));
+
+        List<HotelDetailResponse.Section> policies = new ArrayList<>();
+        for (String[] p : new String[][]{{"mandatory_fees", "Fees paid at the hotel"}, {"know_before_you_go", "Know before you go"},
+                {"instructions", "Check-in instructions"}, {"special_instructions", "Special instructions"}, {"optional_fees", "Optional fees"}}) {
+            String t = flatText(i.path("policies").path(p[0]));
+            if (!t.isBlank()) policies.add(HotelDetailResponse.Section.builder().title(p[1]).text(t).build());
+        }
+        List<HotelDetailResponse.Section> descriptions = new ArrayList<>();
+        i.path("descriptions").fields().forEachRemaining(e -> {
+            String t = flatText(e.getValue());
+            if (!t.isBlank()) descriptions.add(HotelDetailResponse.Section.builder().title(title(e.getKey())).text(t).build());
+        });
+        List<String> amenities = new ArrayList<>();
+        i.path("amenities").forEach(a -> { String n = a.path("name").asText(""); if (!n.isBlank()) amenities.add(n); });
+
+        return HotelDetailResponse.builder()
+                .hotelId(hotelId)
+                .name(!pricing.path("hotelName").asText("").isBlank() ? pricing.path("hotelName").asText() : i.path("name").asText(""))
+                .starRating((int) Math.round(i.path("star_rating").asDouble(0)))
+                .address(address.path("fulladdr").asText(""))
+                .city(!address.path("city").asText("").isBlank() ? address.path("city").asText() : city)
+                .latitude(coords.has("lat") ? coords.path("lat").decimalValue() : null)
+                .longitude(coords.has("long") ? coords.path("long").decimalValue() : null)
+                .images(images)
+                .descriptions(descriptions)
+                .amenities(amenities)
+                .checkInFrom(times.path("checkin_from").asText(null))
+                .checkOutTill(times.path("checkout_till").asText(null))
+                .policies(policies)
+                .options(options)
+                .nights(nights)
+                .supplier("Tripjack")
+                .build();
+    }
+
+    private static HotelDetailResponse.Room room(String id, String name, JsonNode type) {
+        HotelDetailResponse.Room.RoomBuilder b = HotelDetailResponse.Room.builder().id(id).name(name).count(1)
+                .amenities(List.of()).images(List.of());
+        if (type == null) return b.build();
+        List<String> views = new ArrayList<>();
+        type.path("views").forEach(v -> views.add(v.path("name").asText()));
+        List<String> amenities = new ArrayList<>();
+        type.path("amenities").forEach(a -> amenities.add(a.path("name").asText()));
+        JsonNode sqft = type.path("area").path("square_feet");
+        JsonNode max = type.path("occupancy").path("max_allowed").path("total");
+        return b.beds(type.path("bed_config").path("description").asText(null))
+                .areaSqft(sqft.isNumber() || sqft.isTextual() ? (int) Math.round(sqft.asDouble()) : null)
+                .view(views.isEmpty() ? null : String.join(", ", views))
+                .maxOccupancy(max.isNumber() || max.isTextual() ? max.asInt() : null)
+                .description(text(type.path("descriptions").path("overview").asText("")))
+                .amenities(amenities)
+                .images(images(type.path("images")))
+                .build();
+    }
+
+    /** Photos with the main one first; each at its largest size, and a mid size for thumbnails. */
+    static List<HotelDetailResponse.Image> images(JsonNode images) {
+        List<HotelDetailResponse.Image> out = new ArrayList<>();
+        Set<String> seen = new java.util.HashSet<>();
+        for (JsonNode img : images) {
+            String url = link(img.path("links"), true);
+            if (url == null || !seen.add(url)) continue;
+            HotelDetailResponse.Image image = HotelDetailResponse.Image.builder()
+                    .url(url).thumbUrl(link(img.path("links"), false)).caption(img.path("caption").asText(null)).build();
+            if (img.path("is_hero_image").asBoolean(false) || img.path("hero_image").asBoolean(false)) out.add(0, image); else out.add(image);
+        }
+        return out;
+    }
+
+    /** The largest (or a thumbnail-sized) href among a photo's sizes: named ones (original, XXL, Standard) or "350px"-style widths. */
+    static String link(JsonNode links, boolean largest) {
+        List<String> order = largest
+                ? List.of("original", "XXL", "XL", "1000px", "Standard", "350px", "200px", "100px", "70px")
+                : List.of("350px", "Standard", "200px", "1000px", "XXL", "XL", "original", "100px", "70px");
+        for (String k : order) {
+            String href = links.path(k).path("href").asText("");
+            if (!href.isBlank()) return href;
+        }
+        for (JsonNode l : links) {
+            String href = l.path("href").asText("");
+            if (!href.isBlank()) return href;
+        }
+        return null;
+    }
+
+    private JsonNode staticDetail(RestClient client, String host, String hotelId) {
+        Cached<JsonNode> c = statics.get(host + "|" + hotelId);
+        if (c != null && c.at().plus(STATIC_DETAIL_TTL).isAfter(Instant.now())) return c.value();
+        try {
+            JsonNode res = call(client, "POST", "/hms/v3/hotel/static-detail", Map.of("hid", hotelId));
+            statics.put(host + "|" + hotelId, new Cached<>(res, Instant.now()));
+            return res;
+        } catch (SupplierException e) {
+            log.warn("Tripjack hotel static detail failed for {}, showing the options without it: {}", hotelId, e.getMessage());
+            return null;
+        }
+    }
+
+    /** Supplier text is HTML (and sometimes a JSON object of named paragraphs); the page shows plain text only. */
+    static String flatText(JsonNode value) {
+        if (value == null || value.isMissingNode() || value.isNull()) return "";
+        if (value.isObject()) {
+            List<String> parts = new ArrayList<>();
+            value.fields().forEachRemaining(e -> { String t = flatText(e.getValue()); if (!t.isBlank()) parts.add(t); });
+            return String.join("\n", parts);
+        }
+        String raw = value.asText("").trim();
+        if (raw.startsWith("{")) {
+            try {
+                return flatText(OBJECT_MAPPER.readTree(raw));
+            } catch (Exception ignored) {
+                // Not JSON after all - fall through to plain text.
+            }
+        }
+        return text(raw);
+    }
+
+    static String text(String html) {
+        if (html == null || html.isBlank()) return "";
+        String t = html.replaceAll("(?i)<br\\s*/?>|</p>|</li>|</div>", "\n").replaceAll("<[^>]+>", " ");
+        t = org.springframework.web.util.HtmlUtils.htmlUnescape(t);
+        return t.replaceAll("[ \\t\\x0B\\f\\r]+", " ").replaceAll(" *\n *", "\n").replaceAll("\n{2,}", "\n").trim();
+    }
+
+    private static List<String> strings(JsonNode array) {
+        List<String> out = new ArrayList<>();
+        array.forEach(n -> { String v = n.asText(""); if (!v.isBlank()) out.add(v); });
+        return out;
+    }
+
+    private static String title(String key) {
+        String t = key.replace('_', ' ').trim();
+        return t.isEmpty() ? t : Character.toUpperCase(t.charAt(0)) + t.substring(1);
     }
 
     // ── City → region ids → hotel ids ───────────────────────────────────────

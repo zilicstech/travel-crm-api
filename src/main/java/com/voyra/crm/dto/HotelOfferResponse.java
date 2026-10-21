@@ -19,6 +19,15 @@ public class HotelOfferResponse {
     @Schema(description = "Opaque id for this offer within the search response, not a stored entity", example = "hoff-1")
     private String offerId;
 
+    @Schema(description = "Supplier hotel id - opens the hotel's own page", example = "10000000012345")
+    private String hotelId;
+
+    @Schema(description = "The hotel's main photo, when the supplier has one")
+    private String imageUrl;
+
+    @Schema(description = "The search this offer came from - the hotel's page must quote it to the supplier")
+    private String correlationId;
+
     @Schema(example = "Amari Phuket")
     private String hotelName;
 

@@ -14,4 +14,10 @@ import java.util.List;
 public interface HotelSearchProvider {
 
     List<HotelOfferResponse> search(HotelSearchQuery query);
+
+    /**
+     * One hotel opened from a search: every photo, its description and policies, and every bookable room option
+     * for the same dates and guests. {@code query.correlationId} ties it to that search.
+     */
+    com.voyra.crm.dto.HotelDetailResponse detail(String hotelId, HotelSearchQuery query);
 }
