@@ -4,7 +4,9 @@ import com.voyra.crm.dto.ActiveStatusUpdateRequest;
 import com.voyra.crm.dto.AgencyCreateRequest;
 import com.voyra.crm.dto.AgencyCreateResponse;
 import com.voyra.crm.dto.AgencyResponse;
+import com.voyra.crm.dto.AgencyUpdateRequest;
 import com.voyra.crm.dto.CredentialsResponse;
+import com.voyra.crm.dto.PasswordResetRequest;
 import com.voyra.crm.service.AgencyService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -62,5 +64,20 @@ public class PlatformAgencyController {
     @Operation(summary = "Retrieve the Owner's login credentials", description = "Every retrieval is logged.")
     public ResponseEntity<CredentialsResponse> getCredentials(@PathVariable String id) {
         return ResponseEntity.ok(agencyService.getCredentials(id));
+    }
+
+    @PatchMapping("/{id}")
+    @Operation(summary = "Update Agency and Owner details")
+    public ResponseEntity<AgencyResponse> updateAgency(@PathVariable String id,
+                                                        @Valid @RequestBody AgencyUpdateRequest request) {
+        return ResponseEntity.ok(agencyService.updateAgency(id, request));
+    }
+
+    @PostMapping("/{id}/reset-password")
+    @Operation(summary = "Reset Agency Owner password")
+    public ResponseEntity<Void> resetOwnerPassword(@PathVariable String id,
+                                                    @Valid @RequestBody PasswordResetRequest request) {
+        agencyService.resetOwnerPassword(id, request);
+        return ResponseEntity.noContent().build();
     }
 }

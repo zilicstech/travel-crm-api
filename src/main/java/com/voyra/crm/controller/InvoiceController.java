@@ -18,10 +18,8 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * The pre-accounts-module client invoice surface - {@code client_invoice}, read-only history
  * now that the Accounts module (see {@code InvoiceDocumentController}, /api/accounts/invoices)
- * is the only place a customer invoice is raised. Existing rows - real historical invoices, and
- * the seeded demo tenant's own ones (written directly by {@code DemoBusinessDataSeedRunner}
- * through {@code InvoiceService}, never through this controller) - stay visible here
- * permanently; nothing migrates them into the newer {@code invoice} table. Reads are
+ * is the only place a customer invoice is raised. Existing rows - real historical invoices -
+ * stay visible here permanently; nothing migrates them into the newer {@code invoice} table. Reads are
  * Owner/Accountant/Agent (agent scoped to their own bookings). The supplier-invoice endpoints
  * that used to live here moved to {@code SupplierInvoiceController}
  * (/api/accounts/payables/invoices) as part of the accounts-payable rebuild - see

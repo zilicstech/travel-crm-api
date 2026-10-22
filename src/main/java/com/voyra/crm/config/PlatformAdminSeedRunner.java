@@ -13,13 +13,12 @@ import org.springframework.stereotype.Component;
 
 /**
  * Seeds the one SUPER_ADMIN account a deployed environment needs, from environment variables
- * rather than {@link DemoDataSeedRunner}'s hardcoded demo password - this runner is meant to
- * run in every environment including production, so it has no shared/known password and does
- * not depend on app.seed.demo-data.
+ * (SUPER_ADMIN_EMAIL / SUPER_ADMIN_PASSWORD) - this runner is meant to run in every
+ * environment including production, so it has no shared/known password.
  *
  * Idempotent: does nothing once an account with this email exists, so re-deploys are safe.
- * Ordered before {@link com.voyra.crm.migration.TenantMigrationStartupRunner} (100) for
- * consistency with the demo seeder, though platform admins have no tenant to provision.
+ * Ordered before {@link com.voyra.crm.migration.TenantMigrationStartupRunner} (100), though
+ * platform admins have no tenant to provision.
  *
  * SUPER_ADMIN_EMAIL / SUPER_ADMIN_PASSWORD are optional on purpose: an environment that
  * already has its admin seeded (or provisions it another way) should not be forced to keep

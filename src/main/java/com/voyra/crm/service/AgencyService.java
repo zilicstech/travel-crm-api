@@ -5,7 +5,9 @@ import com.voyra.crm.context.TenantContext;
 import com.voyra.crm.dto.AgencyCreateRequest;
 import com.voyra.crm.dto.AgencyCreateResponse;
 import com.voyra.crm.dto.AgencyResponse;
+import com.voyra.crm.dto.AgencyUpdateRequest;
 import com.voyra.crm.dto.CredentialsResponse;
+import com.voyra.crm.dto.PasswordResetRequest;
 import com.voyra.crm.entity.Tenant;
 import com.voyra.crm.migration.TenantFlywayMigrator;
 import com.voyra.crm.repository.AgentRepository;
@@ -69,17 +71,10 @@ public class AgencyService {
                 .build();
     }
 
-    /**
-     * Includes each agency's revenue - the platform dashboard sums this field across every
-     * row for its "Platform Revenue" tile, so leaving it null here (as an earlier version
-     * did) silently summed to zero regardless of real revenue. Tenant count on this console
-     * is small by nature (one row per onboarded agency), so N cross-tenant reads here costs
-     * nothing a Super Admin would notice.
-     */
     @Transactional(readOnly = true)
     public List<AgencyResponse> listAgencies() {
         return tenantRepository.findAll().stream()
-                .map(t -> toResponse(t, true))
+                .map(t -> toResponse(t, false))
                 .toList();
     }
 
@@ -116,6 +111,39 @@ public class AgencyService {
                 .email(tenant.getOwnerEmail())
                 .password(passwordEncoder.decode(tenant.getPassword()))
                 .build();
+    }
+
+    @Transactional
+    public AgencyResponse updateAgency(String id, AgencyUpdateRequest request) {
+        Tenant tenant = findById(id);
+        if (request.getAgencyName() != null && !request.getAgencyName().isBlank()) {
+            tenant.setAgencyName(request.getAgencyName().trim());
+        }
+        if (request.getOwnerName() != null && !request.getOwnerName().isBlank()) {
+            tenant.setOwnerName(request.getOwnerName().trim());
+        }
+        if (request.getOwnerEmail() != null && !request.getOwnerEmail().isBlank()) {
+            String trimmedEmail = request.getOwnerEmail().trim();
+            if (!trimmedEmail.equalsIgnoreCase(tenant.getOwnerEmail())) {
+                loginEmailService.assertFree(trimmedEmail);
+                tenant.setOwnerEmail(trimmedEmail);
+            }
+        }
+        tenantRepository.save(tenant);
+        TenantCache.put(tenant.getId(), tenant.getAgencyName(), tenant.getIsActive());
+        log.info("Agency updated: tenantId={}, agencyName={}", id, tenant.getAgencyName());
+        return toResponse(tenant, true);
+    }
+
+    @Transactional
+    public void resetOwnerPassword(String id, PasswordResetRequest request) {
+        if (!request.getNewPassword().equals(request.getConfirmPassword())) {
+            throw new IllegalArgumentException("New password and confirm password do not match");
+        }
+        Tenant tenant = findById(id);
+        tenant.setPassword(passwordEncoder.encode(request.getNewPassword()));
+        tenantRepository.save(tenant);
+        log.info("Agency owner password reset: tenantId={}, by={}", id, SecurityContextUtil.getAuditInfo());
     }
 
     private AgencyResponse toResponse(Tenant tenant, boolean includeRevenue) {

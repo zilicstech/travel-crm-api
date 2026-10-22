@@ -61,11 +61,11 @@ and the cache-consistency note below.
 ## Pre-deploy checklist
 
 - [ ] All three Secret Manager values are the real production secrets, not copies of local `.env`.
-- [ ] `SEED_DEMO_DATA` is **not** set (the `cloudrun` profile hardcodes it to `false` regardless).
+- [ ] `SUPER_ADMIN_EMAIL` / `SUPER_ADMIN_PASSWORD` are set for the first boot (see
+      `PlatformAdminSeedRunner`); demo seeding has been removed from the codebase.
 - [ ] `CORS_ALLOWED_ORIGINS` is set to the real frontend origin(s), not `localhost`.
-- [ ] The local demo `SUPER_ADMIN` (`admin@travelos.com`) does not exist in the production
-      database. It only gets created if `DemoDataSeedRunner` ran with `SEED_DEMO_DATA=true` —
-      confirm it never was, or delete the row if it was seeded during an earlier test deploy.
+- [ ] The old demo `SUPER_ADMIN` (`admin@travelos.com`) does not exist in the production
+      database - delete the row if it was seeded during an earlier test deploy.
 - [ ] `gcloud sql instances describe` confirms automated backups are enabled on the Cloud SQL
       instance before the first real tenant is onboarded.
 
