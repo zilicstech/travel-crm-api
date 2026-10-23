@@ -60,6 +60,12 @@ class PlatformAgencyApplicationControllerTest {
     }
 
     @Test
+    void anonymousCallerIsUnauthorized() throws Exception {
+        mockMvc.perform(get(BASE)).andExpect(status().isUnauthorized());
+        verify(agencyApplicationService, never()).list(any(), any());
+    }
+
+    @Test
     void agencyOwnerCannotListApplications() throws Exception {
         mockMvc.perform(get(BASE).with(user("owner").roles("AGENCY_OWNER")))
                 .andExpect(status().isForbidden());

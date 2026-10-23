@@ -26,6 +26,7 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.context.SecurityContextHolder;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -54,9 +55,12 @@ class AgencyServiceProvisionTest {
                 new CustomUserPrincipal("root-1", "root", UserType.SUPER_ADMIN, null), null, List.of()));
     }
 
+    private final List<String> provisioned = new ArrayList<>();
+
     @AfterEach
-    void signOut() {
+    void signOutAndForgetTheTenants() {
         SecurityContextHolder.clearContext();
+        provisioned.forEach(TenantCache::remove);
     }
 
     @Test
@@ -64,10 +68,12 @@ class AgencyServiceProvisionTest {
         AgencyApplication app = AgencyApplication.builder().id("app-1").status(ApplicationStatus.SUBMITTED)
                 .agencyName("Sky Trips").legalName("Sky Trips Private Limited").tradeName("Sky Trips Holidays")
                 .pan("ABCDE1234F").gstin("29ABCDE1234F1Z5").cin("U63040KA2020PTC123456").address("12 MG Road")
-                .stateCode("29").ownerName("Asha Rao").ownerEmail("asha@skytrips.in").baseCurrencyCode("INR").build();
+                .stateCode("29").ownerName("Asha Rao").ownerEmail("asha@skytrips.in").ownerPhone("+91 98765 43210")
+                .baseCurrencyCode("INR").build();
         when(passwordEncoder.encode("Secret123")).thenReturn("enc");
 
         Tenant tenant = agencyService.provisionFromApplication(app, "Secret123");
+        provisioned.add(tenant.getId());
 
         InOrder order = inOrder(loginEmailService, tenantRepository, tenantFlywayMigrator, chartOfAccountsSeedService);
         order.verify(loginEmailService).assertFree("asha@skytrips.in");
@@ -88,6 +94,8 @@ class AgencyServiceProvisionTest {
         assertThat(tenant.getOwnerName()).isEqualTo("Asha Rao");
         assertThat(tenant.getOwnerEmail()).isEqualTo("asha@skytrips.in");
         assertThat(tenant.getPassword()).isEqualTo("enc");
+        assertThat(tenant.getContactPhone()).isEqualTo("+91 98765 43210");
+        assertThat(tenant.getContactEmail()).isEqualTo("asha@skytrips.in");
         assertThat(tenant.getBaseCurrencyCode()).isEqualTo("INR");
         assertThat(tenant.getStatus()).isEqualTo(TenantStatus.ACTIVE);
         assertThat(tenant.getIsActive()).isTrue();
@@ -111,6 +119,7 @@ class AgencyServiceProvisionTest {
         ArgumentCaptor<Tenant> saved = ArgumentCaptor.forClass(Tenant.class);
         verify(tenantRepository).saveAndFlush(saved.capture());
         Tenant tenant = saved.getValue();
+        provisioned.add(tenant.getId());
         verify(tenantFlywayMigrator).migrate(tenant.getId());
         verify(tenantDefaultsSeeder).seedCurrentTenant();
         verify(chartOfAccountsSeedService).seed();

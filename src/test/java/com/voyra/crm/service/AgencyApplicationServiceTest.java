@@ -356,14 +356,14 @@ class AgencyApplicationServiceTest {
     void decisionRejectRequiresAReason() {
         assertThatThrownBy(() -> service.decide("app-1", decision(ApplicationStatus.REJECTED, " ")))
                 .isInstanceOf(IllegalArgumentException.class).hasMessage("Give a reason for the rejection");
-        verify(applicationRepository, never()).findById(anyString());
+        verify(applicationRepository, never()).findByIdForUpdate(anyString());
         verify(platformAuditService, never()).record(any(), anyString(), anyString(), any());
     }
 
     @Test
     void decisionWritesAnAuditRow() throws Exception {
         AgencyApplication app = submitted();
-        when(applicationRepository.findById("app-1")).thenReturn(Optional.of(app));
+        when(applicationRepository.findByIdForUpdate("app-1")).thenReturn(Optional.of(app));
 
         AgencyApplicationResponse response = service.decide("app-1", decision(ApplicationStatus.UNDER_REVIEW, null));
 
@@ -383,7 +383,7 @@ class AgencyApplicationServiceTest {
 
     @Test
     void decisionOnARejectedApplicationIsRefused() throws Exception {
-        when(applicationRepository.findById("app-1")).thenReturn(Optional.of(submitted().toBuilder()
+        when(applicationRepository.findByIdForUpdate("app-1")).thenReturn(Optional.of(submitted().toBuilder()
                 .status(ApplicationStatus.REJECTED).build()));
 
         assertThatThrownBy(() -> service.decide("app-1", decision(ApplicationStatus.UNDER_REVIEW, null)))
@@ -394,7 +394,7 @@ class AgencyApplicationServiceTest {
     void requestMoreInfoRotatesTheTokenAndReturnsAResumeLink() throws Exception {
         AgencyApplication app = submitted();
         String oldHash = app.getUploadTokenHash();
-        when(applicationRepository.findById("app-1")).thenReturn(Optional.of(app));
+        when(applicationRepository.findByIdForUpdate("app-1")).thenReturn(Optional.of(app));
 
         AgencyApplicationResponse response = service.decide("app-1", decision(ApplicationStatus.MORE_INFO, null));
 
@@ -408,9 +408,10 @@ class AgencyApplicationServiceTest {
     }
 
     @Test
-    void documentDecisionUpdatesStatusAndReviewer() {
+    void documentDecisionUpdatesStatusAndReviewer() throws Exception {
         KycDocument doc = KycDocument.builder().id("doc-1").applicationId("app-1").type(KycDocumentType.PAN)
                 .fileKey("k").fileName("pan.pdf").status(KycDocumentStatus.PENDING).build();
+        when(applicationRepository.findByIdForUpdate("app-1")).thenReturn(Optional.of(submitted()));
         when(kycDocumentRepository.findByIdAndApplicationId("doc-1", "app-1")).thenReturn(Optional.of(doc));
         KycDocumentDecisionRequest r = new KycDocumentDecisionRequest();
         r.setStatus(KycDocumentStatus.REJECTED);
@@ -443,7 +444,7 @@ class AgencyApplicationServiceTest {
 
     @Test
     void approveFromRejectedIsRefused() throws Exception {
-        when(applicationRepository.findById("app-1")).thenReturn(Optional.of(submitted().toBuilder()
+        when(applicationRepository.findByIdForUpdate("app-1")).thenReturn(Optional.of(submitted().toBuilder()
                 .status(ApplicationStatus.REJECTED).build()));
 
         assertThatThrownBy(() -> service.approve("app-1", "Secret123")).isInstanceOf(IllegalStateException.class);
@@ -453,7 +454,7 @@ class AgencyApplicationServiceTest {
     @Test
     void approveIsOncePerApplication() throws Exception {
         AgencyApplication app = submitted();
-        when(applicationRepository.findById("app-1")).thenReturn(Optional.of(app));
+        when(applicationRepository.findByIdForUpdate("app-1")).thenReturn(Optional.of(app));
         when(agencyService.provisionFromApplication(app, "Secret123")).thenReturn(Tenant.builder().id("T-1").build());
 
         service.approve("app-1", "Secret123");
@@ -465,7 +466,7 @@ class AgencyApplicationServiceTest {
     @Test
     void approveCopiesTheApplicationOntoTheTenant() throws Exception {
         AgencyApplication app = submitted();
-        when(applicationRepository.findById("app-1")).thenReturn(Optional.of(app));
+        when(applicationRepository.findByIdForUpdate("app-1")).thenReturn(Optional.of(app));
         when(agencyService.provisionFromApplication(any(), eq("Secret123"))).thenReturn(Tenant.builder().id("T-1").build());
 
         service.approve("app-1", "Secret123");
@@ -475,6 +476,47 @@ class AgencyApplicationServiceTest {
         assertThat(provisioned.getValue()).isSameAs(app);
         assertThat(app.getTenantId()).isEqualTo("T-1");
         assertThat(app.getStatus()).isEqualTo(ApplicationStatus.APPROVED);
+        assertThat(app.getUploadTokenExpiresAt()).isBeforeOrEqualTo(Instant.now());
         verify(platformAuditService).record(eq(PlatformAuditAction.APPLICATION_APPROVE), eq("AGENCY_APPLICATION"), eq("app-1"), any());
+    }
+
+    @Test
+    void decisionRejectWithAReasonClosesTheApplication() throws Exception {
+        AgencyApplication app = submitted();
+        when(applicationRepository.findByIdForUpdate("app-1")).thenReturn(Optional.of(app));
+
+        service.decide("app-1", decision(ApplicationStatus.REJECTED, " PAN card is unreadable "));
+
+        assertThat(app.getStatus()).isEqualTo(ApplicationStatus.REJECTED);
+        assertThat(app.getRejectionReason()).isEqualTo("PAN card is unreadable");
+        // The applicant's upload link dies with the rejection.
+        assertThat(app.getUploadTokenExpiresAt()).isBeforeOrEqualTo(Instant.now());
+        assertThatThrownBy(() -> service.assertUploadToken(app, TOKEN)).isInstanceOf(AccessDeniedException.class);
+        verify(platformAuditService).record(PlatformAuditAction.APPLICATION_DECISION, "AGENCY_APPLICATION", "app-1",
+                java.util.Map.of("from", "SUBMITTED", "to", "REJECTED"));
+    }
+
+    @Test
+    void reviewableLoadsTheRowForUpdate() throws Exception {
+        when(applicationRepository.findByIdForUpdate("app-1")).thenReturn(Optional.of(submitted()));
+        when(agencyService.provisionFromApplication(any(), anyString())).thenReturn(Tenant.builder().id("T-1").build());
+
+        service.decide("app-1", decision(ApplicationStatus.UNDER_REVIEW, null));
+        service.approve("app-1", "Secret123");
+
+        verify(applicationRepository, times(2)).findByIdForUpdate("app-1");
+        verify(applicationRepository, never()).findById(anyString());
+    }
+
+    @Test
+    void documentDecisionIsRefusedAfterApproval() throws Exception {
+        when(applicationRepository.findByIdForUpdate("app-1")).thenReturn(Optional.of(submitted().toBuilder()
+                .status(ApplicationStatus.APPROVED).build()));
+        KycDocumentDecisionRequest r = new KycDocumentDecisionRequest();
+        r.setStatus(KycDocumentStatus.VERIFIED);
+
+        assertThatThrownBy(() -> service.decideDocument("app-1", "doc-1", r)).isInstanceOf(IllegalStateException.class)
+                .hasMessage("This application is no longer under review");
+        verify(kycDocumentRepository, never()).findByIdAndApplicationId(anyString(), anyString());
     }
 }

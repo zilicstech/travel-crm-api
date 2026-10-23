@@ -23,6 +23,12 @@ public final class TenantCache {
         }
     }
 
+    public static void remove(String tenantId) {
+        if (tenantId != null && !tenantId.isBlank()) {
+            CACHE.remove(key(tenantId));
+        }
+    }
+
     public static Optional<TenantStatus> status(String tenantId) {
         if (tenantId == null || tenantId.isBlank()) {
             return Optional.empty();

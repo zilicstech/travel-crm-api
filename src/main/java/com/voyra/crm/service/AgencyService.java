@@ -86,6 +86,8 @@ public class AgencyService {
                 .stateCode(app.getStateCode())
                 .ownerName(app.getOwnerName())
                 .ownerEmail(app.getOwnerEmail())
+                .contactPhone(app.getOwnerPhone())
+                .contactEmail(app.getOwnerEmail())
                 .password(passwordEncoder.encode(ownerPassword))
                 .baseCurrencyCode(com.voyra.crm.util.FxMath.code(app.getBaseCurrencyCode(), BaseCurrency.DEFAULT))
                 .approvedAt(Instant.now())

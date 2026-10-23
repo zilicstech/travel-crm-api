@@ -220,6 +220,11 @@ public class AgencyApplicationService {
 
     @Transactional
     public KycDocumentResponse decideDocument(String applicationId, String documentId, KycDocumentDecisionRequest request) {
+        AgencyApplication app = applicationRepository.findByIdForUpdate(applicationId)
+                .orElseThrow(() -> new NotFoundException("Application not found"));
+        if (!REVIEWABLE.contains(app.getStatus())) {
+            throw new IllegalStateException("This application is no longer under review");
+        }
         KycDocument doc = findDocument(applicationId, documentId);
         doc.setStatus(request.getStatus());
         doc.setNote(trimToNull(request.getNote()));
@@ -243,6 +248,9 @@ public class AgencyApplicationService {
         ApplicationStatus previous = app.getStatus();
         app.setStatus(status);
         app.setRejectionReason(status == ApplicationStatus.REJECTED ? reason : null);
+        if (status == ApplicationStatus.REJECTED) {
+            expireUploadToken(app);
+        }
         if (request.getNote() != null) {
             app.setReviewNote(trimToNull(request.getNote()));
         }
@@ -269,6 +277,7 @@ public class AgencyApplicationService {
         Tenant tenant = agencyService.provisionFromApplication(app, ownerPassword);
         app.setTenantId(tenant.getId());
         app.setStatus(ApplicationStatus.APPROVED);
+        expireUploadToken(app);
         markReviewed(app);
         platformAuditService.record(PlatformAuditAction.APPLICATION_APPROVE, ENTITY_APPLICATION, app.getId(),
                 Map.of("tenantId", tenant.getId()));
@@ -279,8 +288,10 @@ public class AgencyApplicationService {
         return applicationRepository.findById(id).orElseThrow(() -> new NotFoundException("Application not found"));
     }
 
+    /** Locks the row: approve holds its transaction open while the schema migrates, and a concurrent decide must wait. */
     private AgencyApplication reviewable(String id) {
-        AgencyApplication app = find(id);
+        AgencyApplication app = applicationRepository.findByIdForUpdate(id)
+                .orElseThrow(() -> new NotFoundException("Application not found"));
         if (!REVIEWABLE.contains(app.getStatus())) {
             throw new IllegalStateException("This application is " + app.getStatus() + " and can no longer be decided");
         }
@@ -290,6 +301,11 @@ public class AgencyApplicationService {
     private KycDocument findDocument(String applicationId, String documentId) {
         return kycDocumentRepository.findByIdAndApplicationId(documentId, applicationId)
                 .orElseThrow(() -> new NotFoundException("Document not found"));
+    }
+
+    /** The hash and expiry columns are NOT NULL, so the token is killed by expiring it now. */
+    private static void expireUploadToken(AgencyApplication app) {
+        app.setUploadTokenExpiresAt(Instant.now());
     }
 
     private static void markReviewed(AgencyApplication app) {
