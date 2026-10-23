@@ -7,6 +7,7 @@ import com.voyra.crm.entity.AgencyPricing;
 import com.voyra.crm.enums.DiscountBase;
 import com.voyra.crm.enums.PlatformAuditAction;
 import com.voyra.crm.enums.PricingProduct;
+import com.voyra.crm.exception.NotFoundException;
 import com.voyra.crm.models.ReferenceFare;
 import com.voyra.crm.repository.AgencyPricingRepository;
 import com.voyra.crm.repository.TenantRepository;
@@ -120,13 +121,13 @@ public class AgencyPricingService {
     public AgencyPricingResponse approve(String tenantId, String pricingId) {
         AgencyPricing row = repository.findByIdForUpdate(pricingId)
                 .filter(p -> p.getTenantId().equals(tenantId))
-                .orElseThrow(() -> new IllegalArgumentException("Pricing not found: " + pricingId));
+                .orElseThrow(() -> new NotFoundException("Pricing not found: " + pricingId));
         if (row.getApprovedAt() != null) {
             throw new IllegalStateException("This rate is already approved");
         }
         String actor = SecurityContextUtil.getCurrentUserOrThrow().userId();
         if (actor.equals(row.getCreatedBy())) {
-            throw new IllegalStateException("A different platform admin must approve a loss-making rate");
+            throw new IllegalStateException("A different platform admin must approve this rate");
         }
         row.setApprovedBy(actor);
         row.setApprovedAt(Instant.now());
@@ -186,7 +187,7 @@ public class AgencyPricingService {
 
     private void requireAgency(String tenantId) {
         if (!tenantRepository.existsById(tenantId)) {
-            throw new IllegalArgumentException("Agency not found: " + tenantId);
+            throw new NotFoundException("Agency not found: " + tenantId);
         }
     }
 

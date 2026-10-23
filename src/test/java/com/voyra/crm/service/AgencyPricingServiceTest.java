@@ -1,5 +1,6 @@
 package com.voyra.crm.service;
 
+import com.voyra.crm.exception.NotFoundException;
 import com.voyra.crm.dto.AgencyPricingCreateRequest;
 import com.voyra.crm.dto.AgencyPricingResponse;
 import com.voyra.crm.dto.PricingPreviewResponse;
@@ -104,7 +105,7 @@ class AgencyPricingServiceTest {
     @Test
     void createRefusesAnUnknownAgency() {
         assertThatThrownBy(() -> service.create("nope", request("0", "0", Instant.now())))
-                .isInstanceOf(IllegalArgumentException.class).hasMessage("Agency not found: nope");
+                .isInstanceOf(NotFoundException.class).hasMessage("Agency not found: nope");
     }
 
     @Test
@@ -158,7 +159,7 @@ class AgencyPricingServiceTest {
     void approveNeedsADifferentAdmin() {
         when(repository.findByIdForUpdate("P1")).thenReturn(Optional.of(row("P1", Instant.now(), false)));
         assertThatThrownBy(() -> service.approve(T, "P1"))
-                .isInstanceOf(IllegalStateException.class).hasMessage("A different platform admin must approve a loss-making rate");
+                .isInstanceOf(IllegalStateException.class).hasMessage("A different platform admin must approve this rate");
         verify(repository, never()).save(any());
         verify(auditService, never()).record(any(), any(), any(), any());
     }
@@ -179,7 +180,8 @@ class AgencyPricingServiceTest {
         loginAs("U2");
         assertThatThrownBy(() -> service.approve(T, "P1"))
                 .isInstanceOf(IllegalStateException.class).hasMessage("This rate is already approved");
-        assertThatThrownBy(() -> service.approve("T2", "P1")).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.approve("T2", "P1")).isInstanceOf(NotFoundException.class)
+                .hasMessage("Pricing not found: P1");
         verify(repository, never()).save(any());
         verify(auditService, never()).record(any(), any(), any(), any());
     }
