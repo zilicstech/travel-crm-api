@@ -83,13 +83,15 @@ class PublicAgencyApplicationControllerTest {
     }
 
     @Test
-    void uploadIsRateLimited() throws Exception {
+    void uploadAndSubmitAreNotRateLimited() throws Exception {
         MockMultipartFile file = new MockMultipartFile("file", "pan.pdf", "application/pdf", "%PDF-1.4".getBytes());
 
         mockMvc.perform(multipart("/api/public/agency-applications/app-1/documents").file(file).param("type", "PAN")
                         .header("X-Upload-Token", "tok"))
                 .andExpect(status().isOk());
-        verify(inquiryRateLimiter).check(anyString());
+        mockMvc.perform(post("/api/public/agency-applications/app-1/submit").header("X-Upload-Token", "tok"))
+                .andExpect(status().isOk());
+        verify(inquiryRateLimiter, never()).check(anyString());
         verify(agencyApplicationService).attachDocument(org.mockito.ArgumentMatchers.eq("app-1"),
                 org.mockito.ArgumentMatchers.eq("tok"), org.mockito.ArgumentMatchers.eq(KycDocumentType.PAN), any());
     }

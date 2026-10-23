@@ -52,17 +52,14 @@ public class PublicAgencyApplicationController {
     public ResponseEntity<KycDocumentResponse> upload(@PathVariable String id,
                                                       @RequestHeader(TOKEN_HEADER) String uploadToken,
                                                       @RequestParam KycDocumentType type,
-                                                      @RequestPart("file") MultipartFile file,
-                                                      HttpServletRequest http) {
-        inquiryRateLimiter.check(InquiryRateLimiter.callerOf(http));
+                                                      @RequestPart("file") MultipartFile file) {
+        // Not rate-limited: bounded by the per-application document cap, and create (which issues the token) is limited.
         return ResponseEntity.ok(agencyApplicationService.attachDocument(id, uploadToken, type, file));
     }
 
     @PostMapping("/{id}/submit")
     @Operation(summary = "Submit the application for review", description = "Needs the X-Upload-Token header and a PAN document.")
-    public ResponseEntity<SimpleAckResponse> submit(@PathVariable String id, @RequestHeader(TOKEN_HEADER) String uploadToken,
-                                                    HttpServletRequest http) {
-        inquiryRateLimiter.check(InquiryRateLimiter.callerOf(http));
+    public ResponseEntity<SimpleAckResponse> submit(@PathVariable String id, @RequestHeader(TOKEN_HEADER) String uploadToken) {
         agencyApplicationService.submit(id, uploadToken);
         return ResponseEntity.ok(SimpleAckResponse.builder().success(true).message("Application submitted").build());
     }
