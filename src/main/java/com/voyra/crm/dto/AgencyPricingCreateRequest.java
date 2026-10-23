@@ -4,6 +4,7 @@ import com.voyra.crm.enums.PricingProduct;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
@@ -21,12 +22,14 @@ public class AgencyPricingCreateRequest {
     @NotNull
     @DecimalMin("0")
     @DecimalMax("100")
+    @Digits(integer = 3, fraction = 2)
     @Schema(description = "Discount % the agency's customers see", example = "3")
     private BigDecimal discountPct;
 
     @NotNull
     @DecimalMin("0")
     @DecimalMax("100")
+    @Digits(integer = 3, fraction = 2)
     @Schema(description = "Commission % paid back to the agency", example = "4")
     private BigDecimal commissionPct;
 

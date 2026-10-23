@@ -72,7 +72,8 @@ public class AgencyPricingService {
     public AgencyPricingResponse create(String tenantId, AgencyPricingCreateRequest request) {
         requireAgency(tenantId);
         Instant now = Instant.now();
-        Instant from = request.getEffectiveFrom();
+        // Postgres keeps microseconds: truncate so the duplicate check sees the value that will be stored
+        Instant from = request.getEffectiveFrom().truncatedTo(ChronoUnit.MICROS);
         // one minute of slack for clock skew between the browser and the server
         if (from.isBefore(now.minus(1, ChronoUnit.MINUTES))) {
             throw new IllegalArgumentException("Effective date must be now or later");
@@ -117,7 +118,7 @@ public class AgencyPricingService {
 
     @Transactional
     public AgencyPricingResponse approve(String tenantId, String pricingId) {
-        AgencyPricing row = repository.findById(pricingId)
+        AgencyPricing row = repository.findByIdForUpdate(pricingId)
                 .filter(p -> p.getTenantId().equals(tenantId))
                 .orElseThrow(() -> new IllegalArgumentException("Pricing not found: " + pricingId));
         if (row.getApprovedAt() != null) {
@@ -158,7 +159,10 @@ public class AgencyPricingService {
         return rows.stream().map(r -> toResponse(r, inForce.contains(r.getId()))).toList();
     }
 
-    /** The rate in force at {@code at}: the latest approved row with effectiveFrom at or before it. */
+    /**
+     * The rate in force at {@code at}: among rows approved by {@code at} and effective by {@code at},
+     * the latest effectiveFrom. A late approval never re-prices instants before it.
+     */
     @Transactional(readOnly = true)
     public Optional<AgencyPricing> resolve(String tenantId, PricingProduct product, Instant at) {
         // shortcut: filters the agency's whole history in memory - a handful of rows per product; move to a query if rates churn
@@ -168,7 +172,7 @@ public class AgencyPricingService {
     }
 
     private static boolean applies(AgencyPricing r, Instant at) {
-        return r.getApprovedAt() != null && !r.getEffectiveFrom().isAfter(at);
+        return r.getApprovedAt() != null && !r.getApprovedAt().isAfter(at) && !r.getEffectiveFrom().isAfter(at);
     }
 
     private boolean isInForce(AgencyPricing row) {
@@ -189,6 +193,9 @@ public class AgencyPricingService {
     private static void requirePct(String name, BigDecimal pct) {
         if (pct == null || pct.signum() < 0 || pct.compareTo(HUNDRED) > 0) {
             throw new IllegalArgumentException(name + " % must be between 0 and 100");
+        }
+        if (pct.stripTrailingZeros().scale() > 2) {
+            throw new IllegalArgumentException(name + " % must have at most 2 decimals");
         }
     }
 

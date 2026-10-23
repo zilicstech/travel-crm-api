@@ -103,12 +103,15 @@ class PlatformAgencyPricingControllerTest {
         mockMvc.perform(post(BASE).with(admin("U1")).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"product\":\"FLIGHT\",\"discountPct\":101,\"commissionPct\":0,\"effectiveFrom\":\"2099-01-01T00:00:00Z\"}"))
                 .andExpect(status().isBadRequest());
+        mockMvc.perform(post(BASE).with(admin("U1")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"product\":\"FLIGHT\",\"discountPct\":3.004,\"commissionPct\":0,\"effectiveFrom\":\"2099-01-01T00:00:00Z\"}"))
+                .andExpect(status().isBadRequest());
 
         AgencyPricing pending = AgencyPricing.builder().id("P1").tenantId("T1").product(PricingProduct.FLIGHT)
                 .discountPct(BigDecimal.TEN).commissionPct(BigDecimal.ONE).effectiveFrom(Instant.now())
                 .worstCaseNetPer10k(new BigDecimal("-951.11")).requiresSecondApproval(true)
                 .createdBy("U1").createdAt(Instant.now()).build();
-        given(repository.findById("P1")).willReturn(Optional.of(pending));
+        given(repository.findByIdForUpdate("P1")).willReturn(Optional.of(pending));
         mockMvc.perform(post(BASE + "/P1/approve").with(admin("U1"))).andExpect(status().isConflict());
         mockMvc.perform(post(BASE + "/P1/approve").with(admin("U2")))
                 .andExpect(status().isOk())

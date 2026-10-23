@@ -108,10 +108,20 @@ class AgencyPricingServiceTest {
     }
 
     @Test
+    void createAcceptsUpToAMinuteOfClockSkew() {
+        assertThat(service.create(T, request("0", "0", Instant.now().minusSeconds(59))).getId()).isNotNull();
+        assertThatThrownBy(() -> service.create(T, request("0", "0", Instant.now().minusSeconds(61))))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Effective date must be now or later");
+    }
+
+    @Test
     void createRefusesADuplicateEffectiveDate() {
-        Instant from = Instant.now().plus(1, ChronoUnit.DAYS);
-        when(repository.existsByTenantIdAndProductAndEffectiveFrom(T, PricingProduct.FLIGHT, from)).thenReturn(true);
-        assertThatThrownBy(() -> service.create(T, request("0", "0", from))).isInstanceOf(IllegalStateException.class);
+        // nanoseconds are dropped to match what Postgres stores
+        Instant from = Instant.parse("2099-01-01T00:00:00.123456789Z");
+        Instant stored = Instant.parse("2099-01-01T00:00:00.123456Z");
+        when(repository.existsByTenantIdAndProductAndEffectiveFrom(T, PricingProduct.FLIGHT, stored)).thenReturn(true);
+        assertThatThrownBy(() -> service.create(T, request("0", "0", from))).isInstanceOf(IllegalStateException.class)
+                .hasMessage("A FLIGHT rate already starts at 2099-01-01T00:00:00.123456Z for this agency");
         verify(repository, never()).save(any());
     }
 
@@ -146,15 +156,16 @@ class AgencyPricingServiceTest {
 
     @Test
     void approveNeedsADifferentAdmin() {
-        when(repository.findById("P1")).thenReturn(Optional.of(row("P1", Instant.now(), false)));
+        when(repository.findByIdForUpdate("P1")).thenReturn(Optional.of(row("P1", Instant.now(), false)));
         assertThatThrownBy(() -> service.approve(T, "P1"))
                 .isInstanceOf(IllegalStateException.class).hasMessage("A different platform admin must approve a loss-making rate");
         verify(repository, never()).save(any());
+        verify(auditService, never()).record(any(), any(), any(), any());
     }
 
     @Test
     void approveByASecondAdminStampsAndAudits() {
-        when(repository.findById("P1")).thenReturn(Optional.of(row("P1", Instant.now(), false)));
+        when(repository.findByIdForUpdate("P1")).thenReturn(Optional.of(row("P1", Instant.now(), false)));
         loginAs("U2");
         AgencyPricingResponse r = service.approve(T, "P1");
         assertThat(r.getApprovedBy()).isEqualTo("U2");
@@ -164,11 +175,13 @@ class AgencyPricingServiceTest {
 
     @Test
     void approveRefusesAnApprovedRowAndAnotherAgencysRow() {
-        when(repository.findById("P1")).thenReturn(Optional.of(row("P1", Instant.now(), true)));
+        when(repository.findByIdForUpdate("P1")).thenReturn(Optional.of(row("P1", Instant.now(), true)));
         loginAs("U2");
         assertThatThrownBy(() -> service.approve(T, "P1"))
                 .isInstanceOf(IllegalStateException.class).hasMessage("This rate is already approved");
         assertThatThrownBy(() -> service.approve("T2", "P1")).isInstanceOf(IllegalArgumentException.class);
+        verify(repository, never()).save(any());
+        verify(auditService, never()).record(any(), any(), any(), any());
     }
 
     @Test
@@ -178,6 +191,34 @@ class AgencyPricingServiceTest {
         when(repository.findByTenantIdAndProductOrderByEffectiveFromDesc(T, PricingProduct.FLIGHT)).thenReturn(List.of(
                 row("C", now.plus(1, ChronoUnit.DAYS), true), row("B", now.minus(1, ChronoUnit.DAYS), false), past));
         assertThat(service.resolve(T, PricingProduct.FLIGHT, now)).containsSame(past);
+    }
+
+    @Test
+    void aLateApprovalDoesNotRepriceThePast() {
+        Instant now = Instant.now();
+        AgencyPricing older = row("A", now.minus(3, ChronoUnit.DAYS), true);
+        AgencyPricing late = row("B", now.minus(2, ChronoUnit.DAYS), true).toBuilder()
+                .approvedAt(now.minus(1, ChronoUnit.DAYS)).approvedBy("U2").build();
+        when(repository.findByTenantIdAndProductOrderByEffectiveFromDesc(T, PricingProduct.FLIGHT)).thenReturn(List.of(late, older));
+        assertThat(service.resolve(T, PricingProduct.FLIGHT, now.minus(36, ChronoUnit.HOURS))).containsSame(older);
+        assertThat(service.resolve(T, PricingProduct.FLIGHT, now)).containsSame(late);
+    }
+
+    @Test
+    void inForceIsPerProduct() {
+        Instant now = Instant.now();
+        AgencyPricing hotel = row("H", now.minus(1, ChronoUnit.DAYS), true).toBuilder().product(PricingProduct.HOTEL).build();
+        AgencyPricing hotelOld = row("H0", now.minus(5, ChronoUnit.DAYS), true).toBuilder().product(PricingProduct.HOTEL).build();
+        when(repository.findByTenantIdOrderByEffectiveFromDesc(T)).thenReturn(List.of(
+                hotel, row("F", now.minus(2, ChronoUnit.DAYS), true), hotelOld, row("F0", now.minus(6, ChronoUnit.DAYS), true)));
+        assertThat(service.history(T, null)).extracting(AgencyPricingResponse::isInForce)
+                .containsExactly(true, true, false, false);
+    }
+
+    @Test
+    void previewRefusesMoreThanTwoDecimals() {
+        assertThatThrownBy(() -> service.preview(T, PricingProduct.FLIGHT, new BigDecimal("3.004"), BigDecimal.ONE, false))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Discount % must have at most 2 decimals");
     }
 
     @Test

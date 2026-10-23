@@ -40,6 +40,13 @@ class PricingMathTest {
     }
 
     @Test
+    void voyraNetOnBaseDiscountOnlyGivesAwayPartOfTheBase() {
+        // 1100 earned - 660 (3% of base) - 880 agency commission
+        assertThat(PricingMath.voyraNet(bd("45000"), bd("22000"), bd("3"), bd("4"), bd("5"), DiscountBase.BASE))
+                .isEqualByComparingTo("-440.00");
+    }
+
+    @Test
     void commissionIsCappedAtWhatVoyraEarned() {
         // c 8 > e 5: the agency term is 22000 x 5% = 1100, not 1760
         assertThat(PricingMath.voyraNet(bd("45000"), bd("22000"), bd("3"), bd("8"), bd("5"), DiscountBase.GROSS))
