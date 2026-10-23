@@ -25,6 +25,14 @@ public final class UploadValidator {
     private UploadValidator() {
     }
 
+    /** As {@link #assertAllowed(MultipartFile)}, with a tighter size cap than the server-wide multipart limit. */
+    public static void assertAllowed(MultipartFile file, long maxBytes) {
+        if (file.getSize() > maxBytes) {
+            throw new IllegalArgumentException("File is larger than " + maxBytes / (1024 * 1024) + " MB");
+        }
+        assertAllowed(file);
+    }
+
     public static void assertAllowed(MultipartFile file) {
         String name = file.getOriginalFilename();
         int dot = name != null ? name.lastIndexOf('.') : -1;

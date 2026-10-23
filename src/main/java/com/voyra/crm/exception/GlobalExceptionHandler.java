@@ -80,15 +80,24 @@ public class GlobalExceptionHandler {
                         "Invalid request body", null, HttpStatus.BAD_REQUEST.value(), path));
     }
 
-    /** A query/path parameter that is missing or can't be read (a bad enum, a malformed date) is the caller's mistake. */
+    /** A query/path parameter, header or multipart part that is missing or can't be read (a bad enum, a malformed date) is the caller's mistake. */
     @ExceptionHandler({org.springframework.web.bind.MissingServletRequestParameterException.class,
-            org.springframework.web.method.annotation.MethodArgumentTypeMismatchException.class})
+            org.springframework.web.method.annotation.MethodArgumentTypeMismatchException.class,
+            org.springframework.web.bind.MissingRequestHeaderException.class,
+            org.springframework.web.multipart.support.MissingServletRequestPartException.class})
     public ResponseEntity<ApiErrorResponse> handleBadParameter(Exception ex, HttpServletRequest request) {
         String path = getPath(request);
-        String message = ex instanceof org.springframework.web.bind.MissingServletRequestParameterException missing
-                ? "The '" + missing.getParameterName() + "' parameter is required"
-                : "The '" + ((org.springframework.web.method.annotation.MethodArgumentTypeMismatchException) ex).getName()
-                        + "' parameter has an invalid value";
+        String message;
+        if (ex instanceof org.springframework.web.bind.MissingServletRequestParameterException missing) {
+            message = "The '" + missing.getParameterName() + "' parameter is required";
+        } else if (ex instanceof org.springframework.web.bind.MissingRequestHeaderException missingHeader) {
+            message = "The '" + missingHeader.getHeaderName() + "' header is required";
+        } else if (ex instanceof org.springframework.web.multipart.support.MissingServletRequestPartException missingPart) {
+            message = "The '" + missingPart.getRequestPartName() + "' file is required";
+        } else {
+            message = "The '" + ((org.springframework.web.method.annotation.MethodArgumentTypeMismatchException) ex).getName()
+                    + "' parameter has an invalid value";
+        }
         log.warn("Bad request parameter - path: {}, {}", path, message);
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
                 ApiErrorResponse.of(message, "Invalid request parameter", null, HttpStatus.BAD_REQUEST.value(), path));
