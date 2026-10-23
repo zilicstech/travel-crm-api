@@ -1,5 +1,6 @@
 package com.voyra.crm.dto;
 
+import com.voyra.crm.enums.TenantStatus;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -28,8 +29,11 @@ public class AgencyResponse {
     @Schema(description = "Agency Owner's login email", example = "owner@globalexplorer.com")
     private String ownerEmail;
 
-    @Schema(description = "Whether the agency can currently log in and operate", example = "true")
+    @Schema(description = "False only when DEACTIVATED - kept for existing readers; prefer status", example = "true")
     private Boolean isActive;
+
+    @Schema(description = "Agency liveness - SUSPENDED signs in read-only, DEACTIVATED cannot sign in", example = "ACTIVE")
+    private TenantStatus status;
 
     @Schema(description = "Number of Agents in this agency", example = "3")
     private Long agentsCount;

@@ -1,12 +1,12 @@
 package com.voyra.crm.controller;
 
-import com.voyra.crm.dto.ActiveStatusUpdateRequest;
 import com.voyra.crm.dto.AgencyCreateRequest;
 import com.voyra.crm.dto.AgencyCreateResponse;
 import com.voyra.crm.dto.AgencyResponse;
 import com.voyra.crm.dto.AgencyUpdateRequest;
 import com.voyra.crm.dto.CredentialsResponse;
 import com.voyra.crm.dto.PasswordResetRequest;
+import com.voyra.crm.dto.TenantStatusUpdateRequest;
 import com.voyra.crm.service.AgencyService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -54,10 +54,10 @@ public class PlatformAgencyController {
     }
 
     @PatchMapping("/{id}/status")
-    @Operation(summary = "Activate or deactivate an Agency")
+    @Operation(summary = "Set an Agency's status", description = "ACTIVE, SUSPENDED (sign-in stays open, writes get 423) or DEACTIVATED (sign-in refused).")
     public ResponseEntity<AgencyResponse> updateStatus(@PathVariable String id,
-                                                        @Valid @RequestBody ActiveStatusUpdateRequest request) {
-        return ResponseEntity.ok(agencyService.updateStatus(id, request.getIsActive()));
+                                                        @Valid @RequestBody TenantStatusUpdateRequest request) {
+        return ResponseEntity.ok(agencyService.updateStatus(id, request.getStatus()));
     }
 
     @GetMapping("/{id}/credentials")

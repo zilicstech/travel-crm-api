@@ -5,6 +5,7 @@ import com.voyra.crm.dto.LoginResponse;
 import com.voyra.crm.entity.Agent;
 import com.voyra.crm.entity.PlatformAdmin;
 import com.voyra.crm.entity.Tenant;
+import com.voyra.crm.enums.TenantStatus;
 import com.voyra.crm.enums.UserType;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.PlatformAdminRepository;
@@ -107,7 +108,8 @@ public class AuthService {
 
     private Optional<LoginResponse> tryOwner(LoginRequest request) {
         Optional<Tenant> tenant = tenantRepository.findByOwnerEmailIgnoreCase(request.getEmail());
-        if (tenant.isEmpty() || !Boolean.TRUE.equals(tenant.get().getIsActive())
+        // SUSPENDED still signs in (read-only, enforced by TenantStatusInterceptor); only DEACTIVATED is refused.
+        if (tenant.isEmpty() || tenant.get().getStatus() == TenantStatus.DEACTIVATED
                 || !passwordEncoder.matches(request.getPassword(), tenant.get().getPassword())) {
             return Optional.empty();
         }
@@ -128,7 +130,8 @@ public class AuthService {
     private Optional<LoginResponse> tryAgent(LoginRequest request) {
         Optional<Agent> agent = agentRepository.findByEmailIgnoreCase(request.getEmail());
         if (agent.isEmpty() || !Boolean.TRUE.equals(agent.get().getIsActive())
-                || !passwordEncoder.matches(request.getPassword(), agent.get().getPassword())) {
+                || !passwordEncoder.matches(request.getPassword(), agent.get().getPassword())
+                || !isTenantLoginAllowed(agent.get().getTenantId())) {
             return Optional.empty();
         }
         Agent a = agent.get();
@@ -144,5 +147,12 @@ public class AuthService {
                 .baseCurrencyCode(baseCurrency.of(a.getTenantId()))
                 .token(jwtService.generateToken(a.getEmail(), role, a.getId(), a.getTenantId()))
                 .build());
+    }
+
+    /** An agent of a DEACTIVATED (or missing) agency is refused; SUSPENDED still signs in read-only. */
+    private boolean isTenantLoginAllowed(String tenantId) {
+        return tenantId != null && tenantRepository.findById(tenantId)
+                .map(t -> t.getStatus() != TenantStatus.DEACTIVATED)
+                .orElse(false);
     }
 }

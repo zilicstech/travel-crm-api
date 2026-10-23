@@ -1,8 +1,11 @@
 package com.voyra.crm.entity;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.voyra.crm.enums.TenantStatus;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
@@ -13,6 +16,7 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDateTime;
 
 /**
@@ -46,9 +50,35 @@ public class Tenant {
     @JsonIgnore
     private String password;
 
+    /** Derived mirror of {@link #status} for existing readers (schedulers, AgencyResponse) - set via {@link #setStatus}. */
     @Column(name = "is_active", nullable = false)
     @Builder.Default
     private Boolean isActive = true;
+
+    /** The single liveness truth. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status", nullable = false, length = 12)
+    @Builder.Default
+    private TenantStatus status = TenantStatus.ACTIVE;
+
+    @Column(name = "pan", length = 10)
+    private String pan;
+
+    @Column(name = "cin", length = 30)
+    private String cin;
+
+    @Column(name = "trade_name", length = 200)
+    private String tradeName;
+
+    @Column(name = "approved_at")
+    private Instant approvedAt;
+
+    @Column(name = "approved_by", length = 36)
+    private String approvedBy;
+
+    @Column(name = "booking_blocked", nullable = false)
+    @Builder.Default
+    private Boolean bookingBlocked = false;
 
     @Column(name = "gst_number", length = 30)
     private String gstNumber;
@@ -108,6 +138,12 @@ public class Tenant {
 
     @Column(name = "created_date")
     private LocalDateTime createdDate;
+
+    /** Keeps the legacy is_active column in step: only DEACTIVATED reads as inactive. */
+    public void setStatus(TenantStatus status) {
+        this.status = status;
+        this.isActive = status != TenantStatus.DEACTIVATED;
+    }
 
     @PrePersist
     protected void onCreate() {

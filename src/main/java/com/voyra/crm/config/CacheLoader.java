@@ -34,7 +34,7 @@ public class CacheLoader {
     public void loadCaches() {
         List<Tenant> tenants = tenantRepository.findAll();
         TenantCache.loadFrom(tenants.stream()
-                .map(t -> new TenantCache.TenantEntry(t.getId(), t.getAgencyName(), Boolean.TRUE.equals(t.getIsActive())))
+                .map(t -> new TenantCache.TenantEntry(t.getId(), t.getAgencyName(), t.getStatus()))
                 .toList());
 
         List<Agent> agents = agentRepository.findAll();

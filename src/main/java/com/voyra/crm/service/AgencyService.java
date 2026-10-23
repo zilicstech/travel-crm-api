@@ -9,6 +9,7 @@ import com.voyra.crm.dto.AgencyUpdateRequest;
 import com.voyra.crm.dto.CredentialsResponse;
 import com.voyra.crm.dto.PasswordResetRequest;
 import com.voyra.crm.entity.Tenant;
+import com.voyra.crm.enums.TenantStatus;
 import com.voyra.crm.migration.TenantFlywayMigrator;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.TenantRepository;
@@ -59,7 +60,7 @@ public class AgencyService {
         tenantFlywayMigrator.migrate(tenant.getId());
         seedDefaultsForTenant(tenant.getId());
         seedChartOfAccountsFor(tenant.getId());
-        TenantCache.put(tenant.getId(), tenant.getAgencyName(), true);
+        TenantCache.put(tenant.getId(), tenant.getAgencyName(), tenant.getStatus());
 
         log.info("Agency created: tenantId={}, agencyName={}", tenant.getId(), tenant.getAgencyName());
         return AgencyCreateResponse.builder()
@@ -85,13 +86,13 @@ public class AgencyService {
     }
 
     @Transactional
-    public AgencyResponse updateStatus(String id, boolean isActive) {
+    public AgencyResponse updateStatus(String id, TenantStatus status) {
         Tenant tenant = findById(id);
-        tenant.setIsActive(isActive);
+        tenant.setStatus(status);
         tenantRepository.save(tenant);
         // Same-method cache sync: a stale auth cache is a security bug (blueprint §8.10 rule 2).
-        TenantCache.put(tenant.getId(), tenant.getAgencyName(), isActive);
-        log.info("Agency status updated: tenantId={}, isActive={}", id, isActive);
+        TenantCache.put(tenant.getId(), tenant.getAgencyName(), status);
+        log.info("Agency status updated: tenantId={}, status={}", id, status);
         // includeRevenue=true - a caller updating one agency's status in place (the detail
         // modal) would otherwise see its revenue silently reset to zero on the very next
         // render, since a null totalRevenue reads as 0 wherever this response gets cached.
@@ -130,7 +131,7 @@ public class AgencyService {
             }
         }
         tenantRepository.save(tenant);
-        TenantCache.put(tenant.getId(), tenant.getAgencyName(), tenant.getIsActive());
+        TenantCache.put(tenant.getId(), tenant.getAgencyName(), tenant.getStatus());
         log.info("Agency updated: tenantId={}, agencyName={}", id, tenant.getAgencyName());
         return toResponse(tenant, true);
     }
@@ -159,6 +160,7 @@ public class AgencyService {
                 .ownerName(tenant.getOwnerName())
                 .ownerEmail(tenant.getOwnerEmail())
                 .isActive(tenant.getIsActive())
+                .status(tenant.getStatus())
                 .agentsCount(agentsCount)
                 .totalRevenue(totalRevenue)
                 .createdDate(tenant.getCreatedDate())
