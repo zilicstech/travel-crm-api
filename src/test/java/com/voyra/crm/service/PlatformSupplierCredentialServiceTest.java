@@ -1,0 +1,164 @@
+package com.voyra.crm.service;
+
+import com.voyra.crm.dto.PlatformSupplierCredentialRequest;
+import com.voyra.crm.dto.PlatformSupplierCredentialResponse;
+import com.voyra.crm.entity.PlatformSupplierCredential;
+import com.voyra.crm.enums.PlatformAuditAction;
+import com.voyra.crm.enums.SupplierEnvironment;
+import com.voyra.crm.enums.SupplierProvider;
+import com.voyra.crm.enums.UserType;
+import com.voyra.crm.models.ResolvedCredential;
+import com.voyra.crm.repository.PlatformSupplierCredentialRepository;
+import com.voyra.crm.security.CustomUserPrincipal;
+import com.voyra.crm.util.PasswordEncryptionUtil;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.test.util.ReflectionTestUtils;
+
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+/** The platform's one Tripjack key: stored encrypted, shown masked, never revealed, resolved only for the providers. */
+@ExtendWith(MockitoExtension.class)
+class PlatformSupplierCredentialServiceTest {
+
+    /** Same value as application-test.properties - a real 32-byte AES-256 key, test-only. */
+    private static final String KEY = "dGVzdC1vbmx5LWFlcy1rZXktMzItYnl0ZXMtbG9uZyE=";
+
+    @Mock private PlatformSupplierCredentialRepository repository;
+    @Mock private PlatformAuditService platformAuditService;
+
+    @InjectMocks private PlatformSupplierCredentialService service;
+
+    @BeforeEach
+    void setUp() {
+        ReflectionTestUtils.setField(service, "encryptionKey", KEY);
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+                new CustomUserPrincipal("SA1", "root", UserType.SUPER_ADMIN, null), null, List.of()));
+    }
+
+    @AfterEach
+    void clear() {
+        SecurityContextHolder.clearContext();
+    }
+
+    private PlatformSupplierCredentialRequest request(String apiKey) {
+        PlatformSupplierCredentialRequest r = new PlatformSupplierCredentialRequest();
+        r.setProvider(SupplierProvider.TRIPJACK);
+        r.setEnvironment(SupplierEnvironment.UAT);
+        r.setBaseUrl("https://apitest.tripjack.com");
+        r.setApiKey(apiKey);
+        r.setIsActive(true);
+        return r;
+    }
+
+    private PlatformSupplierCredential stored(String plainKey, boolean active) {
+        return PlatformSupplierCredential.builder()
+                .id("C1").provider(SupplierProvider.TRIPJACK).environment(SupplierEnvironment.PROD)
+                .baseUrl("https://api.tripjack.com")
+                .apiKeyEncrypted(PasswordEncryptionUtil.encrypt(plainKey, KEY))
+                .isActive(active).build();
+    }
+
+    @Test
+    void upsertEncryptsTheKeyAndMasksIt() {
+        when(repository.findByProviderOrderByUpdatedAtDesc(SupplierProvider.TRIPJACK)).thenReturn(List.of());
+
+        PlatformSupplierCredentialResponse response = service.upsert(request("tj_live_key_9f3a"));
+
+        ArgumentCaptor<PlatformSupplierCredential> saved = ArgumentCaptor.forClass(PlatformSupplierCredential.class);
+        verify(repository).save(saved.capture());
+        assertThat(saved.getValue().getApiKeyEncrypted()).isNotEqualTo("tj_live_key_9f3a");
+        assertThat(PasswordEncryptionUtil.decrypt(saved.getValue().getApiKeyEncrypted(), KEY)).isEqualTo("tj_live_key_9f3a");
+        assertThat(response.getMaskedApiKey()).isEqualTo("••••••9f3a");
+        assertThat(response.getUpdatedBy()).isEqualTo("SA1");
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> detail = ArgumentCaptor.forClass(Map.class);
+        verify(platformAuditService).record(eq(PlatformAuditAction.CREDENTIAL_SET), eq("SUPPLIER_CREDENTIAL"),
+                eq("TRIPJACK"), detail.capture());
+        assertThat(detail.getValue().toString()).doesNotContain("tj_live_key_9f3a").doesNotContain("9f3a");
+    }
+
+    @Test
+    void upsertWithBlankKeyKeepsTheStoredOne() {
+        PlatformSupplierCredential existing = stored("old_key_1234", true);
+        String storedCipher = existing.getApiKeyEncrypted();
+        when(repository.findByProviderOrderByUpdatedAtDesc(SupplierProvider.TRIPJACK)).thenReturn(List.of(existing));
+
+        PlatformSupplierCredentialResponse response = service.upsert(request("  "));
+
+        assertThat(existing.getApiKeyEncrypted()).isEqualTo(storedCipher);
+        assertThat(existing.getEnvironment()).isEqualTo(SupplierEnvironment.UAT);
+        assertThat(response.getMaskedApiKey()).isEqualTo("••••••1234");
+    }
+
+    @Test
+    void upsertWithoutAKeyOnFirstSaveIsRejected() {
+        when(repository.findByProviderOrderByUpdatedAtDesc(SupplierProvider.TRIPJACK)).thenReturn(List.of());
+
+        assertThatThrownBy(() -> service.upsert(request(null)))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("API key is required");
+    }
+
+    @Test
+    void activatingDeactivatesTheOtherActiveRowFirst() {
+        PlatformSupplierCredential newest = stored("new_key_5678", false);
+        PlatformSupplierCredential older = stored("old_key_1234", true).toBuilder().id("C0").build();
+        when(repository.findByProviderOrderByUpdatedAtDesc(SupplierProvider.TRIPJACK)).thenReturn(List.of(newest, older));
+
+        service.upsert(request(""));
+
+        assertThat(older.getIsActive()).isFalse();
+        assertThat(newest.getIsActive()).isTrue();
+        verify(repository).saveAllAndFlush(List.of(older));
+    }
+
+    @Test
+    void resolveActiveReturnsDecryptedKey() {
+        when(repository.findByProviderAndIsActiveTrue(SupplierProvider.TRIPJACK)).thenReturn(Optional.of(stored("tj_live_key_9f3a", true)));
+
+        ResolvedCredential credential = service.resolveActive(SupplierProvider.TRIPJACK);
+
+        assertThat(credential.apiKey()).isEqualTo("tj_live_key_9f3a");
+        assertThat(credential.environment()).isEqualTo(SupplierEnvironment.PROD);
+        assertThat(credential.baseUrl()).isEqualTo("https://api.tripjack.com");
+        assertThat(credential.userId()).isNull();
+    }
+
+    @Test
+    void resolveActiveWithoutARowThrows() {
+        when(repository.findByProviderAndIsActiveTrue(SupplierProvider.TRIPJACK)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.resolveActive(SupplierProvider.TRIPJACK))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Tripjack is not configured on the platform");
+    }
+
+    @Test
+    void thereIsNoRevealMethod() {
+        assertThat(Arrays.stream(PlatformSupplierCredentialService.class.getMethods())
+                .filter(m -> Modifier.isPublic(m.getModifiers()))
+                .map(Method::getName))
+                .doesNotContain("reveal");
+    }
+}

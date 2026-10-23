@@ -16,23 +16,21 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 
 /**
- * One agency's credentials for one external supplier - a tenant-schema table, not a column
- * on the public {@code tenant} row, so a mis-written query cannot cross agencies (blueprint
- * §5.3: tenant isolation is structural, not an authorization check). The encrypted columns
- * are never returned by any controller directly; {@code SupplierCredentialService} always
- * maps through a masked or decrypted DTO depending on the endpoint.
+ * Voyra's own account with an external supplier (public schema) - one active row per provider, enforced by a
+ * partial unique index. Every agency's searches run on it. The encrypted columns never leave the service:
+ * responses carry a masked key and nothing reveals the plaintext.
  */
 @Entity
-@Table(name = "supplier_credential")
+@Table(name = "platform_supplier_credential")
 @Getter
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder(toBuilder = true)
-public class SupplierCredential {
+public class PlatformSupplierCredential {
 
     @Id
     @Column(name = "id", length = 36)
@@ -61,19 +59,19 @@ public class SupplierCredential {
     @Builder.Default
     private Boolean isActive = false;
 
-    @Column(name = "created_at")
-    private LocalDateTime createdAt;
-
-    @Column(name = "updated_at")
-    private LocalDateTime updatedAt;
-
     @Column(name = "updated_by", length = 36)
     private String updatedBy;
 
+    @Column(name = "created_at", nullable = false)
+    private Instant createdAt;
+
+    @Column(name = "updated_at", nullable = false)
+    private Instant updatedAt;
+
     @PrePersist
     protected void onCreate() {
-        if (createdAt == null) {
-            createdAt = LocalDateTime.now();
-        }
+        Instant now = Instant.now();
+        if (createdAt == null) createdAt = now;
+        if (updatedAt == null) updatedAt = now;
     }
 }

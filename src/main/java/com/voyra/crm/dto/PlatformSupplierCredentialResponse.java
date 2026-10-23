@@ -8,14 +8,14 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-@Schema(description = "Supplier credential status - the key is always masked here, never plaintext")
-public class SupplierCredentialResponse {
+@Schema(description = "Platform supplier credential status - the key is always masked, never plaintext")
+public class PlatformSupplierCredentialResponse {
 
     @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String id;
@@ -29,12 +29,15 @@ public class SupplierCredentialResponse {
     @Schema(example = "https://apitest.tripjack.com")
     private String baseUrl;
 
-    @Schema(description = "Last few characters only", example = "••••••3f2a")
+    @Schema(description = "Last four characters only", example = "••••••3f2a")
     private String maskedApiKey;
 
     @Schema(example = "true")
     private Boolean isActive;
 
-    @Schema(example = "2026-09-07T10:15:00")
-    private LocalDateTime updatedAt;
+    @Schema(example = "2026-10-23T10:15:00Z")
+    private Instant updatedAt;
+
+    @Schema(description = "Super admin who last saved it", example = "a1b2c3d4-0000-0000-0000-000000000001")
+    private String updatedBy;
 }

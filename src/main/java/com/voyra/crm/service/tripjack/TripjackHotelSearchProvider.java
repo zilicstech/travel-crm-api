@@ -6,12 +6,12 @@ import com.voyra.crm.dto.HotelDetailResponse;
 import com.voyra.crm.dto.HotelOfferResponse;
 import com.voyra.crm.dto.HotelSearchQuery;
 import com.voyra.crm.dto.HotelThumbnailResponse;
-import com.voyra.crm.dto.SupplierCredentialRevealResponse;
+import com.voyra.crm.models.ResolvedCredential;
 import com.voyra.crm.enums.SupplierEnvironment;
 import com.voyra.crm.enums.SupplierProvider;
 import com.voyra.crm.exception.SupplierException;
 import com.voyra.crm.service.HotelSearchProvider;
-import com.voyra.crm.service.SupplierCredentialService;
+import com.voyra.crm.service.PlatformSupplierCredentialService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
@@ -83,7 +83,7 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
     private record StaticData(Map<String, List<Region>> cities, Map<String, String> nationalities, Instant builtAt) { }
     private record Cached<T>(T value, Instant at) { }
 
-    private final SupplierCredentialService supplierCredentialService;
+    private final PlatformSupplierCredentialService platformSupplierCredentialService;
     private final RestClient.Builder restClientBuilder;
     private final String uatBaseUrl;
     private final String prodBaseUrl;
@@ -102,11 +102,11 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
     });
     private final java.util.concurrent.atomic.AtomicBoolean shapeLogged = new java.util.concurrent.atomic.AtomicBoolean();
 
-    public TripjackHotelSearchProvider(SupplierCredentialService supplierCredentialService,
+    public TripjackHotelSearchProvider(PlatformSupplierCredentialService platformSupplierCredentialService,
                                        @Qualifier("tripjackRestClientBuilder") RestClient.Builder restClientBuilder,
                                        @Value("${app.hotel-supplier.tripjack.uat-base-url:https://apitest-hms.tripjack.com}") String uatBaseUrl,
                                        @Value("${app.hotel-supplier.tripjack.prod-base-url:https://hms-search.tripjack.com}") String prodBaseUrl) {
-        this.supplierCredentialService = supplierCredentialService;
+        this.platformSupplierCredentialService = platformSupplierCredentialService;
         this.restClientBuilder = restClientBuilder;
         this.uatBaseUrl = uatBaseUrl;
         this.prodBaseUrl = prodBaseUrl;
@@ -201,9 +201,9 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
     private record Conn(RestClient client, String host) { }
 
     private Conn connect() {
-        SupplierCredentialRevealResponse credential = supplierCredentialService.resolveActive(SupplierProvider.TRIPJACK);
-        String host = credential.getEnvironment() == SupplierEnvironment.PROD ? prodBaseUrl : uatBaseUrl;
-        return new Conn(restClientBuilder.clone().baseUrl(host).defaultHeader("apikey", credential.getApiKey()).build(), host);
+        ResolvedCredential credential = platformSupplierCredentialService.resolveActive(SupplierProvider.TRIPJACK);
+        String host = credential.environment() == SupplierEnvironment.PROD ? prodBaseUrl : uatBaseUrl;
+        return new Conn(restClientBuilder.clone().baseUrl(host).defaultHeader("apikey", credential.apiKey()).build(), host);
     }
 
     /**
@@ -532,7 +532,7 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
 
     /**
      * This host's city list and nationalities, however old - a week-old copy is replaced in the background, never
-     * while a search waits. Not loaded yet (just started, or the agency moved to another Tripjack environment): the
+     * while a search waits. Not loaded yet (just started, or the platform credential moved to another Tripjack environment): the
      * load starts in the background and the search is asked to retry.
      */
     private StaticData loaded(Conn conn) {
@@ -551,8 +551,8 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
     }
 
     /**
-     * Loads this agency's Tripjack host's city list and nationalities unless a copy under a week old is already held.
-     * Called by the scheduled job, with the agency's tenant set so its credential can be read.
+     * Loads the platform Tripjack host's city list and nationalities unless a copy under a week old is already held.
+     * Called by the scheduled job.
      */
     public void refreshStaticData() {
         Conn conn = connect();

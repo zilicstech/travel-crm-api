@@ -8,9 +8,9 @@ import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
 @Data
-@Schema(description = "Create or update the agency's credentials for one supplier - an empty "
-        + "apiKey on an update leaves the stored key unchanged, so the field is never sent back")
-public class SupplierCredentialUpsertRequest {
+@Schema(description = "Set the platform's credential for one supplier - an empty apiKey on an update keeps "
+        + "the stored key, so the key is never sent back to be re-submitted")
+public class PlatformSupplierCredentialRequest {
 
     @NotNull(message = "Provider is required")
     @Schema(example = "TRIPJACK")
@@ -24,12 +24,12 @@ public class SupplierCredentialUpsertRequest {
     @Schema(example = "https://apitest.tripjack.com")
     private String baseUrl;
 
-    @Schema(description = "Leave blank on an update to keep the stored key unchanged", example = "tj_live_key_123")
+    @Schema(description = "Required on first save; leave blank on an update to keep the stored key", example = "tj_live_key_123")
     private String apiKey;
 
-    @Schema(description = "Optional - some Tripjack products pair a user id with the key", example = "agency-001")
+    @Schema(description = "Optional - some Tripjack products pair a user id with the key", example = "voyra-001")
     private String userId;
 
-    @Schema(example = "true")
+    @Schema(description = "Activating this credential deactivates any other for the provider", example = "true")
     private Boolean isActive;
 }

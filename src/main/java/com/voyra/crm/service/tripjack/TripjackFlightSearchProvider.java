@@ -6,11 +6,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.voyra.crm.dto.FlightOfferResponse;
 import com.voyra.crm.dto.FlightSearchQuery;
-import com.voyra.crm.dto.SupplierCredentialRevealResponse;
+import com.voyra.crm.models.ResolvedCredential;
 import com.voyra.crm.enums.SupplierProvider;
 import com.voyra.crm.exception.SupplierException;
 import com.voyra.crm.service.FlightSearchProvider;
-import com.voyra.crm.service.SupplierCredentialService;
+import com.voyra.crm.service.PlatformSupplierCredentialService;
 import com.voyra.crm.util.AirportCodeResolver;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -55,9 +55,9 @@ import java.util.regex.Pattern;
 @Slf4j
 public class TripjackFlightSearchProvider implements FlightSearchProvider {
 
-    private final SupplierCredentialService supplierCredentialService;
+    private final PlatformSupplierCredentialService platformSupplierCredentialService;
     /** The timeout-bounded builder from {@code config.TripjackConfig} - cloned per call so
-     *  each agency's base URL/key never leaks onto a shared client. This class never calls
+     *  a credential change applies to the next call. This class never calls
      *  {@code .requestFactory(...)} on it, so tests can bind {@code MockRestServiceServer} to
      *  a plain builder instead without their mock being silently overwritten. */
     @Qualifier("tripjackRestClientBuilder")
@@ -67,20 +67,19 @@ public class TripjackFlightSearchProvider implements FlightSearchProvider {
 
     @Override
     public List<FlightOfferResponse> search(FlightSearchQuery query) {
-        // Credentials resolved fresh per call, never cached on this singleton bean - it is
-        // shared by every tenant, so caching here would serve one agency's key to all of them.
+        // The platform credential is resolved fresh per call, so a key change applies to the next search.
         log.info("Tripjack flight search start: {} -> {} on {}", query.getOrigin(), query.getDestination(), query.getDepartDate());
-        SupplierCredentialRevealResponse credential;
+        ResolvedCredential credential;
         try {
-            credential = supplierCredentialService.resolveActive(SupplierProvider.TRIPJACK);
+            credential = platformSupplierCredentialService.resolveActive(SupplierProvider.TRIPJACK);
         } catch (RuntimeException e) {
-            log.warn("Tripjack flight search aborted - no active credential for this agency: {}", e.getMessage());
+            log.warn("Tripjack flight search aborted - no active platform credential: {}", e.getMessage());
             throw e;
         }
         if (credential != null) {
-            String key = credential.getApiKey() == null ? "" : credential.getApiKey();
+            String key = credential.apiKey() == null ? "" : credential.apiKey();
             log.info("Tripjack credential resolved: environment={}, baseUrl={}, apiKey=...{} (len {})",
-                    credential.getEnvironment(), credential.getBaseUrl(),
+                    credential.environment(), credential.baseUrl(),
                     key.length() > 4 ? key.substring(key.length() - 4) : "****", key.length());
         }
 
@@ -117,10 +116,10 @@ public class TripjackFlightSearchProvider implements FlightSearchProvider {
         return Map.of("searchQuery", searchQuery);
     }
 
-    private JsonNode callSearch(SupplierCredentialRevealResponse credential, Map<String, Object> requestBody) {
+    private JsonNode callSearch(ResolvedCredential credential, Map<String, Object> requestBody) {
         RestClient client = restClientBuilder.clone()
-                .baseUrl(credential.getBaseUrl())
-                .defaultHeader("apikey", credential.getApiKey())
+                .baseUrl(credential.baseUrl())
+                .defaultHeader("apikey", credential.apiKey())
                 .build();
 
         // Read as a raw string rather than retrieve().body(JsonNode.class) - Tripjack has
@@ -140,12 +139,12 @@ public class TripjackFlightSearchProvider implements FlightSearchProvider {
             // (or the key is wrong) - log the body so that is diagnosable without a debugger.
             log.error("Tripjack flight search HTTP {} from {}: {}. Outbound IP of this server as seen "
                             + "externally: {} (this is the IP Tripjack must have whitelisted)",
-                    e.getStatusCode().value(), credential.getBaseUrl(), e.getResponseBodyAsString(), outboundIp());
+                    e.getStatusCode().value(), credential.baseUrl(), e.getResponseBodyAsString(), outboundIp());
             throw new SupplierException("Tripjack flight search call failed (HTTP "
                     + e.getStatusCode().value() + ")", e);
         } catch (RestClientException e) {
             log.error("Tripjack flight search could not reach {} ({}: {}). Outbound IP of this server: {}",
-                    credential.getBaseUrl(), e.getClass().getSimpleName(), e.getMessage(), outboundIp());
+                    credential.baseUrl(), e.getClass().getSimpleName(), e.getMessage(), outboundIp());
             throw new SupplierException("Tripjack flight search call failed", e);
         }
 

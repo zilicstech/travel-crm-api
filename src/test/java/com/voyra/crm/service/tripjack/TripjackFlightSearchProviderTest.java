@@ -2,12 +2,12 @@ package com.voyra.crm.service.tripjack;
 
 import com.voyra.crm.dto.FlightOfferResponse;
 import com.voyra.crm.dto.FlightSearchQuery;
-import com.voyra.crm.dto.SupplierCredentialRevealResponse;
+import com.voyra.crm.models.ResolvedCredential;
 import com.voyra.crm.enums.FlightCabin;
 import com.voyra.crm.enums.SupplierEnvironment;
 import com.voyra.crm.enums.SupplierProvider;
 import com.voyra.crm.exception.SupplierException;
-import com.voyra.crm.service.SupplierCredentialService;
+import com.voyra.crm.service.PlatformSupplierCredentialService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -41,15 +41,11 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 class TripjackFlightSearchProviderTest {
 
     @Mock
-    private SupplierCredentialService supplierCredentialService;
+    private PlatformSupplierCredentialService platformSupplierCredentialService;
 
-    private SupplierCredentialRevealResponse credential() {
-        return SupplierCredentialRevealResponse.builder()
-                .provider(SupplierProvider.TRIPJACK)
-                .environment(SupplierEnvironment.UAT)
-                .baseUrl("https://apitest.tripjack.com")
-                .apiKey("test-key")
-                .build();
+    private ResolvedCredential credential() {
+        return new ResolvedCredential(SupplierProvider.TRIPJACK, SupplierEnvironment.UAT,
+                "https://apitest.tripjack.com", "test-key", null);
     }
 
     private String fixture(String classpathPath) throws java.io.IOException {
@@ -70,7 +66,7 @@ class TripjackFlightSearchProviderTest {
 
     @Test
     void search_sendsTheDocumentedRequestShapeAndMapsBothFareOptions() throws Exception {
-        when(supplierCredentialService.resolveActive(SupplierProvider.TRIPJACK)).thenReturn(credential());
+        when(platformSupplierCredentialService.resolveActive(SupplierProvider.TRIPJACK)).thenReturn(credential());
 
         RestClient.Builder builder = RestClient.builder();
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
@@ -84,7 +80,7 @@ class TripjackFlightSearchProviderTest {
                 .andExpect(jsonPath("$.searchQuery.routeInfos[0].travelDate").value("2026-10-09"))
                 .andRespond(withSuccess(fixture("tripjack/flight-search-response.json"), MediaType.APPLICATION_JSON));
 
-        TripjackFlightSearchProvider provider = new TripjackFlightSearchProvider(supplierCredentialService, builder);
+        TripjackFlightSearchProvider provider = new TripjackFlightSearchProvider(platformSupplierCredentialService, builder);
         List<FlightOfferResponse> offers = provider.search(query());
 
         server.verify();
@@ -112,7 +108,7 @@ class TripjackFlightSearchProviderTest {
 
     @Test
     void search_totalCoversEveryPassengerAtTheirOwnFare() throws Exception {
-        when(supplierCredentialService.resolveActive(SupplierProvider.TRIPJACK)).thenReturn(credential());
+        when(platformSupplierCredentialService.resolveActive(SupplierProvider.TRIPJACK)).thenReturn(credential());
         RestClient.Builder builder = RestClient.builder();
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
         server.expect(requestTo("https://apitest.tripjack.com/fms/v1/air-search-all"))
@@ -121,7 +117,7 @@ class TripjackFlightSearchProviderTest {
         family.setChildren(1);
         family.setInfants(1);
 
-        List<FlightOfferResponse> offers = new TripjackFlightSearchProvider(supplierCredentialService, builder).search(family);
+        List<FlightOfferResponse> offers = new TripjackFlightSearchProvider(platformSupplierCredentialService, builder).search(family);
 
         // Saver quotes all three passenger types: 2 x 8,400 + 6,300 + 1,000.
         assertThat(offers.get(0).getPrice()).isEqualByComparingTo("8400.00");
@@ -133,13 +129,13 @@ class TripjackFlightSearchProviderTest {
 
     @Test
     void search_connectingFlightCountsEveryStopAndTheWholeJourneyTime() throws Exception {
-        when(supplierCredentialService.resolveActive(SupplierProvider.TRIPJACK)).thenReturn(credential());
+        when(platformSupplierCredentialService.resolveActive(SupplierProvider.TRIPJACK)).thenReturn(credential());
         RestClient.Builder builder = RestClient.builder();
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
         server.expect(requestTo("https://apitest.tripjack.com/fms/v1/air-search-all"))
                 .andRespond(withSuccess(fixture("tripjack/flight-search-connecting-response.json"), MediaType.APPLICATION_JSON));
 
-        FlightOfferResponse offer = new TripjackFlightSearchProvider(supplierCredentialService, builder).search(query()).get(0);
+        FlightOfferResponse offer = new TripjackFlightSearchProvider(platformSupplierCredentialService, builder).search(query()).get(0);
 
         // One change of plane at DEL plus one technical stop on the second leg.
         assertThat(offer.getStops()).isEqualTo(2);
@@ -164,7 +160,7 @@ class TripjackFlightSearchProviderTest {
         FlightSearchQuery query = query();
         query.setOrigin("Atlantis");
 
-        assertThatThrownBy(() -> new TripjackFlightSearchProvider(supplierCredentialService, RestClient.builder())
+        assertThatThrownBy(() -> new TripjackFlightSearchProvider(platformSupplierCredentialService, RestClient.builder())
                 .search(query))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Unknown city");
@@ -172,14 +168,14 @@ class TripjackFlightSearchProviderTest {
 
     @Test
     void search_supplierErrorStatusBecomesASupplierException() throws Exception {
-        when(supplierCredentialService.resolveActive(SupplierProvider.TRIPJACK)).thenReturn(credential());
+        when(platformSupplierCredentialService.resolveActive(SupplierProvider.TRIPJACK)).thenReturn(credential());
 
         RestClient.Builder builder = RestClient.builder();
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
         server.expect(requestTo("https://apitest.tripjack.com/fms/v1/air-search-all"))
                 .andRespond(withStatus(org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR));
 
-        TripjackFlightSearchProvider provider = new TripjackFlightSearchProvider(supplierCredentialService, builder);
+        TripjackFlightSearchProvider provider = new TripjackFlightSearchProvider(platformSupplierCredentialService, builder);
 
         assertThatThrownBy(() -> provider.search(query()))
                 .isInstanceOf(SupplierException.class);
@@ -192,14 +188,14 @@ class TripjackFlightSearchProviderTest {
      */
     @Test
     void search_functionalErrorEnvelopeSurfacesTripjacksRealMessage() throws Exception {
-        when(supplierCredentialService.resolveActive(SupplierProvider.TRIPJACK)).thenReturn(credential());
+        when(platformSupplierCredentialService.resolveActive(SupplierProvider.TRIPJACK)).thenReturn(credential());
 
         RestClient.Builder builder = RestClient.builder();
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
         server.expect(requestTo("https://apitest.tripjack.com/fms/v1/air-search-all"))
                 .andRespond(withSuccess(fixture("tripjack/flight-search-error-response.json"), MediaType.APPLICATION_JSON));
 
-        TripjackFlightSearchProvider provider = new TripjackFlightSearchProvider(supplierCredentialService, builder);
+        TripjackFlightSearchProvider provider = new TripjackFlightSearchProvider(platformSupplierCredentialService, builder);
 
         assertThatThrownBy(() -> provider.search(query()))
                 .isInstanceOf(SupplierException.class)
