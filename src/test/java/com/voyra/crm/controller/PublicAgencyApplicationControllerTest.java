@@ -6,6 +6,7 @@ import com.voyra.crm.enums.KycDocumentType;
 import com.voyra.crm.security.InquiryRateLimiter;
 import com.voyra.crm.security.JwtAuthenticationFilter;
 import com.voyra.crm.security.JwtService;
+import com.voyra.crm.security.KycUploadRateLimiter;
 import com.voyra.crm.security.RestAuthenticationEntryPoint;
 import com.voyra.crm.service.AgencyApplicationService;
 import org.junit.jupiter.api.Test;
@@ -46,6 +47,9 @@ class PublicAgencyApplicationControllerTest {
     @MockBean
     private InquiryRateLimiter inquiryRateLimiter;
 
+    @MockBean
+    private KycUploadRateLimiter kycUploadRateLimiter;
+
     @Test
     void createIsOpenToAnonymousAndRateLimited() throws Exception {
         given(agencyApplicationService.create(any()))
@@ -55,6 +59,7 @@ class PublicAgencyApplicationControllerTest {
                 .andExpect(status().isCreated())
                 .andExpect(content().json("{\"id\":\"app-1\",\"uploadToken\":\"tok\"}"));
         verify(inquiryRateLimiter).check(anyString());
+        verify(kycUploadRateLimiter, never()).check(anyString());
     }
 
     @Test
@@ -83,7 +88,7 @@ class PublicAgencyApplicationControllerTest {
     }
 
     @Test
-    void uploadAndSubmitAreNotRateLimited() throws Exception {
+    void uploadUsesTheUploadLimiterAndSubmitUsesNeither() throws Exception {
         MockMultipartFile file = new MockMultipartFile("file", "pan.pdf", "application/pdf", "%PDF-1.4".getBytes());
 
         mockMvc.perform(multipart("/api/public/agency-applications/app-1/documents").file(file).param("type", "PAN")
@@ -92,8 +97,21 @@ class PublicAgencyApplicationControllerTest {
         mockMvc.perform(post("/api/public/agency-applications/app-1/submit").header("X-Upload-Token", "tok"))
                 .andExpect(status().isOk());
         verify(inquiryRateLimiter, never()).check(anyString());
+        verify(kycUploadRateLimiter, org.mockito.Mockito.times(1)).check(anyString());
         verify(agencyApplicationService).attachDocument(org.mockito.ArgumentMatchers.eq("app-1"),
                 org.mockito.ArgumentMatchers.eq("tok"), org.mockito.ArgumentMatchers.eq(KycDocumentType.PAN), any());
+    }
+
+    @Test
+    void anUploadOverTheLimitIs429() throws Exception {
+        org.mockito.Mockito.doThrow(new InquiryRateLimiter.TooManyInquiriesException("slow down"))
+                .when(kycUploadRateLimiter).check(anyString());
+        MockMultipartFile file = new MockMultipartFile("file", "pan.pdf", "application/pdf", "%PDF-1.4".getBytes());
+
+        mockMvc.perform(multipart("/api/public/agency-applications/app-1/documents").file(file).param("type", "PAN")
+                        .header("X-Upload-Token", "tok"))
+                .andExpect(status().isTooManyRequests());
+        verify(agencyApplicationService, never()).attachDocument(anyString(), anyString(), any(KycDocumentType.class), any());
     }
 
     @Test

@@ -6,6 +6,7 @@ import com.voyra.crm.dto.KycDocumentResponse;
 import com.voyra.crm.dto.SimpleAckResponse;
 import com.voyra.crm.enums.KycDocumentType;
 import com.voyra.crm.security.InquiryRateLimiter;
+import com.voyra.crm.security.KycUploadRateLimiter;
 import com.voyra.crm.service.AgencyApplicationService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -36,6 +37,7 @@ public class PublicAgencyApplicationController {
 
     private final AgencyApplicationService agencyApplicationService;
     private final InquiryRateLimiter inquiryRateLimiter;
+    private final KycUploadRateLimiter kycUploadRateLimiter;
 
     @PostMapping
     @Operation(summary = "Start an agency application", description = "No auth required. Returns the application id "
@@ -49,11 +51,13 @@ public class PublicAgencyApplicationController {
 
     @PostMapping(value = "/{id}/documents", consumes = "multipart/form-data")
     @Operation(summary = "Upload a KYC document", description = "PDF/JPG/PNG/WEBP up to 5 MB, at most 20 per application. Needs the X-Upload-Token header.")
+    @ApiResponse(responseCode = "429", description = "More than 30 uploads in 10 minutes from one connection")
     public ResponseEntity<KycDocumentResponse> upload(@PathVariable String id,
                                                       @RequestHeader(TOKEN_HEADER) String uploadToken,
                                                       @RequestParam KycDocumentType type,
-                                                      @RequestPart("file") MultipartFile file) {
-        // Not rate-limited: bounded by the per-application document cap, and create (which issues the token) is limited.
+                                                      @RequestPart("file") MultipartFile file,
+                                                      HttpServletRequest http) {
+        kycUploadRateLimiter.check(InquiryRateLimiter.callerOf(http));
         return ResponseEntity.ok(agencyApplicationService.attachDocument(id, uploadToken, type, file));
     }
 
