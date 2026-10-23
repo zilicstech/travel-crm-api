@@ -1,6 +1,7 @@
 package com.voyra.crm.repository;
 
 import com.voyra.crm.entity.KycDocument;
+import com.voyra.crm.enums.KycDocumentStatus;
 import com.voyra.crm.enums.KycDocumentType;
 import org.springframework.data.jpa.repository.JpaRepository;
 
@@ -14,4 +15,8 @@ public interface KycDocumentRepository extends JpaRepository<KycDocument, String
     Optional<KycDocument> findByIdAndApplicationId(String id, String applicationId);
 
     long countByApplicationIdAndType(String applicationId, KycDocumentType type);
+
+    long countByApplicationIdAndTypeAndStatusNot(String applicationId, KycDocumentType type, KycDocumentStatus status);
+
+    long countByApplicationId(String applicationId);
 }

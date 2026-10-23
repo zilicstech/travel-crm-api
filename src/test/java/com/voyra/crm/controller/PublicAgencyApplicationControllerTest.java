@@ -81,4 +81,28 @@ class PublicAgencyApplicationControllerTest {
                 .andExpect(content().json("{\"success\":true}"));
         verify(agencyApplicationService).submit("app-1", "tok");
     }
+
+    @Test
+    void uploadIsRateLimited() throws Exception {
+        MockMultipartFile file = new MockMultipartFile("file", "pan.pdf", "application/pdf", "%PDF-1.4".getBytes());
+
+        mockMvc.perform(multipart("/api/public/agency-applications/app-1/documents").file(file).param("type", "PAN")
+                        .header("X-Upload-Token", "tok"))
+                .andExpect(status().isOk());
+        verify(inquiryRateLimiter).check(anyString());
+        verify(agencyApplicationService).attachDocument(org.mockito.ArgumentMatchers.eq("app-1"),
+                org.mockito.ArgumentMatchers.eq("tok"), org.mockito.ArgumentMatchers.eq(KycDocumentType.PAN), any());
+    }
+
+    @Test
+    void aWrongTokenOnUploadIs403ForAnAnonymousCaller() throws Exception {
+        given(agencyApplicationService.attachDocument(anyString(), anyString(), any(KycDocumentType.class), any()))
+                .willThrow(new org.springframework.security.access.AccessDeniedException("This upload link is invalid or has expired"));
+        MockMultipartFile file = new MockMultipartFile("file", "pan.pdf", "application/pdf", "%PDF-1.4".getBytes());
+
+        mockMvc.perform(multipart("/api/public/agency-applications/app-1/documents").file(file).param("type", "PAN")
+                        .header("X-Upload-Token", "wrong"))
+                .andExpect(status().isForbidden())
+                .andExpect(content().json("{\"message\":\"This upload link is invalid or has expired\"}"));
+    }
 }

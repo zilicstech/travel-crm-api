@@ -52,8 +52,6 @@ class AgencyApplicationServiceTest {
     private FileStorageService fileStorageService;
     @Mock
     private LoginEmailService loginEmailService;
-    @Mock
-    private PlatformAuditService platformAuditService;
     @InjectMocks
     private AgencyApplicationService service;
 
@@ -94,7 +92,8 @@ class AgencyApplicationServiceTest {
     @Test
     void createRefusesAnEmailWithAnOpenApplication() throws Exception {
         when(applicationRepository.findFirstByOwnerEmailIgnoreCaseAndStatusIn("asha@skytrips.in", OPEN))
-                .thenReturn(Optional.of(draft(Instant.now().plusSeconds(60))));
+                .thenReturn(Optional.of(draft(Instant.now().plusSeconds(60)).toBuilder()
+                        .status(ApplicationStatus.SUBMITTED).build()));
 
         assertThatThrownBy(() -> service.create(request())).isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("An application for this email is already under review");
@@ -185,7 +184,7 @@ class AgencyApplicationServiceTest {
     void submitNeedsAPanDocument() throws Exception {
         AgencyApplication app = draft(Instant.now().plusSeconds(60));
         when(applicationRepository.findById("app-1")).thenReturn(Optional.of(app));
-        when(kycDocumentRepository.countByApplicationIdAndType("app-1", KycDocumentType.PAN)).thenReturn(0L);
+        when(kycDocumentRepository.countByApplicationIdAndTypeAndStatusNot("app-1", KycDocumentType.PAN, KycDocumentStatus.REJECTED)).thenReturn(0L);
 
         assertThatThrownBy(() -> service.submit("app-1", TOKEN)).isInstanceOf(IllegalStateException.class)
                 .hasMessage("Upload the PAN card first");
@@ -196,7 +195,7 @@ class AgencyApplicationServiceTest {
     void submitMovesDraftToSubmitted() throws Exception {
         AgencyApplication app = draft(Instant.now().plusSeconds(60));
         when(applicationRepository.findById("app-1")).thenReturn(Optional.of(app));
-        when(kycDocumentRepository.countByApplicationIdAndType("app-1", KycDocumentType.PAN)).thenReturn(1L);
+        when(kycDocumentRepository.countByApplicationIdAndTypeAndStatusNot("app-1", KycDocumentType.PAN, KycDocumentStatus.REJECTED)).thenReturn(1L);
 
         service.submit("app-1", TOKEN);
 
@@ -222,5 +221,93 @@ class AgencyApplicationServiceTest {
         assertThat(rejected.getUploadTokenHash()).isNotEqualTo(oldHash).isEqualTo(sha256Hex(response.getUploadToken()));
         assertThat(rejected.getRejectionReason()).isNull();
         assertThat(rejected.getAgencyName()).isEqualTo("Sky Trips");
+    }
+
+    @Test
+    void createReusesAnExpiredDraft() throws Exception {
+        AgencyApplication stale = draft(Instant.now().minusSeconds(60));
+        String oldHash = stale.getUploadTokenHash();
+        when(applicationRepository.findFirstByOwnerEmailIgnoreCaseAndStatusIn("asha@skytrips.in", OPEN))
+                .thenReturn(Optional.of(stale));
+
+        AgencyApplicationCreatedResponse response = service.create(request());
+
+        verify(applicationRepository).save(stale);
+        assertThat(response.getId()).isEqualTo("app-1");
+        assertThat(stale.getStatus()).isEqualTo(ApplicationStatus.DRAFT);
+        assertThat(stale.getUploadTokenHash()).isNotEqualTo(oldHash).isEqualTo(sha256Hex(response.getUploadToken()));
+        assertThat(stale.getUploadTokenExpiresAt()).isAfter(Instant.now().plus(Duration.ofHours(23)));
+        assertThat(stale.getAgencyName()).isEqualTo("Sky Trips");
+    }
+
+    @Test
+    void createRefusesAFreshDraftFor24Hours() throws Exception {
+        when(applicationRepository.findFirstByOwnerEmailIgnoreCaseAndStatusIn("asha@skytrips.in", OPEN))
+                .thenReturn(Optional.of(draft(Instant.now().plusSeconds(3600))));
+
+        assertThatThrownBy(() -> service.create(request())).isInstanceOf(IllegalStateException.class)
+                .hasMessage("An application for this email was started in the last 24 hours. "
+                        + "Continue it in the same browser or try again after 24 hours.");
+        verify(applicationRepository, never()).save(any());
+    }
+
+    @Test
+    void attachRefusesThe21stDocument() throws Exception {
+        when(applicationRepository.findById("app-1")).thenReturn(Optional.of(draft(Instant.now().plusSeconds(60))));
+        when(kycDocumentRepository.countByApplicationId("app-1")).thenReturn(20L);
+
+        assertThatThrownBy(() -> service.attachDocument("app-1", TOKEN, KycDocumentType.OTHER, pdf()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("This application already has the maximum of 20 documents");
+        verify(fileStorageService, never()).store(anyString(), anyString(), anyString(), any());
+    }
+
+    @Test
+    void attachRefusesAWordDocument() throws Exception {
+        when(applicationRepository.findById("app-1")).thenReturn(Optional.of(draft(Instant.now().plusSeconds(60))));
+        MockMultipartFile docx = new MockMultipartFile("file", "pan.docx", "application/vnd.openxmlformats-officedocument",
+                new byte[] {'P', 'K', 3, 4, 0});
+
+        assertThatThrownBy(() -> service.attachDocument("app-1", TOKEN, KycDocumentType.PAN, docx))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Upload a PDF, JPG, PNG or WEBP file");
+        verify(fileStorageService, never()).store(anyString(), anyString(), anyString(), any());
+    }
+
+    @Test
+    void attachRefusesASubmittedApplication() throws Exception {
+        when(applicationRepository.findById("app-1")).thenReturn(Optional.of(draft(Instant.now().plusSeconds(60))
+                .toBuilder().status(ApplicationStatus.SUBMITTED).build()));
+
+        assertThatThrownBy(() -> service.attachDocument("app-1", TOKEN, KycDocumentType.PAN, pdf()))
+                .isInstanceOf(IllegalStateException.class);
+        verify(fileStorageService, never()).store(anyString(), anyString(), anyString(), any());
+    }
+
+    @Test
+    void attachShortensAnOverlongFileNameButKeepsItsExtension() throws Exception {
+        when(applicationRepository.findById("app-1")).thenReturn(Optional.of(draft(Instant.now().plusSeconds(60))));
+        MockMultipartFile file = new MockMultipartFile("file", "p".repeat(300) + ".pdf", "x/" + "y".repeat(120),
+                "%PDF-1.4 pan".getBytes(StandardCharsets.UTF_8));
+        when(fileStorageService.store(anyString(), anyString(), anyString(), any())).thenReturn("key");
+
+        service.attachDocument("app-1", TOKEN, KycDocumentType.PAN, file);
+
+        ArgumentCaptor<KycDocument> saved = ArgumentCaptor.forClass(KycDocument.class);
+        verify(kycDocumentRepository).save(saved.capture());
+        assertThat(saved.getValue().getFileName()).hasSize(255).endsWith("p.pdf");
+        assertThat(saved.getValue().getContentType()).hasSize(100);
+    }
+
+    @Test
+    void submitIgnoresARejectedPan() throws Exception {
+        AgencyApplication app = draft(Instant.now().plusSeconds(60));
+        when(applicationRepository.findById("app-1")).thenReturn(Optional.of(app));
+        // The only PAN on file was rejected in an earlier round, so the non-rejected count is 0.
+        when(kycDocumentRepository.countByApplicationIdAndTypeAndStatusNot("app-1", KycDocumentType.PAN,
+                KycDocumentStatus.REJECTED)).thenReturn(0L);
+
+        assertThatThrownBy(() -> service.submit("app-1", TOKEN)).isInstanceOf(IllegalStateException.class)
+                .hasMessage("Upload the PAN card first");
+        verify(kycDocumentRepository, never()).countByApplicationIdAndType(anyString(), any());
     }
 }

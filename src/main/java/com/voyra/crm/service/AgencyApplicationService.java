@@ -48,6 +48,8 @@ public class AgencyApplicationService {
     public static final String FILE_CATEGORY = "kyc";
     static final long MAX_KYC_BYTES = 5L * 1024 * 1024;
     static final Duration UPLOAD_TOKEN_TTL = Duration.ofHours(24);
+    static final int MAX_DOCUMENTS = 20;
+    private static final Set<String> KYC_EXTENSIONS = Set.of("pdf", "jpg", "jpeg", "png", "webp");
 
     private static final Set<ApplicationStatus> OPEN = EnumSet.of(ApplicationStatus.DRAFT,
             ApplicationStatus.SUBMITTED, ApplicationStatus.UNDER_REVIEW, ApplicationStatus.MORE_INFO);
@@ -69,20 +71,25 @@ public class AgencyApplicationService {
         }
         String email = request.getOwnerEmail().trim();
         loginEmailService.assertFree(email);
-        if (applicationRepository.findFirstByOwnerEmailIgnoreCaseAndStatusIn(email, OPEN).isPresent()) {
+        Instant now = Instant.now();
+        AgencyApplication open = applicationRepository.findFirstByOwnerEmailIgnoreCaseAndStatusIn(email, OPEN).orElse(null);
+        if (open != null && open.getStatus() != ApplicationStatus.DRAFT) {
             throw new IllegalArgumentException("An application for this email is already under review");
+        }
+        if (open != null && open.getUploadTokenExpiresAt().isAfter(now)) {
+            throw new IllegalStateException("An application for this email was started in the last 24 hours. "
+                    + "Continue it in the same browser or try again after 24 hours.");
         }
         String gstin = upperOrNull(request.getGstin());
         String stateCode = trimToNull(request.getStateCode());
         ValidationPatterns.requireGstinMatchesState(gstin, stateCode);
 
-        // Re-applying after a rejection reuses that row, so the platform desk sees one history per email.
-        AgencyApplication app = applicationRepository
+        // An abandoned draft (token expired) or a rejection is reused, so the platform desk sees one history per email.
+        AgencyApplication app = open != null ? open : applicationRepository
                 .findFirstByOwnerEmailIgnoreCaseAndStatusIn(email, EnumSet.of(ApplicationStatus.REJECTED))
                 .orElseGet(() -> AgencyApplication.builder()
                         .id(UniqueIdResolver.resolve(applicationRepository::existsById)).build());
         String token = newToken();
-        Instant now = Instant.now();
         app.setStatus(ApplicationStatus.DRAFT);
         app.setAgencyName(request.getAgencyName().trim());
         app.setLegalName(trimToNull(request.getLegalName()));
@@ -114,6 +121,12 @@ public class AgencyApplicationService {
     @Transactional
     public KycDocumentResponse attachDocument(String applicationId, String uploadToken, KycDocumentType type, MultipartFile file) {
         AgencyApplication app = editable(applicationId, uploadToken);
+        if (kycDocumentRepository.countByApplicationId(app.getId()) >= MAX_DOCUMENTS) {
+            throw new IllegalStateException("This application already has the maximum of " + MAX_DOCUMENTS + " documents");
+        }
+        if (!KYC_EXTENSIONS.contains(extensionOf(file.getOriginalFilename()))) {
+            throw new IllegalArgumentException("Upload a PDF, JPG, PNG or WEBP file");
+        }
         UploadValidator.assertAllowed(file, MAX_KYC_BYTES);
         String fileKey = fileStorageService.store(FILE_SCOPE, FILE_CATEGORY, app.getId(), file);
         KycDocument doc = KycDocument.builder()
@@ -121,8 +134,9 @@ public class AgencyApplicationService {
                 .applicationId(app.getId())
                 .type(type)
                 .fileKey(fileKey)
-                .fileName(file.getOriginalFilename())
-                .contentType(file.getContentType())
+                .fileName(fitFileName(file.getOriginalFilename()))
+                .contentType(file.getContentType() == null || file.getContentType().length() <= 100
+                        ? file.getContentType() : file.getContentType().substring(0, 100))
                 .sizeBytes(file.getSize())
                 .status(KycDocumentStatus.PENDING)
                 .build();
@@ -133,7 +147,8 @@ public class AgencyApplicationService {
     @Transactional
     public void submit(String applicationId, String uploadToken) {
         AgencyApplication app = editable(applicationId, uploadToken);
-        if (kycDocumentRepository.countByApplicationIdAndType(app.getId(), KycDocumentType.PAN) == 0) {
+        if (kycDocumentRepository.countByApplicationIdAndTypeAndStatusNot(app.getId(), KycDocumentType.PAN,
+                KycDocumentStatus.REJECTED) == 0) {
             throw new IllegalStateException("Upload the PAN card first");
         }
         app.setStatus(ApplicationStatus.SUBMITTED);
@@ -169,6 +184,20 @@ public class AgencyApplicationService {
                 .sizeBytes(d.getSizeBytes())
                 .status(d.getStatus())
                 .build();
+    }
+
+    private static String extensionOf(String name) {
+        int dot = name != null ? name.lastIndexOf('.') : -1;
+        return dot >= 0 ? name.substring(dot + 1).toLowerCase(Locale.ROOT) : "";
+    }
+
+    /** file_name is VARCHAR(255): shorten the base name, keep the extension. */
+    static String fitFileName(String name) {
+        if (name.length() <= 255) {
+            return name;
+        }
+        String ext = name.substring(name.lastIndexOf('.')); // present: the extension was checked first
+        return name.substring(0, 255 - ext.length()) + ext;
     }
 
     private static String newToken() {

@@ -48,17 +48,21 @@ public class PublicAgencyApplicationController {
     }
 
     @PostMapping(value = "/{id}/documents", consumes = "multipart/form-data")
-    @Operation(summary = "Upload a KYC document", description = "PDF/JPG/PNG/WEBP up to 5 MB. Needs the X-Upload-Token header.")
+    @Operation(summary = "Upload a KYC document", description = "PDF/JPG/PNG/WEBP up to 5 MB, at most 20 per application. Needs the X-Upload-Token header.")
     public ResponseEntity<KycDocumentResponse> upload(@PathVariable String id,
                                                       @RequestHeader(TOKEN_HEADER) String uploadToken,
                                                       @RequestParam KycDocumentType type,
-                                                      @RequestPart("file") MultipartFile file) {
+                                                      @RequestPart("file") MultipartFile file,
+                                                      HttpServletRequest http) {
+        inquiryRateLimiter.check(InquiryRateLimiter.callerOf(http));
         return ResponseEntity.ok(agencyApplicationService.attachDocument(id, uploadToken, type, file));
     }
 
     @PostMapping("/{id}/submit")
     @Operation(summary = "Submit the application for review", description = "Needs the X-Upload-Token header and a PAN document.")
-    public ResponseEntity<SimpleAckResponse> submit(@PathVariable String id, @RequestHeader(TOKEN_HEADER) String uploadToken) {
+    public ResponseEntity<SimpleAckResponse> submit(@PathVariable String id, @RequestHeader(TOKEN_HEADER) String uploadToken,
+                                                    HttpServletRequest http) {
+        inquiryRateLimiter.check(InquiryRateLimiter.callerOf(http));
         agencyApplicationService.submit(id, uploadToken);
         return ResponseEntity.ok(SimpleAckResponse.builder().success(true).message("Application submitted").build());
     }

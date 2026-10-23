@@ -93,7 +93,7 @@ public class GlobalExceptionHandler {
         } else if (ex instanceof org.springframework.web.bind.MissingRequestHeaderException missingHeader) {
             message = "The '" + missingHeader.getHeaderName() + "' header is required";
         } else if (ex instanceof org.springframework.web.multipart.support.MissingServletRequestPartException missingPart) {
-            message = "The '" + missingPart.getRequestPartName() + "' file is required";
+            message = "The '" + missingPart.getRequestPartName() + "' part is required";
         } else {
             message = "The '" + ((org.springframework.web.method.annotation.MethodArgumentTypeMismatchException) ex).getName()
                     + "' parameter has an invalid value";
