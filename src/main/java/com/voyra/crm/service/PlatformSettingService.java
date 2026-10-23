@@ -114,8 +114,8 @@ public class PlatformSettingService {
                     throw new IllegalArgumentException(key + " must be a JSON list of {label, gross, base}");
                 }
                 if (basket == null || basket.isEmpty() || basket.stream().anyMatch(f -> f == null
-                        || f.label() == null || f.label().isBlank() || f.gross() == null || f.base() == null || f.base().signum() < 0 || f.base().compareTo(f.gross()) > 0)) {
-                    throw new IllegalArgumentException(key + " needs at least one fare, each with a label and 0 <= base <= gross");
+                        || f.label() == null || f.label().isBlank() || f.gross() == null || f.gross().signum() <= 0 || f.base() == null || f.base().signum() < 0 || f.base().compareTo(f.gross()) > 0)) {
+                    throw new IllegalArgumentException(key + " needs at least one fare, each with a label and 0 <= base <= gross, gross above 0");
                 }
             }
         }

@@ -77,6 +77,13 @@ class PlatformSettingServiceTest {
     }
 
     @Test
+    void basketRejectsAZeroGrossFare() {
+        assertThatThrownBy(() -> service().set("reference_fare_basket", "[{\"label\":\"Z\",\"gross\":0,\"base\":0}]"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("reference_fare_basket needs at least one fare, each with a label and 0 <= base <= gross, gross above 0");
+    }
+
+    @Test
     void basketRejectsNullJson() {
         bad("reference_fare_basket", "null");
     }
