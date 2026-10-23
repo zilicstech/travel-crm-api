@@ -8,6 +8,7 @@ import com.voyra.crm.dto.AgencyResponse;
 import com.voyra.crm.dto.AgencyUpdateRequest;
 import com.voyra.crm.dto.CredentialsResponse;
 import com.voyra.crm.dto.PasswordResetRequest;
+import com.voyra.crm.entity.AgencyApplication;
 import com.voyra.crm.entity.Tenant;
 import com.voyra.crm.enums.TenantStatus;
 import com.voyra.crm.migration.TenantFlywayMigrator;
@@ -23,6 +24,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.List;
 
 /** Platform (SUPER_ADMIN) management of Agencies. Agency creation = tenant provisioning. */
@@ -53,14 +55,7 @@ public class AgencyService {
                 .isActive(true)
                 .baseCurrencyCode(com.voyra.crm.util.FxMath.code(request.getBaseCurrencyCode(), BaseCurrency.DEFAULT))
                 .build();
-
-        // Flush first: a concurrent create with the same owner email (a double-click) waits on the
-        // unique index here and fails before it builds a schema, instead of leaving an orphan one.
-        tenantRepository.saveAndFlush(tenant);
-        tenantFlywayMigrator.migrate(tenant.getId());
-        seedDefaultsForTenant(tenant.getId());
-        seedChartOfAccountsFor(tenant.getId());
-        TenantCache.put(tenant.getId(), tenant.getAgencyName(), tenant.getStatus());
+        provision(tenant);
 
         log.info("Agency created: tenantId={}, agencyName={}", tenant.getId(), tenant.getAgencyName());
         return AgencyCreateResponse.builder()
@@ -70,6 +65,47 @@ public class AgencyService {
                 .ownerEmail(tenant.getOwnerEmail())
                 .baseCurrencyCode(tenant.getBaseCurrencyCode())
                 .build();
+    }
+
+    /**
+     * An approved application becomes an agency: its KYC identity is copied onto the tenant and the
+     * caller (a SUPER_ADMIN) is recorded as the approver. The caller marks the application APPROVED.
+     */
+    @Transactional
+    public Tenant provisionFromApplication(AgencyApplication app, String ownerPassword) {
+        loginEmailService.assertFree(app.getOwnerEmail());
+        Tenant tenant = Tenant.builder()
+                .id(generateUniqueTenantId())
+                .agencyName(app.getAgencyName())
+                .legalName(app.getLegalName())
+                .tradeName(app.getTradeName())
+                .pan(app.getPan())
+                .cin(app.getCin())
+                .gstNumber(app.getGstin())
+                .address(app.getAddress())
+                .stateCode(app.getStateCode())
+                .ownerName(app.getOwnerName())
+                .ownerEmail(app.getOwnerEmail())
+                .password(passwordEncoder.encode(ownerPassword))
+                .baseCurrencyCode(com.voyra.crm.util.FxMath.code(app.getBaseCurrencyCode(), BaseCurrency.DEFAULT))
+                .approvedAt(Instant.now())
+                .approvedBy(SecurityContextUtil.getCurrentUserOrThrow().userId())
+                .build();
+        tenant.setStatus(TenantStatus.ACTIVE);
+        provision(tenant);
+        log.info("Agency provisioned from application: tenantId={}, applicationId={}", tenant.getId(), app.getId());
+        return tenant;
+    }
+
+    /** Agency creation = tenant provisioning: the row, its schema, its defaults, then the auth cache. */
+    private void provision(Tenant tenant) {
+        // Flush first: a concurrent create with the same owner email (a double-click) waits on the
+        // unique index here and fails before it builds a schema, instead of leaving an orphan one.
+        tenantRepository.saveAndFlush(tenant);
+        tenantFlywayMigrator.migrate(tenant.getId());
+        seedDefaultsForTenant(tenant.getId());
+        seedChartOfAccountsFor(tenant.getId());
+        TenantCache.put(tenant.getId(), tenant.getAgencyName(), tenant.getStatus());
     }
 
     @Transactional(readOnly = true)
@@ -147,7 +183,8 @@ public class AgencyService {
         log.info("Agency owner password reset: tenantId={}, by={}", id, SecurityContextUtil.getAuditInfo());
     }
 
-    private AgencyResponse toResponse(Tenant tenant, boolean includeRevenue) {
+    /** Package-visible so an approved application can answer with the agency it created. */
+    AgencyResponse toResponse(Tenant tenant, boolean includeRevenue) {
         // Agents only: accountants share the table but are not agents.
         long agentsCount = agentRepository.countByTenantIdAndUserRole(tenant.getId(), com.voyra.crm.enums.UserType.AGENT);
         BigDecimal totalRevenue = null;

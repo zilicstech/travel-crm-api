@@ -2,6 +2,14 @@ package com.voyra.crm.service;
 
 import com.voyra.crm.dto.AgencyApplicationCreateRequest;
 import com.voyra.crm.dto.AgencyApplicationCreatedResponse;
+import com.voyra.crm.dto.AgencyApplicationResponse;
+import com.voyra.crm.dto.AgencyResponse;
+import com.voyra.crm.dto.ApplicationDecisionRequest;
+import com.voyra.crm.dto.KycDocumentDecisionRequest;
+import com.voyra.crm.dto.PagedResponse;
+import com.voyra.crm.entity.Tenant;
+import com.voyra.crm.enums.PlatformAuditAction;
+import com.voyra.crm.security.SecurityContextUtil;
 import com.voyra.crm.dto.KycDocumentResponse;
 import com.voyra.crm.entity.AgencyApplication;
 import com.voyra.crm.entity.KycDocument;
@@ -16,6 +24,10 @@ import com.voyra.crm.util.UploadValidator;
 import com.voyra.crm.util.ValidationPatterns;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.io.Resource;
+import org.springframework.data.domain.Pageable;
+import org.springframework.http.MediaType;
+import org.springframework.http.MediaTypeFactory;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,14 +42,18 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.EnumSet;
+import java.util.Collection;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
 /**
  * Public agency applications: an agency applies without logging in, then uploads KYC files and submits
- * using the one-time upload token returned at creation. The platform desk reviews them (Task 5).
+ * using the one-time upload token returned at creation. The platform desk (SUPER_ADMIN) then reviews them and
+ * either sends them back, rejects them, or approves them into a provisioned agency.
  */
 @Service
 @RequiredArgsConstructor
@@ -55,12 +71,21 @@ public class AgencyApplicationService {
             ApplicationStatus.SUBMITTED, ApplicationStatus.UNDER_REVIEW, ApplicationStatus.MORE_INFO);
     /** The applicant may still change documents and submit only while the application is with them. */
     private static final Set<ApplicationStatus> EDITABLE = EnumSet.of(ApplicationStatus.DRAFT, ApplicationStatus.MORE_INFO);
+    /** With the platform desk: it may decide or approve. */
+    private static final Set<ApplicationStatus> REVIEWABLE = EnumSet.of(ApplicationStatus.SUBMITTED,
+            ApplicationStatus.UNDER_REVIEW, ApplicationStatus.MORE_INFO);
+    private static final Set<ApplicationStatus> DECISIONS = EnumSet.of(ApplicationStatus.UNDER_REVIEW,
+            ApplicationStatus.MORE_INFO, ApplicationStatus.REJECTED);
+    static final Duration MORE_INFO_TOKEN_TTL = Duration.ofDays(7);
+    private static final String ENTITY_APPLICATION = "AGENCY_APPLICATION";
     private static final SecureRandom RANDOM = new SecureRandom();
 
     private final AgencyApplicationRepository applicationRepository;
     private final KycDocumentRepository kycDocumentRepository;
     private final FileStorageService fileStorageService;
     private final LoginEmailService loginEmailService;
+    private final AgencyService agencyService;
+    private final PlatformAuditService platformAuditService;
 
     @Transactional
     public AgencyApplicationCreatedResponse create(AgencyApplicationCreateRequest request) {
@@ -166,6 +191,149 @@ public class AgencyApplicationService {
         }
     }
 
+    @Transactional(readOnly = true)
+    public PagedResponse<AgencyApplicationResponse> list(Collection<ApplicationStatus> statuses, Pageable pageable) {
+        Collection<ApplicationStatus> filter = statuses == null || statuses.isEmpty() ? REVIEWABLE : statuses;
+        return PagedResponse.from(applicationRepository.findByStatusInOrderBySubmittedAtDesc(filter, pageable),
+                app -> toResponse(app, null));
+    }
+
+    @Transactional(readOnly = true)
+    public AgencyApplicationResponse get(String id) {
+        return withDocuments(find(id));
+    }
+
+    /** Not transactional: reading object storage stays outside a transaction (blueprint §8.6). Every view is audited. */
+    public KycFileContent openDocument(String applicationId, String documentId) {
+        KycDocument doc = findDocument(applicationId, documentId);
+        Resource resource = fileStorageService.retrieve(doc.getFileKey());
+        platformAuditService.record(PlatformAuditAction.KYC_DOCUMENT_VIEW, "KYC_DOCUMENT", doc.getId(),
+                Map.of("applicationId", applicationId, "type", doc.getType().name()));
+        // By extension, never the applicant-supplied content type, so an upload cannot be served as HTML.
+        String contentType = MediaTypeFactory.getMediaType(doc.getFileName()).orElse(MediaType.APPLICATION_OCTET_STREAM).toString();
+        return new KycFileContent(resource, doc.getFileName(), contentType);
+    }
+
+    /** Not a DTO - never serialized to JSON, only unpacked into a binary response by the controller. */
+    public record KycFileContent(Resource resource, String fileName, String contentType) {
+    }
+
+    @Transactional
+    public KycDocumentResponse decideDocument(String applicationId, String documentId, KycDocumentDecisionRequest request) {
+        KycDocument doc = findDocument(applicationId, documentId);
+        doc.setStatus(request.getStatus());
+        doc.setNote(trimToNull(request.getNote()));
+        doc.setReviewedBy(SecurityContextUtil.getCurrentUserOrThrow().userId());
+        doc.setReviewedAt(Instant.now());
+        return toResponse(doc);
+    }
+
+    /** UNDER_REVIEW, MORE_INFO (re-opens the form with a fresh 7-day link) or REJECTED (needs a reason). */
+    @Transactional
+    public AgencyApplicationResponse decide(String id, ApplicationDecisionRequest request) {
+        ApplicationStatus status = request.getStatus();
+        if (!DECISIONS.contains(status)) {
+            throw new IllegalArgumentException("A decision is UNDER_REVIEW, MORE_INFO or REJECTED; approve has its own action");
+        }
+        String reason = trimToNull(request.getRejectionReason());
+        if (status == ApplicationStatus.REJECTED && reason == null) {
+            throw new IllegalArgumentException("Give a reason for the rejection");
+        }
+        AgencyApplication app = reviewable(id);
+        ApplicationStatus previous = app.getStatus();
+        app.setStatus(status);
+        app.setRejectionReason(status == ApplicationStatus.REJECTED ? reason : null);
+        if (request.getNote() != null) {
+            app.setReviewNote(trimToNull(request.getNote()));
+        }
+        markReviewed(app);
+        String token = null;
+        if (status == ApplicationStatus.MORE_INFO) {
+            token = newToken();
+            app.setUploadTokenHash(sha256Hex(token));
+            app.setUploadTokenExpiresAt(Instant.now().plus(MORE_INFO_TOKEN_TTL));
+        }
+        platformAuditService.record(PlatformAuditAction.APPLICATION_DECISION, ENTITY_APPLICATION, app.getId(),
+                Map.of("from", previous.name(), "to", status.name()));
+        AgencyApplicationResponse response = withDocuments(app);
+        if (token != null) {
+            response.setResumeUrl("/apply?application=" + app.getId() + "&token=" + token);
+        }
+        return response;
+    }
+
+    /** Provisions the agency (tenant, schema, owner login) and closes the application. Once only. */
+    @Transactional
+    public AgencyResponse approve(String id, String ownerPassword) {
+        AgencyApplication app = reviewable(id);
+        Tenant tenant = agencyService.provisionFromApplication(app, ownerPassword);
+        app.setTenantId(tenant.getId());
+        app.setStatus(ApplicationStatus.APPROVED);
+        markReviewed(app);
+        platformAuditService.record(PlatformAuditAction.APPLICATION_APPROVE, ENTITY_APPLICATION, app.getId(),
+                Map.of("tenantId", tenant.getId()));
+        return agencyService.toResponse(tenant, false);
+    }
+
+    private AgencyApplication find(String id) {
+        return applicationRepository.findById(id).orElseThrow(() -> new NotFoundException("Application not found"));
+    }
+
+    private AgencyApplication reviewable(String id) {
+        AgencyApplication app = find(id);
+        if (!REVIEWABLE.contains(app.getStatus())) {
+            throw new IllegalStateException("This application is " + app.getStatus() + " and can no longer be decided");
+        }
+        return app;
+    }
+
+    private KycDocument findDocument(String applicationId, String documentId) {
+        return kycDocumentRepository.findByIdAndApplicationId(documentId, applicationId)
+                .orElseThrow(() -> new NotFoundException("Document not found"));
+    }
+
+    private static void markReviewed(AgencyApplication app) {
+        app.setReviewedBy(SecurityContextUtil.getCurrentUserOrThrow().userId());
+        app.setReviewedAt(Instant.now());
+    }
+
+    private AgencyApplicationResponse withDocuments(AgencyApplication app) {
+        return toResponse(app, kycDocumentRepository.findByApplicationIdOrderByCreatedAt(app.getId()).stream()
+                .map(AgencyApplicationService::toResponse).toList());
+    }
+
+    private static AgencyApplicationResponse toResponse(AgencyApplication a, List<KycDocumentResponse> documents) {
+        return AgencyApplicationResponse.builder()
+                .id(a.getId())
+                .status(a.getStatus())
+                .agencyName(a.getAgencyName())
+                .legalName(a.getLegalName())
+                .tradeName(a.getTradeName())
+                .pan(a.getPan())
+                .gstin(a.getGstin())
+                .cin(a.getCin())
+                .address(a.getAddress())
+                .city(a.getCity())
+                .stateCode(a.getStateCode())
+                .pincode(a.getPincode())
+                .ownerName(a.getOwnerName())
+                .ownerEmail(a.getOwnerEmail())
+                .ownerPhone(a.getOwnerPhone())
+                .expectedMonthlyVolume(a.getExpectedMonthlyVolume())
+                .baseCurrencyCode(a.getBaseCurrencyCode())
+                .consentAt(a.getConsentAt())
+                .submittedAt(a.getSubmittedAt())
+                .reviewedBy(a.getReviewedBy())
+                .reviewedAt(a.getReviewedAt())
+                .reviewNote(a.getReviewNote())
+                .rejectionReason(a.getRejectionReason())
+                .tenantId(a.getTenantId())
+                .createdAt(a.getCreatedAt())
+                .updatedAt(a.getUpdatedAt())
+                .documents(documents)
+                .build();
+    }
+
     private AgencyApplication editable(String applicationId, String uploadToken) {
         AgencyApplication app = applicationRepository.findById(applicationId)
                 .orElseThrow(() -> new NotFoundException("Application not found"));
@@ -183,6 +351,7 @@ public class AgencyApplicationService {
                 .fileName(d.getFileName())
                 .sizeBytes(d.getSizeBytes())
                 .status(d.getStatus())
+                .note(d.getNote())
                 .build();
     }
 

@@ -2,6 +2,18 @@ package com.voyra.crm.service;
 
 import com.voyra.crm.dto.AgencyApplicationCreateRequest;
 import com.voyra.crm.dto.AgencyApplicationCreatedResponse;
+import com.voyra.crm.dto.AgencyApplicationResponse;
+import com.voyra.crm.dto.ApplicationDecisionRequest;
+import com.voyra.crm.dto.KycDocumentDecisionRequest;
+import com.voyra.crm.entity.Tenant;
+import com.voyra.crm.enums.PlatformAuditAction;
+import com.voyra.crm.enums.UserType;
+import com.voyra.crm.security.CustomUserPrincipal;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
 import com.voyra.crm.entity.AgencyApplication;
 import com.voyra.crm.entity.KycDocument;
 import com.voyra.crm.enums.ApplicationStatus;
@@ -24,6 +36,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.EnumSet;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -34,6 +47,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -52,8 +66,35 @@ class AgencyApplicationServiceTest {
     private FileStorageService fileStorageService;
     @Mock
     private LoginEmailService loginEmailService;
+    @Mock
+    private AgencyService agencyService;
+    @Mock
+    private PlatformAuditService platformAuditService;
     @InjectMocks
     private AgencyApplicationService service;
+
+    @BeforeEach
+    void signInAsPlatformAdmin() {
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+                new CustomUserPrincipal("root-1", "root", UserType.SUPER_ADMIN, null), null, List.of()));
+    }
+
+    @AfterEach
+    void signOut() {
+        SecurityContextHolder.clearContext();
+    }
+
+    private static AgencyApplication submitted() throws Exception {
+        return draft(Instant.now().plusSeconds(60)).toBuilder().status(ApplicationStatus.SUBMITTED).build();
+    }
+
+    private static ApplicationDecisionRequest decision(ApplicationStatus status, String rejectionReason) {
+        ApplicationDecisionRequest r = new ApplicationDecisionRequest();
+        r.setStatus(status);
+        r.setNote("checked");
+        r.setRejectionReason(rejectionReason);
+        return r;
+    }
 
     private static String sha256Hex(String s) throws Exception {
         return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(s.getBytes(StandardCharsets.UTF_8)));
@@ -309,5 +350,131 @@ class AgencyApplicationServiceTest {
         assertThatThrownBy(() -> service.submit("app-1", TOKEN)).isInstanceOf(IllegalStateException.class)
                 .hasMessage("Upload the PAN card first");
         verify(kycDocumentRepository, never()).countByApplicationIdAndType(anyString(), any());
+    }
+
+    @Test
+    void decisionRejectRequiresAReason() {
+        assertThatThrownBy(() -> service.decide("app-1", decision(ApplicationStatus.REJECTED, " ")))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Give a reason for the rejection");
+        verify(applicationRepository, never()).findById(anyString());
+        verify(platformAuditService, never()).record(any(), anyString(), anyString(), any());
+    }
+
+    @Test
+    void decisionWritesAnAuditRow() throws Exception {
+        AgencyApplication app = submitted();
+        when(applicationRepository.findById("app-1")).thenReturn(Optional.of(app));
+
+        AgencyApplicationResponse response = service.decide("app-1", decision(ApplicationStatus.UNDER_REVIEW, null));
+
+        verify(platformAuditService).record(eq(PlatformAuditAction.APPLICATION_DECISION), eq("AGENCY_APPLICATION"), eq("app-1"), any());
+        assertThat(app.getStatus()).isEqualTo(ApplicationStatus.UNDER_REVIEW);
+        assertThat(app.getReviewedBy()).isEqualTo("root-1");
+        assertThat(app.getReviewNote()).isEqualTo("checked");
+        assertThat(response.getStatus()).isEqualTo(ApplicationStatus.UNDER_REVIEW);
+        assertThat(response.getResumeUrl()).isNull();
+    }
+
+    @Test
+    void decisionRefusesAnApprovalStatus() {
+        assertThatThrownBy(() -> service.decide("app-1", decision(ApplicationStatus.APPROVED, null)))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void decisionOnARejectedApplicationIsRefused() throws Exception {
+        when(applicationRepository.findById("app-1")).thenReturn(Optional.of(submitted().toBuilder()
+                .status(ApplicationStatus.REJECTED).build()));
+
+        assertThatThrownBy(() -> service.decide("app-1", decision(ApplicationStatus.UNDER_REVIEW, null)))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void requestMoreInfoRotatesTheTokenAndReturnsAResumeLink() throws Exception {
+        AgencyApplication app = submitted();
+        String oldHash = app.getUploadTokenHash();
+        when(applicationRepository.findById("app-1")).thenReturn(Optional.of(app));
+
+        AgencyApplicationResponse response = service.decide("app-1", decision(ApplicationStatus.MORE_INFO, null));
+
+        assertThat(app.getStatus()).isEqualTo(ApplicationStatus.MORE_INFO);
+        assertThat(app.getUploadTokenHash()).isNotEqualTo(oldHash);
+        assertThat(app.getUploadTokenExpiresAt()).isCloseTo(Instant.now().plus(Duration.ofDays(7)),
+                within(1, java.time.temporal.ChronoUnit.MINUTES));
+        assertThat(response.getResumeUrl()).startsWith("/apply?application=app-1&token=");
+        String token = response.getResumeUrl().substring("/apply?application=app-1&token=".length());
+        assertThat(sha256Hex(token)).isEqualTo(app.getUploadTokenHash());
+    }
+
+    @Test
+    void documentDecisionUpdatesStatusAndReviewer() {
+        KycDocument doc = KycDocument.builder().id("doc-1").applicationId("app-1").type(KycDocumentType.PAN)
+                .fileKey("k").fileName("pan.pdf").status(KycDocumentStatus.PENDING).build();
+        when(kycDocumentRepository.findByIdAndApplicationId("doc-1", "app-1")).thenReturn(Optional.of(doc));
+        KycDocumentDecisionRequest r = new KycDocumentDecisionRequest();
+        r.setStatus(KycDocumentStatus.REJECTED);
+        r.setNote("Unreadable");
+
+        var response = service.decideDocument("app-1", "doc-1", r);
+
+        assertThat(doc.getStatus()).isEqualTo(KycDocumentStatus.REJECTED);
+        assertThat(doc.getNote()).isEqualTo("Unreadable");
+        assertThat(doc.getReviewedBy()).isEqualTo("root-1");
+        assertThat(doc.getReviewedAt()).isNotNull();
+        assertThat(response.getStatus()).isEqualTo(KycDocumentStatus.REJECTED);
+        assertThat(response.getNote()).isEqualTo("Unreadable");
+    }
+
+    @Test
+    void openDocumentWritesAViewAuditRow() {
+        KycDocument doc = KycDocument.builder().id("doc-1").applicationId("app-1").type(KycDocumentType.PAN)
+                .fileKey("tenant_platform/kyc/app-1/x.pdf").fileName("pan.pdf").contentType("text/html").build();
+        when(kycDocumentRepository.findByIdAndApplicationId("doc-1", "app-1")).thenReturn(Optional.of(doc));
+        when(fileStorageService.retrieve("tenant_platform/kyc/app-1/x.pdf")).thenReturn(new ByteArrayResource(new byte[] {1}));
+
+        AgencyApplicationService.KycFileContent content = service.openDocument("app-1", "doc-1");
+
+        assertThat(content.fileName()).isEqualTo("pan.pdf");
+        // Served by extension, never the applicant-supplied content type, so an upload can't be rendered as HTML.
+        assertThat(content.contentType()).isEqualTo("application/pdf");
+        verify(platformAuditService).record(eq(PlatformAuditAction.KYC_DOCUMENT_VIEW), eq("KYC_DOCUMENT"), eq("doc-1"), any());
+    }
+
+    @Test
+    void approveFromRejectedIsRefused() throws Exception {
+        when(applicationRepository.findById("app-1")).thenReturn(Optional.of(submitted().toBuilder()
+                .status(ApplicationStatus.REJECTED).build()));
+
+        assertThatThrownBy(() -> service.approve("app-1", "Secret123")).isInstanceOf(IllegalStateException.class);
+        verify(agencyService, never()).provisionFromApplication(any(), anyString());
+    }
+
+    @Test
+    void approveIsOncePerApplication() throws Exception {
+        AgencyApplication app = submitted();
+        when(applicationRepository.findById("app-1")).thenReturn(Optional.of(app));
+        when(agencyService.provisionFromApplication(app, "Secret123")).thenReturn(Tenant.builder().id("T-1").build());
+
+        service.approve("app-1", "Secret123");
+
+        assertThatThrownBy(() -> service.approve("app-1", "Secret123")).isInstanceOf(IllegalStateException.class);
+        verify(agencyService, times(1)).provisionFromApplication(any(), anyString());
+    }
+
+    @Test
+    void approveCopiesTheApplicationOntoTheTenant() throws Exception {
+        AgencyApplication app = submitted();
+        when(applicationRepository.findById("app-1")).thenReturn(Optional.of(app));
+        when(agencyService.provisionFromApplication(any(), eq("Secret123"))).thenReturn(Tenant.builder().id("T-1").build());
+
+        service.approve("app-1", "Secret123");
+
+        ArgumentCaptor<AgencyApplication> provisioned = ArgumentCaptor.forClass(AgencyApplication.class);
+        verify(agencyService).provisionFromApplication(provisioned.capture(), eq("Secret123"));
+        assertThat(provisioned.getValue()).isSameAs(app);
+        assertThat(app.getTenantId()).isEqualTo("T-1");
+        assertThat(app.getStatus()).isEqualTo(ApplicationStatus.APPROVED);
+        verify(platformAuditService).record(eq(PlatformAuditAction.APPLICATION_APPROVE), eq("AGENCY_APPLICATION"), eq("app-1"), any());
     }
 }

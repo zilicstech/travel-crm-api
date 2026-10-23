@@ -25,4 +25,7 @@ public class KycDocumentResponse {
 
     @Schema(example = "PENDING")
     private KycDocumentStatus status;
+
+    @Schema(description = "The platform desk's note on this document", example = "PAN card is unreadable")
+    private String note;
 }

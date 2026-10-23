@@ -93,4 +93,8 @@ public class AgencyApplicationResponse {
 
     @Schema(description = "Uploaded KYC documents, oldest first")
     private List<KycDocumentResponse> documents;
+
+    @Schema(description = "Only on a MORE_INFO decision: the applicant's link back into the form, valid 7 days. Never stored.",
+            example = "/apply?application=6f1c2a4e-3b8d-4c1a-9e2f-7d5b0a1c3e9f&token=abc")
+    private String resumeUrl;
 }
