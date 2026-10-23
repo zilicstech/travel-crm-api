@@ -10,8 +10,10 @@ import com.voyra.crm.dto.CredentialsResponse;
 import com.voyra.crm.dto.PasswordResetRequest;
 import com.voyra.crm.entity.AgencyApplication;
 import com.voyra.crm.entity.Tenant;
+import com.voyra.crm.enums.PlatformAuditAction;
 import com.voyra.crm.enums.TenantStatus;
 import com.voyra.crm.migration.TenantFlywayMigrator;
+import com.voyra.crm.repository.AgencyApplicationRepository;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.security.AesPasswordEncoder;
@@ -26,6 +28,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 
 /** Platform (SUPER_ADMIN) management of Agencies. Agency creation = tenant provisioning. */
 @Service
@@ -41,6 +44,8 @@ public class AgencyService {
     private final TenantDefaultsSeeder tenantDefaultsSeeder;
     private final ChartOfAccountsSeedService chartOfAccountsSeedService;
     private final LoginEmailService loginEmailService;
+    private final PlatformAuditService platformAuditService;
+    private final AgencyApplicationRepository agencyApplicationRepository;
 
     @Transactional
     public AgencyCreateResponse createAgency(AgencyCreateRequest request) {
@@ -126,8 +131,11 @@ public class AgencyService {
     @Transactional
     public AgencyResponse updateStatus(String id, TenantStatus status) {
         Tenant tenant = findById(id);
+        TenantStatus from = tenant.getStatus();
         tenant.setStatus(status);
         tenantRepository.save(tenant);
+        platformAuditService.record(PlatformAuditAction.TENANT_STATUS, "TENANT", tenant.getId(),
+                Map.of("from", String.valueOf(from), "to", status.name()));
         // Same-method cache sync: a stale auth cache is a security bug (blueprint §8.10 rule 2).
         TenantCache.put(tenant.getId(), tenant.getAgencyName(), status);
         log.info("Agency status updated: tenantId={}, status={}", id, status);
@@ -190,8 +198,12 @@ public class AgencyService {
         // Agents only: accountants share the table but are not agents.
         long agentsCount = agentRepository.countByTenantIdAndUserRole(tenant.getId(), com.voyra.crm.enums.UserType.AGENT);
         BigDecimal totalRevenue = null;
+        String applicationId = null;
         if (includeRevenue) {
+            // Detail-only reads: the list path would turn these into one query per agency.
             totalRevenue = readRevenueForTenant(tenant.getId());
+            applicationId = agencyApplicationRepository.findFirstByTenantId(tenant.getId())
+                    .map(AgencyApplication::getId).orElse(null);
         }
         return AgencyResponse.builder()
                 .id(tenant.getId())
@@ -204,6 +216,10 @@ public class AgencyService {
                 .totalRevenue(totalRevenue)
                 .createdDate(tenant.getCreatedDate())
                 .baseCurrencyCode(tenant.getBaseCurrencyCode())
+                .pan(tenant.getPan())
+                .cin(tenant.getCin())
+                .approvedAt(tenant.getApprovedAt())
+                .applicationId(applicationId)
                 .build();
     }
 

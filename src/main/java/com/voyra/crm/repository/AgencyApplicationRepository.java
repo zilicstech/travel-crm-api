@@ -26,5 +26,8 @@ public interface AgencyApplicationRepository extends JpaRepository<AgencyApplica
 
     Optional<AgencyApplication> findFirstByOwnerEmailIgnoreCaseAndStatusIn(String ownerEmail, Collection<ApplicationStatus> statuses);
 
+    /** The application an approved agency was created from - absent for agencies created directly. */
+    Optional<AgencyApplication> findFirstByTenantId(String tenantId);
+
     List<AgencyApplication> findByStatusAndUpdatedAtBefore(ApplicationStatus status, Instant before);
 }

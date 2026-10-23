@@ -8,6 +8,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDateTime;
 
 @Data
@@ -46,4 +47,18 @@ public class AgencyResponse {
 
     @Schema(description = "ISO 4217 code the agency's books are kept in - set at creation, never changed", example = "INR")
     private String baseCurrencyCode;
+
+    @Schema(description = "Agency PAN from KYC - null for agencies created without an application", example = "ABCDE1234F")
+    private String pan;
+
+    @Schema(description = "Company CIN from KYC, when the agency gave one", example = "U63040KA2020PTC123456")
+    private String cin;
+
+    @Schema(description = "When a platform admin approved the agency's application - null for directly created agencies",
+            example = "2026-10-24T09:15:22Z")
+    private Instant approvedAt;
+
+    @Schema(description = "The application this agency was approved from - detail endpoint only, null otherwise",
+            example = "6f1c2b9e-3a4d-4c1e-9b7a-2d5e8f0a1b3c")
+    private String applicationId;
 }
