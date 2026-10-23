@@ -1,6 +1,8 @@
 package com.voyra.crm.security;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.voyra.crm.cache.TenantCache;
+import com.voyra.crm.context.TenantContext;
 import com.voyra.crm.config.SecurityConfig;
 import com.voyra.crm.config.WebMvcConfig;
 import com.voyra.crm.controller.AuthController;
@@ -18,9 +20,14 @@ import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -67,6 +74,32 @@ class TenantStatusInterceptorTest {
     void suspendedTenantCanStillRead() throws Exception {
         mockMvc.perform(get("/api/vendors").header("Authorization", bearer))
                 .andExpect(status().isOk());
+    }
+
+    @Test
+    void readStylePostsPassForASuspendedTenant() throws Exception {
+        TenantStatusInterceptor interceptor = new TenantStatusInterceptor(new ObjectMapper());
+        TenantContext.setTenantId(TENANT);
+        try {
+            for (String path : List.of("/api/flights/search", "/api/flights/search/paged", "/api/hotels/search",
+                    "/api/hotels/thumbnails", "/api/hotels/HTL-42/detail", "/api/clients/duplicate-check",
+                    "/api/accounts/invoices/preview-tax")) {
+                MockHttpServletResponse response = new MockHttpServletResponse();
+                assertThat(interceptor.preHandle(new MockHttpServletRequest("POST", path), response, new Object()))
+                        .as(path).isTrue();
+            }
+            MockHttpServletResponse refused = new MockHttpServletResponse();
+            assertThat(interceptor.preHandle(new MockHttpServletRequest("POST", "/api/bookings/x/refunds/check"),
+                    refused, new Object())).isFalse();
+            assertThat(refused.getStatus()).isEqualTo(423);
+            // Exact matching: a write nested under an allowed path is still a write.
+            assertThat(interceptor.preHandle(new MockHttpServletRequest("POST", "/api/hotels/HTL-42/detail/book"),
+                    new MockHttpServletResponse(), new Object())).isFalse();
+            assertThat(interceptor.preHandle(new MockHttpServletRequest("PUT", "/api/clients/duplicate-check"),
+                    new MockHttpServletResponse(), new Object())).isFalse();
+        } finally {
+            TenantContext.clear();
+        }
     }
 
     @Test
