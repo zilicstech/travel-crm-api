@@ -37,6 +37,8 @@ import java.time.Instant;
 import java.util.EnumSet;
 import java.util.HexFormat;
 import java.util.List;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -290,6 +292,18 @@ class AgencyApplicationServiceTest {
                 .hasMessage("An application for this email was started in the last 24 hours. "
                         + "Continue it in the same browser or try again after 24 hours.");
         verify(applicationRepository, never()).save(any());
+    }
+
+    @Test
+    void listCarriesTheDocumentCountWithoutTheDocuments() throws Exception {
+        when(applicationRepository.findByStatusInOrderBySubmittedAtDesc(any(), any()))
+                .thenReturn(new PageImpl<>(List.of(draft(Instant.now())), PageRequest.of(0, 20), 1));
+        when(kycDocumentRepository.countByApplicationId("app-1")).thenReturn(3L);
+
+        var row = service.list(null, PageRequest.of(0, 20)).getContent().get(0);
+
+        assertThat(row.getDocumentCount()).isEqualTo(3L);
+        assertThat(row.getDocuments()).isNull();
     }
 
     @Test

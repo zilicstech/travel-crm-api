@@ -195,7 +195,7 @@ public class AgencyApplicationService {
     public PagedResponse<AgencyApplicationResponse> list(Collection<ApplicationStatus> statuses, Pageable pageable) {
         Collection<ApplicationStatus> filter = statuses == null || statuses.isEmpty() ? REVIEWABLE : statuses;
         return PagedResponse.from(applicationRepository.findByStatusInOrderBySubmittedAtDesc(filter, pageable),
-                app -> toResponse(app, null));
+                app -> toResponse(app, null, kycDocumentRepository.countByApplicationId(app.getId())));
     }
 
     @Transactional(readOnly = true)
@@ -314,11 +314,12 @@ public class AgencyApplicationService {
     }
 
     private AgencyApplicationResponse withDocuments(AgencyApplication app) {
-        return toResponse(app, kycDocumentRepository.findByApplicationIdOrderByCreatedAt(app.getId()).stream()
-                .map(AgencyApplicationService::toResponse).toList());
+        List<KycDocumentResponse> docs = kycDocumentRepository.findByApplicationIdOrderByCreatedAt(app.getId()).stream()
+                .map(AgencyApplicationService::toResponse).toList();
+        return toResponse(app, docs, (long) docs.size());
     }
 
-    private static AgencyApplicationResponse toResponse(AgencyApplication a, List<KycDocumentResponse> documents) {
+    private static AgencyApplicationResponse toResponse(AgencyApplication a, List<KycDocumentResponse> documents, Long documentCount) {
         return AgencyApplicationResponse.builder()
                 .id(a.getId())
                 .status(a.getStatus())
@@ -347,6 +348,7 @@ public class AgencyApplicationService {
                 .createdAt(a.getCreatedAt())
                 .updatedAt(a.getUpdatedAt())
                 .documents(documents)
+                .documentCount(documentCount)
                 .build();
     }
 
