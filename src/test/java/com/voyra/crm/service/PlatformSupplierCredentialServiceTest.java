@@ -16,6 +16,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -25,6 +26,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -35,6 +37,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -99,17 +103,102 @@ class PlatformSupplierCredentialServiceTest {
         assertThat(detail.getValue().toString()).doesNotContain("tj_live_key_9f3a").doesNotContain("9f3a");
     }
 
+    private PlatformSupplierCredentialRequest prodRequest(String apiKey) {
+        PlatformSupplierCredentialRequest r = request(apiKey);
+        r.setEnvironment(SupplierEnvironment.PROD);
+        r.setBaseUrl("https://api.tripjack.com");
+        return r;
+    }
+
     @Test
     void upsertWithBlankKeyKeepsTheStoredOne() {
         PlatformSupplierCredential existing = stored("old_key_1234", true);
         String storedCipher = existing.getApiKeyEncrypted();
         when(repository.findByProviderOrderByUpdatedAtDesc(SupplierProvider.TRIPJACK)).thenReturn(List.of(existing));
 
-        PlatformSupplierCredentialResponse response = service.upsert(request("  "));
+        PlatformSupplierCredentialResponse response = service.upsert(prodRequest("  "));
 
         assertThat(existing.getApiKeyEncrypted()).isEqualTo(storedCipher);
-        assertThat(existing.getEnvironment()).isEqualTo(SupplierEnvironment.UAT);
         assertThat(response.getMaskedApiKey()).isEqualTo("••••••1234");
+    }
+
+    @Test
+    void changingTheEnvironmentWithABlankKeyIsRejected() {
+        PlatformSupplierCredential existing = stored("old_key_1234", true);
+        when(repository.findByProviderOrderByUpdatedAtDesc(SupplierProvider.TRIPJACK)).thenReturn(List.of(existing));
+
+        assertThatThrownBy(() -> service.upsert(request("")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Enter the API key again to change the environment or base URL");
+        assertThat(existing.getEnvironment()).isEqualTo(SupplierEnvironment.PROD);
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    void changingTheBaseUrlWithABlankKeyIsRejected() {
+        PlatformSupplierCredential existing = stored("old_key_1234", true);
+        when(repository.findByProviderOrderByUpdatedAtDesc(SupplierProvider.TRIPJACK)).thenReturn(List.of(existing));
+        PlatformSupplierCredentialRequest r = prodRequest(null);
+        r.setBaseUrl("https://hms-search.tripjack.com");
+
+        assertThatThrownBy(() -> service.upsert(r))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Enter the API key again to change the environment or base URL");
+    }
+
+    @Test
+    void aHostOffTheAllowlistIsRejected() {
+        PlatformSupplierCredentialRequest r = request("tj_new_key_0001");
+        r.setBaseUrl("https://attacker.example.com");
+
+        assertThatThrownBy(() -> service.upsert(r))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Base URL must be a Tripjack UAT host over https");
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    void aProdHostUnderUatIsRejected() {
+        PlatformSupplierCredentialRequest r = request("tj_new_key_0001");
+        r.setBaseUrl("https://api.tripjack.com");
+
+        assertThatThrownBy(() -> service.upsert(r))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Base URL must be a Tripjack UAT host over https");
+    }
+
+    @Test
+    void plainHttpIsRejected() {
+        PlatformSupplierCredentialRequest r = prodRequest("tj_new_key_0001");
+        r.setBaseUrl("http://api.tripjack.com");
+
+        assertThatThrownBy(() -> service.upsert(r))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Base URL must be a Tripjack PROD host over https");
+    }
+
+    @Test
+    void anAllowedHostWithANewKeySwitchesEnvironment() {
+        PlatformSupplierCredential existing = stored("old_key_1234", true);
+        when(repository.findByProviderOrderByUpdatedAtDesc(SupplierProvider.TRIPJACK)).thenReturn(List.of(existing));
+        PlatformSupplierCredentialRequest r = request("tj_uat_key_7777");
+        r.setBaseUrl("https://apitest-hms.tripjack.com");
+
+        PlatformSupplierCredentialResponse response = service.upsert(r);
+
+        verify(repository).save(existing);
+        assertThat(existing.getEnvironment()).isEqualTo(SupplierEnvironment.UAT);
+        assertThat(existing.getBaseUrl()).isEqualTo("https://apitest-hms.tripjack.com");
+        assertThat(response.getMaskedApiKey()).isEqualTo("••••••7777");
+    }
+
+    @Test
+    void resolvedCredentialToStringMasksTheKey() {
+        ResolvedCredential c = new ResolvedCredential(SupplierProvider.TRIPJACK, SupplierEnvironment.UAT,
+                "https://apitest.tripjack.com", "tj_live_key_9f3a", "voyra-user-0042");
+
+        assertThat(c.toString()).doesNotContain("tj_live_key_9f3a").doesNotContain("voyra-user-0042")
+                .contains("••••••9f3a").contains("••••••0042");
     }
 
     @Test
@@ -125,12 +214,21 @@ class PlatformSupplierCredentialServiceTest {
         PlatformSupplierCredential newest = stored("new_key_5678", false);
         PlatformSupplierCredential older = stored("old_key_1234", true).toBuilder().id("C0").build();
         when(repository.findByProviderOrderByUpdatedAtDesc(SupplierProvider.TRIPJACK)).thenReturn(List.of(newest, older));
+        List<Boolean> targetActiveAtFlush = new ArrayList<>();
+        when(repository.saveAllAndFlush(any())).thenAnswer(inv -> {
+            targetActiveAtFlush.add(newest.getIsActive());
+            return inv.getArgument(0);
+        });
 
-        service.upsert(request(""));
+        service.upsert(prodRequest(""));
 
         assertThat(older.getIsActive()).isFalse();
         assertThat(newest.getIsActive()).isTrue();
-        verify(repository).saveAllAndFlush(List.of(older));
+        InOrder order = inOrder(repository);
+        order.verify(repository).saveAllAndFlush(List.of(older));
+        order.verify(repository).save(newest);
+        // The managed target row must not already be active when the others are flushed, or both reach one flush.
+        assertThat(targetActiveAtFlush).containsExactly(false);
     }
 
     @Test

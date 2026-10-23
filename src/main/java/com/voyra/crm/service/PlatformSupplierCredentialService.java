@@ -4,6 +4,7 @@ import com.voyra.crm.dto.PlatformSupplierCredentialRequest;
 import com.voyra.crm.dto.PlatformSupplierCredentialResponse;
 import com.voyra.crm.entity.PlatformSupplierCredential;
 import com.voyra.crm.enums.PlatformAuditAction;
+import com.voyra.crm.enums.SupplierEnvironment;
 import com.voyra.crm.enums.SupplierProvider;
 import com.voyra.crm.exception.NotFoundException;
 import com.voyra.crm.models.ResolvedCredential;
@@ -17,10 +18,13 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.net.URI;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 
 /**
  * Voyra's one platform-level account per supplier. Write-only: the key goes in encrypted (the same AES-256-GCM
@@ -33,6 +37,11 @@ import java.util.Map;
 public class PlatformSupplierCredentialService {
 
     static final String ENTITY_TYPE = "SUPPLIER_CREDENTIAL";
+
+    /** The only hosts the platform key may be sent to - a free-text URL would let the key be pointed anywhere. */
+    static final Map<SupplierEnvironment, Set<String>> ALLOWED_HOSTS = Map.of(
+            SupplierEnvironment.UAT, Set.of("apitest.tripjack.com", "apitest-hms.tripjack.com"),
+            SupplierEnvironment.PROD, Set.of("api.tripjack.com", "hms-search.tripjack.com"));
 
     private final PlatformSupplierCredentialRepository repository;
     private final PlatformAuditService platformAuditService;
@@ -50,7 +59,15 @@ public class PlatformSupplierCredentialService {
                         .build()
                 : rows.get(0);
 
+        requireAllowedHost(request.getEnvironment(), request.getBaseUrl());
         boolean keyChanged = request.getApiKey() != null && !request.getApiKey().isBlank();
+        boolean targetChanged = credential.getApiKeyEncrypted() != null
+                && (credential.getEnvironment() != request.getEnvironment()
+                        || !Objects.equals(credential.getBaseUrl(), request.getBaseUrl()));
+        if (targetChanged && !keyChanged) {
+            // Re-pointing a stored key at another host would hand that host the key without anyone re-entering it.
+            throw new IllegalArgumentException("Enter the API key again to change the environment or base URL");
+        }
         if (keyChanged) {
             credential.setApiKeyEncrypted(PasswordEncryptionUtil.encrypt(request.getApiKey(), encryptionKey));
         } else if (credential.getApiKeyEncrypted() == null) {
@@ -61,11 +78,10 @@ public class PlatformSupplierCredentialService {
         }
         credential.setEnvironment(request.getEnvironment());
         credential.setBaseUrl(request.getBaseUrl());
-        if (request.getIsActive() != null) {
-            credential.setIsActive(request.getIsActive());
-        }
-        if (credential.getIsActive()) {
-            // Flushed first: the partial unique index on (provider) WHERE is_active would reject two active rows.
+        boolean activate = request.getIsActive() != null ? request.getIsActive() : Boolean.TRUE.equals(credential.getIsActive());
+        if (activate) {
+            // Others flushed before this row turns active: the partial unique index on (provider) WHERE is_active
+            // would reject two active rows if both changes reached the same flush.
             List<PlatformSupplierCredential> others = rows.stream()
                     .filter(r -> r != credential && Boolean.TRUE.equals(r.getIsActive()))
                     .toList();
@@ -74,6 +90,7 @@ public class PlatformSupplierCredentialService {
                 repository.saveAllAndFlush(others);
             }
         }
+        credential.setIsActive(activate);
         credential.setUpdatedAt(Instant.now());
         credential.setUpdatedBy(SecurityContextUtil.getCurrentUserOrThrow().userId());
         repository.save(credential);
@@ -88,6 +105,21 @@ public class PlatformSupplierCredentialService {
         log.info("Platform supplier credential saved: provider={}, environment={}, active={}, by={}",
                 credential.getProvider(), credential.getEnvironment(), credential.getIsActive(), SecurityContextUtil.getAuditInfo());
         return toResponse(credential);
+    }
+
+    private static void requireAllowedHost(SupplierEnvironment environment, String baseUrl) {
+        URI uri;
+        try {
+            uri = URI.create(baseUrl.trim());
+        } catch (IllegalArgumentException e) {
+            uri = null;
+        }
+        boolean allowed = uri != null && "https".equalsIgnoreCase(uri.getScheme()) && uri.getHost() != null
+                && uri.getUserInfo() == null
+                && ALLOWED_HOSTS.get(environment).contains(uri.getHost().toLowerCase());
+        if (!allowed) {
+            throw new IllegalArgumentException("Base URL must be a Tripjack " + environment + " host over https");
+        }
     }
 
     @Transactional(readOnly = true)

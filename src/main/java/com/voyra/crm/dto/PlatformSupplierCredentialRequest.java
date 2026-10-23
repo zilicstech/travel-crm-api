@@ -5,6 +5,7 @@ import com.voyra.crm.enums.SupplierProvider;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 @Data
@@ -21,6 +22,7 @@ public class PlatformSupplierCredentialRequest {
     private SupplierEnvironment environment;
 
     @NotBlank(message = "Base URL is required")
+    @Size(max = 255, message = "Base URL must be at most 255 characters")
     @Schema(example = "https://apitest.tripjack.com")
     private String baseUrl;
 
