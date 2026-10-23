@@ -66,6 +66,7 @@ public class AgencyApplicationService {
     static final Duration UPLOAD_TOKEN_TTL = Duration.ofHours(24);
     static final int MAX_DOCUMENTS = 20;
     private static final Set<String> KYC_EXTENSIONS = Set.of("pdf", "jpg", "jpeg", "png", "webp");
+    private static final String KYC_TYPE_MESSAGE = "Upload a PDF, JPG, PNG or WEBP file";
 
     private static final Set<ApplicationStatus> OPEN = EnumSet.of(ApplicationStatus.DRAFT,
             ApplicationStatus.SUBMITTED, ApplicationStatus.UNDER_REVIEW, ApplicationStatus.MORE_INFO);
@@ -114,6 +115,15 @@ public class AgencyApplicationService {
                 .findFirstByOwnerEmailIgnoreCaseAndStatusIn(email, EnumSet.of(ApplicationStatus.REJECTED))
                 .orElseGet(() -> AgencyApplication.builder()
                         .id(UniqueIdResolver.resolve(applicationRepository::existsById)).build());
+        if (app.getStatus() == ApplicationStatus.REJECTED) {
+            // A fresh review: the old verdicts and notes belong to the rejected attempt, not to this one.
+            for (KycDocument doc : kycDocumentRepository.findByApplicationIdOrderByCreatedAt(app.getId())) {
+                doc.setStatus(KycDocumentStatus.PENDING);
+                doc.setNote(null);
+                doc.setReviewedBy(null);
+                doc.setReviewedAt(null);
+            }
+        }
         String token = newToken();
         app.setStatus(ApplicationStatus.DRAFT);
         app.setAgencyName(request.getAgencyName().trim());
@@ -150,9 +160,14 @@ public class AgencyApplicationService {
             throw new IllegalStateException("This application already has the maximum of " + MAX_DOCUMENTS + " documents");
         }
         if (!KYC_EXTENSIONS.contains(extensionOf(file.getOriginalFilename()))) {
-            throw new IllegalArgumentException("Upload a PDF, JPG, PNG or WEBP file");
+            throw new IllegalArgumentException(KYC_TYPE_MESSAGE);
         }
-        UploadValidator.assertAllowed(file, MAX_KYC_BYTES);
+        try {
+            UploadValidator.assertAllowed(file, MAX_KYC_BYTES);
+        } catch (IllegalArgumentException e) {
+            // The shared validator's wording lists Word/Excel/CSV, which KYC never accepts; only the size message is kept.
+            throw file.getSize() > MAX_KYC_BYTES ? e : new IllegalArgumentException(KYC_TYPE_MESSAGE);
+        }
         String fileKey = fileStorageService.store(FILE_SCOPE, FILE_CATEGORY, app.getId(), file);
         KycDocument doc = KycDocument.builder()
                 .id(UniqueIdResolver.resolve(kycDocumentRepository::existsById))
@@ -226,10 +241,13 @@ public class AgencyApplicationService {
             throw new IllegalStateException("This application is no longer under review");
         }
         KycDocument doc = findDocument(applicationId, documentId);
+        KycDocumentStatus from = doc.getStatus();
         doc.setStatus(request.getStatus());
         doc.setNote(trimToNull(request.getNote()));
         doc.setReviewedBy(SecurityContextUtil.getCurrentUserOrThrow().userId());
         doc.setReviewedAt(Instant.now());
+        platformAuditService.record(PlatformAuditAction.KYC_DOCUMENT_DECISION, "KYC_DOCUMENT", doc.getId(),
+                Map.of("applicationId", applicationId, "from", from.name(), "to", doc.getStatus().name()));
         return toResponse(doc);
     }
 

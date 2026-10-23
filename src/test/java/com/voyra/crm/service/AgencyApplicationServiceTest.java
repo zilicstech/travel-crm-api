@@ -37,6 +37,7 @@ import java.time.Instant;
 import java.util.EnumSet;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import java.util.Optional;
@@ -267,6 +268,40 @@ class AgencyApplicationServiceTest {
     }
 
     @Test
+    void reapplyAfterRejectionResetsTheKeptDocumentsToPending() throws Exception {
+        AgencyApplication rejected = draft(Instant.now().minusSeconds(3600)).toBuilder()
+                .status(ApplicationStatus.REJECTED).rejectionReason("PAN unreadable").build();
+        KycDocument pan = KycDocument.builder().id("doc-1").applicationId("app-1").type(KycDocumentType.PAN)
+                .fileKey("k").fileName("pan.pdf").status(KycDocumentStatus.REJECTED).note("Blurry scan")
+                .reviewedBy("root-1").reviewedAt(Instant.now()).build();
+        KycDocument gst = pan.toBuilder().id("doc-2").type(KycDocumentType.GST).status(KycDocumentStatus.VERIFIED).note(null).build();
+        when(applicationRepository.findFirstByOwnerEmailIgnoreCaseAndStatusIn("asha@skytrips.in", OPEN))
+                .thenReturn(Optional.empty());
+        when(applicationRepository.findFirstByOwnerEmailIgnoreCaseAndStatusIn(eq("asha@skytrips.in"),
+                eq(EnumSet.of(ApplicationStatus.REJECTED)))).thenReturn(Optional.of(rejected));
+        when(kycDocumentRepository.findByApplicationIdOrderByCreatedAt("app-1")).thenReturn(List.of(pan, gst));
+
+        service.create(request());
+
+        for (KycDocument doc : List.of(pan, gst)) {
+            assertThat(doc.getStatus()).isEqualTo(KycDocumentStatus.PENDING);
+            assertThat(doc.getNote()).isNull();
+            assertThat(doc.getReviewedBy()).isNull();
+            assertThat(doc.getReviewedAt()).isNull();
+        }
+    }
+
+    @Test
+    void anExpiredDraftKeepsItsDocumentStates() throws Exception {
+        when(applicationRepository.findFirstByOwnerEmailIgnoreCaseAndStatusIn("asha@skytrips.in", OPEN))
+                .thenReturn(Optional.of(draft(Instant.now().minusSeconds(60))));
+
+        service.create(request());
+
+        verify(kycDocumentRepository, never()).findByApplicationIdOrderByCreatedAt(anyString());
+    }
+
+    @Test
     void createReusesAnExpiredDraft() throws Exception {
         AgencyApplication stale = draft(Instant.now().minusSeconds(60));
         String oldHash = stale.getUploadTokenHash();
@@ -314,6 +349,17 @@ class AgencyApplicationServiceTest {
         assertThatThrownBy(() -> service.attachDocument("app-1", TOKEN, KycDocumentType.OTHER, pdf()))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("This application already has the maximum of 20 documents");
+        verify(fileStorageService, never()).store(anyString(), anyString(), anyString(), any());
+    }
+
+    @Test
+    void attachRefusesHtmlNamedPdfWithTheKycMessage() throws Exception {
+        when(applicationRepository.findById("app-1")).thenReturn(Optional.of(draft(Instant.now().plusSeconds(60))));
+        MockMultipartFile html = new MockMultipartFile("file", "pan.pdf", "application/pdf",
+                "<html><script>alert(1)</script></html>".getBytes(StandardCharsets.UTF_8));
+
+        assertThatThrownBy(() -> service.attachDocument("app-1", TOKEN, KycDocumentType.PAN, html))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Upload a PDF, JPG, PNG or WEBP file");
         verify(fileStorageService, never()).store(anyString(), anyString(), anyString(), any());
     }
 
@@ -439,6 +485,8 @@ class AgencyApplicationServiceTest {
         assertThat(doc.getReviewedAt()).isNotNull();
         assertThat(response.getStatus()).isEqualTo(KycDocumentStatus.REJECTED);
         assertThat(response.getNote()).isEqualTo("Unreadable");
+        verify(platformAuditService).record(PlatformAuditAction.KYC_DOCUMENT_DECISION, "KYC_DOCUMENT", "doc-1",
+                Map.of("applicationId", "app-1", "from", "PENDING", "to", "REJECTED"));
     }
 
     @Test
