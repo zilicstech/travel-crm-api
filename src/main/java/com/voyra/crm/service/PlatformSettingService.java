@@ -75,6 +75,9 @@ public class PlatformSettingService {
             throw new IllegalArgumentException("Unknown setting: " + key);
         }
         String v = value == null ? "" : value.trim();
+        if (v.length() > 4000) {
+            throw new IllegalArgumentException(key + " must be at most 4000 characters");
+        }
         validate(key, v);
         String from = raw(key);
         PlatformSetting row = repository.findById(key).orElseGet(() -> PlatformSetting.builder().key(key).build());
@@ -110,9 +113,9 @@ public class PlatformSettingService {
                 } catch (RuntimeException e) {
                     throw new IllegalArgumentException(key + " must be a JSON list of {label, gross, base}");
                 }
-                if (basket.isEmpty() || basket.stream().anyMatch(f -> f.label() == null || f.gross() == null
-                        || f.base() == null || f.base().signum() < 0 || f.base().compareTo(f.gross()) > 0)) {
-                    throw new IllegalArgumentException(key + " needs at least one fare with 0 <= base <= gross");
+                if (basket == null || basket.isEmpty() || basket.stream().anyMatch(f -> f == null
+                        || f.label() == null || f.label().isBlank() || f.gross() == null || f.base() == null || f.base().signum() < 0 || f.base().compareTo(f.gross()) > 0)) {
+                    throw new IllegalArgumentException(key + " needs at least one fare, each with a label and 0 <= base <= gross");
                 }
             }
         }
