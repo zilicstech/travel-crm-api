@@ -38,6 +38,9 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class AgencyPricingService {
 
+    private static final java.time.format.DateTimeFormatter SHOWN_AT = java.time.format.DateTimeFormatter
+            .ofPattern("dd MMM yyyy, HH:mm 'IST'", java.util.Locale.ENGLISH).withZone(java.time.ZoneId.of("Asia/Kolkata"));
+
     private static final String ENTITY_TYPE = "AGENCY_PRICING";
     private static final BigDecimal HUNDRED = BigDecimal.valueOf(100);
 
@@ -80,7 +83,7 @@ public class AgencyPricingService {
             throw new IllegalArgumentException("Effective date must be now or later");
         }
         if (repository.existsByTenantIdAndProductAndEffectiveFrom(tenantId, request.getProduct(), from)) {
-            throw new IllegalStateException("A " + request.getProduct() + " rate already starts at " + from + " for this agency");
+            throw new IllegalStateException("A " + request.getProduct() + " rate already starts at " + SHOWN_AT.format(from) + " for this agency");
         }
         // stored as NUMERIC(5,2): guard on the value that will actually be saved
         BigDecimal d = request.getDiscountPct().setScale(2, RoundingMode.HALF_UP);

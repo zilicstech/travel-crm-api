@@ -132,6 +132,9 @@ public class AgencyService {
     public AgencyResponse updateStatus(String id, TenantStatus status) {
         Tenant tenant = findById(id);
         TenantStatus from = tenant.getStatus();
+        if (from == status) {
+            return toResponse(tenant, true);
+        }
         tenant.setStatus(status);
         tenantRepository.save(tenant);
         platformAuditService.record(PlatformAuditAction.TENANT_STATUS, "TENANT", tenant.getId(),

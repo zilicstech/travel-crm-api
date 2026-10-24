@@ -131,6 +131,7 @@ public class BookingService {
     private final com.voyra.crm.repository.JournalEntryRepository journalEntryRepository;
     private final BaseCurrency baseCurrency;
     private final InvoiceLineSource invoiceLineSource;
+    private final BookingAccountingSync bookingAccountingSync;
 
     /** FRD US-ACC-6.1's example rate, used whenever an agency hasn't set its own in Settings. */
     private static final BigDecimal DEFAULT_LOW_MARGIN_THRESHOLD_PERCENT = BigDecimal.valueOf(8);
@@ -900,6 +901,14 @@ public class BookingService {
         if (wasConfirmed) {
             raiseChangeAlerts(booking, changes);
         }
+        syncPaymentIfInvoiced(booking);
+    }
+
+    /** Once invoiced, a voucher added or taken off changes what is still to collect - and so the payment status. */
+    private void syncPaymentIfInvoiced(Booking booking) {
+        if (booking.getPaymentStatusSource() == PaymentStatusSource.DERIVED) {
+            bookingAccountingSync.syncPayment(booking.getId());
+        }
     }
 
     /**
@@ -952,6 +961,7 @@ public class BookingService {
         if (booking.getBookingStatus() == BookingStatus.CONFIRMED) {
             raiseChangeAlerts(booking, changes);
         }
+        syncPaymentIfInvoiced(booking);
     }
 
     /** Row lock first, then the usual access check - two vouchers saved at once must not lose either's amounts. */
@@ -1213,7 +1223,7 @@ public class BookingService {
      */
     public Booking findAccessibleBooking(String id) {
         Booking booking = bookingRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("Booking not found: " + id));
+                .orElseThrow(() -> new com.voyra.crm.exception.NotFoundException("Booking not found: " + id));
         CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
         if (!principal.isAgent()) {
             return booking;

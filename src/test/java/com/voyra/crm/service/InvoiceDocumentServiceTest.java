@@ -722,10 +722,35 @@ class InvoiceDocumentServiceTest {
         when(invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc("I1")).thenReturn(List.of(
                 InvoiceLineItem.builder().invoiceId("I1").bookingId("B1").bookingDocumentId("V1").lineSubtotal(new BigDecimal("107800")).build()));
         when(invoiceLineItemRepository.findBookingIdsByInvoiceId("I1")).thenReturn(List.of("B1"));
-        when(bookingDocumentRepository.findAllById(any())).thenReturn(List.of(voucher("V1", "B1", "NAHKSJ", "105800", "107800")));
+        com.voyra.crm.entity.BookingDocument ticket = voucher("V1", "B1", "NAHKSJ", "105800", "107800");
+        ticket.setDocType(com.voyra.crm.enums.BookingDocumentType.E_TICKET);
+        when(bookingDocumentRepository.findAllById(any())).thenReturn(List.of(ticket));
 
         assertThatThrownBy(() -> invoiceDocumentService.issue("I1"))
                 .isInstanceOf(IllegalStateException.class).hasMessage("Add the fare breakdown for PNR NAHKSJ before generating the invoice");
+    }
+
+    /** Regression C3: the breakdown is the airline ticket's fare (Basic, YQ, K3 ...) - an "Other" voucher on a flight has none to enter. */
+    @Test
+    void anOtherVoucherOnAFlightIsInvoicedWithoutAFareBreakdown() {
+        twoFlights(flight("B1", 42, "K1", "V1", "107800", "105800"), flight("B2", 43, "K1", "V1", "10000", "9000"));
+        com.voyra.crm.entity.BookingDocument extra = voucher("V1", "B1", "SEAT-1", "105800", "107800");
+        extra.setDocType(com.voyra.crm.enums.BookingDocumentType.OTHER);
+        when(bookingDocumentRepository.findAllById(any())).thenReturn(List.of(extra));
+        Invoice draft = Invoice.builder().id("I1").bookingId("B1").clientId("K1").documentType(InvoiceDocumentType.TAX_INVOICE)
+                .status(InvoiceLifecycle.DRAFT).supplyNature(SupplyNature.AIR_TICKET).serviceCategory(InvoiceServiceCategory.AIR_INTERNATIONAL)
+                .billingModel(com.voyra.crm.enums.InvoiceBillingModel.COMMISSION_AGENT).passThroughAmount(new BigDecimal("105800"))
+                .currencyCode("INR").fxRateToInr(BigDecimal.ONE).taxableValue(new BigDecimal("107800")).taxableValueInr(new BigDecimal("107800"))
+                .grandTotal(new BigDecimal("107800")).grandTotalInr(new BigDecimal("107800")).balanceDue(new BigDecimal("107800")).build();
+        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(draft));
+        when(invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc("I1")).thenReturn(List.of(
+                InvoiceLineItem.builder().invoiceId("I1").bookingId("B1").bookingDocumentId("V1").lineSubtotal(new BigDecimal("107800")).build()));
+        when(invoiceLineItemRepository.findBookingIdsByInvoiceId("I1")).thenReturn(List.of("B1"));
+        when(documentNumberService.next(any(), any())).thenReturn("ITI/26-27/0001");
+
+        invoiceDocumentService.issue("I1");
+
+        org.mockito.Mockito.verify(bookingAccountingSync).syncPayment("B1");
     }
 
     @Test

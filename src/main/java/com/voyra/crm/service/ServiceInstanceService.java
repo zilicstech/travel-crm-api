@@ -274,6 +274,10 @@ public class ServiceInstanceService {
             throw new IllegalArgumentException(
                     "Booked is set automatically when the first booking is logged - it cannot be chosen by hand");
         }
+        if (service.getStatus() == ServiceStatus.BOOKED) {
+            throw new IllegalStateException(
+                    "This service is Booked while its booking is live - cancel the booking to change its status");
+        }
         Map<String, String> before = AuditSnapshot.of(service, AUDITED);
 
         service.setStatus(request.getStatus());

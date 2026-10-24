@@ -817,7 +817,7 @@ public class InvoiceDocumentService {
     }
 
     /** An invoice billed from vouchers is issued only while its lines still are what those bookings have left to bill. */
-    /** A flight ticket's invoice prints its fare breakdown: the accountant enters one for every flight voucher it bills. */
+    /** A flight ticket's invoice prints its fare breakdown: the accountant enters one for every e-ticket it bills (an "Other" voucher has no fare). */
     private void assertFareBreakdowns(List<InvoiceLineItem> lines) {
         List<String> ids = lines.stream().map(InvoiceLineItem::getBookingDocumentId).filter(java.util.Objects::nonNull).distinct().toList();
         if (ids.isEmpty()) return;
@@ -825,7 +825,8 @@ public class InvoiceDocumentService {
         Map<String, com.voyra.crm.enums.BookingType> types = bookingRepository.findAllById(vouchers.stream()
                 .map(com.voyra.crm.entity.BookingDocument::getBookingId).distinct().toList()).stream()
                 .collect(java.util.stream.Collectors.toMap(Booking::getId, Booking::getType));
-        vouchers.stream().filter(d -> types.get(d.getBookingId()) == com.voyra.crm.enums.BookingType.FLIGHT && d.getCharges() == null).findFirst()
+        vouchers.stream().filter(d -> types.get(d.getBookingId()) == com.voyra.crm.enums.BookingType.FLIGHT
+                        && d.getDocType() == com.voyra.crm.enums.BookingDocumentType.E_TICKET && d.getCharges() == null).findFirst()
                 .ifPresent(d -> {
                     throw new IllegalStateException("Add the fare breakdown for " + (d.getReferenceNumber() != null
                             ? "PNR " + d.getReferenceNumber() : "the flight voucher") + " before generating the invoice");

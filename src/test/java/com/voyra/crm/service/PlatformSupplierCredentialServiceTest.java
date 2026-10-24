@@ -167,6 +167,19 @@ class PlatformSupplierCredentialServiceTest {
                 .hasMessage("Base URL must be a Tripjack UAT host over https");
     }
 
+    /** The providers append their own API paths, and a port or path would let the key reach another service on the host. */
+    @Test
+    void anAllowedHostWithAPathOrPortIsRejected() {
+        for (String url : List.of("https://apitest.tripjack.com/fms/v1", "https://apitest.tripjack.com:8443", "https://apitest.tripjack.com?x=1")) {
+            PlatformSupplierCredentialRequest r = request("tj_new_key_0001");
+            r.setBaseUrl(url);
+            assertThatThrownBy(() -> service.upsert(r))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("Base URL must be a Tripjack UAT host over https");
+        }
+        verify(repository, never()).save(any());
+    }
+
     @Test
     void plainHttpIsRejected() {
         PlatformSupplierCredentialRequest r = prodRequest("tj_new_key_0001");
@@ -241,6 +254,17 @@ class PlatformSupplierCredentialServiceTest {
         assertThat(credential.environment()).isEqualTo(SupplierEnvironment.PROD);
         assertThat(credential.baseUrl()).isEqualTo("https://api.tripjack.com");
         assertThat(credential.userId()).isNull();
+    }
+
+    /** A row saved before the host guard existed must not keep sending the key to an off-list host. */
+    @Test
+    void resolveActiveRefusesAStoredHostOffTheAllowlist() {
+        PlatformSupplierCredential old = stored("tj_live_key_9f3a", true);
+        old.setBaseUrl("https://attacker.example.com");
+        when(repository.findByProviderAndIsActiveTrue(SupplierProvider.TRIPJACK)).thenReturn(Optional.of(old));
+
+        assertThatThrownBy(() -> service.resolveActive(SupplierProvider.TRIPJACK))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

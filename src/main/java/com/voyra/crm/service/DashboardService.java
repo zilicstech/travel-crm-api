@@ -9,6 +9,7 @@ import com.voyra.crm.entity.ClientInvoice;
 import com.voyra.crm.entity.Lead;
 import com.voyra.crm.entity.Agent;
 import com.voyra.crm.enums.BookingStatus;
+import com.voyra.crm.enums.FollowUpStatus;
 import com.voyra.crm.enums.InvoiceStatus;
 import com.voyra.crm.enums.LeadStatus;
 import com.voyra.crm.enums.ServiceType;
@@ -17,6 +18,7 @@ import com.voyra.crm.repository.BookingRepository;
 import com.voyra.crm.repository.BookingRepository.AgentRevenueProjection;
 import com.voyra.crm.repository.ClientInvoiceRepository;
 import com.voyra.crm.repository.ClientRepository;
+import com.voyra.crm.repository.LeadFollowUpRepository;
 import com.voyra.crm.repository.LeadRepository;
 import com.voyra.crm.security.SecurityContextUtil;
 import lombok.RequiredArgsConstructor;
@@ -42,6 +44,7 @@ public class DashboardService {
     private final ClientInvoiceRepository clientInvoiceRepository;
     private final com.voyra.crm.repository.InvoiceRepository invoiceRepository;
     private final AgentRepository agentRepository;
+    private final LeadFollowUpRepository leadFollowUpRepository;
 
     @Transactional(readOnly = true)
     public OwnerDashboardSummaryResponse getOwnerSummary() {
@@ -64,8 +67,8 @@ public class DashboardService {
                 .lostLeads(lostLeads)
                 .conversionRate(percentage(bookedLeads, totalLeads))
                 .pendingPayments(pendingPayments)
-                .overdueFollowUps(leadRepository.countByFollowUpDateLessThanEqualAndStatusNotIn(
-                        LocalDate.now(), TERMINAL_STATUSES))
+                // Same rule as the Needs Attention feed (EscalationService): open tasks due before today.
+                .overdueFollowUps(leadFollowUpRepository.countByStatusAndDueDateLessThan(FollowUpStatus.OPEN, LocalDate.now()))
                 .pendingBookings(bookingRepository.countByBookingStatus(BookingStatus.PENDING))
                 .confirmedBookings(bookingRepository.countByBookingStatus(BookingStatus.CONFIRMED))
                 .totalBookings(bookingRepository.count())

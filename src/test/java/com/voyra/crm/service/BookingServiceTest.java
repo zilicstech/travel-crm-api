@@ -126,6 +126,9 @@ class BookingServiceTest {
 
     private ClientCreditService clientCreditService;
 
+    @Mock
+    private BookingAccountingSync bookingAccountingSync;
+
 
     @org.mockito.Spy
 
@@ -435,6 +438,14 @@ class BookingServiceTest {
     }
 
     @Test
+    void aMissingOrDeletedBookingIsNotFound() {
+        when(bookingRepository.findById("GONE")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> bookingService.getBooking("GONE"))
+                .isInstanceOf(com.voyra.crm.exception.NotFoundException.class).hasMessageContaining("Booking not found");
+    }
+
+    @Test
     void aBookingPastPendingCannotBeDeleted() {
         Booking booking = Booking.builder().id("B1").agentId("A1").bookingStatus(BookingStatus.CONFIRMED).build();
         when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
@@ -589,6 +600,40 @@ class BookingServiceTest {
         // Made without a supplier: it takes the voucher's, so it can be invoiced with that supplier's other bookings.
         assertThat(booking.getVendorId()).isEqualTo("V1");
         assertThat(booking.getSupplier()).isEqualTo("TripJack");
+    }
+
+    /** Regression C1: a voucher added to (or taken off) an invoiced booking changes what is to collect, so its payment status is re-derived. */
+    @Test
+    void aVoucherOnAnInvoicedBookingReDerivesItsPaymentStatus() {
+        Booking booking = pendingWithoutFare();
+        booking.setBookingStatus(BookingStatus.CONFIRMED);
+        booking.setPnr("PNR0");
+        booking.setVendorId("V1");
+        booking.setPaymentStatusSource(com.voyra.crm.enums.PaymentStatusSource.DERIVED);
+        com.voyra.crm.entity.BookingDocument v = voucher("1000", "50", "PNR0");
+        when(supplierInvoiceService.draftForVoucher(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(com.voyra.crm.dto.SupplierInvoiceResponse.builder().id("S1").build());
+
+        bookingService.applyVoucher(booking, v, "V1", false);
+        bookingService.reverseVoucher(booking, v, false);
+
+        org.mockito.Mockito.verify(bookingAccountingSync, org.mockito.Mockito.times(2)).syncPayment("B1");
+    }
+
+    /** An uninvoiced booking keeps its manually set payment status - nothing is re-derived. */
+    @Test
+    void aVoucherOnAnUninvoicedBookingLeavesItsPaymentStatusAlone() {
+        Booking booking = pendingWithoutFare();
+        when(supplierInvoiceService.draftForVoucher(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(com.voyra.crm.dto.SupplierInvoiceResponse.builder().id("S1").build());
+        when(vendorRepository.findById("V1")).thenReturn(Optional.of(
+                com.voyra.crm.entity.Vendor.builder().id("V1").name("TripJack").build()));
+
+        bookingService.applyVoucher(booking, voucher("1000", "50", "PNR0"), "V1", false);
+
+        org.mockito.Mockito.verify(bookingAccountingSync, org.mockito.Mockito.never()).syncPayment(org.mockito.ArgumentMatchers.any());
     }
 
     /** A flight voucher's commission is the agency's: it goes on the booking's profit and on the supplier bill. */

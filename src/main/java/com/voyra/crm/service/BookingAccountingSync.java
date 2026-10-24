@@ -47,6 +47,7 @@ public class BookingAccountingSync {
     private final CreditNoteRepository creditNoteRepository;
     private final com.voyra.crm.repository.InvoiceLineItemRepository invoiceLineItemRepository;
     private final com.voyra.crm.repository.BookingDocumentRepository bookingDocumentRepository;
+    private final InvoiceLineSource invoiceLineSource;
 
     /**
      * {@code paymentStatusSource} flips MANUAL -&gt; DERIVED the moment a live tax invoice first
@@ -99,7 +100,9 @@ public class BookingAccountingSync {
 
         if (invoicedTotalInr.compareTo(BigDecimal.ZERO) > 0) {
             booking.setPaymentStatusSource(PaymentStatusSource.DERIVED);
-            booking.setPaymentStatus(deriveStatus(invoicedTotalInr, receivedTotalInr, refundedTotalInr));
+            // A voucher added since the last invoice is still to collect too (BookingLifecycleService's toCollect).
+            BigDecimal uninvoiced = uninvoiced(booking, invoiceLineSource.invoiced(bookingId).price());
+            booking.setPaymentStatus(deriveStatus(invoicedTotalInr.add(uninvoiced), receivedTotalInr, refundedTotalInr));
         } else if (booking.getPaymentStatusSource() == PaymentStatusSource.DERIVED) {
             // Was invoiced, that invoice is now cancelled: nothing currently billed on it.
             booking.setPaymentStatus(PaymentStatus.PENDING);
@@ -151,6 +154,14 @@ public class BookingAccountingSync {
         bookingRepository.save(booking);
         log.info("Booking refund synced: bookingId={}, refundable={}, refunded={}, refundState={}",
                 bookingId, refundableTotalInr, refundedTotalInr, booking.getRefundState());
+    }
+
+    /** What of a live booking's price no issued invoice bills yet (before its GST) - a voucher added since the last invoice. */
+    public static BigDecimal uninvoiced(Booking booking, BigDecimal invoicedPrice) {
+        if (booking.getBookingStatus() == com.voyra.crm.enums.BookingStatus.CANCELLED || booking.getSellingPrice() == null) {
+            return BigDecimal.ZERO;
+        }
+        return booking.getSellingPrice().subtract(invoicedPrice != null ? invoicedPrice : BigDecimal.ZERO).max(BigDecimal.ZERO);
     }
 
     /** An advance still on the client's account (no invoice yet) is not money received for the booking until an invoice draws it down. */

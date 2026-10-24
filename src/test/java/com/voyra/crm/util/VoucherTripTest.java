@@ -50,4 +50,16 @@ class VoucherTripTest {
                 .doesNotContainKey("returnDate");
         assertThat(VoucherDetails.lastDate(d)).isEqualTo(LocalDate.parse("2026-11-01"));
     }
+
+    @Test
+    void aReturnTripKeepsItsFarthestPointNotItsStartAgain() {
+        List<VoucherLeg> legs = List.of(
+                VoucherLeg.builder().from("DEL").to("BOM").travelDate(LocalDate.parse("2026-12-20")).build(),
+                VoucherLeg.builder().from("BOM").to("DEL").travelDate(LocalDate.parse("2026-12-27")).build());
+
+        Map<String, String> d = VoucherTrip.details(legs, null);
+
+        assertThat(d).containsEntry("flightFrom", "DEL").containsEntry("flightTo", "BOM")
+                .containsEntry("returnDate", "2026-12-27");
+    }
 }

@@ -44,6 +44,14 @@ class BookingAccountingSyncTest {
     private CreditNoteRepository creditNoteRepository;
     @Mock
     private InvoiceLineItemRepository invoiceLineItemRepository;
+    @Mock
+    private InvoiceLineSource invoiceLineSource;
+
+    @org.junit.jupiter.api.BeforeEach
+    void nothingAddedSinceTheInvoice() {
+        org.mockito.Mockito.lenient().when(invoiceLineSource.invoiced(any()))
+                .thenReturn(new InvoiceLineSource.Invoiced(BigDecimal.ZERO, java.util.Set.of(), null));
+    }
 
 
     @InjectMocks
@@ -128,6 +136,24 @@ class BookingAccountingSyncTest {
         when(invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc(any(), any(), any())).thenReturn(List.of(invoice));
         when(paymentReceiptRepository.findByBookingIdAndDirection("B1", ReceiptDirection.RECEIPT)).thenReturn(List.of(receipt));
         when(paymentReceiptRepository.findByBookingIdAndDirection("B1", ReceiptDirection.REFUND)).thenReturn(List.of());
+
+        bookingAccountingSync.syncPayment("B1");
+
+        assertThat(booking.getPaymentStatus()).isEqualTo(PaymentStatus.PARTIAL);
+    }
+
+    /** Regression C1: a voucher added after a fully paid invoice is still to collect, so the booking is not PAID. */
+    @Test
+    void aVoucherAddedSinceAFullyPaidInvoiceLeavesTheBookingPartial() {
+        Booking booking = manualBooking();
+        booking.setSellingPrice(new BigDecimal("13500.00"));
+        Invoice invoice = Invoice.builder().id("I1").grandTotalInr(new BigDecimal("12360.00")).build();
+        PaymentReceipt receipt = PaymentReceipt.builder().amountInr(new BigDecimal("12360.00")).build();
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
+        when(invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc(any(), any(), any())).thenReturn(List.of(invoice));
+        when(paymentReceiptRepository.findByBookingIdAndDirection("B1", ReceiptDirection.RECEIPT)).thenReturn(List.of(receipt));
+        when(paymentReceiptRepository.findByBookingIdAndDirection("B1", ReceiptDirection.REFUND)).thenReturn(List.of());
+        when(invoiceLineSource.invoiced("B1")).thenReturn(new InvoiceLineSource.Invoiced(new BigDecimal("12000.00"), java.util.Set.of(), null));
 
         bookingAccountingSync.syncPayment("B1");
 

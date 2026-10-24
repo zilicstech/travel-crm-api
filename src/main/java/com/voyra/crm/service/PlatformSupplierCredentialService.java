@@ -60,10 +60,11 @@ public class PlatformSupplierCredentialService {
                 : rows.get(0);
 
         requireAllowedHost(request.getEnvironment(), request.getBaseUrl());
+        String baseUrl = request.getBaseUrl().trim();
         boolean keyChanged = request.getApiKey() != null && !request.getApiKey().isBlank();
         boolean targetChanged = credential.getApiKeyEncrypted() != null
                 && (credential.getEnvironment() != request.getEnvironment()
-                        || !Objects.equals(credential.getBaseUrl(), request.getBaseUrl()));
+                        || !Objects.equals(credential.getBaseUrl(), baseUrl));
         if (targetChanged && !keyChanged) {
             // Re-pointing a stored key at another host would hand that host the key without anyone re-entering it.
             throw new IllegalArgumentException("Enter the API key again to change the environment or base URL");
@@ -77,7 +78,7 @@ public class PlatformSupplierCredentialService {
             credential.setUserIdEncrypted(PasswordEncryptionUtil.encrypt(request.getUserId(), encryptionKey));
         }
         credential.setEnvironment(request.getEnvironment());
-        credential.setBaseUrl(request.getBaseUrl());
+        credential.setBaseUrl(baseUrl);
         boolean activate = request.getIsActive() != null ? request.getIsActive() : Boolean.TRUE.equals(credential.getIsActive());
         if (activate) {
             // Others flushed before this row turns active: the partial unique index on (provider) WHERE is_active
@@ -115,8 +116,9 @@ public class PlatformSupplierCredentialService {
             uri = null;
         }
         boolean allowed = uri != null && "https".equalsIgnoreCase(uri.getScheme()) && uri.getHost() != null
-                && uri.getUserInfo() == null
-                && ALLOWED_HOSTS.get(environment).contains(uri.getHost().toLowerCase());
+                && uri.getUserInfo() == null && uri.getPort() == -1 && uri.getQuery() == null && uri.getFragment() == null
+                && (uri.getPath() == null || uri.getPath().isEmpty() || "/".equals(uri.getPath()))
+                && ALLOWED_HOSTS.get(environment).contains(uri.getHost().toLowerCase(java.util.Locale.ROOT));
         if (!allowed) {
             throw new IllegalArgumentException("Base URL must be a Tripjack " + environment + " host over https");
         }
@@ -134,6 +136,7 @@ public class PlatformSupplierCredentialService {
     public ResolvedCredential resolveActive(SupplierProvider provider) {
         PlatformSupplierCredential c = repository.findByProviderAndIsActiveTrue(provider)
                 .orElseThrow(() -> new IllegalStateException("Tripjack is not configured on the platform"));
+        requireAllowedHost(c.getEnvironment(), c.getBaseUrl());
         return new ResolvedCredential(c.getProvider(), c.getEnvironment(), c.getBaseUrl(),
                 PasswordEncryptionUtil.decrypt(c.getApiKeyEncrypted(), encryptionKey),
                 c.getUserIdEncrypted() != null ? PasswordEncryptionUtil.decrypt(c.getUserIdEncrypted(), encryptionKey) : null);

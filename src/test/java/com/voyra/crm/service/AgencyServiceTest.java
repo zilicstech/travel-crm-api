@@ -22,6 +22,8 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.verify;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 
 /** updateStatus writes the status, keeps is_active mirrored, and syncs the auth cache in the same call. */
@@ -76,6 +78,16 @@ class AgencyServiceTest {
 
         verify(platformAuditService).record(PlatformAuditAction.TENANT_STATUS, "TENANT", ID,
                 Map.of("from", "ACTIVE", "to", "SUSPENDED"));
+    }
+
+    @Test
+    void settingTheSameStatusAgainWritesNoAuditRow() {
+        Tenant tenant = Tenant.builder().id(ID).agencyName("A").status(TenantStatus.ACTIVE).build();
+        when(tenantRepository.findById(ID)).thenReturn(Optional.of(tenant));
+
+        agencyService.updateStatus(ID, TenantStatus.ACTIVE);
+
+        verify(platformAuditService, never()).record(any(), any(), any(), any());
     }
 
     @Test

@@ -122,7 +122,7 @@ class AgencyPricingServiceTest {
         Instant stored = Instant.parse("2099-01-01T00:00:00.123456Z");
         when(repository.existsByTenantIdAndProductAndEffectiveFrom(T, PricingProduct.FLIGHT, stored)).thenReturn(true);
         assertThatThrownBy(() -> service.create(T, request("0", "0", from))).isInstanceOf(IllegalStateException.class)
-                .hasMessage("A FLIGHT rate already starts at 2099-01-01T00:00:00.123456Z for this agency");
+                .hasMessage("A FLIGHT rate already starts at 01 Jan 2099, 05:30 IST for this agency");
         verify(repository, never()).save(any());
     }
 
