@@ -467,6 +467,7 @@ class PlatformBookingServiceTest {
     /** The mirror is written after the debit committed, and only marked PENDING when the booking names a CRM client. */
     @Test
     void ticketedWithAClientMarksTheMirrorPendingAndMirrorsAfterTheDebit() {
+        when(mirrorService.hasLeadAgent(T, null, null)).thenReturn(true);
         FlightReviewRequest request = reviewRequest();
         request.setClientId("C1");
         String id = service.review(request).getBookingId();
@@ -477,6 +478,29 @@ class PlatformBookingServiceTest {
         org.mockito.InOrder order = inOrder(walletService, mirrorService);
         order.verify(walletService).debitHeld(anyString(), any(), anyString(), anyString(), anyString());
         order.verify(mirrorService).sync(id);
+    }
+
+    /** A CRM-client booking needs an agent to own its mirror: refused before the supplier and before any hold. */
+    @Test
+    void aClientBookingWithNoIssuingAgentIsRefusedAtReviewAndConfirm() {
+        FlightReviewRequest request = reviewRequest();
+        request.setClientId("C1");
+
+        assertThatThrownBy(() -> service.review(request))
+                .isInstanceOf(com.voyra.crm.exception.BookingRequestException.class)
+                .hasMessage("Choose the agent this booking is issued by")
+                .extracting("code").isEqualTo("ISSUING_AGENT_REQUIRED");
+        verify(provider, never()).review(any(FlightReviewRequest.class));
+
+        // named at review, then dropped at confirm
+        when(agentRepository.findByIdAndTenantId("A1", T)).thenReturn(Optional.of(Agent.builder().id("A1").build()));
+        request.setIssuedByAgentId("A1");
+        String id = service.review(request).getBookingId();
+        assertThatThrownBy(() -> service.confirm(id, confirmRequest("key-00000001", "4500.00")))
+                .isInstanceOf(com.voyra.crm.exception.BookingRequestException.class)
+                .extracting("code").isEqualTo("ISSUING_AGENT_REQUIRED");
+        verify(walletService, never()).hold(any(), any(), any(), any(), any());
+        verify(provider, never()).book(any());
     }
 
     @Test

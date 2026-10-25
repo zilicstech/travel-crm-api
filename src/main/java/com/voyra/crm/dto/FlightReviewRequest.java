@@ -44,6 +44,9 @@ public class FlightReviewRequest {
     @Schema(description = "Optional displayed fare the agency saw in the search results; when the review differs, priceChanged is true", example = "4500.00")
     private BigDecimal searchDisplayedFare;
 
+    @Schema(description = "Owner booking for a CRM client: the agent the booking is issued by (owns the CRM copy)", example = "a1b2c3")
+    private String issuedByAgentId;
+
     @Size(max = 60)
     @Schema(description = "Display hint: airline name; only the mock supplier uses it to draw a route", example = "IndiGo")
     private String airline;

@@ -237,6 +237,15 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
     }
 
+    @ExceptionHandler(BookingRequestException.class)
+    public ResponseEntity<ApiErrorResponse> handleBookingRequest(BookingRequestException ex, HttpServletRequest request) {
+        String path = getPath(request);
+        log.warn("Booking request refused {} - path: {}", ex.getCode(), path);
+        ApiErrorResponse response = ApiErrorResponse.of(ex.getMessage(), "Invalid request", null, HttpStatus.BAD_REQUEST.value(), path);
+        response.setCode(ex.getCode());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
+    }
+
     @ExceptionHandler(BookingConflictException.class)
     public ResponseEntity<ApiErrorResponse> handleBookingConflict(BookingConflictException ex, HttpServletRequest request) {
         String path = getPath(request);

@@ -26,6 +26,7 @@ import com.voyra.crm.enums.VoyraEarnedSource;
 import com.voyra.crm.enums.WalletEntryType;
 import com.voyra.crm.enums.WalletStatus;
 import com.voyra.crm.exception.BookingConflictException;
+import com.voyra.crm.exception.BookingRequestException;
 import com.voyra.crm.exception.NotFoundException;
 import com.voyra.crm.exception.ReceivableDueException;
 import com.voyra.crm.exception.SupplierException;
@@ -220,6 +221,8 @@ public class PlatformBookingService {
         if (walletService.hasDueReceivable(tenantId)) {
             throw new ReceivableDueException();
         }
+        requireIssuingAgent(principal, request.getClientId(), resolveIssuer(principal, request.getIssuedByAgentId()),
+                request.getServiceId(), request.getLeadId());
         SupplierEnvironment environment = SupplierEnvironment.MOCK;
         String credentialId = null;
         if (!"mock".equalsIgnoreCase(providerConfig.getProvider())) {
@@ -607,6 +610,7 @@ public class PlatformBookingService {
         if (bookingRepository.findByIdempotencyKey(request.getIdempotencyKey()).isPresent()) {
             throw new IllegalStateException("This confirmation key was already used for another booking");
         }
+        requireIssuingAgent(principal, b.getClientId(), issuedBy, b.getServiceId(), b.getLeadId());
         if (request.getPassengers().size() != b.getPaxCount()) {
             throw new IllegalArgumentException("Enter " + b.getPaxCount() + " travellers, as reviewed");
         }
@@ -795,6 +799,18 @@ public class PlatformBookingService {
         }
         return agentRepository.findByIdAndTenantId(requested, p.tenantId()).map(Agent::getId)
                 .orElseThrow(() -> new IllegalArgumentException("Agent not found in this agency: " + requested));
+    }
+
+    /**
+     * A booking for a CRM client gets a CRM mirror, and a CRM booking needs its agent (spec 6): the booking agent, the
+     * issuing agent the owner picked, or the lead's agent. Refused before the supplier and before any hold.
+     */
+    private void requireIssuingAgent(CustomUserPrincipal p, String clientId, String issuedBy, String serviceId, String leadId) {
+        if (clientId == null || clientId.isBlank() || p.isAgent() || issuedBy != null
+                || mirrorService.hasLeadAgent(p.tenantId(), serviceId, leadId)) {
+            return;
+        }
+        throw new BookingRequestException("ISSUING_AGENT_REQUIRED", "Choose the agent this booking is issued by");
     }
 
     private static BookingConflictException priceChanged(BigDecimal displayed) {

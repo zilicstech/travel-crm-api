@@ -189,6 +189,7 @@ public class SupplierCreditNoteService {
      */
     @Transactional
     public SupplierCreditNoteResponse receiveRefund(String id, SupplierCreditNoteRefundRequest request, boolean toWallet) {
+        com.voyra.crm.util.PlatformManaged.checkPaymentMode(request.getPaymentMode());
         SupplierCreditNote note = findById(id);
         assertNotPlatformManaged(note.getBookingId());
         if (note.getStatus() != SupplierCreditNoteStatus.RECORDED) {

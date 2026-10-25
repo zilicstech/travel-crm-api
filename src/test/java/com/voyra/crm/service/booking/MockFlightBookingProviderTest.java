@@ -66,7 +66,7 @@ class MockFlightBookingProviderTest {
         config.getMock().setBookTimeout(true);
         FareReview review = provider.review("o", 1, 0, 0);
         assertThatThrownBy(() -> book(review)).isInstanceOf(SupplierTimeoutException.class);
-        assertThat(provider.bookingDetails("mock-bk-" + review.reviewId() + "-" + review.totalFare().toPlainString()).status()).isEqualTo(SupplierBookingStatus.TICKETED);
+        assertThat(provider.bookingDetails(MockFlightBookingProvider.bookingId(review.reviewId(), review.totalFare())).status()).isEqualTo(SupplierBookingStatus.TICKETED);
     }
 
     @Test
@@ -101,7 +101,7 @@ class MockFlightBookingProviderTest {
         FareReview review = provider.review("o", 1, 0, 0);
 
         assertThat(provider.bookingDetails(review.reviewId()).amount()).isNull();
-        assertThat(provider.bookingDetails("mock-bk-" + review.reviewId() + "-" + review.totalFare().toPlainString()).amount())
+        assertThat(provider.bookingDetails(MockFlightBookingProvider.bookingId(review.reviewId(), review.totalFare())).amount())
                 .isEqualByComparingTo(review.totalFare());
     }
 
@@ -137,5 +137,37 @@ class MockFlightBookingProviderTest {
         r.setOfferId("o1");
         r.setAdults(1);
         assertThat(provider.review(r).itinerary()).isNull();
+    }
+
+    /** platform_booking.supplier_booking_id held 80 characters; the old id repeated the ~70-character review id. */
+    @Test
+    void theBookingIdIsShortAndStillCarriesTheFareForTheRefund() {
+        FareReview review = provider.review("mock-airindia-09:30-FLEXI_PLUS-PREMIUM_ECONOMY", 2, 1, 1);
+        String id = book(review).supplierBookingId();
+
+        assertThat(id).startsWith("mock-bk-").hasSizeLessThanOrEqualTo(40);
+        assertThat(book(review).supplierBookingId()).isEqualTo(id); // same review, same id
+        assertThat(new MockFlightBookingProvider(new FlightBookingProviderConfig()).cancelQuote(id).refund())
+                .isEqualByComparingTo(review.totalFare().multiply(new BigDecimal("0.80")).setScale(2, java.math.RoundingMode.HALF_UP));
+    }
+
+    /** With no reprice the agency sees no "price changed": the review prices an offer exactly as the search showed it. */
+    @Test
+    void withNoRepriceTheReviewTotalIsTheSearchTotal() {
+        for (com.voyra.crm.enums.FlightCabin cabin : com.voyra.crm.enums.FlightCabin.values()) {
+            com.voyra.crm.dto.FlightSearchQuery query = new com.voyra.crm.dto.FlightSearchQuery();
+            query.setOrigin("DEL");
+            query.setDestination("BOM");
+            query.setDepartDate(java.time.LocalDate.of(2026, 12, 15));
+            query.setCabin(cabin);
+            query.setAdults(2);
+            query.setChildren(1);
+            query.setInfants(1);
+            for (com.voyra.crm.dto.FlightOfferResponse offer : new com.voyra.crm.service.MockFlightSearchProvider().search(query)) {
+                FareReview review = provider.review(offer.getOfferId(), 2, 1, 1);
+                assertThat(review.totalFare()).as(offer.getOfferId()).isEqualByComparingTo(offer.getTotalPrice());
+                assertThat(review.baseFare()).as(offer.getOfferId()).isEqualByComparingTo(offer.getBaseFare());
+            }
+        }
     }
 }

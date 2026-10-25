@@ -2,6 +2,7 @@ package com.voyra.crm.scheduler;
 
 import com.voyra.crm.entity.PlatformBooking;
 import com.voyra.crm.enums.MirrorStatus;
+import com.voyra.crm.repository.PlatformBookingEventRepository;
 import com.voyra.crm.repository.PlatformBookingRepository;
 import com.voyra.crm.service.booking.PlatformBookingMirrorService;
 import lombok.RequiredArgsConstructor;
@@ -19,13 +20,19 @@ import java.util.Set;
 public class PlatformBookingMirrorRepairJob {
 
     private static final Set<MirrorStatus> TO_REPAIR = EnumSet.of(MirrorStatus.FAILED, MirrorStatus.PENDING);
+    /** About 24 hours of 10-minute retries; the first failure already alerted Voyra, so the row then waits for an admin. */
+    static final long MAX_ATTEMPTS = 144;
 
     private final PlatformBookingRepository repository;
     private final PlatformBookingMirrorService mirrorService;
+    private final PlatformBookingEventRepository eventRepository;
 
     @Scheduled(cron = "${app.flight-booking.mirror-repair.cron:0 */10 * * * *}")
     public void run() {
         for (PlatformBooking b : repository.findByMirrorStatusIn(TO_REPAIR)) {
+            if (eventRepository.countByPlatformBookingIdAndType(b.getId(), "MIRROR_FAILED") >= MAX_ATTEMPTS) {
+                continue;
+            }
             try {
                 mirrorService.sync(b.getId());
             } catch (RuntimeException e) {

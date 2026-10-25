@@ -39,6 +39,11 @@ public class GlobalExceptionHandlerFixtureController {
         throw new ReceivableDueException();
     }
 
+    @GetMapping("/test/issuing-agent")
+    public String issuingAgent() {
+        throw new BookingRequestException("ISSUING_AGENT_REQUIRED", "Choose the agent this booking is issued by");
+    }
+
     @GetMapping("/test/price-changed")
     public String priceChanged() {
         throw new BookingConflictException("PRICE_CHANGED", "The fare changed", java.util.Map.of("displayedFare", new java.math.BigDecimal("4600.00")));

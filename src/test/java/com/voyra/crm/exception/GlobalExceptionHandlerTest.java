@@ -81,6 +81,14 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    void bookingRequestMapsTo400WithCode() throws Exception {
+        mockMvc.perform(get("/test/issuing-agent"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("ISSUING_AGENT_REQUIRED"))
+                .andExpect(jsonPath("$.message").value("Choose the agent this booking is issued by"));
+    }
+
+    @Test
     void bookingConflictMapsTo409WithCodeAndDetails() throws Exception {
         mockMvc.perform(get("/test/price-changed"))
                 .andExpect(status().isConflict())

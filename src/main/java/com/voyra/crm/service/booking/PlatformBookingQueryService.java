@@ -166,15 +166,18 @@ public class PlatformBookingQueryService {
                 .build()).toList();
     }
 
-    /** One batched lookup of display names for the distinct, non-null ids on {@code rows} (no N+1). */
+    /**
+     * One batched lookup of display names for the distinct, non-null ids on {@code rows} (no N+1). Always a HashMap:
+     * a client-less or booker-less row looks up {@code null}, which an immutable {@code Map.of()} rejects with an NPE.
+     */
     private static <T> Map<String, String> names(List<PlatformBooking> rows, Function<PlatformBooking, String> idOf,
                                                  Function<Collection<String>, ? extends Iterable<T>> loader,
                                                  Function<T, String> id, Function<T, String> name) {
+        Map<String, String> out = new java.util.HashMap<>();
         List<String> ids = rows.stream().map(idOf).filter(Objects::nonNull).distinct().toList();
         if (ids.isEmpty()) {
-            return Map.of();
+            return out;
         }
-        Map<String, String> out = new java.util.HashMap<>();
         loader.apply(ids).forEach(t -> out.put(id.apply(t), name.apply(t)));
         return out;
     }

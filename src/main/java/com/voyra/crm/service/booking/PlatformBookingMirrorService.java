@@ -59,14 +59,14 @@ public class PlatformBookingMirrorService {
 
     /** Brings the mirror in line with the platform row. Idempotent, and never throws: the ticket is already paid for. */
     public void sync(String platformBookingId) {
-        Assert.state(!TransactionSynchronizationManager.isActualTransactionActive(),
-                "The mirror must run after the platform booking's transaction committed, not inside it");
         PlatformBooking b = repository.findById(platformBookingId).orElse(null);
         if (b == null || b.getClientId() == null || b.getMirrorStatus() == MirrorStatus.DONE
                 || (b.getStatus() != PlatformBookingStatus.TICKETED && b.getStatus() != PlatformBookingStatus.CANCELLED)) {
             return; // no CRM client (a Starter agency's record is the platform row), already in line, or still moving
         }
         try {
+            Assert.state(!TransactionSynchronizationManager.isActualTransactionActive(),
+                    "The mirror must run after the platform booking's transaction committed, not inside it");
             List<ItinerarySegment> legs = queryService.itinerary(b);
             List<PaxInput> pax = b.getPaxEnc() == null ? List.of() : paxCodec.decrypt(b.getPaxEnc(), StoredPax.class).passengers();
             String bookingId = SystemActor.call(b.getTenantId(), () -> {
@@ -81,6 +81,11 @@ public class PlatformBookingMirrorService {
             log.warn("CRM mirror of platform booking {} failed: {}", platformBookingId, e.toString());
             finish(platformBookingId, null, e);
         }
+    }
+
+    /** Whether the booking's lead (or lead service) gives its CRM mirror an agent, in the caller's tenant. */
+    public boolean hasLeadAgent(String tenantId, String serviceId, String leadId) {
+        return (serviceId != null || leadId != null) && tenantService.leadAgent(tenantId, serviceId, leadId).isPresent();
     }
 
     /** Records the outcome under the row lock; a concurrent sync that already finished the mirror is never marked FAILED. */

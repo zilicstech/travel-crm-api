@@ -168,19 +168,26 @@ public class PlatformBookingMirrorTenantService {
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void cancel(String bookingId, PlatformBooking pb) {
-        Booking booking = bookingRepository.findById(bookingId).orElseThrow(() -> new NotFoundException("Booking not found: " + bookingId));
+        // the lock first: a second sync (another instance's repair job) waits here, then sees CANCELLED
+        Booking booking = bookingRepository.findByIdForUpdate(bookingId)
+                .orElseThrow(() -> new NotFoundException("Booking not found: " + bookingId));
         if (booking.getBookingStatus() == BookingStatus.CANCELLED) {
             return;
         }
-        BigDecimal refund = pb.getCancelRefund();
-        if (refund == null) {
+        if (pb.getCancelRefund() == null) {
             throw new IllegalStateException("Platform booking " + pb.getId() + " was cancelled without a refund figure - settle the mirror by hand");
         }
+        // INR figures in the agency's base, at the e-ticket's own rate - as create bought it
+        BigDecimal rate = bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc(bookingId).stream()
+                .filter(d -> d.getDocType() == BookingDocumentType.E_TICKET && d.getPurchaseRate() != null)
+                .map(BookingDocument::getPurchaseRate).findFirst().orElse(BigDecimal.ONE);
+        String base = baseCurrency.code();
+        BigDecimal refund = FxMath.toBase(INR, pb.getCancelRefund(), rate, base).base();
         BookingCancelRequest request = new BookingCancelRequest();
         request.setType(CancellationType.CANCELLATION);
         request.setReason("Cancelled with Voyra");
         request.setAirlineCharge(BigDecimal.ZERO);
-        request.setSupplierCharge(pb.getDisplayed().subtract(refund).max(BigDecimal.ZERO));
+        request.setSupplierCharge(FxMath.toBase(INR, pb.getDisplayed().subtract(pb.getCancelRefund()).max(BigDecimal.ZERO), rate, base).base());
         request.setAgencyFee(BigDecimal.ZERO);
         cancellationService.cancel(bookingId, request);
         if (refund.signum() > 0) {
@@ -209,17 +216,25 @@ public class PlatformBookingMirrorTenantService {
         supplierPaymentService.pay(pay);
     }
 
+    /** The lead's agent in the current tenant: the service's assigned agent, else the lead's creator when an agent. */
+    @Transactional(readOnly = true)
+    public Optional<String> leadAgent(String tenantId, String serviceId, String leadId) {
+        String serviceAgent = serviceId == null ? null
+                : leadServiceRepository.findById(serviceId).map(LeadService::getAssignedAgentId).orElse(null);
+        String leadCreator = leadId == null ? null : leadRepository.findById(leadId).map(Lead::getCreatedBy).orElse(null);
+        return firstAgent(tenantId, Stream.of(serviceAgent, leadCreator));
+    }
+
     /** Booking user if an agent, else the agent picked as issuer, else the lead's agent (spec 6). */
     private String agentFor(PlatformBooking pb) {
-        String serviceAgent = pb.getServiceId() == null ? null
-                : leadServiceRepository.findById(pb.getServiceId()).map(LeadService::getAssignedAgentId).orElse(null);
-        String leadAgent = pb.getLeadId() == null ? null : leadRepository.findById(pb.getLeadId()).map(Lead::getCreatedBy).orElse(null);
-        return Stream.of(pb.getBookedBy(), pb.getIssuedByAgentId(), serviceAgent, leadAgent)
-                .filter(Objects::nonNull)
-                .filter(id -> agentRepository.findByIdAndTenantId(id, pb.getTenantId()).isPresent())
-                .findFirst()
+        return firstAgent(pb.getTenantId(), Stream.of(pb.getBookedBy(), pb.getIssuedByAgentId()))
+                .or(() -> leadAgent(pb.getTenantId(), pb.getServiceId(), pb.getLeadId()))
                 .orElseThrow(() -> new IllegalStateException("No agent to own the CRM booking of platform booking " + pb.getId()
                         + " - it needs an issuing agent"));
+    }
+
+    private Optional<String> firstAgent(String tenantId, Stream<String> ids) {
+        return ids.filter(Objects::nonNull).filter(id -> agentRepository.findByIdAndTenantId(id, tenantId).isPresent()).findFirst();
     }
 
     /** The fare's base/tax split carried onto the ticket: the tax as quoted, the agency's discount off the basic. */
@@ -286,13 +301,26 @@ public class PlatformBookingMirrorTenantService {
                 .filter(s -> s != null && !s.isBlank()).collect(Collectors.joining(" "));
     }
 
-    /** All the ticket numbers within the 50-character column; every one stays on the platform booking. */
-    private static String ticketNo(List<String> numbers) {
+    /** Whole ticket numbers within the 50-character column, then "…"; every one stays on the platform booking. */
+    static String ticketNo(List<String> numbers) {
         if (numbers == null || numbers.isEmpty()) {
             return null;
         }
         String all = String.join(", ", numbers);
-        return all.length() <= 50 ? all : all.substring(0, 50);
+        if (all.length() <= 50) {
+            return all;
+        }
+        StringBuilder shown = new StringBuilder();
+        for (String n : numbers) {
+            String next = shown.isEmpty() ? n : shown + ", " + n;
+            if (next.length() > 49) {
+                break;
+            }
+            shown.setLength(0);
+            shown.append(next);
+        }
+        // shortcut: a single number over 49 characters (none are) is cut; the platform booking keeps it whole
+        return (shown.isEmpty() ? numbers.get(0).substring(0, 49) : shown.toString()) + "…";
     }
 
     private static String blankToNull(String s) {

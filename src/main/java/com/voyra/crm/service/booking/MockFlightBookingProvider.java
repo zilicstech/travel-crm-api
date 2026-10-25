@@ -10,7 +10,13 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
+import com.voyra.crm.service.MockFlightSearchProvider;
+
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -65,10 +71,12 @@ public class MockFlightBookingProvider implements FlightBookingProvider {
         if (mock.isFareExpired()) {
             throw new FareUnavailableException("The selected fare is no longer available");
         }
-        BigDecimal perAdult = BigDecimal.valueOf(3000 + Math.floorMod(offerId.hashCode(), 5000));
-        BigDecimal total = perAdult.multiply(BigDecimal.valueOf(adults))
-                .add(perAdult.multiply(new BigDecimal("0.75")).multiply(BigDecimal.valueOf(children)))
-                .add(perAdult.multiply(new BigDecimal("0.10")).multiply(BigDecimal.valueOf(infants)));
+        // a mock search offer is priced exactly as the search showed it; any other id gets a fare from its hash
+        BigDecimal perAdult = MockFlightSearchProvider.adultFare(offerId);
+        if (perAdult == null) {
+            perAdult = BigDecimal.valueOf(3000 + Math.floorMod(offerId.hashCode(), 5000));
+        }
+        BigDecimal total = MockFlightSearchProvider.partyFare(perAdult, adults, children, infants);
         total = total.multiply(BigDecimal.ONE.add(mock.getRepricePct().movePointLeft(2))).setScale(2, RoundingMode.HALF_UP);
         BigDecimal base = total.multiply(BASE_SHARE).setScale(2, RoundingMode.HALF_UP);
         // a fresh id per review, like Tripjack: platform_booking.supplier_review_id is UNIQUE
@@ -78,7 +86,7 @@ public class MockFlightBookingProvider implements FlightBookingProvider {
 
     @Override
     public BookResult book(BookRequest r) {
-        String id = "mock-bk-" + r.reviewId() + "-" + r.totalFare().toPlainString();
+        String id = bookingId(r.reviewId(), r.totalFare());
         if (config.getMock().isBookFail()) {
             return new BookResult(id, SupplierBookingStatus.FAILED, null, List.of(), "Mock: fare sold out", null);
         }
@@ -114,6 +122,16 @@ public class MockFlightBookingProvider implements FlightBookingProvider {
     @Override
     public CancelResult cancel(String supplierBookingId) {
         return new CancelResult(true, refund(supplierBookingId), "Mock cancellation accepted");
+    }
+
+    /** Short and stable per review, ending in the fare so a refund survives a restart: {@code mock-bk-<12 hex>-<fare>}. */
+    static String bookingId(String reviewId, BigDecimal fare) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(reviewId.getBytes(StandardCharsets.UTF_8));
+            return "mock-bk-" + HexFormat.of().formatHex(digest).substring(0, 12) + "-" + fare.toPlainString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 unavailable", e);
+        }
     }
 
     private BigDecimal refund(String id) {

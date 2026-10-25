@@ -218,4 +218,21 @@ class PlatformBookingQueryServiceTest {
         assertThat(service().view(mock).getItinerary()).hasSize(1);
         assertThat(service().view(none).getItinerary()).isEmpty();
     }
+
+    /** A Starter booking has no client (and may have no booker name): the views map it, never 500 after the money moved. */
+    @Test
+    void aBookingWithoutAClientOrBookerMapsInEveryView() {
+        login("O1", UserType.AGENCY_OWNER, "T1");
+        PlatformBooking starter = booking("B1", "T1", null);
+        starter.setClientId(null);
+        starter.setTenantId("T1");
+        given(bookings.findByTenantId(eq("T1"), any(Pageable.class))).willReturn(new PageImpl<>(List.of(starter)));
+        given(bookings.findAll(any(org.springframework.data.jpa.domain.Specification.class), any(Pageable.class)))
+                .willReturn(new PageImpl<>(List.of(starter)));
+
+        assertThat(service().view(starter).getClientName()).isNull(); // what confirm maps its answer with
+        assertThat(service().list(0, 25).getContent()).singleElement().satisfies(r -> assertThat(r.getBookedByName()).isNull());
+        assertThat(service().adminView(starter).getBookedByName()).isNull();
+        assertThat(service().adminList(0, 25, null, null).getContent()).hasSize(1);
+    }
 }

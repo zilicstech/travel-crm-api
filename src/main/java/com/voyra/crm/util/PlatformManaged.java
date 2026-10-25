@@ -1,5 +1,6 @@
 package com.voyra.crm.util;
 
+import com.voyra.crm.enums.PaymentMode;
 import com.voyra.crm.exception.BookingConflictException;
 import com.voyra.crm.security.SystemActor;
 
@@ -17,6 +18,13 @@ public final class PlatformManaged {
     public static void check(boolean mirrored) {
         if (mirrored && !SystemActor.isActive()) {
             throw new BookingConflictException(CODE, "Managed from Platform Bookings", Map.of());
+        }
+    }
+
+    /** 400 for a Voyra Wallet payment or refund from anyone but the system actor: only Voyra moves money through 1310. */
+    public static void checkPaymentMode(PaymentMode mode) {
+        if (mode == PaymentMode.VOYRA_WALLET && !SystemActor.isActive()) {
+            throw new IllegalArgumentException("Voyra Wallet payments are recorded by Voyra only");
         }
     }
 }

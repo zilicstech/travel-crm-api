@@ -265,11 +265,23 @@ class SupplierCreditNoteServiceTest {
         req.setReceivedOn(java.time.LocalDate.of(2026, 10, 1));
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> supplierCreditNoteService.receiveRefund("CN1", req, false))
-                .isInstanceOf(com.voyra.crm.exception.BookingConflictException.class);
+                .isInstanceOf(IllegalArgumentException.class); // a user can't pick Voyra Wallet (and the mirror's note is the platform's)
         com.voyra.crm.security.SystemActor.call("T1", () -> supplierCreditNoteService.receiveRefund("CN1", req, false));
 
         org.mockito.ArgumentCaptor<com.voyra.crm.models.JournalPosting> captor = org.mockito.ArgumentCaptor.forClass(com.voyra.crm.models.JournalPosting.class);
         org.mockito.Mockito.verify(journalService).post(captor.capture());
         assertThat(captor.getValue().lines()).extracting(l -> l.accountCode()).containsExactly("1310", "2200");
+    }
+
+    @Test
+    void aVoyraWalletRefundIsRecordedByVoyraOnly() {
+        com.voyra.crm.dto.SupplierCreditNoteRefundRequest req = new com.voyra.crm.dto.SupplierCreditNoteRefundRequest();
+        req.setAmount(new BigDecimal("4000.00"));
+        req.setPaymentMode(com.voyra.crm.enums.PaymentMode.VOYRA_WALLET);
+        req.setReceivedOn(java.time.LocalDate.of(2026, 10, 1));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> supplierCreditNoteService.receiveRefund("CN1", req))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Voyra Wallet payments are recorded by Voyra only");
+        org.mockito.Mockito.verify(supplierPaymentRepository, org.mockito.Mockito.never()).save(org.mockito.ArgumentMatchers.any());
     }
 }

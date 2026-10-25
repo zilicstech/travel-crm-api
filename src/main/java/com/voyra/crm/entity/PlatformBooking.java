@@ -71,10 +71,10 @@ public class PlatformBooking {
     @Column(name = "credential_id", length = 36)
     private String credentialId;
 
-    @Column(name = "supplier_review_id", length = 80)
+    @Column(name = "supplier_review_id", length = 120)
     private String supplierReviewId;
 
-    @Column(name = "supplier_booking_id", length = 80)
+    @Column(name = "supplier_booking_id", length = 120)
     private String supplierBookingId;
 
     @Column(name = "pnr", length = 40)

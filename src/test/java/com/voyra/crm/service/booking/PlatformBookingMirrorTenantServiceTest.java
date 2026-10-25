@@ -102,6 +102,7 @@ class PlatformBookingMirrorTenantServiceTest {
         });
         when(bookingDocumentRepository.findById(anyString())).thenAnswer(i -> Optional.ofNullable(ticket.get()));
         when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
+        when(bookingRepository.findByIdForUpdate("B1")).thenReturn(Optional.of(booking));
         when(bookingRepository.findByPlatformBookingId(anyString())).thenReturn(Optional.empty());
         when(supplierInvoiceService.approveForBooking(eq("SI1"), anyString())).thenReturn(SupplierInvoiceResponse.builder()
                 .id("SI1").status(SupplierInvoiceStatus.APPROVED).balanceDue(new BigDecimal("5400.00")).build());
@@ -206,15 +207,59 @@ class PlatformBookingMirrorTenantServiceTest {
         verify(cancellationService).recordVoyraWalletRefund("B1", new BigDecimal("4000.00"));
     }
 
+    /** Two syncs at once (the request hook and a repair job on another instance): the second waits on the lock, sees CANCELLED. */
     @Test
-    void aMirrorAlreadyCancelledIsLeftAlone() {
+    void aMirrorAlreadyCancelledIsLeftAloneAfterTheLock() {
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(Booking.builder().id("B1").bookingStatus(BookingStatus.CONFIRMED).build()));
         booking.setBookingStatus(BookingStatus.CANCELLED);
         PlatformBooking pb = platformBooking();
         pb.setCancelRefund(new BigDecimal("4000.00"));
 
         service.cancel("B1", pb);
 
+        verify(bookingRepository).findByIdForUpdate("B1");
         verify(cancellationService, never()).cancel(anyString(), any());
+        verify(cancellationService, never()).recordVoyraWalletRefund(anyString(), any());
+    }
+
+    @Test
+    void cancelTakesTheBookingLockBeforeAnythingElse() {
+        PlatformBooking pb = platformBooking();
+        pb.setCancelRefund(new BigDecimal("4000.00"));
+
+        service.cancel("B1", pb);
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(bookingRepository, cancellationService);
+        order.verify(bookingRepository).findByIdForUpdate("B1");
+        order.verify(cancellationService).cancel(eq("B1"), any());
+        verify(bookingRepository, never()).findById("B1");
+    }
+
+    /** A USD-base agency bought the ticket in INR at the ticket's rate: the cancel and the refund are in its base, like create. */
+    @Test
+    void aNonInrAgencyCancelsInItsBaseCurrency() {
+        org.mockito.Mockito.doReturn("USD").when(baseCurrency).code();
+        when(bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc("B1")).thenReturn(List.of(BookingDocument.builder()
+                .id("D1").bookingId("B1").docType(BookingDocumentType.E_TICKET).purchaseCurrency("INR")
+                .purchasePrice(new BigDecimal("5400.00")).purchaseRate(new BigDecimal("0.012")).build()));
+        PlatformBooking pb = platformBooking();
+        pb.setCancelRefund(new BigDecimal("4000.00"));
+
+        service.cancel("B1", pb);
+
+        ArgumentCaptor<BookingCancelRequest> request = ArgumentCaptor.forClass(BookingCancelRequest.class);
+        verify(cancellationService).cancel(eq("B1"), request.capture());
+        assertThat(request.getValue().getSupplierCharge()).isEqualByComparingTo("16.80"); // 1400 INR at 0.012
+        verify(cancellationService).recordVoyraWalletRefund("B1", new BigDecimal("48.00"));
+    }
+
+    @Test
+    void ticketNumbersAreNeverCutMidWay() {
+        assertThat(PlatformBookingMirrorTenantService.ticketNo(List.of("0981234567890", "0981234567891")))
+                .isEqualTo("0981234567890, 0981234567891");
+        assertThat(PlatformBookingMirrorTenantService.ticketNo(List.of("0981234567890", "0981234567891", "0981234567892", "0981234567893")))
+                .isEqualTo("0981234567890, 0981234567891, 0981234567892…");
+        assertThat(PlatformBookingMirrorTenantService.ticketNo(List.of())).isNull();
     }
 
     @Test

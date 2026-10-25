@@ -159,7 +159,7 @@ class PlatformBookingMirrorServiceTest {
 
     /** The cancel hook runs on a scheduler or super-admin thread: no agency principal, another (or no) tenant. */
     @Test
-    void mirrorCancelCreatesCreditNoteAndRestoresTenantContext() {
+    void mirrorCancelRunsAsTheSystemInTheAgencyTenantAndRestoresTheCallersContext() {
         PlatformBooking b = ticketed("C1");
         b.setStatus(PlatformBookingStatus.CANCELLED);
         b.setCancelRefund(new BigDecimal("4000.00"));
@@ -201,5 +201,28 @@ class PlatformBookingMirrorServiceTest {
         assertThat(b.getMirrorStatus()).isEqualTo(MirrorStatus.FAILED);
         assertThat(TenantContext.getTenantId()).isNull();
         assertThat(SystemActor.isActive()).isFalse();
+    }
+
+    /** Called by mistake inside a transaction (after the money committed): the mirror fails and is retried, the caller never sees it. */
+    @Test
+    void aSyncInsideATransactionFailsTheMirrorNotTheCaller() {
+        PlatformBooking b = ticketed("C1");
+        org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(true);
+        try {
+            org.assertj.core.api.Assertions.assertThatCode(() -> service.sync("PB1")).doesNotThrowAnyException();
+        } finally {
+            org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(false);
+        }
+
+        assertThat(b.getMirrorStatus()).isEqualTo(MirrorStatus.FAILED);
+        verifyNoInteractions(tenantService);
+    }
+
+    @Test
+    void anAgentResolvesFromTheLeadsServiceOrTheLead() {
+        when(tenantService.leadAgent("T1", "S1", "L1")).thenReturn(Optional.of("A9"));
+
+        assertThat(service.hasLeadAgent("T1", "S1", "L1")).isTrue();
+        assertThat(service.hasLeadAgent("T1", null, null)).isFalse();
     }
 }

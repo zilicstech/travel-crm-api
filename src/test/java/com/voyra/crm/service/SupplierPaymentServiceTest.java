@@ -487,7 +487,8 @@ class SupplierPaymentServiceTest {
         SupplierPaymentRequest request = request("SI1", new BigDecimal("5400.00"));
         request.setPaymentMode(PaymentMode.VOYRA_WALLET);
 
-        supplierPaymentService.pay(request);
+        org.mockito.Mockito.doReturn("INR").when(baseCurrency).code();
+        com.voyra.crm.security.SystemActor.call("T1", () -> supplierPaymentService.pay(request));
 
         ArgumentCaptor<JournalPosting> captor = ArgumentCaptor.forClass(JournalPosting.class);
         verify(journalService).post(captor.capture());
@@ -507,5 +508,31 @@ class SupplierPaymentServiceTest {
                 .isInstanceOf(com.voyra.crm.exception.BookingConflictException.class)
                 .hasMessage("Managed from Platform Bookings");
         verify(supplierPaymentRepository, org.mockito.Mockito.never()).save(any());
+    }
+
+    /** Only Voyra (the system actor writing a mirror) pays from the Voyra wallet - no user picks it on a bill or an advance. */
+    @Test
+    void voyraWalletPaymentsAreRecordedByVoyraOnly() {
+        SupplierPaymentRequest bill = request("SI1", new BigDecimal("100.00"));
+        bill.setPaymentMode(PaymentMode.VOYRA_WALLET);
+        SupplierPaymentRequest advance = request(null, new BigDecimal("100.00"));
+        advance.setPaymentMode(PaymentMode.VOYRA_WALLET);
+
+        for (SupplierPaymentRequest r : List.of(bill, advance)) {
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> supplierPaymentService.pay(r))
+                    .isInstanceOf(IllegalArgumentException.class).hasMessage("Voyra Wallet payments are recorded by Voyra only");
+        }
+
+        SupplierPayment voyraAdvance = SupplierPayment.builder().id("D1").vendorId("V1").isAdvance(true)
+                .paymentMode(PaymentMode.VOYRA_WALLET).amount(new BigDecimal("500.00")).build();
+        when(supplierInvoiceRepository.findByIdForUpdate("SI1")).thenReturn(Optional.of(approvedBill(new BigDecimal("1000.00"))));
+        when(supplierPaymentRepository.findById("D1")).thenReturn(Optional.of(voyraAdvance));
+        SupplierAdvanceApplyRequest apply = new SupplierAdvanceApplyRequest();
+        apply.setAdvancePaymentId("D1");
+        apply.setAmount(new BigDecimal("100.00"));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> supplierPaymentService.applyAdvance("SI1", apply))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Voyra Wallet payments are recorded by Voyra only");
+        verify(supplierPaymentRepository, never()).save(any());
+        verify(journalService, never()).post(any());
     }
 }

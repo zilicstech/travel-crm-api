@@ -69,6 +69,7 @@ public class SupplierPaymentService {
 
     @Transactional
     public SupplierPaymentResponse pay(SupplierPaymentRequest request) {
+        com.voyra.crm.util.PlatformManaged.checkPaymentMode(request.getPaymentMode());
         if (request.getPaidOn() != null && request.getPaidOn().isAfter(FinancialYear.today())) {
             throw new IllegalArgumentException("The payment date can't be in the future");
         }
@@ -235,6 +236,7 @@ public class SupplierPaymentService {
         if (!Boolean.TRUE.equals(advance.getIsAdvance()) || advance.getReversedAt() != null) {
             throw new IllegalArgumentException("This payment is not an active advance");
         }
+        com.voyra.crm.util.PlatformManaged.checkPaymentMode(advance.getPaymentMode());
         if (!advance.getVendorId().equals(invoice.getVendorId())) {
             throw new IllegalArgumentException("This advance belongs to a different vendor");
         }
