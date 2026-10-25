@@ -98,6 +98,10 @@ public class PlatformBookingMirrorTenantService {
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public String create(PlatformBooking pb, List<ItinerarySegment> segments, List<PaxInput> passengers) {
+        Optional<Booking> existing = bookingRepository.findByPlatformBookingId(pb.getId());
+        if (existing.isPresent()) {
+            return existing.get().getId();
+        }
         List<VoucherLeg> legs = VoucherTrip.cleanLegs(segments.stream().map(PlatformBookingMirrorTenantService::leg).toList());
         Map<String, String> trip = Optional.ofNullable(VoucherTrip.details(legs, null)).orElse(Map.of());
         LocalDate firstFlight = VoucherTrip.firstDate(legs);
@@ -133,6 +137,10 @@ public class PlatformBookingMirrorTenantService {
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public String createHotel(PlatformBooking pb, HotelStaySummary stay, List<PaxInput> passengers) {
+        Optional<Booking> existing = bookingRepository.findByPlatformBookingId(pb.getId());
+        if (existing.isPresent()) {
+            return existing.get().getId(); // a retry on a mirrored row needs no stay
+        }
         if (stay == null || stay.checkIn() == null || stay.checkOut() == null) {
             throw new IllegalStateException("Platform booking " + pb.getId() + " has no stay to mirror");
         }
@@ -166,14 +174,10 @@ public class PlatformBookingMirrorTenantService {
     /**
      * What every mirror shares: vendor Voyra Platform, bought in INR at the displayed fare (in the agency's base at today's
      * rate) with the fare's base/tax split, the agency's default markup for the product, the voucher described by
-     * {@code describe}, and its supplier bill paid from the Voyra wallet. The existing mirror is returned untouched.
+     * {@code describe}, and its supplier bill paid from the Voyra wallet. Callers return an existing mirror first.
      */
     private String mirror(PlatformBooking pb, BookingCreateRequest request, ServiceType product, BookingDocumentType docType,
                           Consumer<BookingDocument> describe) {
-        Optional<Booking> existing = bookingRepository.findByPlatformBookingId(pb.getId());
-        if (existing.isPresent()) {
-            return existing.get().getId();
-        }
         // an agency may keep an old, deactivated vendor of the same name next to the seeded one
         Vendor vendor = vendorRepository.findAllByNameIgnoreCase(VOYRA_VENDOR).stream().filter(v -> Boolean.TRUE.equals(v.getIsActive()))
                 .findFirst().orElseThrow(() -> new IllegalStateException("This agency has no active " + VOYRA_VENDOR + " vendor"));

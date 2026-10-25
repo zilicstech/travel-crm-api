@@ -1166,6 +1166,20 @@ class PlatformBookingServiceTest {
         assertThat(rows).isEmpty();
     }
 
+    /** "Today" is India's (FinancialYear.today), not the server's: a check-in before the Indian today is refused. */
+    @Test
+    void thePastIsJudgedByTheIndianToday() {
+        hotelSupplierQuotes("5000.00");
+        HotelReviewRequest r = hotelReviewRequest(); // check-in today + 37 on the server clock
+        try (org.mockito.MockedStatic<com.voyra.crm.util.FinancialYear> fy =
+                     org.mockito.Mockito.mockStatic(com.voyra.crm.util.FinancialYear.class, org.mockito.Mockito.CALLS_REAL_METHODS)) {
+            fy.when(com.voyra.crm.util.FinancialYear::today).thenReturn(r.getCheckIn().plusDays(1));
+
+            assertThatThrownBy(() -> service.reviewHotel(r)).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("past");
+        }
+        verify(hotelProvider, never()).review(any(), any(), any(), any(), anyList());
+    }
+
     /** Room 2 was reviewed for one adult: a second guest there is refused even though the booking total (4) is not exceeded. */
     @Test
     void moreGuestsInARoomThanItWasReviewedForAreRefused() {

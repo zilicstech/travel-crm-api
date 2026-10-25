@@ -78,7 +78,7 @@ public class TripjackHotelBookingProvider implements HotelBookingProvider {
         body.put("hid", hotelId);
         body.put("checkIn", checkIn.toString());
         body.put("checkOut", checkOut.toString());
-        body.put("roomInfo", roomInfo(rooms));
+        body.put("rooms", rooms(rooms));
         JsonNode res = post("/hms/v3/hotel/review", body, "review", true);
         if (!succeeded(res)) {
             throw new FareUnavailableException(message(res, "Room is no longer available"));
@@ -180,10 +180,10 @@ public class TripjackHotelBookingProvider implements HotelBookingProvider {
     }
 
     /**
-     * Each reviewed room's occupancy as {@code roomInfo}, in the per-room shape of the v3 listing/pricing {@code rooms}
-     * ({@code adults}, {@code children}, {@code childAge}). Unverified (slice 0): the field name and shape are a guess.
+     * Each reviewed room's occupancy as {@code rooms}, the name and per-room shape ({@code adults}, {@code children},
+     * {@code childAge}) the live v3 listing/pricing calls use. Unverified for the review endpoint (slice 0).
      */
-    private static List<Map<String, Object>> roomInfo(List<HotelRoomRequest> rooms) {
+    private static List<Map<String, Object>> rooms(List<HotelRoomRequest> rooms) {
         return rooms.stream().map(r -> {
             List<Integer> ages = r.getChildAges() == null ? List.of() : r.getChildAges();
             Map<String, Object> room = new LinkedHashMap<>();

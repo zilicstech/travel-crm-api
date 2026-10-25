@@ -225,7 +225,7 @@ public class PlatformBookingService {
         if (!request.getCheckOut().isAfter(request.getCheckIn())) {
             throw new IllegalArgumentException("Check-out must be after check-in");
         }
-        if (request.getCheckIn().isBefore(java.time.LocalDate.now())) {
+        if (request.getCheckIn().isBefore(com.voyra.crm.util.FinancialYear.today())) { // India's today, not the server's
             throw new IllegalArgumentException("Check-in can't be in the past");
         }
         ReviewEnv env = admit(principal, PricingProduct.HOTEL, request.getClientId(), request.getIssuedByAgentId(),

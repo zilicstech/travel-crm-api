@@ -68,10 +68,10 @@ class TripjackHotelBookingProviderTest {
                 .andExpect(header("apikey", "test-key"))
                 .andExpect(jsonPath("$.optionId").value("opt-1")).andExpect(jsonPath("$.hid").value("100012"))
                 .andExpect(jsonPath("$.checkIn").value("2026-12-01")).andExpect(jsonPath("$.checkOut").value("2026-12-04"))
-                .andExpect(jsonPath("$.roomInfo.length()").value(2))
-                .andExpect(jsonPath("$.roomInfo[0].adults").value(2)).andExpect(jsonPath("$.roomInfo[0].children").value(1))
-                .andExpect(jsonPath("$.roomInfo[0].childAge[0]").value(6))
-                .andExpect(jsonPath("$.roomInfo[1].adults").value(1)).andExpect(jsonPath("$.roomInfo[1].children").doesNotExist())
+                .andExpect(jsonPath("$.rooms.length()").value(2)).andExpect(jsonPath("$.roomInfo").doesNotExist())
+                .andExpect(jsonPath("$.rooms[0].adults").value(2)).andExpect(jsonPath("$.rooms[0].children").value(1))
+                .andExpect(jsonPath("$.rooms[0].childAge[0]").value(6))
+                .andExpect(jsonPath("$.rooms[1].adults").value(1)).andExpect(jsonPath("$.rooms[1].children").doesNotExist())
                 .andRespond(withSuccess(REVIEW_OK, MediaType.APPLICATION_JSON));
         FareReview r = review();
         server.verify();

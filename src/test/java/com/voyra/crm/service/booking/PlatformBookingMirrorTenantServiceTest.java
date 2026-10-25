@@ -374,6 +374,7 @@ class PlatformBookingMirrorTenantServiceTest {
         when(bookingRepository.findByPlatformBookingId("PB1")).thenReturn(Optional.of(booking));
 
         assertThat(service.createHotel(hotelBooking(), stay(), pax())).isEqualTo("B1");
+        assertThat(service.createHotel(hotelBooking(), null, pax())).isEqualTo("B1"); // a retry never needs the stay again
 
         verify(bookingService, never()).logBooking(any(), anyString(), any(), any(), any(), any(), any(), any());
         verify(supplierPaymentService, never()).pay(any());
