@@ -110,4 +110,19 @@ class AuthServiceTenantStatusTest {
         request.setPassword("secret");
         return request;
     }
+
+    @org.junit.jupiter.api.Test
+    void currentEntitlementsAreTheCallersTenants() {
+        org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(
+                new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                        new com.voyra.crm.security.CustomUserPrincipal("A1", "a", com.voyra.crm.enums.UserType.AGENT, "T9"), null, java.util.List.of()));
+        com.voyra.crm.models.Entitlements e = new com.voyra.crm.models.Entitlements(com.voyra.crm.enums.SubscriptionPlan.SUITE,
+                com.voyra.crm.enums.SubscriptionStatus.ACTIVE, java.util.Set.of(), 5, false, null);
+        org.mockito.Mockito.when(entitlementService.resolve("T9")).thenReturn(e);
+        try {
+            org.assertj.core.api.Assertions.assertThat(authService.currentEntitlements()).isSameAs(e);
+        } finally {
+            org.springframework.security.core.context.SecurityContextHolder.clearContext();
+        }
+    }
 }

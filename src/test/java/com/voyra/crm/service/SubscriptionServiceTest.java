@@ -103,6 +103,20 @@ class SubscriptionServiceTest {
     }
 
     @Test
+    void movingAStarterOntoAPaidPlanStartsAPeriodSoTheJobBillsIt() {
+        sub.setPlan(SubscriptionPlan.STARTER);
+        sub.setWaivedReason(null);
+        sub.setPeriodStart(null);
+        sub.setPeriodEnd(null);
+
+        service.update("T1", update(SubscriptionPlan.SUITE, List.of(), 0, BillingCycle.MONTHLY));
+
+        assertThat(sub.getPeriodStart()).isNotNull();
+        assertThat(sub.getPeriodEnd()).isNotNull();
+        assertThat(sub.getPeriodEnd()).isBeforeOrEqualTo(Instant.now());  // due now: the next daily run raises the first invoice
+    }
+
+    @Test
     void suiteStoresEverySkuAndStarterNone() {
         service.update("T1", update(SubscriptionPlan.STARTER, List.of(Sku.VISA), 4, BillingCycle.MONTHLY));
         assertThat(sub.getSkus()).isEmpty();

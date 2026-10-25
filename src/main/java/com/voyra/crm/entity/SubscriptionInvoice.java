@@ -15,6 +15,7 @@ import org.hibernate.type.SqlTypes;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -55,6 +56,28 @@ public class SubscriptionInvoice {
 
     @Column(name = "gst", nullable = false, precision = 19, scale = 2)
     private BigDecimal gst;
+
+    /** CGST 9 % + SGST 9 % when the agency is in Voyra's state, else IGST 18 %; gst = their sum. */
+    @Column(name = "cgst", nullable = false, precision = 19, scale = 2)
+    @Builder.Default
+    private BigDecimal cgst = BigDecimal.ZERO;
+
+    @Column(name = "sgst", nullable = false, precision = 19, scale = 2)
+    @Builder.Default
+    private BigDecimal sgst = BigDecimal.ZERO;
+
+    @Column(name = "igst", nullable = false, precision = 19, scale = 2)
+    @Builder.Default
+    private BigDecimal igst = BigDecimal.ZERO;
+
+    @Column(name = "sac_code", length = 8)
+    private String sacCode;
+
+    /** Frozen at issue: {seller: {legalName, gstin, address, stateCode}, buyer: {name, gstin, address, stateCode}}. */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "billing_details", nullable = false, columnDefinition = "jsonb")
+    @Builder.Default
+    private Map<String, Object> billingDetails = new HashMap<>();
 
     @Column(name = "total", nullable = false)
     private BigDecimal total;

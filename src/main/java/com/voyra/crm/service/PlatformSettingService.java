@@ -9,7 +9,12 @@ import com.voyra.crm.enums.PlatformAuditAction;
 import com.voyra.crm.models.ReferenceFare;
 import com.voyra.crm.repository.PlatformSettingRepository;
 import com.voyra.crm.security.SecurityContextUtil;
+import com.voyra.crm.util.ValidationPatterns;
+import com.voyra.crm.models.VoyraLegal;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -22,6 +27,7 @@ import java.util.Map;
 import java.util.Set;
 
 /** Platform-wide settings read by the pricing engine. Typed getters fall back to the seeded defaults. */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class PlatformSettingService {
@@ -33,19 +39,29 @@ public class PlatformSettingService {
     static final String REFERENCE_FARE_BASKET = "reference_fare_basket";
     static final String SKU_PRICES = "sku_prices";
     static final String FOUNDING_AGENCIES = "founding_agencies";
+    static final String VOYRA_LEGAL_NAME = "voyra_legal_name";
+    static final String VOYRA_GSTIN = "voyra_gstin";
+    static final String VOYRA_ADDRESS = "voyra_address";
+    static final String VOYRA_STATE_CODE = "voyra_state_code";
+    static final String SUBSCRIPTION_SAC = "subscription_sac";
     /** Monthly INR, excl. GST: one per SKU (STAFF_SEATS per seat) plus SUITE, which includes 5 seats. */
     private static final Set<String> SKU_PRICE_KEYS = Set.of("CRM_CORE", "STAFF_SEATS", "ACCOUNTS_GST", "REPORTS", "VISA", "SUITE");
 
-    private static final Map<String, String> DEFAULTS = Map.of(
-            DISCOUNT_BASE, "GROSS",
-            TDS_RATE, "0",
-            COMMISSION_ESTIMATE_PCT, "5",
-            VOYRA_CANCEL_FEE, "0",
-            SKU_PRICES, "{\"CRM_CORE\":2499,\"STAFF_SEATS\":399,\"ACCOUNTS_GST\":1999,\"REPORTS\":699,\"VISA\":499,\"SUITE\":4999}",
-            FOUNDING_AGENCIES, "[\"Voyra Global\"]",
-            REFERENCE_FARE_BASKET, "[{\"label\":\"Domestic LCC\",\"gross\":5000,\"base\":3500},"
+    private static final Map<String, String> DEFAULTS = Map.ofEntries(
+            Map.entry(DISCOUNT_BASE, "GROSS"),
+            Map.entry(TDS_RATE, "0"),
+            Map.entry(COMMISSION_ESTIMATE_PCT, "5"),
+            Map.entry(VOYRA_CANCEL_FEE, "0"),
+            Map.entry(SKU_PRICES, "{\"CRM_CORE\":2499,\"STAFF_SEATS\":399,\"ACCOUNTS_GST\":1999,\"REPORTS\":699,\"VISA\":499,\"SUITE\":4999}"),
+            Map.entry(FOUNDING_AGENCIES, "[\"Voyra Global\"]"),
+            Map.entry(REFERENCE_FARE_BASKET, "[{\"label\":\"Domestic LCC\",\"gross\":5000,\"base\":3500},"
                     + "{\"label\":\"Domestic FSC\",\"gross\":9000,\"base\":6000},"
-                    + "{\"label\":\"International\",\"gross\":45000,\"base\":22000}]");
+                    + "{\"label\":\"International\",\"gross\":45000,\"base\":22000}]"),
+            Map.entry(VOYRA_LEGAL_NAME, ""),
+            Map.entry(VOYRA_GSTIN, ""),
+            Map.entry(VOYRA_ADDRESS, ""),
+            Map.entry(VOYRA_STATE_CODE, ""),
+            Map.entry(SUBSCRIPTION_SAC, "998314"));
 
     private final PlatformSettingRepository repository;
     private final PlatformAuditService auditService;
@@ -96,6 +112,38 @@ public class PlatformSettingService {
         return readJson(FOUNDING_AGENCIES, raw(FOUNDING_AGENCIES), new TypeReference<>() { });
     }
 
+    /** Voyra's identity on subscription tax invoices; blanks are null and the state code falls back to the GSTIN. */
+    @Transactional(readOnly = true)
+    public VoyraLegal voyraLegal() {
+        String gstin = blankToNull(raw(VOYRA_GSTIN));
+        gstin = gstin == null ? null : gstin.toUpperCase(java.util.Locale.ROOT);
+        String state = blankToNull(raw(VOYRA_STATE_CODE));
+        return new VoyraLegal(blankToNull(raw(VOYRA_LEGAL_NAME)), gstin, blankToNull(raw(VOYRA_ADDRESS)),
+                state != null ? state : gstin != null ? gstin.substring(0, 2) : null);
+    }
+
+    /** SAC printed on subscription invoices (998314: IT design and development / SaaS). */
+    @Transactional(readOnly = true)
+    public String subscriptionSac() {
+        return raw(SUBSCRIPTION_SAC);
+    }
+
+    /** Subscription tax invoices need Voyra's GSTIN; empty is allowed locally, so say so loudly. */
+    @EventListener(ApplicationReadyEvent.class)
+    public void warnIfVoyraGstinMissing() {
+        try {
+            if (blankToNull(raw(VOYRA_GSTIN)) == null) {
+                log.warn("Platform setting voyra_gstin is empty - subscription invoices print without Voyra's GSTIN. Set it in Platform settings.");
+            }
+        } catch (RuntimeException e) {
+            log.warn("Could not read platform setting voyra_gstin at startup: {}", e.getMessage());
+        }
+    }
+
+    private static String blankToNull(String v) {
+        return v == null || v.isBlank() ? null : v.trim();
+    }
+
     @Transactional
     public PlatformSettingResponse set(String key, String value) {
         if (!DEFAULTS.containsKey(key)) {
@@ -142,6 +190,25 @@ public class PlatformSettingService {
                             + ", each a monthly INR price between 0 and 1000000");
                 }
             }
+            case VOYRA_LEGAL_NAME -> requireLength(key, v, 200);
+            case VOYRA_ADDRESS -> requireLength(key, v, 500);
+            case VOYRA_GSTIN -> {
+                if (!v.matches(ValidationPatterns.GSTIN)) {
+                    throw new IllegalArgumentException(key + " must be a 15-character GSTIN (e.g. 27AAACV1234F1Z5) or empty");
+                }
+                ValidationPatterns.requireGstinMatchesState(v, raw(VOYRA_STATE_CODE));
+            }
+            case VOYRA_STATE_CODE -> {
+                if (!v.isEmpty() && !v.matches("[0-9]{2}")) {
+                    throw new IllegalArgumentException(key + " must be a 2-digit GST state code (e.g. 27) or empty");
+                }
+                ValidationPatterns.requireGstinMatchesState(raw(VOYRA_GSTIN), v);
+            }
+            case SUBSCRIPTION_SAC -> {
+                if (!v.matches("[0-9]{4,8}")) {
+                    throw new IllegalArgumentException(key + " must be a 4-8 digit SAC code");
+                }
+            }
             case FOUNDING_AGENCIES -> {
                 List<String> names = readJson(key, v, new TypeReference<>() { });
                 if (names == null || names.stream().anyMatch(n -> n == null || n.isBlank() || n.length() > 150)) {
@@ -160,6 +227,12 @@ public class PlatformSettingService {
                     throw new IllegalArgumentException(key + " needs at least one fare, each with a label and 0 <= base <= gross, gross above 0");
                 }
             }
+        }
+    }
+
+    private static void requireLength(String key, String v, int max) {
+        if (v.length() > max) {
+            throw new IllegalArgumentException(key + " must be at most " + max + " characters");
         }
     }
 

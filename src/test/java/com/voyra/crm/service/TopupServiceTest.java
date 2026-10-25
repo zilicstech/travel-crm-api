@@ -263,14 +263,22 @@ class TopupServiceTest {
 
     @Test
     void simulateIs404WhenProviderIsRazorpay() {
-        given(paymentGateway.name()).willReturn("razorpay");
+        org.mockito.Mockito.lenient().when(paymentGateway.name()).thenReturn("razorpay");
         assertThatThrownBy(() -> service.simulate("T1", "R1")).isInstanceOf(NotFoundException.class);
         verifyNoInteractions(webhookService, walletService);
     }
 
     @Test
+    void simulateIs404WhenSimulationIsSwitchedOffEvenOnTheStub() {
+        org.mockito.Mockito.lenient().when(paymentGateway.name()).thenReturn("stub");
+        given(paymentGateway.simulateEnabled()).willReturn(false);
+        assertThatThrownBy(() -> service.simulate("T1", "R1")).isInstanceOf(NotFoundException.class);
+        verifyNoInteractions(webhookService, topupRepository);
+    }
+
+    @Test
     void simulateIs404ForAnotherAgencysTopup() {
-        given(paymentGateway.name()).willReturn("stub");
+        given(paymentGateway.simulateEnabled()).willReturn(true);
         TopupRequest t = pending().toBuilder().tenantId("T2").mode(TopupMode.GATEWAY).gatewayOrderId("order_1").build();
         given(topupRepository.findById("R1")).willReturn(Optional.of(t));
         assertThatThrownBy(() -> service.simulate("T1", "R1")).isInstanceOf(NotFoundException.class);
@@ -279,7 +287,7 @@ class TopupServiceTest {
 
     @Test
     void simulateRefusedOnANonTestWallet() {
-        given(paymentGateway.name()).willReturn("stub");
+        given(paymentGateway.simulateEnabled()).willReturn(true);
         TopupRequest t = pending().toBuilder().mode(TopupMode.GATEWAY).gatewayOrderId("order_1").build();
         given(topupRepository.findById("R1")).willReturn(Optional.of(t));
         given(walletRepository.findByTenantId("T1")).willReturn(Optional.of(wallet(WalletStatus.OPEN)));
@@ -291,7 +299,7 @@ class TopupServiceTest {
 
     @Test
     void simulateRunsACapturedEventThroughTheWebhookHandler() {
-        given(paymentGateway.name()).willReturn("stub");
+        given(paymentGateway.simulateEnabled()).willReturn(true);
         TopupRequest t = pending().toBuilder().mode(TopupMode.GATEWAY).gatewayOrderId("order_1").build();
         given(topupRepository.findById("R1")).willReturn(Optional.of(t));
         given(walletRepository.findByTenantId("T1")).willReturn(Optional.of(wallet(WalletStatus.OPEN).toBuilder().isTest(true).build()));

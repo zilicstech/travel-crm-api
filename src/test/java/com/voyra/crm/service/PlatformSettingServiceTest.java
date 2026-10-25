@@ -171,4 +171,29 @@ class PlatformSettingServiceTest {
         SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
                 new CustomUserPrincipal("U1", "admin", UserType.SUPER_ADMIN, null), null));
     }
+
+    @Test
+    void voyraLegalSettingsAreValidatedAndMayBeEmpty() {
+        bad("voyra_gstin", "27AAACV1234F1Z");
+        bad("voyra_gstin", "AAACV1234F1Z527");
+        bad("voyra_state_code", "7");
+        bad("voyra_state_code", "MH");
+        bad("subscription_sac", "");
+        bad("subscription_sac", "abc");
+        bad("voyra_legal_name", "x".repeat(201));
+        bad("voyra_address", "x".repeat(501));
+        assertThat(service().voyraLegal()).isEqualTo(new com.voyra.crm.models.VoyraLegal(null, null, null, null));
+        assertThat(service().subscriptionSac()).isEqualTo("998314");
+    }
+
+    @Test
+    void voyraStateFallsBackToItsGstin() {
+        org.mockito.Mockito.lenient().when(repository.findById("voyra_gstin")).thenReturn(Optional.of(PlatformSetting.builder().key("voyra_gstin").value("27AAACV1234F1Z5").build()));
+        org.mockito.Mockito.lenient().when(repository.findById("voyra_legal_name")).thenReturn(Optional.of(PlatformSetting.builder().key("voyra_legal_name").value("Voyra Travel Pvt Ltd").build()));
+
+        com.voyra.crm.models.VoyraLegal legal = service().voyraLegal();
+
+        assertThat(legal.stateCode()).isEqualTo("27");
+        assertThat(legal.legalName()).isEqualTo("Voyra Travel Pvt Ltd");
+    }
 }

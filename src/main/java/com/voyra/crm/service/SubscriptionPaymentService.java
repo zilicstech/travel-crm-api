@@ -69,11 +69,11 @@ public class SubscriptionPaymentService {
     }
 
     /**
-     * Stub provider and test wallets only (404 / 409 otherwise): pays the caller's own invoice by running a
+     * Stub provider with simulation switched on, and test wallets only (404 / 409 otherwise): pays the caller's own invoice by running a
      * payment.captured event through the real webhook handler. Not transactional, so the handler commits before the re-read.
      */
     public SubscriptionInvoiceResponse simulate(String tenantId, String invoiceId) {
-        if (!stub()) {
+        if (!gateway.simulateEnabled()) {
             throw new NotFoundException("Invoice not found");
         }
         SubscriptionInvoice inv = invoiceRepository.findById(invoiceId).filter(i -> i.getTenantId().equals(tenantId))

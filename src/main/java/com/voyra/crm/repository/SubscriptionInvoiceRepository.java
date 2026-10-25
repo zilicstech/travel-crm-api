@@ -34,6 +34,6 @@ public interface SubscriptionInvoiceRepository extends JpaRepository<Subscriptio
 
     /** Only the key: a full save here could overwrite a settlement that committed after the invoice was read. */
     @Modifying
-    @Query("update SubscriptionInvoice i set i.pdfKey = :key where i.id = :id and i.pdfKey is null")
-    int setPdfKeyIfMissing(@Param("id") String id, @Param("key") String key);
+    @Query("update SubscriptionInvoice i set i.pdfKey = :key where i.id = :id")
+    int setPdfKey(@Param("id") String id, @Param("key") String key);
 }

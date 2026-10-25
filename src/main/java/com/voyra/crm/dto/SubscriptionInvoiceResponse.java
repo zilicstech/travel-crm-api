@@ -27,8 +27,17 @@ public class SubscriptionInvoiceResponse {
     @Schema(description = "Taxable value, excluding GST", example = "4999.00")
     private BigDecimal amount;
 
-    @Schema(description = "GST at 18 %", example = "899.82")
+    @Schema(description = "GST at 18 % (cgst + sgst, or igst)", example = "899.82")
     private BigDecimal gst;
+
+    @Schema(description = "CGST 9 % when the agency is in Voyra's state, else 0", example = "449.91")
+    private BigDecimal cgst;
+
+    @Schema(description = "SGST 9 % when the agency is in Voyra's state, else 0", example = "449.91")
+    private BigDecimal sgst;
+
+    @Schema(description = "IGST 18 % when the agency is in another (or unknown) state, else 0", example = "0.00")
+    private BigDecimal igst;
 
     @Schema(description = "Total including GST", example = "5898.82")
     private BigDecimal total;

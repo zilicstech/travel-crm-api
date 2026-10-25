@@ -21,4 +21,7 @@ public interface PaymentGateway {
     String publicKeyId();
 
     String name();
+
+    /** True only for the stub gateway with app.payments.simulate-enabled on: the simulate endpoints answer 404 otherwise. */
+    boolean simulateEnabled();
 }

@@ -10,7 +10,10 @@ import com.voyra.crm.enums.UserType;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.PlatformAdminRepository;
 import com.voyra.crm.repository.TenantRepository;
+import com.voyra.crm.models.Entitlements;
 import com.voyra.crm.security.JwtService;
+import com.voyra.crm.security.SecurityContextUtil;
+import org.springframework.security.access.AccessDeniedException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -43,6 +46,15 @@ public class AuthService {
     private final JwtService jwtService;
     private final BaseCurrency baseCurrency;
     private final EntitlementService entitlementService;
+
+    /** The caller's agency entitlements, same shape as at login; refreshed by the frontend after plan changes. */
+    public Entitlements currentEntitlements() {
+        String tenantId = SecurityContextUtil.getCurrentUserOrThrow().tenantId();
+        if (tenantId == null) {
+            throw new AccessDeniedException("No agency for the current user");
+        }
+        return entitlementService.resolve(tenantId);
+    }
 
     /**
      * Resolves the principal from the credentials alone - no role is supplied by the caller.

@@ -3,6 +3,8 @@ package com.voyra.crm.service;
 import com.voyra.crm.dto.SubscriptionInvoiceResponse;
 import com.voyra.crm.entity.Subscription;
 import com.voyra.crm.entity.SubscriptionInvoice;
+import com.voyra.crm.entity.Tenant;
+import com.voyra.crm.models.VoyraLegal;
 import com.voyra.crm.enums.BillingCycle;
 import com.voyra.crm.enums.PlatformAuditAction;
 import com.voyra.crm.enums.Sku;
@@ -18,8 +20,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.mockito.junit.jupiter.MockitoSettings;
-import org.mockito.quality.Strictness;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
 
@@ -39,13 +39,13 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
 @ExtendWith(MockitoExtension.class)
-@MockitoSettings(strictness = Strictness.LENIENT)
 class SubscriptionBillingServiceTest {
 
     private static final Map<String, BigDecimal> PRICES = Map.of("CRM_CORE", new BigDecimal("2499"), "STAFF_SEATS",
@@ -69,9 +69,11 @@ class SubscriptionBillingServiceTest {
     void setUp() {
         service = new SubscriptionBillingService(subscriptionRepository, invoiceRepository, tenantRepository, settingService,
                 entitlementService, auditService, notificationService, fileStorageService, jdbcTemplate, transactionManager);
-        given(settingService.skuPrices()).willReturn(PRICES);
-        given(invoiceRepository.save(any(SubscriptionInvoice.class))).willAnswer(i -> i.getArgument(0));
-        given(jdbcTemplate.queryForObject(anyString(), eq(Long.class), any(), any())).willReturn(42L);
+        lenient().when(settingService.skuPrices()).thenReturn(PRICES);
+        lenient().when(settingService.voyraLegal()).thenReturn(new VoyraLegal("Voyra Travel Pvt Ltd", "27AAACV1234F1Z5", "Andheri, Mumbai", "27"));
+        lenient().when(settingService.subscriptionSac()).thenReturn("998314");
+        lenient().when(invoiceRepository.save(any(SubscriptionInvoice.class))).thenAnswer(i -> i.getArgument(0));
+        lenient().when(jdbcTemplate.queryForObject(anyString(), eq(Long.class), any(), any())).thenReturn(42L);
     }
 
     private static Subscription suite(int extraSeats, BillingCycle cycle) {
@@ -90,7 +92,8 @@ class SubscriptionBillingServiceTest {
                 .lines(List.of()).amount(new BigDecimal("4999.00")).gst(new BigDecimal("899.82"))
                 .total(new BigDecimal("5898.82")).status(status).dueAt(Instant.parse("2026-11-08T00:00:00Z"))
                 .createdAt(Instant.now()).build();
-        given(invoiceRepository.findByIdForUpdate("I1")).willReturn(Optional.of(inv));
+        lenient().when(invoiceRepository.findByIdForUpdate("I1")).thenReturn(Optional.of(inv));
+        lenient().when(invoiceRepository.findById("I1")).thenReturn(Optional.of(inv));
         return inv;
     }
 
@@ -316,18 +319,132 @@ class SubscriptionBillingServiceTest {
     void pdfIsRenderedAndStoredOnceThenServedFromStorage() {
         SubscriptionInvoice inv = issued("ISSUED");
         inv.setLines(SubscriptionBillingService.lines(suite(1, BillingCycle.MONTHLY), PRICES));
-        given(invoiceRepository.findById("I1")).willReturn(Optional.of(inv));
         given(fileStorageService.store(eq("platform"), eq("subscription-invoices/T1"), eq("I1"), any())).willReturn("key1");
 
         SubscriptionBillingService.InvoicePdf pdf = service.pdf("T1", "I1");
 
         assertThat(pdf.fileName()).isEqualTo("VOY-SUB-2026-1.pdf");
-        verify(invoiceRepository).setPdfKeyIfMissing("I1", "key1");
-        verify(fileStorageService).retrieve("key1");
+        verify(invoiceRepository).setPdfKey("I1", "key1");
 
-        inv.setPdfKey("key1");
         service.pdf("T1", "I1");
+        verify(fileStorageService).retrieve("key1");
         verify(fileStorageService, times(1)).store(anyString(), anyString(), anyString(), any());
         assertThatThrownBy(() -> service.pdf("T2", "I1")).isInstanceOf(com.voyra.crm.exception.NotFoundException.class);
+    }
+
+    // ---- review fixes
+
+    @Test
+    void raiseNowIsRefusedWhileAnInvoiceIsOpen() {
+        Subscription s = suite(0, BillingCycle.MONTHLY).toBuilder().status(SubscriptionStatus.READ_ONLY)
+                .periodEnd(Instant.now().minus(Duration.ofDays(20))).build();
+        given(subscriptionRepository.findByTenantIdForUpdate("T1")).willReturn(Optional.of(s));
+        given(invoiceRepository.findFirstByTenantIdAndStatusOrderByDueAtAsc("T1", "ISSUED"))
+                .willReturn(Optional.of(SubscriptionInvoice.builder().id("I0").number("VOY-SUB-2026-7").status("ISSUED").build()));
+
+        assertThatThrownBy(() -> service.raiseNow("T1")).isInstanceOf(IllegalStateException.class)
+                .hasMessage("Void or settle invoice VOY-SUB-2026-7 first");
+        verify(invoiceRepository, never()).save(any());
+    }
+
+    private static Tenant agency(String stateCode, String gstin) {
+        return Tenant.builder().id("T1").agencyName("Sky Trips").legalName("Sky Trips LLP").gstNumber(gstin)
+                .address("MG Road, Pune").stateCode(stateCode).build();
+    }
+
+    @Test
+    void sameStateAsVoyraSplitsCgstAndSgstAndSnapshotsBothParties() {
+        given(tenantRepository.findById("T1")).willReturn(Optional.of(agency("27", "27ABCDE1234F1Z5")));
+        Instant start = Instant.parse("2026-11-01T00:00:00Z");
+
+        SubscriptionInvoice inv = service.issue(suite(0, BillingCycle.MONTHLY), start, start);
+
+        assertThat(inv.getCgst()).isEqualByComparingTo("449.91");  // 4999 x 9 %
+        assertThat(inv.getSgst()).isEqualByComparingTo("449.91");
+        assertThat(inv.getIgst()).isEqualByComparingTo("0");
+        assertThat(inv.getGst()).isEqualByComparingTo("899.82");
+        assertThat(inv.getTotal()).isEqualByComparingTo("5898.82");
+        assertThat(inv.getSacCode()).isEqualTo("998314");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> seller = (Map<String, Object>) inv.getBillingDetails().get("seller");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> buyer = (Map<String, Object>) inv.getBillingDetails().get("buyer");
+        assertThat(seller).containsEntry("gstin", "27AAACV1234F1Z5").containsEntry("stateCode", "27");
+        assertThat(buyer).containsEntry("name", "Sky Trips LLP").containsEntry("gstin", "27ABCDE1234F1Z5")
+                .containsEntry("address", "MG Road, Pune").containsEntry("stateCode", "27");
+        assertThat(SubscriptionBillingService.toResponse(inv).getCgst()).isEqualByComparingTo("449.91");
+    }
+
+    @Test
+    void anotherStateIsIgstAt18Percent() {
+        given(tenantRepository.findById("T1")).willReturn(Optional.of(agency("29", null)));
+        Instant start = Instant.parse("2026-11-01T00:00:00Z");
+
+        SubscriptionInvoice inv = service.issue(suite(0, BillingCycle.MONTHLY), start, start);
+
+        assertThat(inv.getIgst()).isEqualByComparingTo("899.82");
+        assertThat(inv.getCgst()).isEqualByComparingTo("0");
+        assertThat(inv.getSgst()).isEqualByComparingTo("0");
+        assertThat(inv.getGst()).isEqualByComparingTo("899.82");
+    }
+
+    @Test
+    void agencyStateFallsBackToItsGstinAndUnknownStateIsIgst() {
+        given(tenantRepository.findById("T1")).willReturn(Optional.of(agency(null, "27ABCDE1234F1Z5")));
+        Instant start = Instant.parse("2026-11-01T00:00:00Z");
+        assertThat(service.issue(suite(0, BillingCycle.MONTHLY), start, start).getCgst()).isEqualByComparingTo("449.91");
+
+        given(tenantRepository.findById("T1")).willReturn(Optional.of(agency(null, null)));
+        assertThat(service.issue(suite(0, BillingCycle.MONTHLY), start, start).getIgst()).isEqualByComparingTo("899.82");
+    }
+
+    @Test
+    void settlingReRendersAndReStoresThePdf() {
+        SubscriptionInvoice inv = issued("ISSUED");
+        inv.setPdfKey("old");
+        given(subscriptionRepository.findByTenantIdForUpdate("T1")).willReturn(Optional.of(suite(0, BillingCycle.MONTHLY)));
+        given(fileStorageService.store(eq("platform"), eq("subscription-invoices/T1"), eq("I1"), any())).willReturn("paid-copy");
+
+        service.markPaid("I1", "pay_1");
+
+        verify(invoiceRepository).setPdfKey("I1", "paid-copy");
+        verify(fileStorageService).delete("old");
+    }
+
+    @Test
+    void voidingReRendersAndReStoresThePdf() {
+        issued("ISSUED");
+        given(subscriptionRepository.findByTenantIdForUpdate("T1")).willReturn(Optional.of(suite(0, BillingCycle.MONTHLY)));
+        given(fileStorageService.store(eq("platform"), eq("subscription-invoices/T1"), eq("I1"), any())).willReturn("void-copy");
+
+        service.voidInvoice("T1", "I1", "Plan changed");
+
+        verify(invoiceRepository).setPdfKey("I1", "void-copy");
+    }
+
+    @Test
+    void storageFailureWhenServingReturnsFreshlyRenderedBytes() throws Exception {
+        SubscriptionInvoice inv = issued("PAID");
+        inv.setPdfKey("gone");
+        inv.setPaidAt(Instant.now());
+        given(fileStorageService.retrieve("gone")).willThrow(new IllegalStateException("bucket down"));
+        given(fileStorageService.store(any(), any(), any(), any())).willThrow(new IllegalStateException("bucket down"));
+
+        SubscriptionBillingService.InvoicePdf pdf = service.pdf("T1", "I1");
+
+        assertThat(new String(pdf.resource().getInputStream().readNBytes(4))).isEqualTo("%PDF");
+    }
+
+    @Test
+    void payingSetsAPeriodStartWhenThereWasNone() {
+        SubscriptionInvoice inv = issued("ISSUED");
+        Subscription s = suite(0, BillingCycle.MONTHLY).toBuilder().periodStart(null)
+                .periodEnd(Instant.parse("2027-06-01T00:00:00Z")).build();
+        given(subscriptionRepository.findByTenantIdForUpdate("T1")).willReturn(Optional.of(s));
+
+        service.markPaid("I1", "pay_1");
+
+        assertThat(s.getPeriodStart()).isNotNull();
+        assertThat(s.getPeriodEnd()).isNotNull();
     }
 }

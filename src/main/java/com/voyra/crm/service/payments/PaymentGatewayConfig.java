@@ -27,8 +27,9 @@ public class PaymentGatewayConfig {
 
     @Bean
     @ConditionalOnProperty(name = "app.payments.provider", havingValue = "stub", matchIfMissing = true)
-    public PaymentGateway stubPaymentGateway() {
-        log.warn("Payment provider is STUB - no real payments; simulated top-ups allowed on test wallets only");
-        return new StubPaymentGateway();
+    public PaymentGateway stubPaymentGateway(@Value("${app.payments.simulate-enabled:true}") boolean simulateEnabled) {
+        log.warn("Payment provider is STUB - no real payments; simulated payments {}", simulateEnabled
+                ? "allowed on test wallets only" : "switched off (app.payments.simulate-enabled=false)");
+        return new StubPaymentGateway(simulateEnabled);
     }
 }

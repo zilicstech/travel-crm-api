@@ -142,8 +142,13 @@ public class GatewayWebhookService {
             return WebhookOutcome.PROCESSED;
         }
         if (order.getPurpose() == GatewayOrderPurpose.SUBSCRIPTION) {
-            // Never a wallet call. Idempotent by payment id; a capture for a PAID/VOID invoice alerts and changes nothing.
+            // Never a wallet call. Idempotent by payment id: a redelivery finds this order PAID and markPaid a no-op.
             if (!billingService.markPaid(order.getRefId(), paymentId)) {
+                // A PAID order is a redelivery. Otherwise the capture was not applied (invoice already paid or void; billing
+                // alerted): FLAGGED stops reconciliation re-trying it.
+                if (order.getStatus() != GatewayOrderStatus.PAID) {
+                    order.setStatus(GatewayOrderStatus.FLAGGED);
+                }
                 return WebhookOutcome.IGNORED;
             }
             order.setStatus(GatewayOrderStatus.PAID);

@@ -2,6 +2,7 @@ package com.voyra.crm.service;
 
 import com.voyra.crm.entity.GatewayOrder;
 import com.voyra.crm.entity.TopupRequest;
+import com.voyra.crm.enums.GatewayOrderPurpose;
 import com.voyra.crm.enums.GatewayOrderStatus;
 import com.voyra.crm.enums.TopupMode;
 import com.voyra.crm.enums.TopupStatus;
@@ -20,9 +21,11 @@ import java.time.Instant;
 import java.util.List;
 
 /**
- * Catches top-ups whose webhook never arrived: PENDING gateway top-ups older than 15 minutes are checked against the
+ * Catches gateway payments whose webhook never arrived. Top-ups: PENDING gateway top-ups older than 15 minutes are checked against the
  * gateway and credited through the webhook's own capture path (same {@code gw:} key, so a late webhook is a no-op);
- * ones unpaid after 24 hours expire. Each top-up runs in its own transaction so one failure rolls back only itself.
+ * ones unpaid after 24 hours expire. Subscription orders (CREATED, older than 15 minutes) get the same treatment: a captured
+ * payment goes through the webhook's capture path (so billing's markPaid, idempotent by payment id), unpaid after 24 hours
+ * expires (paying again opens a new order). Each row runs in its own transaction so one failure rolls back only itself.
  */
 @Service
 @Slf4j
@@ -60,6 +63,30 @@ public class GatewayReconciliationService {
         }
         if (!due.isEmpty()) {
             log.info("Gateway reconciliation checked {} pending top-up(s)", due.size());
+        }
+        List<GatewayOrder> subscriptionOrders = orderRepository.findByPurposeAndStatusAndCreatedAtBefore(
+                GatewayOrderPurpose.SUBSCRIPTION, GatewayOrderStatus.CREATED, Instant.now().minus(MIN_AGE));
+        for (GatewayOrder o : subscriptionOrders) {
+            try {
+                tx.executeWithoutResult(s -> reconcileSubscriptionOrder(o.getGatewayOrderId()));
+            } catch (Exception e) {
+                log.error("Gateway reconciliation failed for subscription order {}: {}", o.getGatewayOrderId(), e.getMessage(), e);
+            }
+        }
+    }
+
+    private void reconcileSubscriptionOrder(String gatewayOrderId) {
+        GatewayOrder order = orderRepository.findByGatewayOrderIdForUpdate(gatewayOrderId).orElse(null);
+        if (order == null || order.getStatus() != GatewayOrderStatus.CREATED) {
+            return;  // a webhook got there first
+        }
+        GatewayPayment paid = gateway.fetchOrderPayments(gatewayOrderId).stream()
+                .filter(p -> "captured".equals(p.status())).findFirst().orElse(null);
+        if (paid != null) {
+            webhookService.applyCapture(order, paid);
+        } else if (order.getCreatedAt().isBefore(Instant.now().minus(EXPIRY))) {
+            order.setStatus(GatewayOrderStatus.EXPIRED);
+            order.setUpdatedAt(Instant.now());
         }
     }
 

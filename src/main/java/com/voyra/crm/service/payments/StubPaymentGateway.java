@@ -11,6 +11,12 @@ import java.util.UUID;
 /** Stand-in until the Razorpay keys arrive: fake order ids, and payments arrive only through the simulate endpoint. */
 public class StubPaymentGateway implements PaymentGateway {
 
+    private final boolean simulateEnabled;
+
+    public StubPaymentGateway(boolean simulateEnabled) {
+        this.simulateEnabled = simulateEnabled;
+    }
+
     @Override
     public GatewayOrderCreated createOrder(BigDecimal amountInr, String receipt, Map<String, String> notes) {
         return new GatewayOrderCreated("order_stub_" + UUID.randomUUID().toString().replace("-", ""),
@@ -36,5 +42,10 @@ public class StubPaymentGateway implements PaymentGateway {
     @Override
     public String name() {
         return "stub";
+    }
+
+    @Override
+    public boolean simulateEnabled() {
+        return simulateEnabled;
     }
 }

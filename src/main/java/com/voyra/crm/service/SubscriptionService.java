@@ -109,6 +109,14 @@ public class SubscriptionService {
         s.setSkus(skus);
         s.setSeats(plan == SubscriptionPlan.STARTER ? 0 : request.getSeats());
         s.setBillingCycle(request.getBillingCycle());
+        // A paid plan with no period would never be renewed: start one ending now, so the next daily run bills it.
+        boolean paidPlan = plan != SubscriptionPlan.STARTER && s.getWaivedReason() == null
+                && (s.getStatus() == SubscriptionStatus.ACTIVE || s.getStatus() == SubscriptionStatus.PAST_DUE);
+        if (paidPlan && (s.getPeriodStart() == null || s.getPeriodEnd() == null)) {
+            Instant now = Instant.now();
+            s.setPeriodStart(s.getPeriodStart() == null ? now : s.getPeriodStart());
+            s.setPeriodEnd(s.getPeriodEnd() == null ? now : s.getPeriodEnd());
+        }
         s.setUpdatedAt(Instant.now());
         subscriptionRepository.save(s);
         auditService.record(PlatformAuditAction.SUBSCRIPTION_CHANGE, "TENANT", tenantId, Map.of("before", before,

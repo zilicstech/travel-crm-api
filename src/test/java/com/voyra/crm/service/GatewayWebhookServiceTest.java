@@ -245,13 +245,14 @@ class GatewayWebhookServiceTest {
     }
 
     @Test
-    void subscriptionCaptureTheInvoiceRefusedLeavesTheOrderAsItWas() {
+    void subscriptionCaptureTheInvoiceRefusedFlagsTheOrderSoNothingRetriesIt() {
         GatewayOrder o = order(GatewayOrderPurpose.SUBSCRIPTION);
         given(billingService.markPaid("R1", "pay_1")).willReturn(false);
 
         assertThat(service.handle(payment("payment.captured", "pay_1", 50000, "INR"), "sig")).isEqualTo(WebhookOutcome.IGNORED);
 
-        assertThat(o.getStatus()).isEqualTo(GatewayOrderStatus.CREATED);
+        // captured but not applied (invoice already paid or void): billing alerted; FLAGGED keeps reconciliation off it
+        assertThat(o.getStatus()).isEqualTo(GatewayOrderStatus.FLAGGED);
         verifyNoInteractions(walletService);
     }
 

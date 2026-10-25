@@ -97,4 +97,9 @@ public class RazorpayPaymentGateway implements PaymentGateway {
             throw new SupplierException("Razorpay call failed: " + e.getClass().getSimpleName(), null);
         }
     }
+
+    @Override
+    public boolean simulateEnabled() {
+        return false;
+    }
 }

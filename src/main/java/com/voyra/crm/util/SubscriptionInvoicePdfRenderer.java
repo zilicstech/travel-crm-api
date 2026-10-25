@@ -11,7 +11,6 @@ import com.lowagie.text.pdf.PdfPCell;
 import com.lowagie.text.pdf.PdfPTable;
 import com.lowagie.text.pdf.PdfWriter;
 import com.voyra.crm.entity.SubscriptionInvoice;
-import com.voyra.crm.entity.Tenant;
 
 import java.io.ByteArrayOutputStream;
 import java.math.BigDecimal;
@@ -20,7 +19,11 @@ import java.time.format.DateTimeFormatter;
 import java.util.Locale;
 import java.util.Map;
 
-/** Voyra's subscription invoice to an agency, from the figures frozen on the invoice at issue (same OpenPDF style as CreditNotePdfRenderer). */
+/**
+ * Voyra's GST tax invoice to an agency for its subscription, entirely from what was frozen on the invoice at issue
+ * (lines, tax split, SAC, both parties) - re-rendering after payment or void changes only the status line.
+ * Same OpenPDF style as CreditNotePdfRenderer.
+ */
 public final class SubscriptionInvoicePdfRenderer {
 
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.ENGLISH)
@@ -29,8 +32,9 @@ public final class SubscriptionInvoicePdfRenderer {
     private SubscriptionInvoicePdfRenderer() {
     }
 
-    /** {@code agency} may be null (deleted tenant): the bill-to block then shows only the tenant id. */
-    public static byte[] write(SubscriptionInvoice inv, Tenant agency) {
+    public static byte[] write(SubscriptionInvoice inv) {
+        Map<String, Object> seller = party(inv, "seller");
+        Map<String, Object> buyer = party(inv, "buyer");
         Document document = new Document(PageSize.A4, 32, 32, 36, 36);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         try {
@@ -42,7 +46,13 @@ public final class SubscriptionInvoicePdfRenderer {
             Font bodyFont = FontFactory.getFont(FontFactory.HELVETICA, 9);
 
             document.add(new Paragraph("TAX INVOICE", titleFont));
-            document.add(new Paragraph("Voyra - CRM subscription", bodyFont));
+            document.add(new Paragraph(" "));
+
+            PdfPTable parties = new PdfPTable(2);
+            parties.setWidthPercentage(100);
+            parties.addCell(block("Supplier", text(seller.get("legalName"), "Voyra"), seller, labelFont, bodyFont));
+            parties.addCell(block("Billed To", text(buyer.get("name"), inv.getTenantId()), buyer, labelFont, bodyFont));
+            document.add(parties);
             document.add(new Paragraph(" "));
 
             PdfPTable meta = new PdfPTable(2);
@@ -51,14 +61,8 @@ public final class SubscriptionInvoicePdfRenderer {
             row(meta, "Invoice Date", date(inv.getCreatedAt()), labelFont, bodyFont);
             row(meta, "Period", date(inv.getPeriodStart()) + " - " + date(inv.getPeriodEnd()), labelFont, bodyFont);
             row(meta, "Due Date", date(inv.getDueAt()), labelFont, bodyFont);
-            row(meta, "Billed To", agency == null ? inv.getTenantId()
-                    : agency.getLegalName() != null ? agency.getLegalName() : agency.getAgencyName(), labelFont, bodyFont);
-            if (agency != null && agency.getGstNumber() != null) {
-                row(meta, "GSTIN", agency.getGstNumber(), labelFont, bodyFont);
-            }
-            if (agency != null && agency.getAddress() != null) {
-                row(meta, "Address", agency.getAddress(), labelFont, bodyFont);
-            }
+            row(meta, "Place of Supply", text(buyer.get("stateCode"), "-"), labelFont, bodyFont);
+            row(meta, "SAC", InvoicePdfRenderer.valueOr(inv.getSacCode()), labelFont, bodyFont);
             if ("PAID".equals(inv.getStatus())) {
                 row(meta, "Status", "Paid on " + date(inv.getPaidAt()), labelFont, bodyFont);
             } else if ("VOID".equals(inv.getStatus())) {
@@ -88,7 +92,13 @@ public final class SubscriptionInvoicePdfRenderer {
             totals.setWidthPercentage(50);
             totals.setHorizontalAlignment(Element.ALIGN_RIGHT);
             total(totals, "Taxable Value", InvoicePdfRenderer.money(inv.getAmount()), bodyFont);
-            total(totals, "GST @ 18%", InvoicePdfRenderer.money(inv.getGst()), bodyFont);
+            if (inv.getCgst() != null && inv.getCgst().signum() > 0) {
+                total(totals, "CGST @ 9%", InvoicePdfRenderer.money(inv.getCgst()), bodyFont);
+                total(totals, "SGST @ 9%", InvoicePdfRenderer.money(inv.getSgst()), bodyFont);
+            } else {
+                total(totals, "IGST @ 18%", InvoicePdfRenderer.money(inv.getIgst() != null && inv.getIgst().signum() > 0
+                        ? inv.getIgst() : inv.getGst()), bodyFont);
+            }
             total(totals, "Total (INR)", InvoicePdfRenderer.money(inv.getTotal()), labelFont);
             document.add(totals);
             document.add(new Paragraph(" "));
@@ -99,6 +109,30 @@ public final class SubscriptionInvoicePdfRenderer {
             }
         }
         return out.toByteArray();
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> party(SubscriptionInvoice inv, String key) {
+        Object value = inv.getBillingDetails() == null ? null : inv.getBillingDetails().get(key);
+        return value instanceof Map<?, ?> m ? (Map<String, Object>) m : Map.of();
+    }
+
+    private static String text(Object value, String fallback) {
+        return value == null || String.valueOf(value).isBlank() ? fallback : String.valueOf(value);
+    }
+
+    private static PdfPCell block(String title, String name, Map<String, Object> party, Font labelFont, Font bodyFont) {
+        Paragraph p = new Paragraph();
+        p.add(new Phrase(title + "\n", labelFont));
+        p.add(new Phrase(name + "\n", bodyFont));
+        if (party.get("address") != null) {
+            p.add(new Phrase(party.get("address") + "\n", bodyFont));
+        }
+        p.add(new Phrase("GSTIN: " + text(party.get("gstin"), "-") + "\n", bodyFont));
+        p.add(new Phrase("State code: " + text(party.get("stateCode"), "-"), bodyFont));
+        PdfPCell cell = new PdfPCell(p);
+        cell.setBorder(0);
+        return cell;
     }
 
     private static String date(java.time.Instant value) {

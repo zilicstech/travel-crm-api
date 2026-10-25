@@ -134,11 +134,11 @@ public class TopupService {
     }
 
     /**
-     * Stub provider and test wallets only (404 / 409 otherwise): pays the caller's own gateway top-up by running a payment.captured event
+     * Stub provider with simulation switched on, and test wallets only (404 / 409 otherwise): pays the caller's own gateway top-up by running a payment.captured event
      * through the real webhook handler. Not transactional, so the handler commits before the re-read.
      */
     public TopupResponse simulate(String tenantId, String id) {
-        if (!"stub".equals(paymentGateway.name())) {
+        if (!paymentGateway.simulateEnabled()) {
             throw new NotFoundException("Top-up not found");
         }
         TopupRequest t = topupRepository.findById(id)

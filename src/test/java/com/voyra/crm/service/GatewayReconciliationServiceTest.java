@@ -2,6 +2,7 @@ package com.voyra.crm.service;
 
 import com.voyra.crm.entity.GatewayOrder;
 import com.voyra.crm.entity.TopupRequest;
+import com.voyra.crm.enums.GatewayOrderPurpose;
 import com.voyra.crm.enums.GatewayOrderStatus;
 import com.voyra.crm.enums.TopupMode;
 import com.voyra.crm.enums.TopupStatus;
@@ -26,6 +27,7 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -124,5 +126,51 @@ class GatewayReconciliationServiceTest {
 
         assertThat(bad.getStatus()).isEqualTo(TopupStatus.PENDING);
         assertThat(good.getStatus()).isEqualTo(TopupStatus.EXPIRED);
+    }
+
+    private GatewayOrder subscriptionOrder(String id, Duration age) {
+        GatewayOrder o = GatewayOrder.builder().id("G" + id).gatewayOrderId("order_" + id).purpose(GatewayOrderPurpose.SUBSCRIPTION)
+                .refId("I" + id).amount(new BigDecimal("100.00")).status(GatewayOrderStatus.CREATED)
+                .createdAt(Instant.now().minus(age)).build();
+        given(orderRepository.findByGatewayOrderIdForUpdate("order_" + id)).willReturn(Optional.of(o));
+        given(orderRepository.findByPurposeAndStatusAndCreatedAtBefore(eq(GatewayOrderPurpose.SUBSCRIPTION),
+                eq(GatewayOrderStatus.CREATED), any())).willReturn(List.of(o));
+        return o;
+    }
+
+    @Test
+    void subscriptionOrderWithACapturedPaymentGoesThroughTheWebhookCapturePath() {
+        subscriptionOrder("S", Duration.ofMinutes(20));
+        GatewayPayment p = captured("S");
+        given(gateway.fetchOrderPayments("order_S")).willReturn(List.of(p));
+
+        service.reconcile();
+
+        verify(webhookService).applyCapture(any(GatewayOrder.class), eq(p));
+    }
+
+    @Test
+    void subscriptionOrderUnpaidAfter24HoursExpires() {
+        GatewayOrder o = subscriptionOrder("X", Duration.ofHours(25));
+        given(gateway.fetchOrderPayments("order_X")).willReturn(List.of());
+
+        service.reconcile();
+
+        assertThat(o.getStatus()).isEqualTo(GatewayOrderStatus.EXPIRED);
+        verify(webhookService, never()).applyCapture(any(), any());
+    }
+
+    @Test
+    void subscriptionOrderUnpaidForAFewHoursStaysOpenAndTheCutoffIs15Minutes() {
+        GatewayOrder o = subscriptionOrder("Y", Duration.ofHours(2));
+        given(gateway.fetchOrderPayments("order_Y")).willReturn(List.of());
+
+        service.reconcile();
+
+        assertThat(o.getStatus()).isEqualTo(GatewayOrderStatus.CREATED);
+        var cutoff = org.mockito.ArgumentCaptor.forClass(Instant.class);
+        verify(orderRepository).findByPurposeAndStatusAndCreatedAtBefore(eq(GatewayOrderPurpose.SUBSCRIPTION),
+                eq(GatewayOrderStatus.CREATED), cutoff.capture());
+        assertThat(Duration.between(cutoff.getValue(), Instant.now())).isBetween(Duration.ofMinutes(14), Duration.ofMinutes(16));
     }
 }

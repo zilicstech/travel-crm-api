@@ -20,8 +20,6 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.mockito.junit.jupiter.MockitoSettings;
-import org.mockito.quality.Strictness;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -35,12 +33,12 @@ import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
 @ExtendWith(MockitoExtension.class)
-@MockitoSettings(strictness = Strictness.LENIENT)
 class SubscriptionPaymentServiceTest {
 
     @Mock private SubscriptionInvoiceRepository invoiceRepository;
@@ -57,17 +55,17 @@ class SubscriptionPaymentServiceTest {
     void setUp() {
         inv = SubscriptionInvoice.builder().id("I1").tenantId("T1").number("VOY-SUB-2026-1").status("ISSUED")
                 .total(new BigDecimal("5898.82")).createdAt(Instant.now()).build();
-        given(invoiceRepository.findByIdForUpdate("I1")).willReturn(Optional.of(inv));
-        given(invoiceRepository.findById("I1")).willReturn(Optional.of(inv));
-        given(gateway.name()).willReturn("razorpay");
-        given(gateway.publicKeyId()).willReturn("rzp_test_1");
-        given(gateway.createOrder(any(), eq("I1"), anyMap())).willReturn(new GatewayOrderCreated("order_9", 589882L, "INR"));
-        given(orderRepository.save(any(GatewayOrder.class))).willAnswer(i -> i.getArgument(0));
-        given(tenantRepository.findById("T1")).willReturn(Optional.empty());
+        lenient().when(invoiceRepository.findByIdForUpdate("I1")).thenReturn(Optional.of(inv));
+        lenient().when(invoiceRepository.findById("I1")).thenReturn(Optional.of(inv));
+        lenient().when(gateway.name()).thenReturn("razorpay");
+        lenient().when(gateway.publicKeyId()).thenReturn("rzp_test_1");
+        lenient().when(gateway.createOrder(any(), eq("I1"), anyMap())).thenReturn(new GatewayOrderCreated("order_9", 589882L, "INR"));
+        lenient().when(orderRepository.save(any(GatewayOrder.class))).thenAnswer(i -> i.getArgument(0));
+        lenient().when(tenantRepository.findById("T1")).thenReturn(Optional.empty());
     }
 
     private void wallet(boolean test) {
-        given(walletRepository.findByTenantId("T1")).willReturn(Optional.of(Wallet.builder().id("W1").tenantId("T1").isTest(test).build()));
+        lenient().when(walletRepository.findByTenantId("T1")).thenReturn(Optional.of(Wallet.builder().id("W1").tenantId("T1").isTest(test).build()));
     }
 
     @Test
@@ -118,7 +116,7 @@ class SubscriptionPaymentServiceTest {
 
     @Test
     void simulateRunsACaptureThroughTheRealWebhookHandler() {
-        given(gateway.name()).willReturn("stub");
+        given(gateway.simulateEnabled()).willReturn(true);
         wallet(true);
         inv.setGatewayOrderId("order_stub_1");
 
@@ -133,9 +131,20 @@ class SubscriptionPaymentServiceTest {
         inv.setGatewayOrderId("order_stub_1");
         assertThatThrownBy(() -> service.simulate("T1", "I1")).isInstanceOf(NotFoundException.class);
 
-        given(gateway.name()).willReturn("stub");
+        given(gateway.simulateEnabled()).willReturn(true);
         wallet(false);
         assertThatThrownBy(() -> service.simulate("T1", "I1")).isInstanceOf(IllegalStateException.class);
+        verifyNoInteractions(webhookService);
+    }
+
+    @Test
+    void simulateIs404WhenSimulationIsSwitchedOffEvenOnTheStub() {
+        lenient().when(gateway.name()).thenReturn("stub");
+        given(gateway.simulateEnabled()).willReturn(false);
+        wallet(true);
+        inv.setGatewayOrderId("order_stub_1");
+
+        assertThatThrownBy(() -> service.simulate("T1", "I1")).isInstanceOf(NotFoundException.class);
         verifyNoInteractions(webhookService);
     }
 }

@@ -14,8 +14,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.mockito.junit.jupiter.MockitoSettings;
-import org.mockito.quality.Strictness;
 import org.springframework.transaction.PlatformTransactionManager;
 
 import java.time.Duration;
@@ -30,13 +28,13 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
 @ExtendWith(MockitoExtension.class)
-@MockitoSettings(strictness = Strictness.LENIENT)
 class SubscriptionLifecycleServiceTest {
 
     private static final Instant NOW = Instant.parse("2026-11-10T00:00:00Z");
@@ -54,11 +52,11 @@ class SubscriptionLifecycleServiceTest {
     void setUp() {
         service = new SubscriptionLifecycleService(subscriptionRepository, invoiceRepository, billingService,
                 entitlementService, notificationService, transactionManager);
-        given(invoiceRepository.findFirstByTenantIdAndStatusOrderByDueAtAsc("T1", "ISSUED")).willReturn(Optional.empty());
+        lenient().when(invoiceRepository.findFirstByTenantIdAndStatusOrderByDueAtAsc("T1", "ISSUED")).thenReturn(Optional.empty());
     }
 
     private Subscription stub(Subscription s) {
-        given(subscriptionRepository.findByTenantIdForUpdate("T1")).willReturn(Optional.of(s));
+        lenient().when(subscriptionRepository.findByTenantIdForUpdate("T1")).thenReturn(Optional.of(s));
         return s;
     }
 
@@ -74,8 +72,8 @@ class SubscriptionLifecycleServiceTest {
     }
 
     private void overdue(Instant dueAt) {
-        given(invoiceRepository.findFirstByTenantIdAndStatusOrderByDueAtAsc("T1", "ISSUED"))
-                .willReturn(Optional.of(SubscriptionInvoice.builder().id("I1").tenantId("T1").status("ISSUED").dueAt(dueAt).build()));
+        lenient().when(invoiceRepository.findFirstByTenantIdAndStatusOrderByDueAtAsc("T1", "ISSUED"))
+                .thenReturn(Optional.of(SubscriptionInvoice.builder().id("I1").tenantId("T1").status("ISSUED").dueAt(dueAt).build()));
     }
 
     @Test
