@@ -94,6 +94,9 @@ class WalletServiceTest {
                 .filter(e -> e.getId().equals(i.getArgument(0))).findFirst());
         lenient().when(entryRepository.existsByRelatedEntryIdAndType(anyString(), any())).thenAnswer(i -> entries.stream()
                 .anyMatch(e -> Objects.equals(e.getRelatedEntryId(), i.getArgument(0)) && e.getType() == i.getArgument(1)));
+        lenient().when(entryRepository.findFirstByRelatedEntryIdAndType(anyString(), any())).thenAnswer(i -> entries.stream()
+                .filter(e -> Objects.equals(e.getRelatedEntryId(), i.getArgument(0)) && e.getType() == i.getArgument(1))
+                .findFirst());
         lenient().when(entryRepository.findOpenHolds("W1")).thenAnswer(i -> entries.stream()
                 .filter(h -> h.getType() == WalletEntryType.HOLD)
                 .filter(h -> entries.stream().noneMatch(r -> r.getType() == WalletEntryType.HOLD_RELEASE
@@ -323,15 +326,44 @@ class WalletServiceTest {
     void adjustmentBelowZeroIsRefused() {
         fund("100");
 
-        assertThatThrownBy(() -> service.adjust(T, d("-150"), "Bank charge"))
+        assertThatThrownBy(() -> service.adjust(T, d("-150"), "Bank charge", "adj:c1"))
                 .isInstanceOfSatisfying(InsufficientBalanceException.class,
                         e -> assertThat(e.getAvailable()).isEqualByComparingTo("100"));
         assertThat(entries).isEmpty();
 
-        WalletEntry ok = service.adjust(T, d("-40"), "Bank charge");
+        WalletEntry ok = service.adjust(T, d("-40"), "Bank charge", "adj:c2");
         assertThat(ok.getType()).isEqualTo(WalletEntryType.ADJUSTMENT);
         assertThat(ok.getNarration()).isEqualTo("Bank charge");
         assertThat(wallet.getBalance()).isEqualByComparingTo("60");
+    }
+
+    @Test
+    void sameAdjustmentKeyPostsOnce() {
+        fund("100");
+
+        WalletEntry first = service.adjust(T, d("-40"), "Bank charge", "adj:req-1");
+        WalletEntry again = service.adjust(T, d("-40"), "Bank charge", "adj:req-1");
+
+        assertThat(again).isSameAs(first);
+        assertThat(first.getIdempotencyKey()).isEqualTo("adj:req-1");
+        assertThat(entries).hasSize(1);
+        assertThat(wallet.getBalance()).isEqualByComparingTo("60");
+    }
+
+    @Test
+    void debitHeldTwiceWithDifferentKeysDebitsOnce() {
+        fund("1000");
+        WalletEntry hold = service.hold(T, d("400"), "h1", "PLATFORM_BOOKING", "B1");
+
+        WalletEntry debit = service.debitHeld(hold.getId(), d("400"), "d1", "PLATFORM_BOOKING", "B1");
+        // the hold is now released by the first debitHeld; a retry under a fresh key must still find that debit
+        WalletEntry again = service.debitHeld(hold.getId(), d("400"), "d2", "PLATFORM_BOOKING", "B1");
+
+        assertThat(again).isSameAs(debit);
+        assertThat(debit.getRelatedEntryId()).isEqualTo(hold.getId());
+        assertThat(entries).extracting(WalletEntry::getType).containsExactly(WalletEntryType.HOLD,
+                WalletEntryType.HOLD_RELEASE, WalletEntryType.BOOKING_DEBIT);
+        assertThat(wallet.getBalance()).isEqualByComparingTo("600");
     }
 
     @Test

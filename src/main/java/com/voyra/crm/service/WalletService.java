@@ -121,7 +121,8 @@ public class WalletService {
     /**
      * Releases the hold (if still open) and debits {@code amount} once. A debit above what is available after the
      * release - a late ticket after an admin release, or a supplier charging more than the hold - debits what is
-     * there and opens a LATE_TICKET receivable for the shortfall.
+     * there and opens a LATE_TICKET receivable for the shortfall. A hold is debited at most once whatever key is
+     * passed: the BOOKING_DEBIT points at the hold, and a second call returns that entry.
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public WalletEntry debitHeld(String holdEntryId, BigDecimal amount, String idempotencyKey, String refType, String refId) {
@@ -132,11 +133,16 @@ public class WalletService {
         if (existing.isPresent()) {
             return existing.get();
         }
+        Optional<WalletEntry> priorDebit = entryRepository.findFirstByRelatedEntryIdAndType(hold.getId(),
+                WalletEntryType.BOOKING_DEBIT);
+        if (priorDebit.isPresent()) {
+            return priorDebit.get();
+        }
         if (!isReleased(hold)) {
             release(wallet, hold, idempotencyKey + ":release");
         }
         WalletEntry entry = debitCovered(wallet, WalletEntryType.BOOKING_DEBIT, amount, idempotencyKey, refType, refId,
-                ReceivableReason.LATE_TICKET);
+                ReceivableReason.LATE_TICKET, hold.getId());
         checkLowBalance(wallet);
         return entry;
     }
@@ -152,14 +158,14 @@ public class WalletService {
         if (existing.isPresent()) {
             return existing.get();
         }
-        WalletEntry entry = debitCovered(wallet, type, amount, idempotencyKey, refType, refId, reason);
+        WalletEntry entry = debitCovered(wallet, type, amount, idempotencyKey, refType, refId, reason, null);
         checkLowBalance(wallet);
         return entry;
     }
 
-    /** Admin correction. shortcut: a random idempotency key, so a double-submit posts twice; the caller's audit row shows it. */
+    /** Admin correction; a positive one settles DUE receivables like any credit. */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public WalletEntry adjust(String tenantId, BigDecimal signedAmount, String reason) {
+    public WalletEntry adjust(String tenantId, BigDecimal signedAmount, String reason, String idempotencyKey) {
         if (signedAmount == null || signedAmount.signum() == 0) {
             throw new IllegalArgumentException("Adjustment amount must not be zero");
         }
@@ -168,9 +174,12 @@ public class WalletService {
             throw new IllegalArgumentException("A reason is required for an adjustment");
         }
         Wallet wallet = lock(tenantId);
+        Optional<WalletEntry> existing = entryRepository.findByIdempotencyKey(idempotencyKey);
+        if (existing.isPresent()) {
+            return existing.get();
+        }
         requireOpen(wallet);
-        String key = "adj:" + UniqueIdResolver.resolve(entryRepository::existsById);
-        WalletPosting posting = new WalletPosting(WalletEntryType.ADJUSTMENT, signedAmount, key, null, null, reason, null);
+        WalletPosting posting = new WalletPosting(WalletEntryType.ADJUSTMENT, signedAmount, idempotencyKey, null, null, reason, null);
         WalletEntry entry;
         if (signedAmount.signum() > 0) {
             entry = creditLocked(wallet, posting);
@@ -247,11 +256,11 @@ public class WalletService {
     }
 
     private WalletEntry debitCovered(Wallet wallet, WalletEntryType type, BigDecimal amount, String idempotencyKey,
-                                     String refType, String refId, ReceivableReason reason) {
+                                     String refType, String refId, ReceivableReason reason, String relatedEntryId) {
         BigDecimal covered = amount.min(available(wallet));
         BigDecimal shortfall = amount.subtract(covered);
         WalletEntry entry = post(wallet, new WalletPosting(type, covered.negate(), idempotencyKey, refType, refId,
-                shortfall.signum() > 0 ? "Short by " + shortfall + " - receivable opened" : null, null));
+                shortfall.signum() > 0 ? "Short by " + shortfall + " - receivable opened" : null, relatedEntryId));
         if (shortfall.signum() > 0) {
             receivableRepository.save(PlatformReceivable.builder()
                     .id(UniqueIdResolver.resolve(receivableRepository::existsById))

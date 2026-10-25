@@ -18,6 +18,8 @@ public interface WalletEntryRepository extends JpaRepository<WalletEntry, String
 
     boolean existsByRelatedEntryIdAndType(String relatedEntryId, WalletEntryType type);
 
+    Optional<WalletEntry> findFirstByRelatedEntryIdAndType(String relatedEntryId, WalletEntryType type);
+
     /** HOLD rows no HOLD_RELEASE points at. */
     @Query("""
             SELECT h FROM WalletEntry h WHERE h.walletId = :walletId
