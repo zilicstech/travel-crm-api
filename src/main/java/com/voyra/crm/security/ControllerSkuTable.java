@@ -114,7 +114,7 @@ public final class ControllerSkuTable {
             entry(WalletController.class, NEVER_GATED),
             entry(TopupController.class, NEVER_GATED),
             entry(AgencyProfileController.class, NEVER_GATED),
-            // a read-only owner must still see the plan and pay (Task 4 adds the payment routes here)
+            // a read-only owner must still see the plan and pay (pay, simulate and PDF routes live here)
             entry(AgencySubscriptionController.class, NEVER_GATED),
             entry(PlatformAgencySubscriptionController.class, NEVER_GATED),
             entry(OwnerDashboardController.class, NEVER_GATED),

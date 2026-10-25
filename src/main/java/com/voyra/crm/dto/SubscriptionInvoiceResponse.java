@@ -24,6 +24,12 @@ public class SubscriptionInvoiceResponse {
     @Schema(description = "Period end")
     private Instant periodEnd;
 
+    @Schema(description = "Taxable value, excluding GST", example = "4999.00")
+    private BigDecimal amount;
+
+    @Schema(description = "GST at 18 %", example = "899.82")
+    private BigDecimal gst;
+
     @Schema(description = "Total including GST", example = "5898.82")
     private BigDecimal total;
 
@@ -35,4 +41,7 @@ public class SubscriptionInvoiceResponse {
 
     @Schema(description = "When it was paid", nullable = true)
     private Instant paidAt;
+
+    @Schema(description = "GATEWAY or BANK", nullable = true)
+    private String paidVia;
 }

@@ -9,11 +9,16 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 
-/** Voyra's invoice to an agency for its subscription - public schema. Task 4 issues and settles these. */
+/** Voyra's invoice to an agency for its subscription - public schema. Issued and settled by SubscriptionBillingService. */
 @Entity
 @Table(name = "subscription_invoice")
 @Getter
@@ -33,16 +38,22 @@ public class SubscriptionInvoice {
     @Column(name = "number", length = 30)
     private String number;
 
-    @Column(name = "period_start")
+    @Column(name = "period_start", nullable = false)
     private Instant periodStart;
 
-    @Column(name = "period_end")
+    @Column(name = "period_end", nullable = false)
     private Instant periodEnd;
 
-    @Column(name = "amount")
+    /** Frozen at issue: sku, description, quantity, unitPrice (monthly, string), months, amount (string). */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "lines", nullable = false, columnDefinition = "jsonb")
+    @Builder.Default
+    private List<Map<String, Object>> lines = new ArrayList<>();
+
+    @Column(name = "amount", nullable = false, precision = 19, scale = 2)
     private BigDecimal amount;
 
-    @Column(name = "gst")
+    @Column(name = "gst", nullable = false, precision = 19, scale = 2)
     private BigDecimal gst;
 
     @Column(name = "total", nullable = false)
@@ -55,8 +66,22 @@ public class SubscriptionInvoice {
     @Column(name = "due_at")
     private Instant dueAt;
 
+    @Column(name = "gateway_order_id", length = 60)
+    private String gatewayOrderId;
+
     @Column(name = "paid_at")
     private Instant paidAt;
+
+    /** GATEWAY or BANK. */
+    @Column(name = "paid_via", length = 10)
+    private String paidVia;
+
+    /** Gateway payment id or bank reference. */
+    @Column(name = "paid_ref", length = 100)
+    private String paidRef;
+
+    @Column(name = "pdf_key", length = 500)
+    private String pdfKey;
 
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;

@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.List;
 import java.util.Optional;
 
 public interface SubscriptionRepository extends JpaRepository<Subscription, String> {
@@ -17,4 +18,7 @@ public interface SubscriptionRepository extends JpaRepository<Subscription, Stri
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select s from Subscription s where s.tenantId = :tenantId")
     Optional<Subscription> findByTenantIdForUpdate(@Param("tenantId") String tenantId);
+
+    @Query("select s.tenantId from Subscription s")
+    List<String> findAllTenantIds();
 }

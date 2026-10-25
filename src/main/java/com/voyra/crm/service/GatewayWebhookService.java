@@ -50,11 +50,13 @@ public class GatewayWebhookService {
     private final WalletService walletService;
     private final NotificationService notificationService;
     private final PaymentGateway gateway;
+    private final SubscriptionBillingService billingService;
     private final int orphanMaxAttempts;
 
     public GatewayWebhookService(GatewayOrderRepository orderRepository, GatewayWebhookOrphanRepository orphanRepository,
                                  TopupRequestRepository topupRepository, WalletRepository walletRepository, WalletService walletService,
                                  NotificationService notificationService, PaymentGateway gateway,
+                                 SubscriptionBillingService billingService,
                                  @Value("${app.payments.orphan-max-attempts:5}") int orphanMaxAttempts) {
         this.orderRepository = orderRepository;
         this.orphanRepository = orphanRepository;
@@ -63,6 +65,7 @@ public class GatewayWebhookService {
         this.walletService = walletService;
         this.notificationService = notificationService;
         this.gateway = gateway;
+        this.billingService = billingService;
         this.orphanMaxAttempts = orphanMaxAttempts;
     }
 
@@ -139,7 +142,11 @@ public class GatewayWebhookService {
             return WebhookOutcome.PROCESSED;
         }
         if (order.getPurpose() == GatewayOrderPurpose.SUBSCRIPTION) {
-            order.setStatus(GatewayOrderStatus.PAID);  // slice 5 consumes it
+            // Never a wallet call. Idempotent by payment id; a capture for a PAID/VOID invoice alerts and changes nothing.
+            if (!billingService.markPaid(order.getRefId(), paymentId)) {
+                return WebhookOutcome.IGNORED;
+            }
+            order.setStatus(GatewayOrderStatus.PAID);
             return WebhookOutcome.PROCESSED;
         }
         TopupRequest topup = topup(order);

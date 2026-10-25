@@ -60,13 +60,15 @@ class GatewayWebhookServiceTest {
     private NotificationService notificationService;
     @Mock
     private PaymentGateway gateway;
+    @Mock
+    private SubscriptionBillingService billingService;
 
     private GatewayWebhookService service;
 
     @BeforeEach
     void setUp() {
         service = new GatewayWebhookService(orderRepository, orphanRepository, topupRepository, walletRepository,
-                walletService, notificationService, gateway, 5);
+                walletService, notificationService, gateway, billingService, 5);
         given(gateway.verifyWebhook(anyString(), any())).willReturn(true);
         given(walletRepository.findById("W1")).willReturn(Optional.of(wallet(WalletStatus.OPEN)));
         given(walletService.chargebacksPosted("TOPUP_REQUEST", "R1")).willReturn(BigDecimal.ZERO);
@@ -219,14 +221,38 @@ class GatewayWebhookServiceTest {
     }
 
     @Test
-    void subscriptionPurposeNeverTouchesAWallet() {
+    void subscriptionCaptureDeliveredTwicePaysTheInvoiceOnceAndNeverTouchesAWallet() {
         GatewayOrder o = order(GatewayOrderPurpose.SUBSCRIPTION);
+        given(billingService.markPaid("R1", "pay_1")).willReturn(true, false);
 
         assertThat(service.handle(payment("payment.captured", "pay_1", 50000, "INR"), "sig")).isEqualTo(WebhookOutcome.PROCESSED);
+        assertThat(service.handle(orderPaid("pay_1"), "sig")).isEqualTo(WebhookOutcome.IGNORED);
         service.handle(reversal("refund.processed", "refund", "rfnd_1", 50000), "sig");
 
         assertThat(o.getStatus()).isEqualTo(GatewayOrderStatus.PAID);
+        verify(billingService, times(2)).markPaid("R1", "pay_1");
         verifyNoInteractions(walletService, topupRepository);
+    }
+
+    @Test
+    void subscriptionCaptureForTheWrongAmountIsFlaggedAndNotPaid() {
+        GatewayOrder o = order(GatewayOrderPurpose.SUBSCRIPTION);
+
+        service.handle(payment("payment.captured", "pay_1", 40000, "INR"), "sig");
+
+        assertThat(o.getStatus()).isEqualTo(GatewayOrderStatus.FLAGGED);
+        verifyNoInteractions(billingService, walletService);
+    }
+
+    @Test
+    void subscriptionCaptureTheInvoiceRefusedLeavesTheOrderAsItWas() {
+        GatewayOrder o = order(GatewayOrderPurpose.SUBSCRIPTION);
+        given(billingService.markPaid("R1", "pay_1")).willReturn(false);
+
+        assertThat(service.handle(payment("payment.captured", "pay_1", 50000, "INR"), "sig")).isEqualTo(WebhookOutcome.IGNORED);
+
+        assertThat(o.getStatus()).isEqualTo(GatewayOrderStatus.CREATED);
+        verifyNoInteractions(walletService);
     }
 
     @Test

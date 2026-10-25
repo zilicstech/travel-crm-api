@@ -72,6 +72,13 @@ public class Subscription {
     @Column(name = "billing_cycle", nullable = false, length = 8)
     private BillingCycle billingCycle;
 
+    /** Smallest of the 14/7/1-day expiry notices already sent for {@link #expiryNoticeFor}. */
+    @Column(name = "expiry_notice_days")
+    private Integer expiryNoticeDays;
+
+    @Column(name = "expiry_notice_for")
+    private Instant expiryNoticeFor;
+
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 }

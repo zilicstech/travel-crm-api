@@ -2,7 +2,6 @@ package com.voyra.crm.service;
 
 import com.voyra.crm.dto.AgencySubscriptionResponse;
 import com.voyra.crm.dto.SubscriptionAdminResponse;
-import com.voyra.crm.dto.SubscriptionInvoiceResponse;
 import com.voyra.crm.dto.SubscriptionUpdateRequest;
 import com.voyra.crm.dto.SubscriptionWaiveRequest;
 import com.voyra.crm.dto.TrialExtendRequest;
@@ -82,10 +81,7 @@ public class SubscriptionService {
                 .periodEnd(s.getPeriodEnd()).trialEndsAt(s.getTrialEndsAt()).readOnly(e.readOnly())
                 .waived(waived).waivedLabel(waived ? WAIVER_LABELS.get(s.getWaivedReason()) : null)
                 .invoices(invoiceRepository.findByTenantIdAndStatusNotOrderByCreatedAtDesc(tenantId, "DRAFT").stream()
-                        .map(i -> SubscriptionInvoiceResponse.builder().id(i.getId()).number(i.getNumber())
-                                .periodStart(i.getPeriodStart()).periodEnd(i.getPeriodEnd()).total(i.getTotal())
-                                .status(i.getStatus()).dueAt(i.getDueAt()).paidAt(i.getPaidAt()).build())
-                        .toList())
+                        .map(SubscriptionBillingService::toResponse).toList())
                 .build();
     }
 
