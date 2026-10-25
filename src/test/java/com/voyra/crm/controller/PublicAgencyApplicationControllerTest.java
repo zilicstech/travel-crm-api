@@ -74,15 +74,30 @@ class PublicAgencyApplicationControllerTest {
                 .willReturn(AgencyApplicationCreatedResponse.builder().id("app-1").uploadToken("tok").build());
 
         mockMvc.perform(post("/api/public/agency-applications").contentType(MediaType.APPLICATION_JSON)
+                        .header("CF-Connecting-IP", "203.0.113.7").header("X-Forwarded-For", "203.0.113.7, 10.0.0.1")
                         .content(VALID.replace("}", ",\"captchaToken\":\"cf-token\"}")))
                 .andExpect(status().isCreated());
-        verify(turnstileVerifier).verify(org.mockito.ArgumentMatchers.eq("cf-token"), anyString());
+        // Cloudflare's own header is the visitor; the last X-Forwarded-For hop is a proxy and is never sent
+        verify(turnstileVerifier).verify("cf-token", "203.0.113.7");
+    }
+
+    /** Carried minor: without CF-Connecting-IP no remoteip is sent at all (it is optional for Cloudflare). */
+    @Test
+    void withoutCloudflaresHeaderNoRemoteIpIsSent() throws Exception {
+        given(agencyApplicationService.create(any()))
+                .willReturn(AgencyApplicationCreatedResponse.builder().id("app-1").uploadToken("tok").build());
+
+        mockMvc.perform(post("/api/public/agency-applications").contentType(MediaType.APPLICATION_JSON)
+                        .header("X-Forwarded-For", "198.51.100.4, 10.0.0.1")
+                        .content(VALID.replace("}", ",\"captchaToken\":\"cf-token\"}")))
+                .andExpect(status().isCreated());
+        verify(turnstileVerifier).verify("cf-token", null);
     }
 
     @Test
     void aFailedCaptchaIs400AndNothingIsCreated() throws Exception {
         org.mockito.Mockito.doThrow(new CaptchaException(HttpStatus.BAD_REQUEST, "CAPTCHA_FAILED", "Verification failed, please try again."))
-                .when(turnstileVerifier).verify(any(), anyString());
+                .when(turnstileVerifier).verify(any(), any());
 
         mockMvc.perform(post("/api/public/agency-applications").contentType(MediaType.APPLICATION_JSON).content(VALID))
                 .andExpect(status().isBadRequest())
@@ -93,7 +108,7 @@ class PublicAgencyApplicationControllerTest {
     @Test
     void captchaUnavailableIs503AndNothingIsCreated() throws Exception {
         org.mockito.Mockito.doThrow(new CaptchaException(HttpStatus.SERVICE_UNAVAILABLE, "CAPTCHA_UNAVAILABLE", "Verification failed, please try again."))
-                .when(turnstileVerifier).verify(any(), anyString());
+                .when(turnstileVerifier).verify(any(), any());
 
         mockMvc.perform(post("/api/public/agency-applications").contentType(MediaType.APPLICATION_JSON).content(VALID))
                 .andExpect(status().isServiceUnavailable())

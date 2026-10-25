@@ -51,7 +51,7 @@ public class PublicAgencyApplicationController {
                                                                    HttpServletRequest http) {
         String caller = InquiryRateLimiter.callerOf(http);
         inquiryRateLimiter.check(caller);
-        turnstileVerifier.verify(request.getCaptchaToken(), caller);
+        turnstileVerifier.verify(request.getCaptchaToken(), TurnstileVerifier.remoteIpOf(http));
         return ResponseEntity.status(HttpStatus.CREATED).body(agencyApplicationService.create(request));
     }
 

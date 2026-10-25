@@ -1,6 +1,7 @@
 package com.voyra.crm.security;
 
 import com.voyra.crm.exception.CaptchaException;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -31,6 +32,15 @@ public class TurnstileVerifier {
     public TurnstileVerifier(RestClient.Builder builder, String secret) {
         this.client = builder.build();
         this.secret = secret;
+    }
+
+    /**
+     * The visitor's address for Cloudflare's optional {@code remoteip}: the CF-Connecting-IP header Cloudflare sets, or null
+     * (omitted) without it - the last X-Forwarded-For hop is our own proxy, and a wrong address only weakens the check.
+     */
+    public static String remoteIpOf(HttpServletRequest request) {
+        String ip = request.getHeader("CF-Connecting-IP");
+        return StringUtils.hasText(ip) ? ip.trim() : null;
     }
 
     public boolean enabled() {
