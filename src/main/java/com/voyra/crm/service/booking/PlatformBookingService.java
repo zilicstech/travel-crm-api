@@ -1,6 +1,7 @@
 package com.voyra.crm.service.booking;
 
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.voyra.crm.dto.FlightReviewRequest;
 import com.voyra.crm.dto.PaxInput;
@@ -128,7 +129,7 @@ public class PlatformBookingService {
         CustomUserPrincipal principal = requireBooker();
         return tx.execute(s -> {
             PlatformBooking b = bookingRepository.findByIdForUpdate(bookingId)
-                    .filter(x -> principal.tenantId().equals(x.getTenantId()))
+                    .filter(x -> actsOn(principal, x))
                     .orElseThrow(() -> new NotFoundException("Booking not found"));
             if (b.getStatus() == PlatformBookingStatus.ABORTED) {
                 return b;
@@ -225,7 +226,7 @@ public class PlatformBookingService {
             credentialId = credential.getId();
         }
 
-        FareReview fare = provider.review(request.getOfferId(), request.getAdults(), request.getChildren(), request.getInfants());
+        FareReview fare = provider.review(request);
         PriceQuote quote = quoter.quote(tenantId, PricingProduct.FLIGHT, fare.totalFare(), fare.baseFare());
         PlatformBooking booking = PlatformBooking.builder()
                 .id(UniqueIdResolver.resolve(bookingRepository::existsById))
@@ -241,7 +242,7 @@ public class PlatformBookingService {
                 .gross(fare.totalFare())
                 .base(fare.baseFare())
                 .paxCount(request.getAdults() + request.getChildren() + request.getInfants())
-                .itinerary(fare.itinerary() == null ? null : objectMapper.convertValue(fare.itinerary(), MAP))
+                .itinerary(itineraryMap(fare.itinerary()))
                 .fareRules(fare.fareRules())
                 // shortcut: Tripjack's review expiry field is unknown (slice 0), so a missing expiry gets 15 minutes
                 .reviewExpiresAt(fare.expiresAt() != null ? fare.expiresAt() : Instant.now().plus(DEFAULT_REVIEW_TTL))
@@ -279,7 +280,7 @@ public class PlatformBookingService {
                 "confirm must not run inside a transaction - the supplier book call would hold a connection and the row lock");
         CustomUserPrincipal principal = requireBooker();
         String issuedBy = resolveIssuer(principal, request.getIssuedByAgentId());
-        Held held = tx.execute(s -> hold(bookingId, principal.tenantId(), request, issuedBy));
+        Held held = tx.execute(s -> hold(bookingId, principal, request, issuedBy));
         if (held.refusal() != null) {
             throw held.refusal();
         }
@@ -323,6 +324,7 @@ public class PlatformBookingService {
                 "cancelQuote must not run inside a transaction - the supplier call would hold a connection");
         CustomUserPrincipal principal = requireBooker();
         PlatformBooking b = bookingRepository.findByIdAndTenantId(bookingId, principal.tenantId())
+                .filter(x -> actsOn(principal, x))
                 .orElseThrow(() -> new NotFoundException("Booking not found"));
         if (b.getStatus() == PlatformBookingStatus.CANCELLING) {
             throw cancelInProgress();
@@ -453,7 +455,7 @@ public class PlatformBookingService {
 
     private Claim claimCancel(String bookingId, CustomUserPrincipal principal, String idempotencyKey) {
         PlatformBooking b = bookingRepository.findByIdForUpdate(bookingId)
-                .filter(r -> principal.tenantId().equals(r.getTenantId()))
+                .filter(r -> actsOn(principal, r))
                 .orElseThrow(() -> new NotFoundException("Booking not found"));
         if (b.getStatus() == PlatformBookingStatus.CANCELLED) {
             return new Claim(b, false);
@@ -580,9 +582,10 @@ public class PlatformBookingService {
     private record Held(PlatformBooking booking, RuntimeException refusal, boolean sendBook) {
     }
 
-    private Held hold(String bookingId, String tenantId, PlatformBookingConfirmRequest request, String issuedBy) {
+    private Held hold(String bookingId, CustomUserPrincipal principal, PlatformBookingConfirmRequest request, String issuedBy) {
+        String tenantId = principal.tenantId();
         PlatformBooking b = bookingRepository.findByIdForUpdate(bookingId)
-                .filter(x -> tenantId.equals(x.getTenantId()))
+                .filter(x -> actsOn(principal, x))
                 .orElseThrow(() -> new NotFoundException("Booking not found"));
         String payloadHash = paxCodec.hash(List.of(request.getPassengers(), request.getContactEmail(), request.getContactPhone()));
         if (request.getIdempotencyKey().equals(b.getIdempotencyKey())) {
@@ -791,6 +794,19 @@ public class PlatformBookingService {
     private static PaxDetail toPax(PaxInput p) {
         return new PaxDetail(p.getType(), p.getTitle(), p.getFirstName(), p.getLastName(), p.getDob(),
                 p.getPassportNo(), p.getPassportExpiry(), p.getNationality());
+    }
+
+    /** Stores whatever shape the supplier sent: an object as-is, an array (Tripjack tripInfos) under "tripInfos". */
+    private Map<String, Object> itineraryMap(JsonNode itinerary) {
+        if (itinerary == null || itinerary.isNull()) {
+            return null;
+        }
+        return itinerary.isObject() ? objectMapper.convertValue(itinerary, MAP) : Map.of("tripInfos", objectMapper.convertValue(itinerary, Object.class));
+    }
+
+    /** A booking this caller may act on: same agency, and an agent only their own (a colleague's is simply absent). */
+    private static boolean actsOn(CustomUserPrincipal p, PlatformBooking b) {
+        return p.tenantId().equals(b.getTenantId()) && (!p.isAgent() || p.userId().equals(b.getBookedBy()));
     }
 
     private static boolean positive(BigDecimal v) {

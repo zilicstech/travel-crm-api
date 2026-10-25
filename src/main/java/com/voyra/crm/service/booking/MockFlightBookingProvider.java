@@ -1,5 +1,8 @@
 package com.voyra.crm.service.booking;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.voyra.crm.dto.FlightReviewRequest;
 import com.voyra.crm.exception.FareUnavailableException;
 import com.voyra.crm.exception.SupplierTimeoutException;
 import com.voyra.crm.models.booking.*;
@@ -29,10 +32,32 @@ public class MockFlightBookingProvider implements FlightBookingProvider {
     private static final BigDecimal REFUND_SHARE = new BigDecimal("0.80");
     private static final BigDecimal BASE_SHARE = new BigDecimal("0.85");
 
+    private static final ObjectMapper JSON = new ObjectMapper();
+
     private final FlightBookingProviderConfig config;
 
     /** Remaining PENDING answers per supplier booking id (in-memory: mock only). The fare lives in the id itself. */
     private final Map<String, Integer> pendingLeft = new ConcurrentHashMap<>();
+
+    @Override
+    public FareReview review(FlightReviewRequest r) {
+        FareReview base = review(r.getOfferId(), r.getAdults(), r.getChildren(), r.getInfants());
+        if (r.getOrigin() == null || r.getDestination() == null) {
+            return base;
+        }
+        // shape mirrors Tripjack's sI segments so the same parser reads mock and real itineraries
+        ObjectNode seg = JSON.createObjectNode();
+        ObjectNode fD = seg.putObject("fD");
+        fD.put("fN", r.getFlightNumber());
+        fD.putObject("aI").put("code", r.getAirlineCode()).put("name", r.getAirline());
+        seg.putObject("da").put("code", r.getOrigin());
+        seg.putObject("aa").put("code", r.getDestination());
+        seg.put("dt", r.getDepartDate() + "T" + r.getDepartTime());
+        seg.put("at", r.getDepartDate() + "T" + r.getArriveTime());
+        ObjectNode itinerary = JSON.createObjectNode();
+        itinerary.putArray("sI").add(seg);
+        return new FareReview(base.reviewId(), base.totalFare(), base.baseFare(), base.currency(), base.fareRules(), base.expiresAt(), itinerary);
+    }
 
     @Override
     public FareReview review(String offerId, int adults, int children, int infants) {

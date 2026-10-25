@@ -197,4 +197,25 @@ class PlatformBookingQueryServiceTest {
             assertThat(e.getPayload()).containsEntry("voyraNet", "145.00");
         });
     }
+
+    @Test
+    void routeIsReadFromBothTheTripjackArrayWrapAndTheMockShape() {
+        login("O1", UserType.AGENCY_OWNER, "T1");
+        Map<String, Object> seg = Map.of("fD", Map.of("aI", Map.of("code", "AI", "name", "Air India"), "fN", "865"),
+                "da", Map.of("code", "DEL"), "aa", Map.of("code", "BLR"), "dt", "2026-12-02T09:00", "at", "2026-12-02T11:45");
+        PlatformBooking tripjack = booking("B1", "T1", "O1");
+        tripjack.setItinerary(Map.of("tripInfos", List.of(Map.of("sI", List.of(seg), "totalPriceList", List.of()))));
+        PlatformBooking mock = booking("B2", "T1", "O1");
+        mock.setItinerary(Map.of("sI", List.of(seg)));
+        PlatformBooking none = booking("B3", "T1", "O1");
+        none.setItinerary(Map.of("tripInfos", List.of(Map.of("x", 1))));
+
+        assertThat(service().view(tripjack).getItinerary()).singleElement().satisfies(s -> {
+            assertThat(s.getFrom()).isEqualTo("DEL");
+            assertThat(s.getTo()).isEqualTo("BLR");
+            assertThat(s.getFlightNumber()).isEqualTo("AI-865");
+        });
+        assertThat(service().view(mock).getItinerary()).hasSize(1);
+        assertThat(service().view(none).getItinerary()).isEmpty();
+    }
 }

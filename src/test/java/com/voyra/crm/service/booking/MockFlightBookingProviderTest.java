@@ -104,4 +104,38 @@ class MockFlightBookingProviderTest {
         assertThat(provider.bookingDetails("mock-bk-" + review.reviewId() + "-" + review.totalFare().toPlainString()).amount())
                 .isEqualByComparingTo(review.totalFare());
     }
+
+    @Test
+    void reviewWithDisplayHintsSynthesisesAnSiItinerary() {
+        com.voyra.crm.dto.FlightReviewRequest r = new com.voyra.crm.dto.FlightReviewRequest();
+        r.setOfferId("o1");
+        r.setAdults(1);
+        r.setAirline("IndiGo");
+        r.setAirlineCode("6E");
+        r.setFlightNumber("201");
+        r.setOrigin("DEL");
+        r.setDestination("BOM");
+        r.setDepartDate("2026-12-01");
+        r.setDepartTime("06:00");
+        r.setArriveTime("08:10");
+
+        var itinerary = provider.review(r).itinerary();
+
+        var seg = itinerary.findValues("sI").get(0).get(0);
+        assertThat(seg.path("da").path("code").asText()).isEqualTo("DEL");
+        assertThat(seg.path("aa").path("code").asText()).isEqualTo("BOM");
+        assertThat(seg.path("dt").asText()).isEqualTo("2026-12-01T06:00");
+        assertThat(seg.path("at").asText()).isEqualTo("2026-12-01T08:10");
+        assertThat(seg.path("fD").path("aI").path("code").asText()).isEqualTo("6E");
+        assertThat(seg.path("fD").path("aI").path("name").asText()).isEqualTo("IndiGo");
+        assertThat(seg.path("fD").path("fN").asText()).isEqualTo("201");
+    }
+
+    @Test
+    void reviewWithoutHintsHasNoItinerary() {
+        com.voyra.crm.dto.FlightReviewRequest r = new com.voyra.crm.dto.FlightReviewRequest();
+        r.setOfferId("o1");
+        r.setAdults(1);
+        assertThat(provider.review(r).itinerary()).isNull();
+    }
 }

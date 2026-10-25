@@ -1,5 +1,6 @@
 package com.voyra.crm.service.booking;
 
+import com.voyra.crm.dto.FlightReviewRequest;
 import com.voyra.crm.models.booking.*;
 
 /**
@@ -11,6 +12,11 @@ public interface FlightBookingProvider {
 
     /** @throws com.voyra.crm.exception.FareUnavailableException when the fare is gone */
     FareReview review(String offerId, int adults, int children, int infants);
+
+    /** Review from the agency request; only the mock reads its display hints, real suppliers use their own itinerary. */
+    default FareReview review(FlightReviewRequest r) {
+        return review(r.getOfferId(), r.getAdults(), r.getChildren(), r.getInfants());
+    }
 
     /** @throws com.voyra.crm.exception.SupplierTimeoutException on a transport timeout (outcome unknown) */
     BookResult book(BookRequest request);

@@ -73,8 +73,10 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
@@ -155,7 +157,7 @@ class PlatformBookingServiceTest {
         lenient().when(walletRepository.findByTenantId(T)).thenAnswer(i -> Optional.of(wallet));
         lenient().when(tenantRepository.findById(T)).thenAnswer(i -> Optional.of(tenant));
         lenient().when(pricingService.requireInForce(T, PricingProduct.FLIGHT)).thenReturn(AgencyPricing.builder().id("P1").build());
-        lenient().when(provider.review(anyString(), any(Integer.class), any(Integer.class), any(Integer.class)))
+        lenient().when(provider.review(any(FlightReviewRequest.class)))
                 .thenReturn(new FareReview("rv-1", new BigDecimal("5000.00"), new BigDecimal("4250.00"), "INR",
                         "Refundable", Instant.now().plus(15, ChronoUnit.MINUTES), null));
         lenient().when(quoter.quote(eq(T), eq(PricingProduct.FLIGHT), any(), any())).thenReturn(quote("P1", "4500.00", "100.00", "0.00"));
@@ -250,7 +252,7 @@ class PlatformBookingServiceTest {
         assertThat(res.getWalletAvailable()).isEqualByComparingTo("10000.00");
         assertThat(res.isPriceChanged()).isFalse();
         assertThat(res.getFareRules()).isEqualTo("Refundable");
-        verify(provider).review("offer-1", 2, 1, 0);
+        verify(provider).review(argThat((FlightReviewRequest r) -> r.getOfferId().equals("offer-1") && r.getAdults() == 2 && r.getChildren() == 1));
     }
 
     @Test
@@ -281,7 +283,7 @@ class PlatformBookingServiceTest {
         when(pricingService.requireInForce(T, PricingProduct.FLIGHT)).thenThrow(new PricingNotConfiguredException());
 
         assertThatThrownBy(() -> service.review(reviewRequest())).isInstanceOf(PricingNotConfiguredException.class);
-        verify(provider, never()).review(anyString(), any(Integer.class), any(Integer.class), any(Integer.class));
+        verify(provider, never()).review(any(FlightReviewRequest.class));
     }
 
     @Test
@@ -293,7 +295,7 @@ class PlatformBookingServiceTest {
         when(walletService.hasDueReceivable(T)).thenReturn(true);
         assertThatThrownBy(() -> service.review(reviewRequest())).isInstanceOf(ReceivableDueException.class);
 
-        verify(provider, never()).review(anyString(), any(Integer.class), any(Integer.class), any(Integer.class));
+        verify(provider, never()).review(any(FlightReviewRequest.class));
     }
 
     @Test
@@ -827,5 +829,66 @@ class PlatformBookingServiceTest {
         rows.get(id).setTenantId("T2");
 
         assertThatThrownBy(() -> service.abort(id)).isInstanceOf(NotFoundException.class);
+    }
+
+    // ---- an agent acts only on bookings they made; the owner on all of the agency's ----
+
+    private String reviewedByAgent(String agentId) {
+        loginAs(UserType.AGENT, agentId);
+        when(agentRepository.findById(agentId)).thenReturn(Optional.of(
+                Agent.builder().id(agentId).manageableServices(List.of(ServiceType.FLIGHT)).build()));
+        return reviewed();
+    }
+
+    @Test
+    void anAgentCannotConfirmAbortQuoteOrCancelAColleaguesBooking() {
+        String id = reviewedByAgent("AG1");
+        rows.get(id).setStatus(PlatformBookingStatus.TICKETED);
+        lenient().when(bookingRepository.findByIdAndTenantId(id, T)).thenAnswer(i -> Optional.of(rows.get(id)));
+        loginAs(UserType.AGENT, "AG2");
+        when(agentRepository.findById("AG2")).thenReturn(Optional.of(
+                Agent.builder().id("AG2").manageableServices(List.of(ServiceType.FLIGHT)).build()));
+
+        assertThatThrownBy(() -> service.confirm(id, confirmRequest("key-00000001", "4500.00"))).isInstanceOf(NotFoundException.class);
+        assertThatThrownBy(() -> service.abort(id)).isInstanceOf(NotFoundException.class);
+        assertThatThrownBy(() -> service.cancelQuote(id)).isInstanceOf(NotFoundException.class);
+        assertThatThrownBy(() -> service.cancel(id, "cancel-key-1")).isInstanceOf(NotFoundException.class);
+        verify(walletService, never()).hold(any(), any(), any(), any(), any());
+        verify(provider, never()).cancel(any());
+    }
+
+    @Test
+    void theOwnerCanActOnAnAgentsBooking() {
+        String id = reviewedByAgent("AG1");
+        lenient().when(bookingRepository.findByIdAndTenantId(id, T)).thenAnswer(i -> Optional.of(rows.get(id)));
+        loginAs(UserType.AGENCY_OWNER, "OWNER1");
+
+        assertThat(service.confirm(id, confirmRequest("key-00000001", "4500.00")).getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
+        when(provider.cancelQuote(any())).thenReturn(new com.voyra.crm.models.booking.CancelQuote(new BigDecimal("4000.00"), null));
+        when(settings.voyraCancelFee()).thenReturn(BigDecimal.ZERO);
+        assertThatCode(() -> service.cancelQuote(id)).doesNotThrowAnyException();
+        String other = reviewedByAgent("AG1");
+        loginAs(UserType.AGENCY_OWNER, "OWNER1");
+        assertThat(service.abort(other).getStatus()).isEqualTo(PlatformBookingStatus.ABORTED);
+    }
+
+    @Test
+    void reviewKeepsAnArrayItineraryUnderTripInfos() {
+        when(provider.review(any(FlightReviewRequest.class))).thenReturn(new FareReview("rv-2", new BigDecimal("5000.00"),
+                new BigDecimal("4250.00"), "INR", "Refundable", Instant.now().plus(15, ChronoUnit.MINUTES),
+                objectMapper.valueToTree(List.of(Map.of("sI", List.of(Map.of("id", "S1")))))));
+
+        String id = reviewed();
+
+        assertThat(rows.get(id).getItinerary()).containsOnlyKeys("tripInfos");
+    }
+
+    @Test
+    void reviewKeepsAnObjectItineraryAsIs() {
+        when(provider.review(any(FlightReviewRequest.class))).thenReturn(new FareReview("rv-3", new BigDecimal("5000.00"),
+                new BigDecimal("4250.00"), "INR", "Refundable", Instant.now().plus(15, ChronoUnit.MINUTES),
+                objectMapper.valueToTree(Map.of("tripInfos", List.of()))));
+
+        assertThat(rows.get(reviewed()).getItinerary()).containsOnlyKeys("tripInfos");
     }
 }

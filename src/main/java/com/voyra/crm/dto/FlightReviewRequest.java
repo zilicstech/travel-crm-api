@@ -4,6 +4,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 import java.math.BigDecimal;
@@ -42,4 +43,36 @@ public class FlightReviewRequest {
 
     @Schema(description = "Optional displayed fare the agency saw in the search results; when the review differs, priceChanged is true", example = "4500.00")
     private BigDecimal searchDisplayedFare;
+
+    @Size(max = 60)
+    @Schema(description = "Display hint: airline name; only the mock supplier uses it to draw a route", example = "IndiGo")
+    private String airline;
+
+    @Size(max = 3)
+    @Schema(description = "Display hint: airline code; only the mock supplier uses it to draw a route", example = "6E")
+    private String airlineCode;
+
+    @Size(max = 8)
+    @Schema(description = "Display hint: flight number; only the mock supplier uses it to draw a route", example = "201")
+    private String flightNumber;
+
+    @Size(max = 3)
+    @Schema(description = "Display hint: origin airport code; only the mock supplier uses it to draw a route", example = "DEL")
+    private String origin;
+
+    @Size(max = 3)
+    @Schema(description = "Display hint: destination airport code; only the mock supplier uses it to draw a route", example = "BOM")
+    private String destination;
+
+    @Size(max = 10)
+    @Schema(description = "Display hint: departure date; only the mock supplier uses it to draw a route", example = "2026-12-01")
+    private String departDate;
+
+    @Size(max = 8)
+    @Schema(description = "Display hint: departure time; only the mock supplier uses it to draw a route", example = "06:00")
+    private String departTime;
+
+    @Size(max = 8)
+    @Schema(description = "Display hint: arrival time; only the mock supplier uses it to draw a route", example = "08:10")
+    private String arriveTime;
 }
