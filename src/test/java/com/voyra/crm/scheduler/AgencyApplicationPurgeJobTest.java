@@ -84,17 +84,12 @@ class AgencyApplicationPurgeJobTest {
     }
 
     @Test
-    void alsoPurgesTheStagingFilesOfApprovedApplications() {
-        AgencyApplication app = AgencyApplication.builder().id("app-1").status(ApplicationStatus.APPROVED).build();
-        List<KycDocument> docs = List.of(doc("d1"));
-        when(applicationRepository.findByStatusAndUpdatedAtBefore(any(), any())).thenReturn(List.of());
-        when(applicationRepository.findByStatusAndUpdatedAtBefore(eq(ApplicationStatus.APPROVED), any())).thenReturn(List.of(app));
-        when(kycDocumentRepository.findByApplicationIdOrderByCreatedAt("app-1")).thenReturn(docs);
-
+    void neverTouchesTheKycFilesOfApprovedApplications() {
+        // approval copies no file, so these are the only KYC evidence for a live agency
         job.run();
 
-        verify(fileStorageService).delete("tenant_platform/kyc/app-1/d1");
-        verify(kycDocumentRepository).deleteAll(docs);
-        assertThat(app.getStatus()).isEqualTo(ApplicationStatus.APPROVED);
+        verify(applicationRepository, never()).findByStatusAndUpdatedAtBefore(eq(ApplicationStatus.APPROVED), any());
+        verify(fileStorageService, never()).delete(anyString());
+        verify(kycDocumentRepository, never()).deleteAll(any());
     }
 }
