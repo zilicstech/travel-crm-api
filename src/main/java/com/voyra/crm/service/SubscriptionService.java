@@ -17,6 +17,7 @@ import com.voyra.crm.models.Entitlements;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.SubscriptionInvoiceRepository;
 import com.voyra.crm.repository.SubscriptionRepository;
+import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.security.SecurityContextUtil;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.AccessDeniedException;
@@ -45,6 +46,7 @@ public class SubscriptionService {
     private final SubscriptionRepository subscriptionRepository;
     private final SubscriptionInvoiceRepository invoiceRepository;
     private final AgentRepository agentRepository;
+    private final TenantRepository tenantRepository;
     private final EntitlementService entitlementService;
     private final PlatformAuditService auditService;
 
@@ -93,6 +95,10 @@ public class SubscriptionService {
         if (request.getSeats() == null || request.getSeats() < 0) {
             throw new IllegalArgumentException("seats cannot be negative");
         }
+        if (request.getPlan() == SubscriptionPlan.CUSTOM && request.getSeats() > 0
+                && (request.getSkus() == null || !request.getSkus().contains(Sku.STAFF_SEATS))) {
+            throw new IllegalArgumentException("Add the Staff seats SKU to give seats");
+        }
         Subscription s = load(tenantId);
         SubscriptionPlan plan = request.getPlan();
         List<String> skus = switch (plan) {
@@ -109,9 +115,9 @@ public class SubscriptionService {
         s.setBillingCycle(request.getBillingCycle());
         s.setUpdatedAt(Instant.now());
         subscriptionRepository.save(s);
-        Entitlements fresh = entitlementService.refresh(tenantId);
         auditService.record(PlatformAuditAction.SUBSCRIPTION_CHANGE, "TENANT", tenantId, Map.of("before", before,
                 "after", Map.of("plan", plan.name(), "skus", skus, "seats", s.getSeats(), "billingCycle", s.getBillingCycle().name())));
+        Entitlements fresh = entitlementService.refresh(tenantId);
         return adminView(s, fresh);
     }
 
@@ -122,6 +128,9 @@ public class SubscriptionService {
             throw new IllegalArgumentException("until must be in the future");
         }
         Subscription s = load(tenantId);
+        if (s.getPlan() == SubscriptionPlan.STARTER || s.getStatus() == SubscriptionStatus.CANCELLED) {
+            throw new IllegalArgumentException("Set a plan before waiving");
+        }
         Instant now = Instant.now();
         s.setWaivedReason(request.getReason());
         s.setPeriodEnd(request.getUntil());
@@ -129,9 +138,9 @@ public class SubscriptionService {
         s.setStatus(SubscriptionStatus.ACTIVE);
         s.setUpdatedAt(now);
         subscriptionRepository.save(s);
-        Entitlements fresh = entitlementService.refresh(tenantId);
         auditService.record(PlatformAuditAction.SUBSCRIPTION_WAIVE, "TENANT", tenantId, request.getUntil() == null
                 ? Map.of("reason", request.getReason().name()) : Map.of("reason", request.getReason().name(), "until", request.getUntil().toString()));
+        Entitlements fresh = entitlementService.refresh(tenantId);
         return adminView(s, fresh);
     }
 
@@ -152,14 +161,18 @@ public class SubscriptionService {
         s.setPeriodEnd(end);
         s.setUpdatedAt(now);
         subscriptionRepository.save(s);
-        Entitlements fresh = entitlementService.refresh(tenantId);
         auditService.record(PlatformAuditAction.SUBSCRIPTION_TRIAL_EXTEND, "TENANT", tenantId,
                 Map.of("days", request.getDays(), "trialEndsAt", end.toString()));
+        Entitlements fresh = entitlementService.refresh(tenantId);
         return adminView(s, fresh);
     }
 
     private Subscription load(String tenantId) {
-        return subscriptionRepository.findByTenantId(tenantId)
-                .orElseThrow(() -> new NotFoundException("Subscription not found for this agency"));
+        return subscriptionRepository.findByTenantId(tenantId).orElseGet(() -> {
+            if (!tenantRepository.existsById(tenantId)) {
+                throw new NotFoundException("Agency not found");
+            }
+            return entitlementService.startMissingTrial(tenantId);
+        });
     }
 }

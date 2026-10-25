@@ -18,6 +18,7 @@ import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.BookingRepository;
 import com.voyra.crm.repository.LeadNoteRepository;
 import com.voyra.crm.repository.LeadRepository;
+import com.voyra.crm.repository.SubscriptionRepository;
 import com.voyra.crm.repository.VisaRepository;
 import com.voyra.crm.security.AesPasswordEncoder;
 import com.voyra.crm.security.CustomUserPrincipal;
@@ -58,6 +59,7 @@ public class AgentService {
     private final AesPasswordEncoder passwordEncoder;
     private final LoginEmailService loginEmailService;
     private final EntitlementService entitlementService;
+    private final SubscriptionRepository subscriptionRepository;
 
     @Transactional
     public AgentCreateResponse createAgent(AgentCreateRequest request) {
@@ -197,7 +199,7 @@ public class AgentService {
     @Transactional
     public AgentPerformanceResponse updateStatus(String id, boolean isActive) {
         Agent agent = findOwnedAgent(id);
-        if (isActive) {
+        if (isActive && !Boolean.TRUE.equals(agent.getIsActive())) {
             // the interceptors let this route through so an owner can always deactivate; reactivating is a write
             entitlementService.assertWritable(agent.getTenantId());
             assertSeatFree(agent.getTenantId());
@@ -333,7 +335,12 @@ public class AgentService {
 
     /** Spec §8: a login needs a free seat to be created or reactivated; existing logins are never cut off. */
     private void assertSeatFree(String tenantId) {
+        // lock the tenant's subscription row until commit so two concurrent creates cannot both take the last seat
+        subscriptionRepository.findByTenantIdForUpdate(tenantId);
         int seats = entitlementService.resolve(tenantId).seats();
+        if (seats == 0) {
+            throw new IllegalStateException("Staff logins need the Staff seats add-on — add it in Subscription");
+        }
         if (agentRepository.countByTenantIdAndIsActiveTrue(tenantId) >= seats) {
             throw new IllegalStateException("All " + seats + " seats are in use — add seats in Subscription");
         }

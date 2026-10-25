@@ -109,7 +109,7 @@ public class EntitlementService {
      * Rolling-deploy window: a tenant created before its subscription row existed must never be locked
      * out, so it starts a trial. A concurrent request creating the same row wins (tenant_id is unique).
      */
-    private Subscription startMissingTrial(String tenantId) {
+    public Subscription startMissingTrial(String tenantId) {
         log.warn("Tenant {} has no subscription row - starting a {}-day Suite trial", tenantId, TRIAL_LENGTH.toDays());
         try {
             return newTransaction.execute(tx -> subscriptionRepository.saveAndFlush(

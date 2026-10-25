@@ -55,6 +55,7 @@ class SubscriptionServiceTest {
     @Mock private SubscriptionRepository subscriptionRepository;
     @Mock private SubscriptionInvoiceRepository invoiceRepository;
     @Mock private AgentRepository agentRepository;
+    @Mock private com.voyra.crm.repository.TenantRepository tenantRepository;
     @Mock private EntitlementService entitlementService;
     @Mock private PlatformAuditService auditService;
     @InjectMocks private SubscriptionService service;
@@ -97,8 +98,8 @@ class SubscriptionServiceTest {
         assertThat(sub.getBillingCycle()).isEqualTo(BillingCycle.ANNUAL);
         InOrder order = inOrder(subscriptionRepository, entitlementService, auditService);
         order.verify(subscriptionRepository).save(sub);
-        order.verify(entitlementService).refresh("T1");
         order.verify(auditService).record(eq(PlatformAuditAction.SUBSCRIPTION_CHANGE), eq("TENANT"), eq("T1"), any());
+        order.verify(entitlementService).refresh("T1");
     }
 
     @Test
@@ -207,6 +208,47 @@ class SubscriptionServiceTest {
     @Test
     void unknownTenantIs404() {
         when(subscriptionRepository.findByTenantId("NOPE")).thenReturn(Optional.empty());
+        when(tenantRepository.existsById("NOPE")).thenReturn(false);
         assertThatThrownBy(() -> service.adminView("NOPE")).isInstanceOf(NotFoundException.class);
+        verify(entitlementService, never()).startMissingTrial(any());
+    }
+
+    @Test
+    void aTenantWithoutARowGetsTheTrialInsteadOf404() {
+        Subscription trial = EntitlementService.newTrial("S9", "T9", Instant.now());
+        when(subscriptionRepository.findByTenantId("T9")).thenReturn(Optional.empty());
+        when(tenantRepository.existsById("T9")).thenReturn(true);
+        when(entitlementService.startMissingTrial("T9")).thenReturn(trial);
+        when(entitlementService.resolve("T9")).thenReturn(new Entitlements(SubscriptionPlan.SUITE, SubscriptionStatus.TRIAL,
+                EnumSet.allOf(Sku.class), 5, false, null));
+        assertThat(service.adminView("T9").getStatus()).isEqualTo(SubscriptionStatus.TRIAL);
+    }
+
+    @Test
+    void auditIsRecordedBeforeTheCacheRefresh() {
+        service.update("T1", update(SubscriptionPlan.SUITE, List.of(), 1, BillingCycle.MONTHLY));
+        InOrder order = inOrder(auditService, entitlementService);
+        order.verify(auditService).record(eq(PlatformAuditAction.SUBSCRIPTION_CHANGE), any(), any(), any());
+        order.verify(entitlementService).refresh("T1");
+    }
+
+    @Test
+    void waiveIsRefusedOnStarterAndCancelled() {
+        SubscriptionWaiveRequest r = new SubscriptionWaiveRequest();
+        r.setReason(WaivedReason.COMPLIMENTARY);
+        sub.setPlan(SubscriptionPlan.STARTER);
+        assertThatThrownBy(() -> service.waive("T1", r)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Set a plan before waiving");
+        sub.setPlan(SubscriptionPlan.SUITE);
+        sub.setStatus(SubscriptionStatus.CANCELLED);
+        assertThatThrownBy(() -> service.waive("T1", r)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Set a plan before waiving");
+    }
+
+    @Test
+    void customSeatsNeedTheStaffSeatsSku() {
+        assertThatThrownBy(() -> service.update("T1", update(SubscriptionPlan.CUSTOM, List.of(Sku.CRM_CORE), 2, BillingCycle.MONTHLY)))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Add the Staff seats SKU to give seats");
+        verify(subscriptionRepository, never()).save(any());
     }
 }

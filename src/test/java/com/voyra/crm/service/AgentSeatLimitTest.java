@@ -45,6 +45,7 @@ class AgentSeatLimitTest {
     @Mock private AesPasswordEncoder passwordEncoder;
     @Mock private LoginEmailService loginEmailService;
     @Mock private EntitlementService entitlementService;
+    @Mock private com.voyra.crm.repository.SubscriptionRepository subscriptionRepository;
     @InjectMocks private AgentService agentService;
 
     @BeforeEach
@@ -80,6 +81,32 @@ class AgentSeatLimitTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("All 5 seats are in use — add seats in Subscription");
         verify(agentRepository, never()).save(any());
+    }
+
+    @Test
+    void theTenantSubscriptionRowIsLockedBeforeSeatsAreCounted() {
+        seats(5, 4);
+        agentService.createAgent(request());
+        InOrder order = inOrder(subscriptionRepository, agentRepository);
+        order.verify(subscriptionRepository).findByTenantIdForUpdate("T1");
+        order.verify(agentRepository).countByTenantIdAndIsActiveTrue("T1");
+    }
+
+    @Test
+    void zeroSeatsSaysTheAddOnIsNeeded() {
+        when(entitlementService.resolve("T1")).thenReturn(new Entitlements(SubscriptionPlan.STARTER, null, Set.of(), 0, false, null));
+        assertThatThrownBy(() -> agentService.createAgent(request()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Staff logins need the Staff seats add-on — add it in Subscription");
+    }
+
+    @Test
+    void reactivatingAnAlreadyActiveAgentSkipsTheSeatCheck() {
+        Agent agent = Agent.builder().id("A1").tenantId("T1").isActive(true).build();
+        when(agentRepository.findById("A1")).thenReturn(Optional.of(agent));
+        agentService.updateStatus("A1", true);
+        verify(entitlementService, never()).resolve(any());
+        verify(subscriptionRepository, never()).findByTenantIdForUpdate(any());
     }
 
     @Test

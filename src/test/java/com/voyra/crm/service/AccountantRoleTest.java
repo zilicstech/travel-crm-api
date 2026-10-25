@@ -53,6 +53,8 @@ class AccountantRoleTest {
     private LoginEmailService loginEmailService;
     @Mock
     private EntitlementService entitlementService;
+    @Mock
+    private com.voyra.crm.repository.SubscriptionRepository subscriptionRepository;
 
     @InjectMocks
     private AgentService agentService;
