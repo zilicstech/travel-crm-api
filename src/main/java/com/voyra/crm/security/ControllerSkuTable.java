@@ -73,6 +73,7 @@ import com.voyra.crm.controller.VisaController;
 import com.voyra.crm.controller.WalletController;
 import com.voyra.crm.enums.SkuRule;
 
+import java.util.List;
 import java.util.Map;
 
 import static com.voyra.crm.enums.SkuRule.ACCOUNTS_GST;
@@ -87,9 +88,14 @@ import static java.util.Map.entry;
  * Every controller class and the SKU it needs (spec §5.2 "Unlocks", §8). Explicit on purpose: a new
  * controller fails ControllerSkuTableContractTest and blueprint-audit.sh until it is added here.
  * Never gated = Starter: auth, public links, reference data, portal (search, platform bookings,
- * wallet), agency profile, owner dashboard, and the super-admin platform API.
+ * wallet), agency profile, owner dashboard, staff management, and the super-admin platform API.
  */
 public final class ControllerSkuTable {
+
+    /** Spec §8's never-gated paths: free in every subscription state, so READ_ONLY leaves them alone too. */
+    public static final List<String> NEVER_GATED_PATHS = List.of(
+            "/api/auth", "/api/public", "/api/reference", "/api/platform-bookings", "/api/wallet",
+            "/api/flights", "/api/hotels", "/api/agency/profile", "/api/platform");
 
     public static final Map<Class<?>, SkuRule> TABLE = Map.ofEntries(
             // Starter and platform
@@ -107,6 +113,7 @@ public final class ControllerSkuTable {
             entry(TopupController.class, NEVER_GATED),
             entry(AgencyProfileController.class, NEVER_GATED),
             entry(OwnerDashboardController.class, NEVER_GATED),
+            entry(OwnerAgentController.class, NEVER_GATED),
             entry(PlatformAdminBookingController.class, NEVER_GATED),
             entry(PlatformAgencyApplicationController.class, NEVER_GATED),
             entry(PlatformAgencyController.class, NEVER_GATED),
@@ -138,14 +145,15 @@ public final class ControllerSkuTable {
             entry(AgencySettingController.class, CRM_CORE),
             entry(MarkupDefaultController.class, CRM_CORE),
             entry(AuditLogController.class, CRM_CORE),
-            // Staff seats
-            entry(OwnerAgentController.class, STAFF_SEATS),
+            // client invoicing, its receipts, and the tax config it reads (spec §5.2 "client invoices")
+            entry(InvoiceDocumentController.class, CRM_CORE),
+            entry(PaymentReceiptController.class, CRM_CORE),
+            entry(TaxConfigController.class, CRM_CORE),
+            // Staff seats (staff management itself is never gated: the seat check gates create/reactivate)
             entry(AgentDashboardController.class, STAFF_SEATS),
             // Accounts & GST
             entry(AccountsDashboardController.class, ACCOUNTS_GST),
             entry(AccountingChangeAlertController.class, ACCOUNTS_GST),
-            entry(InvoiceDocumentController.class, ACCOUNTS_GST),
-            entry(PaymentReceiptController.class, ACCOUNTS_GST),
             entry(CreditNoteController.class, ACCOUNTS_GST),
             entry(CustomerLedgerController.class, ACCOUNTS_GST),
             entry(PartyLedgerController.class, ACCOUNTS_GST),
@@ -153,7 +161,6 @@ public final class ControllerSkuTable {
             entry(JournalController.class, ACCOUNTS_GST),
             entry(FinancialStatementsController.class, ACCOUNTS_GST),
             entry(ControlAccountReconciliationController.class, ACCOUNTS_GST),
-            entry(TaxConfigController.class, ACCOUNTS_GST),
             entry(ExchangeRateLookupController.class, ACCOUNTS_GST),
             entry(PayablesDashboardController.class, ACCOUNTS_GST),
             entry(SupplierInvoiceController.class, ACCOUNTS_GST),
@@ -170,6 +177,10 @@ public final class ControllerSkuTable {
             entry(VisaController.class, VISA));
 
     private ControllerSkuTable() {
+    }
+
+    public static boolean isNeverGatedPath(String path) {
+        return NEVER_GATED_PATHS.stream().anyMatch(p -> path.equals(p) || path.startsWith(p + "/"));
     }
 
     /** Fails closed: an unclassified controller is a build failure, never a silently open route. */

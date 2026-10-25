@@ -1,6 +1,10 @@
 package com.voyra.crm.security;
 
+import com.voyra.crm.controller.InvoiceDocumentController;
+import com.voyra.crm.controller.OwnerAgentController;
 import com.voyra.crm.controller.OwnerDashboardController;
+import com.voyra.crm.controller.PaymentReceiptController;
+import com.voyra.crm.controller.TaxConfigController;
 import com.voyra.crm.enums.SkuRule;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -77,7 +81,10 @@ class ControllerSkuTableContractTest {
         assertThat(patternsByController.keySet()).containsAll(ControllerSkuTable.TABLE.keySet());
     }
 
-    /** Exactly the spec's never-gated paths, plus the owner dashboard (Starter keeps a dashboard). */
+    /**
+     * Exactly the spec's never-gated paths, plus the owner dashboard (Starter keeps a dashboard) and staff
+     * management (the seat check gates create/reactivate; an owner can always cut a login off).
+     */
     @Test
     void neverGatedIsExactlyTheSpecList() {
         Set<String> expected = patternsByController.entrySet().stream()
@@ -85,11 +92,29 @@ class ControllerSkuTableContractTest {
                 .map(e -> e.getKey().getSimpleName())
                 .collect(Collectors.toCollection(TreeSet::new));
         expected.add(OwnerDashboardController.class.getSimpleName());
+        expected.add(OwnerAgentController.class.getSimpleName());
         Set<String> actual = ControllerSkuTable.TABLE.entrySet().stream()
                 .filter(e -> e.getValue() == SkuRule.NEVER_GATED)
                 .map(e -> e.getKey().getSimpleName())
                 .collect(Collectors.toCollection(TreeSet::new));
         assertThat(actual).isEqualTo(expected);
+    }
+
+    /** The interceptor is registered on /api/** only - a gated route outside it would be silently open. */
+    @Test
+    void everyGatedRouteIsInsideTheInterceptorScope() {
+        Set<String> outside = patternsByController.entrySet().stream()
+                .filter(e -> ControllerSkuTable.TABLE.get(e.getKey()) != SkuRule.NEVER_GATED)
+                .flatMap(e -> e.getValue().stream().filter(p -> !p.startsWith("/api/")).map(p -> e.getKey().getSimpleName() + " " + p))
+                .collect(Collectors.toCollection(TreeSet::new));
+        assertThat(outside).isEmpty();
+    }
+
+    /** Client invoicing (invoices, receipts, and the tax config it reads) is CRM Core, per spec §5.2 "client invoices". */
+    @Test
+    void clientInvoicingIsCrmCore() {
+        assertThat(List.of(InvoiceDocumentController.class, PaymentReceiptController.class, TaxConfigController.class))
+                .allMatch(c -> ControllerSkuTable.TABLE.get(c) == SkuRule.CRM_CORE);
     }
 
     @Test

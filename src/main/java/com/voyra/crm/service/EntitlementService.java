@@ -8,6 +8,8 @@ import com.voyra.crm.enums.SubscriptionStatus;
 import com.voyra.crm.models.Entitlements;
 import com.voyra.crm.repository.SubscriptionRepository;
 import com.voyra.crm.enums.BillingCycle;
+import com.voyra.crm.enums.TenantStatus;
+import com.voyra.crm.exception.TenantWriteRefusedException;
 import com.voyra.crm.util.UniqueIdResolver;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataAccessException;
@@ -57,12 +59,25 @@ public class EntitlementService {
     }
 
     /**
-     * Public proposal and feedback links are CRM Core features: an agency without CRM Core, or
-     * READ_ONLY, gets "This link is no longer available" instead (spec §8).
+     * Public proposal and feedback links are CRM Core features: an agency without CRM Core, READ_ONLY,
+     * or not ACTIVE (SUSPENDED, DEACTIVATED), gets "This link is no longer available" instead (spec §8).
      */
     public boolean publicLinksAvailable(String tenantId) {
+        if (TenantCache.status(tenantId).orElse(null) != TenantStatus.ACTIVE) {
+            return false;
+        }
         Entitlements e = resolve(tenantId);
         return e.skus().contains(Sku.CRM_CORE) && !e.readOnly();
+    }
+
+    /** For writes the interceptors pass through on purpose (staff reactivation): SUSPENDED 423, READ_ONLY 402. */
+    public void assertWritable(String tenantId) {
+        if (TenantCache.status(tenantId).orElse(null) == TenantStatus.SUSPENDED) {
+            throw TenantWriteRefusedException.suspended();
+        }
+        if (resolve(tenantId).readOnly()) {
+            throw TenantWriteRefusedException.readOnly();
+        }
     }
 
     /** Reloads from the subscription row and replaces the cached value. */
@@ -100,7 +115,8 @@ public class EntitlementService {
             return newTransaction.execute(tx -> subscriptionRepository.saveAndFlush(
                     newTrial(UniqueIdResolver.resolve(subscriptionRepository::existsById), tenantId, Instant.now())));
         } catch (DataAccessException e) {
-            return subscriptionRepository.findByTenantId(tenantId).orElse(null);
+            // A concurrent create wins; anything else is a real failure, never a silent Starter downgrade.
+            return subscriptionRepository.findByTenantId(tenantId).orElseThrow(() -> e);
         }
     }
 

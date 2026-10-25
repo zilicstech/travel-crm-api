@@ -21,6 +21,7 @@ import java.util.Map;
  * A SUSPENDED agency signs in and reads, but every tenant-scoped write is refused with 423. Reads include the
  * few POSTs that only compute or look up (searches, previews, duplicate checks) - listed exactly in
  * {@link ReadRequests#READ_STYLE_POSTS}; a POST that records anything (e.g. a refund check) stays blocked.
+ * An owner may still deactivate or delete a staff login ({@link ReadRequests#isStaffCutOff}).
  * Runs after JwtAuthenticationFilter, so TenantContext already holds the request's tenant.
  */
 @Component
@@ -37,6 +38,7 @@ public class TenantStatusInterceptor implements HandlerInterceptor {
         String path = request.getRequestURI().substring(request.getContextPath().length());
         String tenantId = TenantContext.getTenantId();
         if (ReadRequests.isRead(request, path)
+                || ReadRequests.isStaffCutOff(request, path)
                 || OPEN_PREFIXES.stream().anyMatch(path::startsWith)
                 || tenantId == null
                 || TenantCache.status(tenantId).orElse(null) != TenantStatus.SUSPENDED) {

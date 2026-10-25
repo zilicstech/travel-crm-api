@@ -129,6 +129,31 @@ class TenantStatusInterceptorTest {
         }
     }
 
+    /** An owner can always cut staff off, even while suspended; reactivation is refused in AgentService. */
+    @Test
+    void suspendedOwnerCanStillDeactivateAndDeleteStaff() throws Exception {
+        TenantStatusInterceptor interceptor = new TenantStatusInterceptor(new ObjectMapper());
+        TenantContext.setTenantId(TENANT);
+        try {
+            assertThat(interceptor.preHandle(new MockHttpServletRequest("PATCH", "/api/agents/A1/status"),
+                    new MockHttpServletResponse(), new Object())).isTrue();
+            assertThat(interceptor.preHandle(new MockHttpServletRequest("DELETE", "/api/agents/A1"),
+                    new MockHttpServletResponse(), new Object())).isTrue();
+            for (MockHttpServletRequest write : List.of(new MockHttpServletRequest("POST", "/api/agents"),
+                    new MockHttpServletRequest("PUT", "/api/agents/A1"),
+                    new MockHttpServletRequest("PATCH", "/api/agents/A1"),
+                    new MockHttpServletRequest("POST", "/api/agents/A1/reset-password"),
+                    new MockHttpServletRequest("DELETE", "/api/agents/A1/status"),
+                    new MockHttpServletRequest("DELETE", "/api/vendors/A1"))) {
+                MockHttpServletResponse refused = new MockHttpServletResponse();
+                assertThat(interceptor.preHandle(write, refused, new Object())).as(write.getMethod() + " " + write.getRequestURI()).isFalse();
+                assertThat(refused.getStatus()).isEqualTo(423);
+            }
+        } finally {
+            TenantContext.clear();
+        }
+    }
+
     @Test
     void authRoutesAreNeverBlocked() throws Exception {
         when(authService.loginOwner(any())).thenReturn(LoginResponse.builder().success(true).build());

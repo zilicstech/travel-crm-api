@@ -57,6 +57,7 @@ public class AgentService {
     private final VisaRepository visaRepository;
     private final AesPasswordEncoder passwordEncoder;
     private final LoginEmailService loginEmailService;
+    private final EntitlementService entitlementService;
 
     @Transactional
     public AgentCreateResponse createAgent(AgentCreateRequest request) {
@@ -194,6 +195,10 @@ public class AgentService {
     @Transactional
     public AgentPerformanceResponse updateStatus(String id, boolean isActive) {
         Agent agent = findOwnedAgent(id);
+        if (isActive) {
+            // the interceptors let this route through so an owner can always deactivate; reactivating is a write
+            entitlementService.assertWritable(agent.getTenantId());
+        }
         agent.setIsActive(isActive);
         agentRepository.save(agent);
         AgentCache.put(agent.getId(), isActive);

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.voyra.crm.context.TenantContext;
 import com.voyra.crm.enums.PlatformAuditAction;
 import com.voyra.crm.enums.SkuRule;
+import com.voyra.crm.exception.TenantWriteRefusedException;
 import com.voyra.crm.models.Entitlements;
 import com.voyra.crm.service.EntitlementService;
 import com.voyra.crm.service.PlatformAuditService;
@@ -23,9 +24,10 @@ import java.util.Map;
 /**
  * Spec §8 SKU enforcement. Runs after {@link TenantStatusInterceptor} (a SUSPENDED agency keeps its 423).
  * A controller needing a SKU the agency lacks gets 402 SKU_REQUIRED; a READ_ONLY agency keeps every read
- * (and the read-style POSTs in {@link ReadRequests}) and gets 402 READ_ONLY on writes. Never-gated routes
- * are left alone entirely: Starter, wallet and platform bookings are free, so READ_ONLY never blocks them.
- * Nobody is logged out and nothing is deleted. SUPER_ADMIN bypasses; acting on a tenant is audit-logged.
+ * (and the read-style POSTs in {@link ReadRequests}) and gets 402 READ_ONLY on writes, except that an owner
+ * can always cut staff off. Spec §8's never-gated paths are left alone entirely: Starter, wallet and
+ * platform bookings are free, so READ_ONLY never blocks them. Other never-gated controllers (owner
+ * dashboard, staff management) need no SKU but are still READ_ONLY. Nobody is logged out, nothing is deleted. SUPER_ADMIN bypasses; acting on a tenant is audit-logged.
  */
 @Component
 public class EntitlementInterceptor implements HandlerInterceptor {
@@ -59,17 +61,16 @@ public class EntitlementInterceptor implements HandlerInterceptor {
             }
             return true;
         }
-        if (rule == SkuRule.NEVER_GATED || tenantId == null) {
+        if (tenantId == null || (rule == SkuRule.NEVER_GATED && ControllerSkuTable.isNeverGatedPath(path))) {
             return true;
         }
         Entitlements entitlements = entitlementService.resolve(tenantId);
-        if (!entitlements.skus().contains(rule.sku())) {
+        if (rule != SkuRule.NEVER_GATED && !entitlements.skus().contains(rule.sku())) {
             return refuse(response, Map.of("code", "SKU_REQUIRED", "sku", rule.sku().name(),
                     "message", "Your plan doesn't include this feature. Upgrade in Subscription."));
         }
-        if (entitlements.readOnly() && !ReadRequests.isRead(request, path)) {
-            return refuse(response, Map.of("code", "READ_ONLY",
-                    "message", "Your subscription is read-only. Renew in Subscription to make changes."));
+        if (entitlements.readOnly() && !ReadRequests.isRead(request, path) && !ReadRequests.isStaffCutOff(request, path)) {
+            return refuse(response, Map.of("code", "READ_ONLY", "message", TenantWriteRefusedException.READ_ONLY_MESSAGE));
         }
         return true;
     }

@@ -204,6 +204,15 @@ public class GlobalExceptionHandler {
                         HttpStatus.CONFLICT.value(), path));
     }
 
+    @ExceptionHandler(TenantWriteRefusedException.class)
+    public ResponseEntity<ApiErrorResponse> handleTenantWriteRefused(TenantWriteRefusedException ex, HttpServletRequest request) {
+        String path = getPath(request);
+        log.warn("Tenant write refused - code: {}, path: {}", ex.getCode(), path);
+        ApiErrorResponse response = ApiErrorResponse.of(ex.getMessage(), "Write refused", null, ex.getStatus().value(), path);
+        response.setCode(ex.getCode());
+        return ResponseEntity.status(ex.getStatus()).body(response);
+    }
+
     @ExceptionHandler(InsufficientBalanceException.class)
     public ResponseEntity<ApiErrorResponse> handleInsufficientBalance(InsufficientBalanceException ex,
                                                                       HttpServletRequest request) {

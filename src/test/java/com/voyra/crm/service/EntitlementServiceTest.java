@@ -8,6 +8,7 @@ import com.voyra.crm.enums.SubscriptionPlan;
 import com.voyra.crm.enums.SubscriptionStatus;
 import com.voyra.crm.enums.TenantStatus;
 import com.voyra.crm.enums.WaivedReason;
+import com.voyra.crm.exception.TenantWriteRefusedException;
 import com.voyra.crm.models.Entitlements;
 import com.voyra.crm.repository.SubscriptionRepository;
 import org.junit.jupiter.api.AfterEach;
@@ -29,6 +30,7 @@ import java.util.Optional;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -218,6 +220,7 @@ class EntitlementServiceTest {
 
     @Test
     void publicLinksNeedCrmCoreAndAWritableSubscription() {
+        TenantCache.put("T1", "Sky", TenantStatus.ACTIVE);
         TenantCache.putEntitlements("T1", new Entitlements(SubscriptionPlan.SUITE, SubscriptionStatus.ACTIVE, ALL, 5, false, null));
         assertThat(entitlementService.publicLinksAvailable("T1")).isTrue();
         TenantCache.putEntitlements("T1", new Entitlements(SubscriptionPlan.SUITE, SubscriptionStatus.READ_ONLY, ALL, 5, true, null));
@@ -226,6 +229,45 @@ class EntitlementServiceTest {
         assertThat(entitlementService.publicLinksAvailable("T1")).isFalse();
         TenantCache.putEntitlements("T1", new Entitlements(SubscriptionPlan.STARTER, SubscriptionStatus.ACTIVE, Set.of(), 0, false, null));
         assertThat(entitlementService.publicLinksAvailable("T1")).isFalse();
+    }
+
+    @Test
+    void publicLinksAreRefusedForASuspendedOrDeactivatedAgency() {
+        TenantCache.putEntitlements("T1", new Entitlements(SubscriptionPlan.SUITE, SubscriptionStatus.ACTIVE, ALL, 5, false, null));
+        TenantCache.put("T1", "Sky", TenantStatus.SUSPENDED);
+        assertThat(entitlementService.publicLinksAvailable("T1")).isFalse();
+        TenantCache.put("T1", "Sky", TenantStatus.DEACTIVATED);
+        assertThat(entitlementService.publicLinksAvailable("T1")).isFalse();
+    }
+
+    @Test
+    void aFailedTrialInsertWithNoRowAfterwardsIsRethrownNotStarter() {
+        when(subscriptionRepository.findByTenantId("T1")).thenReturn(Optional.empty());
+        when(subscriptionRepository.saveAndFlush(any(Subscription.class))).thenThrow(new DataIntegrityViolationException("db down"));
+
+        assertThatThrownBy(() -> entitlementService.resolve("T1")).isInstanceOf(DataIntegrityViolationException.class);
+        assertThat(TenantCache.entitlements("T1")).isEmpty();
+    }
+
+    @Test
+    void assertWritableRefusesSuspendedWith423AndReadOnlyWith402() {
+        TenantCache.put("T1", "Sky", TenantStatus.ACTIVE);
+        TenantCache.putEntitlements("T1", new Entitlements(SubscriptionPlan.SUITE, SubscriptionStatus.ACTIVE, ALL, 5, false, null));
+        entitlementService.assertWritable("T1");
+
+        TenantCache.putEntitlements("T1", new Entitlements(SubscriptionPlan.SUITE, SubscriptionStatus.READ_ONLY, ALL, 5, true, null));
+        assertThatThrownBy(() -> entitlementService.assertWritable("T1"))
+                .isInstanceOfSatisfying(TenantWriteRefusedException.class, e -> {
+                    assertThat(e.getStatus().value()).isEqualTo(402);
+                    assertThat(e.getCode()).isEqualTo("READ_ONLY");
+                });
+
+        TenantCache.put("T1", "Sky", TenantStatus.SUSPENDED);
+        assertThatThrownBy(() -> entitlementService.assertWritable("T1"))
+                .isInstanceOfSatisfying(TenantWriteRefusedException.class, e -> {
+                    assertThat(e.getStatus().value()).isEqualTo(423);
+                    assertThat(e.getCode()).isEqualTo("TENANT_SUSPENDED");
+                });
     }
 
     private static Subscription.SubscriptionBuilder sub(SubscriptionPlan plan, SubscriptionStatus status) {

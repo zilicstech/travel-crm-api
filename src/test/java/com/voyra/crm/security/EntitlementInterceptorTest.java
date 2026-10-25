@@ -5,6 +5,8 @@ import com.voyra.crm.cache.TenantCache;
 import com.voyra.crm.config.SecurityConfig;
 import com.voyra.crm.config.WebMvcConfig;
 import com.voyra.crm.controller.ClientController;
+import com.voyra.crm.controller.InvoiceDocumentController;
+import com.voyra.crm.controller.OwnerAgentController;
 import com.voyra.crm.controller.PlatformSettingController;
 import com.voyra.crm.controller.ReportController;
 import com.voyra.crm.controller.TopupController;
@@ -16,7 +18,12 @@ import com.voyra.crm.enums.SubscriptionStatus;
 import com.voyra.crm.enums.TenantStatus;
 import com.voyra.crm.enums.UserType;
 import com.voyra.crm.models.Entitlements;
+import com.voyra.crm.models.TaxComputationResult;
 import com.voyra.crm.service.AgentService;
+import com.voyra.crm.service.BaseCurrency;
+import com.voyra.crm.service.InvoiceDocumentService;
+import com.voyra.crm.service.InvoicePurchaseService;
+import com.voyra.crm.service.TaxEngine;
 import com.voyra.crm.service.ClientService;
 import com.voyra.crm.service.EntitlementService;
 import com.voyra.crm.service.PlatformAuditService;
@@ -47,14 +54,18 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.mock;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /** SKU x status matrix (spec §8): 402 SKU_REQUIRED / READ_ONLY, never-gated routes, SUPER_ADMIN bypass. */
 @WebMvcTest({VendorController.class, ReportController.class, ClientController.class, TopupController.class,
-        PlatformSettingController.class})
+        PlatformSettingController.class, OwnerAgentController.class, InvoiceDocumentController.class})
 @ActiveProfiles("test")
 @Import({SecurityConfig.class, JwtAuthenticationFilter.class, JwtService.class, RestAuthenticationEntryPoint.class,
         WebMvcConfig.class, TenantStatusInterceptor.class, EntitlementInterceptor.class})
@@ -73,6 +84,10 @@ class EntitlementInterceptorTest {
     @MockBean private ClientService clientService;
     @MockBean private TopupService topupService;
     @MockBean private PlatformSettingService platformSettingService;
+    @MockBean private TaxEngine taxEngine;
+    @MockBean private InvoiceDocumentService invoiceDocumentService;
+    @MockBean private InvoicePurchaseService invoicePurchaseService;
+    @MockBean private BaseCurrency baseCurrency;
 
     private String owner;
 
@@ -193,5 +208,52 @@ class EntitlementInterceptorTest {
         String admin = "Bearer " + jwtService.generateToken("root@voyra.in", UserType.SUPER_ADMIN, ADMIN, null);
         mockMvc.perform(get("/api/platform/settings").header("Authorization", admin)).andExpect(status().isOk());
         verify(platformAuditService, never()).record(any(), anyString(), anyString(), anyMap());
+    }
+
+    @Test
+    void readOnlyRefusesPutPatchAndDelete() throws Exception {
+        entitled(EnumSet.allOf(Sku.class), true);
+        for (MockHttpServletRequestBuilder write : java.util.List.of(
+                put("/api/accounts/invoices/I1"), patch("/api/vendors/V1"), patch("/api/vendors/V1/status"),
+                delete("/api/vendors/V1"), delete("/api/accounts/invoices/I1"))) {
+            mockMvc.perform(write.header("Authorization", owner).contentType(MediaType.APPLICATION_JSON).content("{}"))
+                    .andExpect(status().is(402)).andExpect(jsonPath("$.code").value("READ_ONLY"));
+        }
+    }
+
+    @Test
+    void readOnlyAllowsTheTaxPreviewPost() throws Exception {
+        entitled(EnumSet.allOf(Sku.class), true);
+        when(taxEngine.compute(any())).thenReturn(mock(TaxComputationResult.class));
+        mockMvc.perform(post("/api/accounts/invoices/preview-tax").header("Authorization", owner)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"clientId\":\"C1\",\"taxableAmount\":1000,\"supplyNature\":\"AIR_TICKET\"}"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void staffManagementIsNeverGatedBySku() throws Exception {
+        entitled(Set.of(), false);
+        mockMvc.perform(get("/api/agents").header("Authorization", owner)).andExpect(status().isOk());
+    }
+
+    /** An owner can always cut staff off; every other staff write waits for a writable subscription. */
+    @Test
+    void readOnlyOwnerCanDeactivateAndDeleteStaffButNothingElse() throws Exception {
+        entitled(EnumSet.allOf(Sku.class), true);
+        mockMvc.perform(patch("/api/agents/A1/status").header("Authorization", owner)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"isActive\":false}"))
+                .andExpect(status().isOk());
+        verify(agentService).updateStatus("A1", false);
+        mockMvc.perform(delete("/api/agents/A1").header("Authorization", owner)).andExpect(status().isNoContent());
+        verify(agentService).removeAgent("A1");
+
+        mockMvc.perform(post("/api/agents").header("Authorization", owner).contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().is(402)).andExpect(jsonPath("$.code").value("READ_ONLY"));
+        mockMvc.perform(put("/api/agents/A1").header("Authorization", owner).contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().is(402)).andExpect(jsonPath("$.code").value("READ_ONLY"));
+        mockMvc.perform(post("/api/agents/A1/reset-password").header("Authorization", owner)
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().is(402)).andExpect(jsonPath("$.code").value("READ_ONLY"));
     }
 }

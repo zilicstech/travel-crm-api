@@ -20,6 +20,8 @@ public final class ReadRequests {
             "/api/hotels/search", "/api/hotels/thumbnails", "/api/hotels/{id}/detail",
             "/api/clients/duplicate-check", "/api/accounts/invoices/preview-tax");
     private static final AntPathMatcher MATCHER = new AntPathMatcher();
+    private static final String STAFF_STATUS = "/api/agents/{id}/status";
+    private static final String STAFF_LOGIN = "/api/agents/{id}";
 
     private ReadRequests() {
     }
@@ -28,5 +30,15 @@ public final class ReadRequests {
     public static boolean isRead(HttpServletRequest request, String path) {
         return READ_METHODS.contains(request.getMethod())
                 || ("POST".equals(request.getMethod()) && READ_STYLE_POSTS.stream().anyMatch(p -> MATCHER.match(p, path)));
+    }
+
+    /**
+     * An owner can always cut a staff login off, even SUSPENDED or READ_ONLY: deactivate (PATCH status) or
+     * delete. Not a read - the PATCH route also reactivates, which AgentService refuses via
+     * EntitlementService.assertWritable.
+     */
+    public static boolean isStaffCutOff(HttpServletRequest request, String path) {
+        return ("PATCH".equals(request.getMethod()) && MATCHER.match(STAFF_STATUS, path))
+                || ("DELETE".equals(request.getMethod()) && MATCHER.match(STAFF_LOGIN, path));
     }
 }
