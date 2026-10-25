@@ -1,12 +1,13 @@
 package com.voyra.crm.cache;
 
 import com.voyra.crm.enums.TenantStatus;
+import com.voyra.crm.models.Entitlements;
 
 import java.util.Collection;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
-/** Hot-path tenant status lookup, avoiding a DB hit on every authenticated request. */
+/** Hot-path tenant status and entitlements lookup, avoiding a DB hit on every authenticated request. */
 public final class TenantCache {
 
     private static final ConcurrentHashMap<String, TenantInfo> CACHE = new ConcurrentHashMap<>();
@@ -14,13 +15,32 @@ public final class TenantCache {
     private TenantCache() {
     }
 
-    public record TenantInfo(String name, TenantStatus status) {
+    /** entitlements null = not resolved yet (EntitlementService loads it on first use). */
+    public record TenantInfo(String name, TenantStatus status, Entitlements entitlements) {
     }
 
+    /** Keeps any cached entitlements - a rename or status change does not touch the subscription. */
     public static void put(String tenantId, String name, TenantStatus status) {
         if (tenantId != null && !tenantId.isBlank()) {
-            CACHE.put(key(tenantId), new TenantInfo(name == null ? "" : name, status));
+            CACHE.compute(key(tenantId), (k, old) ->
+                    new TenantInfo(name == null ? "" : name, status, old == null ? null : old.entitlements()));
         }
+    }
+
+    /** Called by EntitlementService, in the same method as every subscription change. */
+    public static void putEntitlements(String tenantId, Entitlements entitlements) {
+        if (tenantId != null && !tenantId.isBlank()) {
+            CACHE.compute(key(tenantId), (k, old) -> old == null
+                    ? new TenantInfo("", null, entitlements)
+                    : new TenantInfo(old.name(), old.status(), entitlements));
+        }
+    }
+
+    public static Optional<Entitlements> entitlements(String tenantId) {
+        if (tenantId == null || tenantId.isBlank()) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(CACHE.get(key(tenantId))).map(TenantInfo::entitlements);
     }
 
     public static void remove(String tenantId) {

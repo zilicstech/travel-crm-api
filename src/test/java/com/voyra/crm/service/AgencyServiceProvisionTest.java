@@ -50,6 +50,7 @@ class AgencyServiceProvisionTest {
     @Mock private PlatformAuditService platformAuditService;
     @Mock private com.voyra.crm.repository.WalletRepository walletRepository;
     @Mock private com.voyra.crm.repository.AgencyApplicationRepository agencyApplicationRepository;
+    @Mock private com.voyra.crm.repository.SubscriptionRepository subscriptionRepository;
     @InjectMocks private AgencyService agencyService;
 
     @BeforeEach
@@ -133,5 +134,38 @@ class AgencyServiceProvisionTest {
         assertThat(response.getAgencyName()).isEqualTo("Global Explorer Travels");
         assertThat(response.getOwnerEmail()).isEqualTo("owner@globalexplorer.com");
         assertThat(response.getBaseCurrencyCode()).isEqualTo("USD");
+    }
+
+    @Test
+    void provisioningStartsAFourteenDaySuiteTrialAndCachesItsEntitlements() {
+        AgencyCreateRequest request = new AgencyCreateRequest();
+        request.setAgencyName("Trial Travels");
+        request.setOwnerName("Tara");
+        request.setOwnerEmail("tara@trial.in");
+        request.setOwnerPassword("SecurePass123");
+        when(passwordEncoder.encode("SecurePass123")).thenReturn("enc");
+
+        AgencyCreateResponse response = agencyService.createAgency(request);
+        provisioned.add(response.getId());
+
+        ArgumentCaptor<com.voyra.crm.entity.Subscription> saved = ArgumentCaptor.forClass(com.voyra.crm.entity.Subscription.class);
+        verify(subscriptionRepository).save(saved.capture());
+        com.voyra.crm.entity.Subscription sub = saved.getValue();
+        Instant inFourteenDays = Instant.now().plus(java.time.Duration.ofDays(14));
+        assertThat(sub.getTenantId()).isEqualTo(response.getId());
+        assertThat(sub.getId()).hasSize(36);
+        assertThat(sub.getPlan()).isEqualTo(com.voyra.crm.enums.SubscriptionPlan.SUITE);
+        assertThat(sub.getStatus()).isEqualTo(com.voyra.crm.enums.SubscriptionStatus.TRIAL);
+        assertThat(sub.getWaivedReason()).isNull();
+        assertThat(sub.getSeats()).isZero();
+        assertThat(sub.getSkus()).containsExactlyInAnyOrder("CRM_CORE", "STAFF_SEATS", "ACCOUNTS_GST", "REPORTS", "VISA");
+        assertThat(sub.getTrialEndsAt()).isCloseTo(inFourteenDays, within(1, java.time.temporal.ChronoUnit.MINUTES));
+        assertThat(sub.getPeriodEnd()).isEqualTo(sub.getTrialEndsAt());
+        assertThat(sub.getBillingCycle()).isEqualTo(com.voyra.crm.enums.BillingCycle.MONTHLY);
+        assertThat(TenantCache.entitlements(response.getId())).get().satisfies(e -> {
+            assertThat(e.status()).isEqualTo(com.voyra.crm.enums.SubscriptionStatus.TRIAL);
+            assertThat(e.readOnly()).isFalse();
+            assertThat(e.seats()).isEqualTo(5);
+        });
     }
 }

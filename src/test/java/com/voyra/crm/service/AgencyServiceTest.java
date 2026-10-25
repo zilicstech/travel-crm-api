@@ -45,6 +45,7 @@ class AgencyServiceTest {
     @Mock private PlatformAuditService platformAuditService;
     @Mock private AgencyApplicationRepository agencyApplicationRepository;
     @Mock private WalletRepository walletRepository;
+    @Mock private com.voyra.crm.repository.SubscriptionRepository subscriptionRepository;
     @Mock private TenantFlywayMigrator tenantFlywayMigrator;
     @Mock private TenantDefaultsSeeder tenantDefaultsSeeder;
     @Mock private ChartOfAccountsSeedService chartOfAccountsSeedService;

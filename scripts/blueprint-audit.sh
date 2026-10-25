@@ -43,12 +43,13 @@ check "§5.3 all controllers guarded by @PreAuthorize" 0 "$UNGUARDED"
 # Extended for agency applications: AgencyApplication (entity/AgencyApplication.java), KycDocument (entity/KycDocument.java). PlatformSetting (entity/PlatformSetting.java). AgencyPricing (entity/AgencyPricing.java).
 # Extended for the wallet: Wallet, WalletEntry, TopupRequest, GatewayOrder, GatewayWebhookOrphan, PlatformReceivable (entity/).
 # Extended for platform bookings: PlatformBooking, PlatformBookingEvent (entity/).
+# Extended for subscriptions: Subscription (entity/).
 check "§7.3 no entities returned from controllers" 0 \
-  "$(grep -rlE 'ResponseEntity<(List<)?(Lead|LeadMember|LeadNote|LeadProposal|LeadTimeline|LeadService|LeadFollowUp|LeadVoucher|AgencySetting|Client|Member|MemberDocument|BookingDocument|Booking|Visa|Agent|Tenant|ClientInvoice|SupplierInvoice|PlatformAdmin|PlatformSupplierCredential|AuditLog|Vendor|CommunicationLog|Feedback|FeedbackLink|ShiftHandover|TaxRateConfig|InvoiceLineItem|Invoice|PaymentReceipt|CustomerLedgerEntry|CreditNote|SupplierInvoiceLineItem|SupplierPayment|SupplierLedgerEntry|SupplierCreditNote|Inquiry|AgencyApplication|KycDocument|PlatformSetting|AgencyPricing|Wallet|WalletEntry|TopupRequest|GatewayOrder|GatewayWebhookOrphan|PlatformReceivable|PlatformBooking|PlatformBookingEvent)[>,]' $SRC/controller/ 2>/dev/null | wc -l | tr -d ' ')"
+  "$(grep -rlE 'ResponseEntity<(List<)?(Lead|LeadMember|LeadNote|LeadProposal|LeadTimeline|LeadService|LeadFollowUp|LeadVoucher|AgencySetting|Client|Member|MemberDocument|BookingDocument|Booking|Visa|Agent|Tenant|ClientInvoice|SupplierInvoice|PlatformAdmin|PlatformSupplierCredential|AuditLog|Vendor|CommunicationLog|Feedback|FeedbackLink|ShiftHandover|TaxRateConfig|InvoiceLineItem|Invoice|PaymentReceipt|CustomerLedgerEntry|CreditNote|SupplierInvoiceLineItem|SupplierPayment|SupplierLedgerEntry|SupplierCreditNote|Inquiry|AgencyApplication|KycDocument|PlatformSetting|AgencyPricing|Wallet|WalletEntry|TopupRequest|GatewayOrder|GatewayWebhookOrphan|PlatformReceivable|PlatformBooking|PlatformBookingEvent|Subscription)[>,]' $SRC/controller/ 2>/dev/null | wc -l | tr -d ' ')"
 
 # Public tables must not be shadowed by a same-named tenant table (tenant search_path is "tenant_x, public").
-check "public wallet/booking tables not shadowed by tenant migrations" 0 \
-  "$(grep -liE 'create[[:space:]]+table[[:space:]]+(if[[:space:]]+not[[:space:]]+exists[[:space:]]+)?(public\.)?(wallet|wallet_entry|topup_request|gateway_order|gateway_webhook_orphan|platform_receivable|platform_booking|platform_booking_event)([[:space:]]|\()' src/main/resources/db/migration/tenant/*.sql 2>/dev/null | wc -l | tr -d ' ')"
+check "public wallet/booking/subscription tables not shadowed by tenant migrations" 0 \
+  "$(grep -liE 'create[[:space:]]+table[[:space:]]+(if[[:space:]]+not[[:space:]]+exists[[:space:]]+)?(public\.)?(wallet|wallet_entry|topup_request|gateway_order|gateway_webhook_orphan|platform_receivable|platform_booking|platform_booking_event|subscription|subscription_invoice|voyra_invoice_sequence)([[:space:]]|\()' src/main/resources/db/migration/tenant/*.sql 2>/dev/null | wc -l | tr -d ' ')"
 
 # §8.1 - controllers hold no repository access and no try/catch
 check "§8.1 no repository access in controllers" 0 \

@@ -10,7 +10,13 @@ import com.voyra.crm.dto.CredentialsResponse;
 import com.voyra.crm.dto.PasswordResetRequest;
 import com.voyra.crm.entity.AgencyApplication;
 import com.voyra.crm.entity.Tenant;
+import com.voyra.crm.entity.Subscription;
 import com.voyra.crm.entity.Wallet;
+import com.voyra.crm.enums.BillingCycle;
+import com.voyra.crm.enums.Sku;
+import com.voyra.crm.enums.SubscriptionPlan;
+import com.voyra.crm.enums.SubscriptionStatus;
+import com.voyra.crm.repository.SubscriptionRepository;
 import com.voyra.crm.enums.WalletStatus;
 import com.voyra.crm.repository.WalletRepository;
 import com.voyra.crm.enums.PlatformAuditAction;
@@ -29,7 +35,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
@@ -50,6 +58,10 @@ public class AgencyService {
     private final PlatformAuditService platformAuditService;
     private final AgencyApplicationRepository agencyApplicationRepository;
     private final WalletRepository walletRepository;
+    private final SubscriptionRepository subscriptionRepository;
+
+    /** Every newly approved agency starts on a 14-day Suite trial (spec §5.2). */
+    static final Duration TRIAL_LENGTH = Duration.ofDays(14);
 
     @Transactional
     public AgencyCreateResponse createAgency(AgencyCreateRequest request) {
@@ -121,10 +133,26 @@ public class AgencyService {
                 .status(WalletStatus.OPEN)
                 .createdAt(Instant.now())
                 .build());
+        Instant now = Instant.now();
+        Subscription trial = Subscription.builder()
+                .id(UniqueIdResolver.resolve(subscriptionRepository::existsById))
+                .tenantId(tenant.getId())
+                .plan(SubscriptionPlan.SUITE)
+                .skus(Arrays.stream(Sku.values()).map(Enum::name).toList())
+                .seats(0)
+                .status(SubscriptionStatus.TRIAL)
+                .periodStart(now)
+                .periodEnd(now.plus(TRIAL_LENGTH))
+                .trialEndsAt(now.plus(TRIAL_LENGTH))
+                .billingCycle(BillingCycle.MONTHLY)
+                .updatedAt(now)
+                .build();
+        subscriptionRepository.save(trial);
         tenantFlywayMigrator.migrate(tenant.getId());
         seedDefaultsForTenant(tenant.getId());
         seedChartOfAccountsFor(tenant.getId());
         TenantCache.put(tenant.getId(), tenant.getAgencyName(), tenant.getStatus());
+        TenantCache.putEntitlements(tenant.getId(), EntitlementService.compute(trial, now));
     }
 
     @Transactional(readOnly = true)

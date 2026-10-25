@@ -124,4 +124,51 @@ class PlatformSettingServiceTest {
         verify(auditService).record(eq(PlatformAuditAction.SETTING_SET), eq("PLATFORM_SETTING"), eq("tds_rate"),
                 eq(Map.of("key", "tds_rate", "from", "0", "to", "2")));
     }
+
+    @Test
+    void skuPricesAndFoundingAgenciesDefaultToTheSpec() {
+        Map<String, java.math.BigDecimal> prices = service().skuPrices();
+        assertThat(prices).containsOnlyKeys("CRM_CORE", "STAFF_SEATS", "ACCOUNTS_GST", "REPORTS", "VISA", "SUITE");
+        assertThat(prices.get("SUITE")).isEqualByComparingTo("4999");
+        assertThat(prices.get("STAFF_SEATS")).isEqualByComparingTo("399");
+        assertThat(service().foundingAgencies()).containsExactly("Voyra Global");
+    }
+
+    @Test
+    void skuPricesMustNameEveryPriceWithANonNegativeNumber() {
+        signIn();
+        assertThatThrownBy(() -> service().set("sku_prices", "{\"SUITE\":4999}"))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("sku_prices");
+        assertThatThrownBy(() -> service().set("sku_prices", "not json"))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("sku_prices");
+        String negative = "{\"CRM_CORE\":-1,\"STAFF_SEATS\":399,\"ACCOUNTS_GST\":1999,\"REPORTS\":699,\"VISA\":499,\"SUITE\":4999}";
+        assertThatThrownBy(() -> service().set("sku_prices", negative))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("sku_prices");
+        String extra = "{\"CRM_CORE\":1,\"STAFF_SEATS\":399,\"ACCOUNTS_GST\":1999,\"REPORTS\":699,\"VISA\":499,\"SUITE\":4999,\"X\":1}";
+        assertThatThrownBy(() -> service().set("sku_prices", extra))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("sku_prices");
+
+        when(repository.save(any(PlatformSetting.class))).thenAnswer(i -> i.getArgument(0));
+        String ok = "{\"CRM_CORE\":2999,\"STAFF_SEATS\":399,\"ACCOUNTS_GST\":1999,\"REPORTS\":699,\"VISA\":499,\"SUITE\":5499}";
+        assertThat(service().set("sku_prices", ok).getValue()).isEqualTo(ok);
+    }
+
+    @Test
+    void foundingAgenciesMustBeAJsonListOfNames() {
+        signIn();
+        assertThatThrownBy(() -> service().set("founding_agencies", "Voyra Global"))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("founding_agencies");
+        assertThatThrownBy(() -> service().set("founding_agencies", "[\"\"]"))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("founding_agencies");
+
+        when(repository.save(any(PlatformSetting.class))).thenAnswer(i -> i.getArgument(0));
+        assertThat(service().set("founding_agencies", "[]").getValue()).isEqualTo("[]");
+        assertThat(service().set("founding_agencies", "[\"Voyra Global\",\"Sky Trips\"]").getValue())
+                .isEqualTo("[\"Voyra Global\",\"Sky Trips\"]");
+    }
+
+    private void signIn() {
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+                new CustomUserPrincipal("U1", "admin", UserType.SUPER_ADMIN, null), null));
+    }
 }

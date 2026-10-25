@@ -19,6 +19,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /** Platform-wide settings read by the pricing engine. Typed getters fall back to the seeded defaults. */
 @Service
@@ -30,12 +31,18 @@ public class PlatformSettingService {
     static final String COMMISSION_ESTIMATE_PCT = "commission_estimate_pct";
     static final String VOYRA_CANCEL_FEE = "voyra_cancel_fee";
     static final String REFERENCE_FARE_BASKET = "reference_fare_basket";
+    static final String SKU_PRICES = "sku_prices";
+    static final String FOUNDING_AGENCIES = "founding_agencies";
+    /** Monthly INR, excl. GST: one per SKU (STAFF_SEATS per seat) plus SUITE, which includes 5 seats. */
+    private static final Set<String> SKU_PRICE_KEYS = Set.of("CRM_CORE", "STAFF_SEATS", "ACCOUNTS_GST", "REPORTS", "VISA", "SUITE");
 
     private static final Map<String, String> DEFAULTS = Map.of(
             DISCOUNT_BASE, "GROSS",
             TDS_RATE, "0",
             COMMISSION_ESTIMATE_PCT, "5",
             VOYRA_CANCEL_FEE, "0",
+            SKU_PRICES, "{\"CRM_CORE\":2499,\"STAFF_SEATS\":399,\"ACCOUNTS_GST\":1999,\"REPORTS\":699,\"VISA\":499,\"SUITE\":4999}",
+            FOUNDING_AGENCIES, "[\"Voyra Global\"]",
             REFERENCE_FARE_BASKET, "[{\"label\":\"Domestic LCC\",\"gross\":5000,\"base\":3500},"
                     + "{\"label\":\"Domestic FSC\",\"gross\":9000,\"base\":6000},"
                     + "{\"label\":\"International\",\"gross\":45000,\"base\":22000}]");
@@ -77,6 +84,18 @@ public class PlatformSettingService {
         return parseBasket(raw(REFERENCE_FARE_BASKET));
     }
 
+    /** Monthly INR price per key of {@link #SKU_PRICE_KEYS}; annual billing is 10 of these. */
+    @Transactional(readOnly = true)
+    public Map<String, BigDecimal> skuPrices() {
+        return readJson(SKU_PRICES, raw(SKU_PRICES), new TypeReference<>() { });
+    }
+
+    /** Agency names (matched to tenant.agency_name, ignoring case) that never pay for Suite. */
+    @Transactional(readOnly = true)
+    public List<String> foundingAgencies() {
+        return readJson(FOUNDING_AGENCIES, raw(FOUNDING_AGENCIES), new TypeReference<>() { });
+    }
+
     @Transactional
     public PlatformSettingResponse set(String key, String value) {
         if (!DEFAULTS.containsKey(key)) {
@@ -115,6 +134,20 @@ public class PlatformSettingService {
             case TDS_RATE -> requireRange(key, v, 30);
             case COMMISSION_ESTIMATE_PCT -> requireRange(key, v, 100);
             case VOYRA_CANCEL_FEE -> requireRange(key, v, 1_000_000);
+            case SKU_PRICES -> {
+                Map<String, BigDecimal> prices = readJson(key, v, new TypeReference<>() { });
+                if (prices == null || !prices.keySet().equals(SKU_PRICE_KEYS) || prices.values().stream()
+                        .anyMatch(p -> p == null || p.signum() < 0 || p.compareTo(BigDecimal.valueOf(1_000_000)) > 0)) {
+                    throw new IllegalArgumentException(key + " needs exactly " + SKU_PRICE_KEYS.stream().sorted().toList()
+                            + ", each a monthly INR price between 0 and 1000000");
+                }
+            }
+            case FOUNDING_AGENCIES -> {
+                List<String> names = readJson(key, v, new TypeReference<>() { });
+                if (names == null || names.stream().anyMatch(n -> n == null || n.isBlank() || n.length() > 150)) {
+                    throw new IllegalArgumentException(key + " must be a JSON list of agency names (1-150 characters each)");
+                }
+            }
             default -> {
                 List<ReferenceFare> basket;
                 try {
@@ -139,6 +172,14 @@ public class PlatformSettingService {
         }
         if (n.signum() < 0 || n.compareTo(BigDecimal.valueOf(max)) > 0) {
             throw new IllegalArgumentException(key + " must be between 0 and " + max);
+        }
+    }
+
+    private <T> T readJson(String key, String json, TypeReference<T> type) {
+        try {
+            return objectMapper.readValue(json, type);
+        } catch (Exception e) {
+            throw new IllegalArgumentException(key + " is not valid JSON of the expected shape", e);
         }
     }
 

@@ -40,6 +40,7 @@ class AuthServiceTenantStatusTest {
     @Mock private PasswordEncoder passwordEncoder;
     @Mock private JwtService jwtService;
     @Mock private BaseCurrency baseCurrency;
+    @Mock private EntitlementService entitlementService;
     @InjectMocks private AuthService authService;
 
     @BeforeEach
@@ -73,6 +74,19 @@ class AuthServiceTenantStatusTest {
     void agentOfASuspendedAgencyCanLogIn() {
         agentInTenantWithStatus(TenantStatus.SUSPENDED);
         assertThat(authService.loginAgent(credentials("agent@a.com")).isSuccess()).isTrue();
+    }
+
+    @Test
+    void ownerAndAgentLoginsCarryTheAgencyEntitlements() {
+        com.voyra.crm.models.Entitlements trial = new com.voyra.crm.models.Entitlements(
+                com.voyra.crm.enums.SubscriptionPlan.SUITE, com.voyra.crm.enums.SubscriptionStatus.TRIAL,
+                java.util.EnumSet.allOf(com.voyra.crm.enums.Sku.class), 5, false, null);
+        when(entitlementService.resolve("T1")).thenReturn(trial);
+        ownerWithStatus(TenantStatus.ACTIVE);
+        agentInTenantWithStatus(TenantStatus.ACTIVE);
+
+        assertThat(authService.loginOwner(credentials("owner@a.com")).getEntitlements()).isEqualTo(trial);
+        assertThat(authService.loginAgent(credentials("agent@a.com")).getEntitlements()).isEqualTo(trial);
     }
 
     /** Built with the builder, so isActive keeps its default true - only status can refuse. */
