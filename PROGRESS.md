@@ -206,6 +206,10 @@ environment, see `docs/DEPLOYMENT.md`):
 - Agency Owner: `owner@globalexplorer.com` (Global Explorer Travels)
 - Agent: `liam@globalexplorer.com`
 
+## B2B platform slice 2: wallet (feat/b2b-platform)
+
+Public migration V18 and the wallet module. Agencies hold a prepaid INR wallet: `WalletService` posts append-only `wallet_entry` rows under a row lock (idempotency key per posting; holds move `held` only; never negative; a shortfall is a DUE `platform_receivable` settled by the next credit). Top-ups come by bank transfer (proof upload, unique UTR, admin approves a possibly different amount, 409 on a second approval) or by Razorpay (signed idempotent webhook, orphan table for events that arrive before the order, reconcile job for stuck PENDING rows, expiry). `PAYMENT_PROVIDER` defaults to `stub`, whose Simulate payment endpoint works only on a wallet flagged test. Platform admins adjust, close (refused with an open hold, DUE receivable or PENDING top-up) and flag test wallets; every action is audited. Env: `PAYMENT_PROVIDER`, `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`. Verification: `./mvnw verify`, `e2e/wallet.spec.ts`, and wallet rules in the full-regression `invariants.py`. Booking debits and holds arrive in slice 3.
+
 ## Explicitly out of scope (per earlier decisions)
 
 - Audit log and notification system.
