@@ -21,12 +21,12 @@ class MockFlightBookingProviderTest {
     }
 
     @Test
-    void review_isDeterministicWithBaseFareAt85Percent() {
+    void review_isDeterministicWithBaseFareAt85PercentAndAFreshReviewId() {
         FareReview a = provider.review("mock-indigo-0615-PUBLISHED", 2, 1, 0);
         FareReview b = provider.review("mock-indigo-0615-PUBLISHED", 2, 1, 0);
-        assertThat(a).usingRecursiveComparison().ignoringFields("expiresAt").isEqualTo(b);
+        assertThat(a).usingRecursiveComparison().ignoringFields("expiresAt", "reviewId").isEqualTo(b);
         assertThat(a.baseFare()).isEqualByComparingTo(a.totalFare().multiply(new BigDecimal("0.85")).setScale(2, java.math.RoundingMode.HALF_UP));
-        assertThat(a.reviewId()).isEqualTo("mock-rv-mock-indigo-0615-PUBLISHED");
+        assertThat(a.reviewId()).startsWith("mock-rv-mock-indigo-0615-PUBLISHED-").isNotEqualTo(b.reviewId());
     }
 
     @Test

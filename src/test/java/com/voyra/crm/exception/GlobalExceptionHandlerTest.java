@@ -81,6 +81,21 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    void bookingConflictMapsTo409WithCodeAndDetails() throws Exception {
+        mockMvc.perform(get("/test/price-changed"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("PRICE_CHANGED"))
+                .andExpect(jsonPath("$.details.displayedFare").value(4600.00));
+    }
+
+    @Test
+    void fareUnavailableMapsTo409WithCode() throws Exception {
+        mockMvc.perform(get("/test/fare-unavailable"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("FARE_UNAVAILABLE"));
+    }
+
+    @Test
     void accessDeniedMapsTo403() throws Exception {
         mockMvc.perform(get("/test/access-denied"))
                 .andExpect(status().isForbidden());

@@ -39,6 +39,16 @@ public class GlobalExceptionHandlerFixtureController {
         throw new ReceivableDueException();
     }
 
+    @GetMapping("/test/price-changed")
+    public String priceChanged() {
+        throw new BookingConflictException("PRICE_CHANGED", "The fare changed", java.util.Map.of("displayedFare", new java.math.BigDecimal("4600.00")));
+    }
+
+    @GetMapping("/test/fare-unavailable")
+    public String fareUnavailable() {
+        throw new FareUnavailableException("gone");
+    }
+
     @GetMapping("/test/access-denied")
     public String accessDenied() {
         throw new AccessDeniedException("denied");

@@ -1,7 +1,9 @@
 package com.voyra.crm.models.booking;
 
+import java.math.BigDecimal;
 import java.util.List;
 
+/** {@code amount} is the total the supplier charged, null when it did not say; a figure other than the reviewed total is a variance. */
 public record BookResult(String supplierBookingId, SupplierBookingStatus status, String pnr,
-                         List<String> ticketNumbers, String message) {
+                         List<String> ticketNumbers, String message, BigDecimal amount) {
 }

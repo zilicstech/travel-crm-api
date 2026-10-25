@@ -78,21 +78,21 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
 
         JsonNode res = post("/oms/v1/air/book", body, "book", false);
         if (explicitlyFailed(res)) {
-            return new BookResult(r.reviewId(), SupplierBookingStatus.FAILED, null, List.of(), message(res, "Booking failed"));
+            return new BookResult(r.reviewId(), SupplierBookingStatus.FAILED, null, List.of(), message(res, "Booking failed"), null);
         }
         if (!succeeded(res)) {
             // Empty or unexpected answer: the supplier may have booked, so this is unknown, not failed.
             throw new SupplierException("Tripjack book returned an ambiguous response", null);
         }
         // Accepted is not ticketed: the ticket arrives asynchronously, so the caller polls bookingDetails.
-        return new BookResult(r.reviewId(), SupplierBookingStatus.PENDING, null, List.of(), null);
+        return new BookResult(r.reviewId(), SupplierBookingStatus.PENDING, null, List.of(), null, null);
     }
 
     @Override
     public BookResult bookingDetails(String supplierBookingId) {
         JsonNode res = post("/oms/v1/booking-details", Map.of("bookingId", supplierBookingId), "booking-details");
         if (!succeeded(res)) {
-            return new BookResult(supplierBookingId, SupplierBookingStatus.PENDING, null, List.of(), message(res, null));
+            return new BookResult(supplierBookingId, SupplierBookingStatus.PENDING, null, List.of(), message(res, null), null);
         }
         String orderStatus = res.path("order").path("status").asText("").toUpperCase();
         SupplierBookingStatus status = switch (orderStatus) {
@@ -112,7 +112,8 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
                 }
             });
         }
-        return new BookResult(supplierBookingId, status, pnr, tickets, orderStatus.isEmpty() ? null : orderStatus);
+        // shortcut: the charged amount is not parsed (field unknown until the slice 0 spike), so no variance is detected here
+        return new BookResult(supplierBookingId, status, pnr, tickets, orderStatus.isEmpty() ? null : orderStatus, null);
     }
 
     @Override

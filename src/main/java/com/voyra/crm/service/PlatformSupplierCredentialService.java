@@ -118,7 +118,7 @@ public class PlatformSupplierCredentialService {
         boolean allowed = uri != null && "https".equalsIgnoreCase(uri.getScheme()) && uri.getHost() != null
                 && uri.getUserInfo() == null && uri.getPort() == -1 && uri.getQuery() == null && uri.getFragment() == null
                 && (uri.getPath() == null || uri.getPath().isEmpty() || "/".equals(uri.getPath()))
-                && ALLOWED_HOSTS.get(environment).contains(uri.getHost().toLowerCase(java.util.Locale.ROOT));
+                && ALLOWED_HOSTS.getOrDefault(environment, Set.of()).contains(uri.getHost().toLowerCase(java.util.Locale.ROOT));
         if (!allowed) {
             throw new IllegalArgumentException("Base URL must be a Tripjack " + environment + " host over https");
         }

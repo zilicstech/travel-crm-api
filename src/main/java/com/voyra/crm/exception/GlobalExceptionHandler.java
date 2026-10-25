@@ -237,6 +237,27 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
     }
 
+    @ExceptionHandler(BookingConflictException.class)
+    public ResponseEntity<ApiErrorResponse> handleBookingConflict(BookingConflictException ex, HttpServletRequest request) {
+        String path = getPath(request);
+        log.warn("Booking conflict {} - path: {}", ex.getCode(), path);
+        ApiErrorResponse response = ApiErrorResponse.of(ex.getMessage(), "Booking conflict", null,
+                HttpStatus.CONFLICT.value(), path);
+        response.setCode(ex.getCode());
+        response.setDetails(ex.getDetails());
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
+    }
+
+    @ExceptionHandler(FareUnavailableException.class)
+    public ResponseEntity<ApiErrorResponse> handleFareUnavailable(FareUnavailableException ex, HttpServletRequest request) {
+        String path = getPath(request);
+        log.warn("Fare unavailable - path: {}", path);
+        ApiErrorResponse response = ApiErrorResponse.of(ex.getMessage(), "Fare unavailable", null,
+                HttpStatus.CONFLICT.value(), path);
+        response.setCode("FARE_UNAVAILABLE");
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
+    }
+
     @ExceptionHandler(ObjectOptimisticLockingFailureException.class)
     public ResponseEntity<ApiErrorResponse> handleOptimisticLocking(ObjectOptimisticLockingFailureException ex,
                                                                      HttpServletRequest request) {
