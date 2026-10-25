@@ -63,3 +63,15 @@
 - `e2e/platform-hotel-booking.spec.ts` (pricing HOTEL row for Dummy QA; owner books → TICKETED/CONFIRMED with confirmation number; statement rows; cancel → refund + recall; agent with client → mirror with HOTEL_VOUCHER; agent without HOTEL → 403).
 - invariants: booking invariants already product-neutral — add a HOTEL row to the checks; matrix PH rows; docs + PR texts (slice 4 section, `HOTEL_BOOKING_PROVIDER` env).
 - Gates: `./mvnw verify`, full Playwright on a fresh production build, invariants hold.
+
+## Rulings made during execution (2026-10-26)
+
+- Ruling: none beyond plan deviations.
+- Ruling: Tripjack hotel cancelQuote reads booking-details, never calls cancel-booking — a guessed dry-run flag could really cancel — cost: quote may be unknown (null → slice 3 refund-unknown path)
+- Ruling: Task 2 extends BookRequest with per-room guest split (PaxInput.roomIndex) and lead-guest PAN for Tripjack hotel book — cost: none
+- Ruling: Task 3 also takes Task 2 minors 1 (hotel review sends per-room occupancy to the provider — changes Task 1 signature), 2 (per-room guest cap), 3 (404 before 403 in actedOn), 6 (refuse past check-in) — load-bearing for Tripjack / trust boundary — cost: small
+- Ruling (for Task 3 fix round): Tripjack hotel review uses the same room-structure name as the repo's live-verified listing/pricing calls (`rooms`), not `roomInfo`; past-check-in check uses Asia/Kolkata date — consistency with verified calls; agencies are Indian — cost: slice 0 may still correct
+- Task 3: fix round 1/5 (3 addressed; 9b26782..f537d88, 1377 tests) — Ruling: scoped re-review folded into slice final review (small, test-first fixes) — cost: one pass later
+- Ruling: Task 5 task-review folded into the slice final review (test/docs only) along with the T3 fix-round re-review — cost: none
+- Ruling: fix wave = Important 1 + minors 2 (docs PAN/endpoint wording), 4 (show fareRules/bookingNotes under the hotel policy), 5 (hotel wording in resolve modal, timeline, REVIEW_EXPIRED/PRICE_CHANGED messages), 6 (e2e LEAKS + baseFare), 8 (flight mirror ⇒ FLIGHT + E_TICKET invariant), RF2 test distinct figures — small — cost: one dispatch
+- Ruling: hotel reference basket for pricing guard (minor 3) → slice 6; lead-tab e2e (minor 9) → slice 6 full regression; two clocks for today (minor 7) cosmetic, parked
