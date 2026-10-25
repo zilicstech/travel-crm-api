@@ -10,6 +10,9 @@ import com.voyra.crm.dto.CredentialsResponse;
 import com.voyra.crm.dto.PasswordResetRequest;
 import com.voyra.crm.entity.AgencyApplication;
 import com.voyra.crm.entity.Tenant;
+import com.voyra.crm.entity.Wallet;
+import com.voyra.crm.enums.WalletStatus;
+import com.voyra.crm.repository.WalletRepository;
 import com.voyra.crm.enums.PlatformAuditAction;
 import com.voyra.crm.enums.TenantStatus;
 import com.voyra.crm.migration.TenantFlywayMigrator;
@@ -46,6 +49,7 @@ public class AgencyService {
     private final LoginEmailService loginEmailService;
     private final PlatformAuditService platformAuditService;
     private final AgencyApplicationRepository agencyApplicationRepository;
+    private final WalletRepository walletRepository;
 
     @Transactional
     public AgencyCreateResponse createAgency(AgencyCreateRequest request) {
@@ -109,6 +113,14 @@ public class AgencyService {
         // Flush first: a concurrent create with the same owner email (a double-click) waits on the
         // unique index here and fails before it builds a schema, instead of leaving an orphan one.
         tenantRepository.saveAndFlush(tenant);
+        walletRepository.save(Wallet.builder()
+                .id(UniqueIdResolver.resolve(walletRepository::existsById))
+                .tenantId(tenant.getId())
+                .balance(BigDecimal.ZERO.setScale(2))
+                .held(BigDecimal.ZERO.setScale(2))
+                .status(WalletStatus.OPEN)
+                .createdAt(Instant.now())
+                .build());
         tenantFlywayMigrator.migrate(tenant.getId());
         seedDefaultsForTenant(tenant.getId());
         seedChartOfAccountsFor(tenant.getId());

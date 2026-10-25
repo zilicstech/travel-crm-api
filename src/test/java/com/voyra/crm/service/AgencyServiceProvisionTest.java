@@ -48,6 +48,7 @@ class AgencyServiceProvisionTest {
     @Mock private ChartOfAccountsSeedService chartOfAccountsSeedService;
     @Mock private LoginEmailService loginEmailService;
     @Mock private PlatformAuditService platformAuditService;
+    @Mock private com.voyra.crm.repository.WalletRepository walletRepository;
     @Mock private com.voyra.crm.repository.AgencyApplicationRepository agencyApplicationRepository;
     @InjectMocks private AgencyService agencyService;
 

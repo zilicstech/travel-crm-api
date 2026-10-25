@@ -1,9 +1,16 @@
 package com.voyra.crm.service;
 
 import com.voyra.crm.cache.TenantCache;
+import com.voyra.crm.dto.AgencyCreateRequest;
 import com.voyra.crm.dto.AgencyResponse;
 import com.voyra.crm.entity.AgencyApplication;
 import com.voyra.crm.entity.Tenant;
+import com.voyra.crm.entity.Wallet;
+import com.voyra.crm.enums.WalletStatus;
+import com.voyra.crm.migration.TenantFlywayMigrator;
+import com.voyra.crm.repository.WalletRepository;
+import org.mockito.ArgumentCaptor;
+import java.math.BigDecimal;
 import com.voyra.crm.enums.PlatformAuditAction;
 import com.voyra.crm.enums.TenantStatus;
 import com.voyra.crm.repository.AgencyApplicationRepository;
@@ -37,6 +44,12 @@ class AgencyServiceTest {
     @Mock private TenantScopedReadService tenantScopedReadService;
     @Mock private PlatformAuditService platformAuditService;
     @Mock private AgencyApplicationRepository agencyApplicationRepository;
+    @Mock private WalletRepository walletRepository;
+    @Mock private TenantFlywayMigrator tenantFlywayMigrator;
+    @Mock private TenantDefaultsSeeder tenantDefaultsSeeder;
+    @Mock private ChartOfAccountsSeedService chartOfAccountsSeedService;
+    @Mock private LoginEmailService loginEmailService;
+    @Mock private com.voyra.crm.security.AesPasswordEncoder passwordEncoder;
     @InjectMocks private AgencyService agencyService;
 
     @AfterEach
@@ -116,5 +129,26 @@ class AgencyServiceTest {
 
         assertThat(response.getApplicationId()).isNull();
         assertThat(response.getApprovedAt()).isNull();
+    }
+
+    @Test
+    void provisioningCreatesAnOpenZeroWallet() {
+        AgencyCreateRequest request = new AgencyCreateRequest();
+        request.setAgencyName("A");
+        request.setOwnerName("O");
+        request.setOwnerEmail("o@a.test");
+        request.setOwnerPassword("pw");
+
+        var created = agencyService.createAgency(request);
+
+        ArgumentCaptor<Wallet> saved = ArgumentCaptor.forClass(Wallet.class);
+        verify(walletRepository).save(saved.capture());
+        Wallet wallet = saved.getValue();
+        assertThat(wallet.getTenantId()).isEqualTo(created.getId());
+        assertThat(wallet.getBalance()).isEqualByComparingTo(BigDecimal.ZERO);
+        assertThat(wallet.getHeld()).isEqualByComparingTo(BigDecimal.ZERO);
+        assertThat(wallet.getStatus()).isEqualTo(WalletStatus.OPEN);
+        assertThat(wallet.getIsTest()).isFalse();
+        TenantCache.put(created.getId(), "A", TenantStatus.ACTIVE);
     }
 }
