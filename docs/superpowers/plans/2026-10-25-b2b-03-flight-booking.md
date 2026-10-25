@@ -33,10 +33,10 @@
 
 ## Review Focus
 
-1. **Double click on Confirm / two tabs** — one hold, one book call, one debit; second confirm returns the same booking. Test in Task 5.
-2. **Price changed at review** (supplier repriced, or a new pricing row came into force) — the agency must re-confirm the new displayed price before any hold. Test in Task 5.
-3. **Wallet short at confirm** — 409 `INSUFFICIENT_BALANCE` with available, no supplier book call, row stays REVIEWING. Test in Task 5.
-4. **Supplier times out on book then tickets later** — row BOOKING → poller finds TICKETED → one debit; a TICKETED arriving after an admin "Resolve as failed" still debits (receivable if short). Test in Task 6.
+1. **Double click on Confirm / two tabs** — one hold, one book call, one debit; second confirm returns the same booking. Test in Task 4.
+2. **Price changed at review** (supplier repriced, or a new pricing row came into force) — the agency must re-confirm the new displayed price before any hold. Test in Task 4.
+3. **Wallet short at confirm** — 409 `INSUFFICIENT_BALANCE` with available, no supplier book call, row stays REVIEWING. Test in Task 4.
+4. **Supplier times out on book then tickets later** — row BOOKING → poller finds TICKETED → one debit; a TICKETED arriving after an admin "Resolve as failed" still debits (receivable if short). Test in Task 5.
 5. **Agency A opens agency B's booking id** — 404. Test in Task 7.
 
 ---
