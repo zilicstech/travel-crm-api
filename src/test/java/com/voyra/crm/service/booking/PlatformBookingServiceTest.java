@@ -15,6 +15,7 @@ import com.voyra.crm.entity.Wallet;
 import com.voyra.crm.entity.WalletEntry;
 import com.voyra.crm.enums.PlatformBookingStatus;
 import com.voyra.crm.enums.PricingProduct;
+import com.voyra.crm.enums.ReceivableReason;
 import com.voyra.crm.enums.ServiceType;
 import com.voyra.crm.enums.SupplierEnvironment;
 import com.voyra.crm.enums.SupplierProvider;
@@ -47,12 +48,14 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -69,6 +72,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.calls;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -311,7 +316,10 @@ class PlatformBookingServiceTest {
                 .containsSubsequence("REVIEWED", "HELD", "BOOKING", "TICKETED");
         assertThat(savedEvents).allSatisfy(e -> assertThat(e.getPlatformBookingId()).isEqualTo(id));
         String all = savedEvents.stream().map(e -> String.valueOf(e.getPayload())).reduce("", String::concat);
-        assertThat(all).doesNotContain("N1234567").contains("*****567");
+        assertThat(all).doesNotContain("N1234567").doesNotContain("Rahul").doesNotContain("Sharma").doesNotContain("2019");
+        PlatformBookingEvent booking = savedEvents.stream().filter(e -> e.getType().equals("BOOKING")).findFirst().orElseThrow();
+        assertThat(booking.getPayload()).containsEntry("paxCount", 3);
+        assertThat(booking.getPayload().get("types")).isEqualTo(List.of("ADULT", "ADULT", "CHILD"));
     }
 
     @Test
@@ -447,7 +455,7 @@ class PlatformBookingServiceTest {
         verify(walletService).credit(eq(T), eq(WalletEntryType.COMMISSION_CREDIT), eq(new BigDecimal("100.00")),
                 eq("pb-comm:" + id), eq(REF), eq(id), anyString());
         verify(walletService).debitOrReceivable(eq(T), eq(WalletEntryType.TDS_DEDUCTED), eq(new BigDecimal("5.00")),
-                eq("pb-tds:" + id), eq(REF), eq(id), any());
+                eq("pb-tds:" + id), eq(REF), eq(id), eq(ReceivableReason.TDS_SHORTFALL));
     }
 
     @Test
@@ -531,6 +539,74 @@ class PlatformBookingServiceTest {
 
         assertThatThrownBy(() -> service.confirm(id, confirmRequest("key-00000001", "4500.00"))).isInstanceOf(IllegalStateException.class);
         verify(walletService, never()).hold(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void timeoutThenTicketedWithoutAChargedAmountKeepsVoyraNet() {
+        String id = reviewed();
+        when(provider.book(any())).thenThrow(new SupplierTimeoutException("timed out", null));
+        service.confirm(id, confirmRequest("key-00000001", "4500.00"));
+
+        // the poller asks by review id; the mock cannot read a fare from it
+        PlatformBooking b = service.applySupplierResult(id, new BookResult("rv-1", SupplierBookingStatus.TICKETED, "PNR123",
+                List.of("TKT-1"), "Ticketed", BigDecimal.ZERO));
+
+        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
+        assertThat(b.getVoyraNet()).isEqualByComparingTo("-472.50");
+        assertThat(savedEvents).extracting(PlatformBookingEvent::getType).doesNotContain("VARIANCE");
+        verify(notificationService, times(1)).platformAlert(anyString(), anyString());
+    }
+
+    @Test
+    void sameKeyWithADifferentPayloadIs409() {
+        String id = reviewed();
+        service.confirm(id, confirmRequest("key-00000001", "4500.00"));
+        PlatformBookingConfirmRequest otherPhone = confirmRequest("key-00000001", "4500.00");
+        otherPhone.setContactPhone("9000000000");
+
+        assertThatThrownBy(() -> service.confirm(id, otherPhone))
+                .isInstanceOfSatisfying(BookingConflictException.class, e -> assertThat(e.getCode()).isEqualTo("IDEMPOTENCY_KEY_REUSED"));
+        assertThatThrownBy(() -> service.confirm(id, confirmRequest("key-00000001", "4400.00")))
+                .isInstanceOfSatisfying(BookingConflictException.class, e -> assertThat(e.getCode()).isEqualTo("IDEMPOTENCY_KEY_REUSED"));
+        assertThat(rows.get(id).getConfirmPayloadHash()).hasSize(64);
+        verify(provider, times(1)).book(any());
+    }
+
+    @Test
+    void anEncryptionFailureHappensBeforeTheHold() {
+        PlatformBookingService broken = new PlatformBookingService(bookingRepository, provider, config, quoter, pricingService,
+                walletService, walletRepository, tenantRepository, agentRepository, credentialRepository, notificationService,
+                new PlatformBookingEventRecorder(eventRepository, paxCodec), new PaxCodec(objectMapper, "bad"), objectMapper,
+                transactionManager);
+        String id = broken.review(reviewRequest()).getBookingId();
+
+        assertThatThrownBy(() -> broken.confirm(id, confirmRequest("key-00000001", "4500.00"))).isInstanceOf(RuntimeException.class);
+        verify(walletService, never()).hold(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void theHoldCommitsBeforeTheSupplierIsCalled() {
+        String id = reviewed();
+
+        service.confirm(id, confirmRequest("key-00000001", "4500.00"));
+
+        InOrder order = inOrder(walletService, transactionManager, provider);
+        order.verify(walletService).hold(eq(T), any(), anyString(), anyString(), anyString());
+        order.verify(transactionManager, calls(2)).commit(any()); // tx1 (hold) and tx2 (BOOKING)
+        order.verify(provider).book(any());
+    }
+
+    @Test
+    void confirmRefusesToRunInsideATransaction() {
+        String id = reviewed();
+        TransactionSynchronizationManager.setActualTransactionActive(true);
+        try {
+            assertThatThrownBy(() -> service.confirm(id, confirmRequest("key-00000001", "4500.00")))
+                    .isInstanceOf(IllegalStateException.class);
+        } finally {
+            TransactionSynchronizationManager.setActualTransactionActive(false);
+        }
+        verify(provider, never()).book(any());
     }
 
     @Test

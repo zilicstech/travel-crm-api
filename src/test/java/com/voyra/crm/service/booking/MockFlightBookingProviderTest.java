@@ -95,4 +95,13 @@ class MockFlightBookingProviderTest {
         assertThat(c.accepted()).isTrue();
         assertThat(c.refund()).isEqualByComparingTo(expected);
     }
+
+    @Test
+    void bookingDetailsByReviewIdReportsNoChargedAmount() {
+        FareReview review = provider.review("o", 1, 0, 0);
+
+        assertThat(provider.bookingDetails(review.reviewId()).amount()).isNull();
+        assertThat(provider.bookingDetails("mock-bk-" + review.reviewId() + "-" + review.totalFare().toPlainString()).amount())
+                .isEqualByComparingTo(review.totalFare());
+    }
 }

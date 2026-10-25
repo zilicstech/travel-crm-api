@@ -92,15 +92,19 @@ public class MockFlightBookingProvider implements FlightBookingProvider {
     }
 
     private BigDecimal refund(String id) {
-        return fare(id).multiply(REFUND_SHARE).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal fare = fare(id);
+        return (fare != null ? fare : BigDecimal.ZERO).multiply(REFUND_SHARE).setScale(2, RoundingMode.HALF_UP);
     }
 
-    /** The booked fare, carried in the booking id so it survives a restart. */
+    /** The booked fare, carried in a mock-bk id so it survives a restart; null for any other id (e.g. a review id after a timeout). */
     private static BigDecimal fare(String id) {
+        if (!id.startsWith("mock-bk-")) {
+            return null;
+        }
         try {
             return new BigDecimal(id.substring(id.lastIndexOf('-') + 1));
         } catch (NumberFormatException e) {
-            return BigDecimal.ZERO;
+            return null;
         }
     }
 

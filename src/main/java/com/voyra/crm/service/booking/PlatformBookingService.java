@@ -43,7 +43,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.util.Assert;
 
 import java.math.BigDecimal;
 import java.time.Duration;
@@ -178,6 +180,8 @@ public class PlatformBookingService {
      * applied by {@link #applySupplierResult}. Returns the booking for the caller to map.
      */
     public PlatformBooking confirm(String bookingId, PlatformBookingConfirmRequest request) {
+        Assert.state(!TransactionSynchronizationManager.isActualTransactionActive(),
+                "confirm must not run inside a transaction - the supplier book call would hold a connection and the row lock");
         CustomUserPrincipal principal = requireBooker();
         String issuedBy = resolveIssuer(principal, request.getIssuedByAgentId());
         Held held = tx.execute(s -> hold(bookingId, principal.tenantId(), request, issuedBy));
@@ -225,7 +229,12 @@ public class PlatformBookingService {
         PlatformBooking b = bookingRepository.findByIdForUpdate(bookingId)
                 .filter(x -> tenantId.equals(x.getTenantId()))
                 .orElseThrow(() -> new NotFoundException("Booking not found"));
+        String payloadHash = paxCodec.hash(List.of(request.getPassengers(), request.getContactEmail(), request.getContactPhone()));
         if (request.getIdempotencyKey().equals(b.getIdempotencyKey())) {
+            if (request.getAcceptedDisplayedFare().compareTo(b.getDisplayed()) != 0 || !payloadHash.equals(b.getConfirmPayloadHash())) {
+                throw new BookingConflictException("IDEMPOTENCY_KEY_REUSED",
+                        "This confirmation key was already used with different details", Map.of());
+            }
             return new Held(b, null, false);
         }
         if (b.getStatus() != PlatformBookingStatus.REVIEWING) {
@@ -252,13 +261,16 @@ public class PlatformBookingService {
             throw new BookingConflictException("REVIEW_EXPIRED", "This fare review has expired - review the fare again", Map.of());
         }
         walletRepository.findByTenantId(tenantId).ifPresent(w -> requireMatchingWallet(b.getEnvironment(), w));
+        // everything that can fail runs before the hold, so a refusal never leaves a committed hold behind
+        String paxEnc = paxCodec.encrypt(Map.of("passengers", request.getPassengers(),
+                "contactEmail", request.getContactEmail(), "contactPhone", request.getContactPhone()));
 
         WalletEntry hold = walletService.hold(tenantId, b.getDisplayed(), "pb-hold:" + bookingId, REF_TYPE, bookingId);
         b.setHoldEntryId(hold.getId());
         b.setIdempotencyKey(request.getIdempotencyKey());
+        b.setConfirmPayloadHash(payloadHash);
         b.setIssuedByAgentId(issuedBy);
-        b.setPaxEnc(paxCodec.encrypt(Map.of("passengers", request.getPassengers(),
-                "contactEmail", request.getContactEmail(), "contactPhone", request.getContactPhone())));
+        b.setPaxEnc(paxEnc);
         b.setStatus(PlatformBookingStatus.HELD);
         bookingRepository.save(b);
         events.record(bookingId, "HELD", Map.of("amount", b.getDisplayed(), "holdEntryId", hold.getId()));
@@ -272,7 +284,8 @@ public class PlatformBookingService {
         }
         b.setStatus(PlatformBookingStatus.BOOKING);
         bookingRepository.save(b);
-        events.record(bookingId, "BOOKING", Map.of("passengers", request.getPassengers()));
+        events.record(bookingId, "BOOKING", Map.of("paxCount", request.getPassengers().size(),
+                "types", request.getPassengers().stream().map(PaxInput::getType).toList()));
         return b;
     }
 
@@ -311,9 +324,9 @@ public class PlatformBookingService {
             walletService.credit(b.getTenantId(), WalletEntryType.COMMISSION_CREDIT, b.getAgencyCommission(), "pb-comm:" + id,
                     REF_TYPE, id, "Commission on flight booking " + result.pnr());
             if (positive(b.getTds())) {
-                // the commission just credited covers the TDS, so the receivable reason is never used in practice
+                // the credit above can be swallowed by older DUE receivables, so the TDS may itself fall short
                 walletService.debitOrReceivable(b.getTenantId(), WalletEntryType.TDS_DEDUCTED, b.getTds(), "pb-tds:" + id,
-                        REF_TYPE, id, ReceivableReason.LATE_TICKET);
+                        REF_TYPE, id, ReceivableReason.TDS_SHORTFALL);
             }
         }
         b.setStatus(PlatformBookingStatus.TICKETED);
@@ -321,7 +334,8 @@ public class PlatformBookingService {
         b.setTicketNumbers(result.ticketNumbers());
         b.setTicketedAt(Instant.now());
         b.setSupplierMessage(truncate(result.message()));
-        if (result.amount() != null && result.amount().compareTo(b.getGross()) != 0) {
+        // a null or non-positive amount means the supplier did not say what it charged - not a variance
+        if (positive(result.amount()) && result.amount().compareTo(b.getGross()) != 0) {
             BigDecimal variance = result.amount().subtract(b.getGross());
             b.setVoyraNet(b.getVoyraNet().subtract(variance));
             events.record(id, "VARIANCE", Map.of("reviewed", b.getGross(), "charged", result.amount()));

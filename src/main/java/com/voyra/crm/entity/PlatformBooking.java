@@ -178,6 +178,10 @@ public class PlatformBooking {
     @Column(name = "idempotency_key", length = 80)
     private String idempotencyKey;
 
+    /** SHA-256 of the confirmed passengers and contact: the same key with a different payload is refused. */
+    @Column(name = "confirm_payload_hash", length = 64)
+    private String confirmPayloadHash;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 

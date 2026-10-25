@@ -6,6 +6,9 @@ import com.voyra.crm.util.PasswordEncryptionUtil;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -36,6 +39,16 @@ public class PaxCodec {
             return objectMapper.readValue(PasswordEncryptionUtil.decrypt(encrypted, key), type);
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("Could not read passengers", e);
+        }
+    }
+
+    /** Hex SHA-256 of {@code value}'s JSON; pass ordered structures (lists, beans), never a Map.of. */
+    public String hash(Object value) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(objectMapper.writeValueAsBytes(value)));
+        } catch (JsonProcessingException | NoSuchAlgorithmException e) {
+            throw new IllegalStateException("Could not hash the confirm payload", e);
         }
     }
 
