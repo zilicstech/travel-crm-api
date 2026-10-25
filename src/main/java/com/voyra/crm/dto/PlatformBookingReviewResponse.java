@@ -30,6 +30,12 @@ public class PlatformBookingReviewResponse {
     @Schema(description = "Supplier fare rules shown before confirm", example = "Refundable, cancellation fee applies")
     private String fareRules;
 
+    @Schema(description = "Hotels: the rate's cancellation policy, in plain words", example = "Free cancellation until 2026-11-29")
+    private String cancellationPolicy;
+
+    @Schema(description = "Hotels: free cancellation ends at this time, when the supplier says", example = "2026-11-29T00:00:00Z")
+    private Instant freeCancellationUntil;
+
     @Schema(description = "Confirm before this time or review again", example = "2026-10-25T10:15:00Z")
     private Instant reviewExpiresAt;
 

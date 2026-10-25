@@ -45,7 +45,7 @@ public class PlatformBookingPoller {
 
     private final PlatformBookingRepository bookingRepository;
     private final PlatformBookingEventRepository eventRepository;
-    private final FlightBookingProvider provider;
+    private final BookingProviderRegistry providers;
     private final FlightBookingProviderConfig config;
     private final PlatformBookingService bookingService;
     private final PlatformBookingEventRecorder events;
@@ -53,12 +53,12 @@ public class PlatformBookingPoller {
     private final TransactionTemplate tx;
 
     public PlatformBookingPoller(PlatformBookingRepository bookingRepository, PlatformBookingEventRepository eventRepository,
-                                 FlightBookingProvider provider, FlightBookingProviderConfig config,
+                                 BookingProviderRegistry providers, FlightBookingProviderConfig config,
                                  PlatformBookingService bookingService, PlatformBookingEventRecorder events,
                                  NotificationService notificationService, PlatformTransactionManager transactionManager) {
         this.bookingRepository = bookingRepository;
         this.eventRepository = eventRepository;
-        this.provider = provider;
+        this.providers = providers;
         this.config = config;
         this.bookingService = bookingService;
         this.events = events;
@@ -115,7 +115,7 @@ public class PlatformBookingPoller {
         String supplierId = b.getSupplierBookingId() != null ? b.getSupplierBookingId() : b.getSupplierReviewId();
         BookResult result = null;
         try {
-            result = provider.bookingDetails(supplierId);
+            result = providers.supplierFor(b).bookingDetails(supplierId); // each row asks its own product's supplier
         } catch (RuntimeException e) {
             log.warn("bookingDetails for platform booking {} gave no answer: {}", b.getId(), e.getClass().getSimpleName());
         }

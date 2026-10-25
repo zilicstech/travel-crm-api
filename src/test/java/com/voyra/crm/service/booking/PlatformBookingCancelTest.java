@@ -84,6 +84,7 @@ class PlatformBookingCancelTest {
     @Mock private PlatformBookingRepository bookingRepository;
     @Mock private PlatformBookingEventRepository eventRepository;
     @Mock private FlightBookingProvider provider;
+    @Mock private HotelBookingProvider hotelProvider;
     @Mock private AgencyPriceQuoter quoter;
     @Mock private AgencyPricingService pricingService;
     @Mock private WalletService walletService;
@@ -106,9 +107,15 @@ class PlatformBookingCancelTest {
     private Wallet wallet = Wallet.builder().id("W1").tenantId(T).status(WalletStatus.OPEN).balance(new BigDecimal("1000.00"))
             .held(BigDecimal.ZERO).build();
 
+    private final HotelBookingProviderConfig hotelConfig = new HotelBookingProviderConfig();
+
+    private BookingProviderRegistry registry() {
+        return new BookingProviderRegistry(provider, hotelProvider, new FlightBookingProviderConfig(), hotelConfig);
+    }
+
     @BeforeEach
     void setUp() {
-        service = new PlatformBookingService(bookingRepository, provider, new FlightBookingProviderConfig(), quoter, pricingService,
+        service = new PlatformBookingService(bookingRepository, registry(), quoter, pricingService,
                 walletService, walletRepository, tenantRepository, agentRepository, credentialRepository, notificationService,
                 new PlatformBookingEventRecorder(eventRepository, paxCodec), paxCodec, objectMapper, transactionManager,
                 walletEntryRepository, platformAuditService, settings, mirrorService);
@@ -558,5 +565,25 @@ class PlatformBookingCancelTest {
             TransactionSynchronizationManager.setActualTransactionActive(false);
         }
         verify(provider, never()).cancel(anyString());
+    }
+
+    /** cancel for a hotel reuses the flight path but quotes and cancels with the hotel supplier. */
+    @Test
+    void aHotelBookingIsCancelledThroughTheHotelSupplier() {
+        rows.get(ID).setProduct(PricingProduct.HOTEL);
+        when(hotelProvider.cancelQuote("SB-1")).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
+        when(hotelProvider.cancel("SB-1")).thenReturn(new CancelResult(true, new BigDecimal("4000.00"), "Cancelled"));
+
+        assertThat(service.cancelQuote(ID).refund()).isEqualByComparingTo("4000.00");
+        PlatformBooking b = service.cancel(ID, "ck-1");
+
+        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
+        verify(hotelProvider).cancel("SB-1");
+        verify(provider, never()).cancelQuote(any());
+        verify(provider, never()).cancel(any());
+        verify(walletService).credit(eq(T), eq(WalletEntryType.REFUND_CREDIT), eq(new BigDecimal("4000.00")),
+                eq("pb-refund:" + ID), eq(REF), eq(ID), contains("hotel booking"));
+        verify(walletService).debitOrReceivable(T, WalletEntryType.COMMISSION_RECALL, new BigDecimal("95.00"),
+                "pb-recall:" + ID, REF, ID, ReceivableReason.CANCEL_NET_NEGATIVE);
     }
 }

@@ -1,6 +1,8 @@
 package com.voyra.crm.dto;
 
 import io.swagger.v3.oas.annotations.media.Schema;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
@@ -53,4 +55,13 @@ public class PaxInput {
 
     @Schema(description = "CRM member this traveller was picked from, if any", example = "m1d2e3f4-0000-0000-0000-000000000001")
     private String memberId;
+
+    @Min(0)
+    @Max(8)
+    @Schema(description = "Hotel only: the room (0-based, as reviewed) this guest stays in; the first guest of each room is its lead", example = "0")
+    private Integer roomIndex;
+
+    @Pattern(regexp = "[A-Z]{5}[0-9]{4}[A-Z]")
+    @Schema(description = "Hotel only: PAN of the lead guest, when the hotel requires it", example = "ABCDE1234F")
+    private String pan;
 }

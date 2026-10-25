@@ -64,6 +64,7 @@ class PlatformBookingPollerTest {
     @Mock private PlatformBookingRepository bookingRepository;
     @Mock private PlatformBookingEventRepository eventRepository;
     @Mock private FlightBookingProvider provider;
+    @Mock private HotelBookingProvider hotelProvider;
     @Mock private AgencyPriceQuoter quoter;
     @Mock private AgencyPricingService pricingService;
     @Mock private WalletService walletService;
@@ -85,15 +86,21 @@ class PlatformBookingPollerTest {
     private final Map<String, WalletEntry> walletEntries = new HashMap<>();
     private PlatformBookingPoller poller;
 
+    private final HotelBookingProviderConfig hotelConfig = new HotelBookingProviderConfig();
+
+    private BookingProviderRegistry registry() {
+        return new BookingProviderRegistry(provider, hotelProvider, config, hotelConfig);
+    }
+
     @BeforeEach
     void setUp() {
         ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
         PaxCodec paxCodec = new PaxCodec(objectMapper, KEY);
         PlatformBookingEventRecorder events = new PlatformBookingEventRecorder(eventRepository, paxCodec);
-        PlatformBookingService service = new PlatformBookingService(bookingRepository, provider, config, quoter, pricingService,
+        PlatformBookingService service = new PlatformBookingService(bookingRepository, registry(), quoter, pricingService,
                 walletService, walletRepository, tenantRepository, agentRepository, credentialRepository, notificationService,
                 events, paxCodec, objectMapper, transactionManager, walletEntryRepository, platformAuditService, settings, mirrorService);
-        poller = new PlatformBookingPoller(bookingRepository, eventRepository, provider, config, service, events,
+        poller = new PlatformBookingPoller(bookingRepository, eventRepository, registry(), config, service, events,
                 notificationService, transactionManager);
 
         lenient().when(bookingRepository.save(any())).thenAnswer(i -> {
@@ -416,5 +423,25 @@ class PlatformBookingPollerTest {
             TransactionSynchronizationManager.setActualTransactionActive(false);
         }
         verify(provider, never()).bookingDetails(anyString());
+    }
+
+    /** Review Focus 3: a flight and a hotel booking of the same agency polled in one run - each asks its own supplier. */
+    @Test
+    void aFlightAndAHotelPolledInOneRunEachAskTheirOwnSupplier() {
+        bookingRow("F1", Instant.now());
+        bookingRow("H1", Instant.now()).setProduct(PricingProduct.HOTEL);
+        when(provider.bookingDetails("rv-F1")).thenReturn(pending());
+        when(hotelProvider.bookingDetails("rv-H1"))
+                .thenReturn(new BookResult("HB-1", SupplierBookingStatus.TICKETED, "MH42", List.of(), "Confirmed", null));
+
+        poller.poll();
+
+        verify(provider).bookingDetails("rv-F1");
+        verify(hotelProvider).bookingDetails("rv-H1");
+        verify(provider, never()).bookingDetails("rv-H1");
+        verify(hotelProvider, never()).bookingDetails("rv-F1");
+        assertThat(rows.get("F1").getStatus()).isEqualTo(PlatformBookingStatus.BOOKING);
+        assertThat(rows.get("H1").getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
+        assertThat(rows.get("H1").getPnr()).isEqualTo("MH42");
     }
 }

@@ -6,6 +6,7 @@ import com.voyra.crm.dto.PaxInput;
 import com.voyra.crm.entity.PlatformBooking;
 import com.voyra.crm.enums.MirrorStatus;
 import com.voyra.crm.enums.PlatformBookingStatus;
+import com.voyra.crm.enums.PricingProduct;
 import com.voyra.crm.repository.PlatformBookingRepository;
 import com.voyra.crm.security.SystemActor;
 import com.voyra.crm.service.NotificationService;
@@ -63,6 +64,10 @@ public class PlatformBookingMirrorService {
         if (b == null || b.getClientId() == null || b.getMirrorStatus() == MirrorStatus.DONE
                 || (b.getStatus() != PlatformBookingStatus.TICKETED && b.getStatus() != PlatformBookingStatus.CANCELLED)) {
             return; // no CRM client (a Starter agency's record is the platform row), already in line, or still moving
+        }
+        if (b.getProduct() == PricingProduct.HOTEL) {
+            // shortcut: no hotel mirror yet - HOTEL rows keep mirror_status NONE (no failure, no alert) until Task 3 writes a HOTEL_VOUCHER
+            return;
         }
         PlatformBookingStatus acted = b.getStatus();
         try {

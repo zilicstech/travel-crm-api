@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.voyra.crm.dto.FlightReviewRequest;
+import com.voyra.crm.dto.HotelReviewRequest;
 import com.voyra.crm.dto.PaxInput;
 import com.voyra.crm.dto.PlatformBookingConfirmRequest;
 import com.voyra.crm.dto.PlatformBookingReviewResponse;
@@ -77,8 +78,7 @@ public class PlatformBookingService {
     private static final TypeReference<Map<String, Object>> MAP = new TypeReference<>() { };
 
     private final PlatformBookingRepository bookingRepository;
-    private final FlightBookingProvider provider;
-    private final FlightBookingProviderConfig providerConfig;
+    private final BookingProviderRegistry providers;
     private final AgencyPriceQuoter quoter;
     private final AgencyPricingService pricingService;
     private final WalletService walletService;
@@ -96,8 +96,8 @@ public class PlatformBookingService {
     private final PlatformSettingService settings;
     private final PlatformBookingMirrorService mirrorService;
 
-    public PlatformBookingService(PlatformBookingRepository bookingRepository, FlightBookingProvider provider,
-                                  FlightBookingProviderConfig providerConfig, AgencyPriceQuoter quoter,
+    public PlatformBookingService(PlatformBookingRepository bookingRepository, BookingProviderRegistry providers,
+                                  AgencyPriceQuoter quoter,
                                   AgencyPricingService pricingService, WalletService walletService,
                                   WalletRepository walletRepository, TenantRepository tenantRepository,
                                   AgentRepository agentRepository, PlatformSupplierCredentialRepository credentialRepository,
@@ -106,8 +106,7 @@ public class PlatformBookingService {
                                   WalletEntryRepository walletEntryRepository, PlatformAuditService platformAuditService,
                                   PlatformSettingService settings, PlatformBookingMirrorService mirrorService) {
         this.bookingRepository = bookingRepository;
-        this.provider = provider;
-        this.providerConfig = providerConfig;
+        this.providers = providers;
         this.quoter = quoter;
         this.pricingService = pricingService;
         this.walletService = walletService;
@@ -134,9 +133,7 @@ public class PlatformBookingService {
     public PlatformBooking abort(String bookingId) {
         CustomUserPrincipal principal = requireBooker();
         return tx.execute(s -> {
-            PlatformBooking b = bookingRepository.findByIdForUpdate(bookingId)
-                    .filter(x -> actsOn(principal, x))
-                    .orElseThrow(() -> new NotFoundException("Booking not found"));
+            PlatformBooking b = actedOn(principal, bookingRepository.findByIdForUpdate(bookingId));
             if (b.getStatus() == PlatformBookingStatus.ABORTED) {
                 return b;
             }
@@ -210,9 +207,42 @@ public class PlatformBookingService {
 
     /** Re-prices the offer with the supplier and stamps a REVIEWING row; every refusal happens before the supplier call. */
     public PlatformBookingReviewResponse review(FlightReviewRequest request) {
-        CustomUserPrincipal principal = requireBooker();
+        CustomUserPrincipal principal = requireBooker(PricingProduct.FLIGHT);
+        ReviewEnv env = admit(principal, PricingProduct.FLIGHT, request.getClientId(), request.getIssuedByAgentId(),
+                request.getServiceId(), request.getLeadId());
+        FareReview fare = providers.flights().review(request);
+        return stampReview(principal, PricingProduct.FLIGHT, env, fare, request.getClientId(), request.getLeadId(),
+                request.getServiceId(), request.getAdults() + request.getChildren() + request.getInfants(),
+                itineraryMap(fare.itinerary()), request.getSearchDisplayedFare());
+    }
+
+    /**
+     * Hotel twin of {@link #review(FlightReviewRequest)}: same refusals, re-prices the room option for the stay and stamps a
+     * REVIEWING HOTEL row whose itinerary is {@code {hotel, stay, rooms, cancellationPolicy}} for the screens and the mirror.
+     */
+    public PlatformBookingReviewResponse reviewHotel(HotelReviewRequest request) {
+        CustomUserPrincipal principal = requireBooker(PricingProduct.HOTEL);
+        if (!request.getCheckOut().isAfter(request.getCheckIn())) {
+            throw new IllegalArgumentException("Check-out must be after check-in");
+        }
+        ReviewEnv env = admit(principal, PricingProduct.HOTEL, request.getClientId(), request.getIssuedByAgentId(),
+                request.getServiceId(), request.getLeadId());
+        FareReview fare = providers.hotels().review(request.getOptionId(), request.getHotelId(), request.getCheckIn(),
+                request.getCheckOut(), request.getRooms().size());
+        int guests = request.getRooms().stream()
+                .mapToInt(r -> r.getAdults() + (r.getChildAges() == null ? 0 : r.getChildAges().size())).sum();
+        return stampReview(principal, PricingProduct.HOTEL, env, fare, request.getClientId(), request.getLeadId(),
+                request.getServiceId(), guests, hotelItinerary(request, fare), request.getSearchDisplayedFare());
+    }
+
+    private record ReviewEnv(SupplierEnvironment environment, String credentialId) {
+    }
+
+    /** Every refusal a review makes before the supplier is asked; returns the environment the booking runs in. */
+    private ReviewEnv admit(CustomUserPrincipal principal, PricingProduct product, String clientId, String issuedByAgentId,
+                           String serviceId, String leadId) {
         String tenantId = principal.tenantId();
-        pricingService.requireInForce(tenantId, PricingProduct.FLIGHT);
+        pricingService.requireInForce(tenantId, product);
         Tenant tenant = tenantRepository.findById(tenantId).orElseThrow(() -> new NotFoundException("Agency not found"));
         if (tenant.getStatus() != TenantStatus.ACTIVE) {
             throw new IllegalStateException("This agency is suspended or deactivated - bookings are not allowed");
@@ -223,39 +253,40 @@ public class PlatformBookingService {
         if (walletService.hasDueReceivable(tenantId)) {
             throw new ReceivableDueException();
         }
-        requireIssuingAgent(principal, request.getClientId(), resolveIssuer(principal, request.getIssuedByAgentId()),
-                request.getServiceId(), request.getLeadId());
-        SupplierEnvironment environment = SupplierEnvironment.MOCK;
-        String credentialId = null;
-        if (!"mock".equalsIgnoreCase(providerConfig.getProvider())) {
-            PlatformSupplierCredential credential = credentialRepository.findByProviderAndIsActiveTrue(SupplierProvider.TRIPJACK)
-                    .orElseThrow(() -> new IllegalStateException("Tripjack is not configured on the platform"));
-            environment = credential.getEnvironment();
-            credentialId = credential.getId();
+        requireIssuingAgent(principal, clientId, resolveIssuer(principal, issuedByAgentId), serviceId, leadId);
+        if (providers.isMock(product)) {
+            return new ReviewEnv(SupplierEnvironment.MOCK, null);
         }
+        PlatformSupplierCredential credential = credentialRepository.findByProviderAndIsActiveTrue(SupplierProvider.TRIPJACK)
+                .orElseThrow(() -> new IllegalStateException("Tripjack is not configured on the platform"));
+        return new ReviewEnv(credential.getEnvironment(), credential.getId());
+    }
 
-        FareReview fare = provider.review(request);
+    private PlatformBookingReviewResponse stampReview(CustomUserPrincipal principal, PricingProduct product, ReviewEnv env,
+                                                      FareReview fare, String clientId, String leadId, String serviceId,
+                                                      int paxCount, Map<String, Object> itinerary, BigDecimal searched) {
+        String tenantId = principal.tenantId();
         if (fare.baseFare() == null) {
             // discount and commission are worked off the base fare, so there is no price to show without it
             throw new BookingConflictException("BASE_FARE_UNAVAILABLE",
                     "The supplier did not give this fare's base fare - pick another fare", Map.of());
         }
-        PriceQuote quote = quoter.quote(tenantId, PricingProduct.FLIGHT, fare.totalFare(), fare.baseFare());
+        PriceQuote quote = quoter.quote(tenantId, product, fare.totalFare(), fare.baseFare());
         PlatformBooking booking = PlatformBooking.builder()
                 .id(UniqueIdResolver.resolve(bookingRepository::existsById))
                 .tenantId(tenantId)
-                .product(PricingProduct.FLIGHT)
-                .clientId(request.getClientId())
-                .leadId(request.getLeadId())
-                .serviceId(request.getServiceId())
+                .product(product)
+                .clientId(clientId)
+                .leadId(leadId)
+                .serviceId(serviceId)
                 .status(PlatformBookingStatus.REVIEWING)
-                .environment(environment)
-                .credentialId(credentialId)
+                .environment(env.environment())
+                .credentialId(env.credentialId())
                 .supplierReviewId(fare.reviewId())
                 .gross(fare.totalFare())
                 .base(fare.baseFare())
-                .paxCount(request.getAdults() + request.getChildren() + request.getInfants())
-                .itinerary(itineraryMap(fare.itinerary()))
+                .paxCount(paxCount)
+                .itinerary(itinerary)
                 .fareRules(fare.fareRules())
                 // shortcut: Tripjack's review expiry field is unknown (slice 0), so a missing expiry gets 15 minutes
                 .reviewExpiresAt(fare.expiresAt() != null ? fare.expiresAt() : Instant.now().plus(DEFAULT_REVIEW_TTL))
@@ -268,7 +299,6 @@ public class PlatformBookingService {
             events.record(booking.getId(), "REVIEWED", Map.of("displayed", booking.getDisplayed(), "pricingId", quote.pricingId()));
         });
 
-        BigDecimal searched = request.getSearchDisplayedFare();
         boolean changed = searched != null && searched.compareTo(booking.getDisplayed()) != 0;
         return PlatformBookingReviewResponse.builder()
                 .bookingId(booking.getId())
@@ -277,6 +307,8 @@ public class PlatformBookingService {
                 .priceChanged(changed)
                 .agencyEarns(quote.agencyEarns())
                 .fareRules(booking.getFareRules())
+                .cancellationPolicy(fare.cancellationPolicy())
+                .freeCancellationUntil(fare.freeCancellationUntil())
                 .reviewExpiresAt(booking.getReviewExpiresAt())
                 .walletAvailable(walletRepository.findByTenantId(tenantId)
                         .map(w -> w.getBalance().subtract(w.getHeld())).orElse(BigDecimal.ZERO))
@@ -306,9 +338,7 @@ public class PlatformBookingService {
         }
         BookResult result;
         try {
-            result = provider.book(new BookRequest(booking.getSupplierReviewId(), booking.getGross(),
-                    request.getPassengers().stream().map(PlatformBookingService::toPax).toList(),
-                    request.getContactEmail(), request.getContactPhone()));
+            result = providers.supplierFor(booking).book(bookRequest(booking, request));
         } catch (RuntimeException e) {
             // outcome unknown (timeout, 5xx, empty body): never release the hold or retry book - the poller asks bookingDetails
             log.warn("Book call for platform booking {} gave no clean answer: {}", bookingId, e.getClass().getSimpleName());
@@ -336,15 +366,13 @@ public class PlatformBookingService {
         Assert.state(!TransactionSynchronizationManager.isActualTransactionActive(),
                 "cancelQuote must not run inside a transaction - the supplier call would hold a connection");
         CustomUserPrincipal principal = requireBooker();
-        PlatformBooking b = bookingRepository.findByIdAndTenantId(bookingId, principal.tenantId())
-                .filter(x -> actsOn(principal, x))
-                .orElseThrow(() -> new NotFoundException("Booking not found"));
+        PlatformBooking b = actedOn(principal, bookingRepository.findByIdAndTenantId(bookingId, principal.tenantId()));
         if (b.getStatus() == PlatformBookingStatus.CANCELLING) {
             throw cancelInProgress();
         }
         requireCancellable(b);
         BigDecimal fee = settings.voyraCancelFee();
-        BigDecimal refund = refundOf(provider.cancelQuote(supplierId(b)).refund(), b.getDisplayed(), fee);
+        BigDecimal refund = refundOf(providers.supplierFor(b).cancelQuote(supplierId(b)).refund(), b.getDisplayed(), fee);
         BigDecimal recall = recallOf(b);
         return new CancelPreview(refund, recall, refund == null ? null : refund.subtract(recall), fee, refund == null);
     }
@@ -372,6 +400,7 @@ public class PlatformBookingService {
             return claim.booking();
         }
         String supplierId = supplierId(claim.booking());
+        BookingSupplier provider = providers.supplierFor(claim.booking());
         BigDecimal fee = settings.voyraCancelFee();
         CancelQuote quote;
         try {
@@ -467,9 +496,7 @@ public class PlatformBookingService {
     }
 
     private Claim claimCancel(String bookingId, CustomUserPrincipal principal, String idempotencyKey) {
-        PlatformBooking b = bookingRepository.findByIdForUpdate(bookingId)
-                .filter(r -> actsOn(principal, r))
-                .orElseThrow(() -> new NotFoundException("Booking not found"));
+        PlatformBooking b = actedOn(principal, bookingRepository.findByIdForUpdate(bookingId));
         if (b.getStatus() == PlatformBookingStatus.CANCELLED) {
             return new Claim(b, false);
         }
@@ -529,7 +556,7 @@ public class PlatformBookingService {
             } else {
                 if (refund.signum() > 0) {
                     walletService.credit(b.getTenantId(), WalletEntryType.REFUND_CREDIT, refund, "pb-refund:" + id, REF_TYPE, id,
-                            "Refund on cancelled flight booking " + b.getPnr());
+                            "Refund on cancelled " + noun(b) + " " + b.getPnr());
                 }
                 if (recall.signum() > 0) {
                     walletService.debitOrReceivable(b.getTenantId(), WalletEntryType.COMMISSION_RECALL, recall, "pb-recall:" + id,
@@ -600,9 +627,7 @@ public class PlatformBookingService {
 
     private Held hold(String bookingId, CustomUserPrincipal principal, PlatformBookingConfirmRequest request, String issuedBy) {
         String tenantId = principal.tenantId();
-        PlatformBooking b = bookingRepository.findByIdForUpdate(bookingId)
-                .filter(x -> actsOn(principal, x))
-                .orElseThrow(() -> new NotFoundException("Booking not found"));
+        PlatformBooking b = actedOn(principal, bookingRepository.findByIdForUpdate(bookingId));
         String payloadHash = paxCodec.hash(List.of(request.getPassengers(), request.getContactEmail(), request.getContactPhone()));
         if (request.getIdempotencyKey().equals(b.getIdempotencyKey())) {
             if (request.getAcceptedDisplayedFare().compareTo(b.getDisplayed()) != 0 || !payloadHash.equals(b.getConfirmPayloadHash())) {
@@ -621,13 +646,15 @@ public class PlatformBookingService {
             throw new IllegalStateException("This confirmation key was already used for another booking");
         }
         requireIssuingAgent(principal, b.getClientId(), issuedBy, b.getServiceId(), b.getLeadId());
-        if (request.getPassengers().size() != b.getPaxCount()) {
+        if (b.getProduct() == PricingProduct.HOTEL) {
+            requireGuestsPerRoom(b, request.getPassengers());
+        } else if (request.getPassengers().size() != b.getPaxCount()) {
             throw new IllegalArgumentException("Enter " + b.getPaxCount() + " travellers, as reviewed");
         }
         if (request.getAcceptedDisplayedFare().compareTo(b.getDisplayed()) != 0) {
             throw priceChanged(b.getDisplayed());
         }
-        PriceQuote quote = quoter.quote(tenantId, PricingProduct.FLIGHT, b.getGross(), b.getBase());
+        PriceQuote quote = quoter.quote(tenantId, b.getProduct(), b.getGross(), b.getBase());
         if (!quote.pricingId().equals(String.valueOf(b.getPricingSnapshot().get("pricingId")))) {
             stamp(b, quote);
             bookingRepository.save(b);
@@ -713,7 +740,7 @@ public class PlatformBookingService {
         b.setDebitEntryId(debit.getId());
         if (positive(b.getAgencyCommission())) {
             walletService.credit(b.getTenantId(), WalletEntryType.COMMISSION_CREDIT, b.getAgencyCommission(), "pb-comm:" + id,
-                    REF_TYPE, id, "Commission on flight booking " + result.pnr());
+                    REF_TYPE, id, "Commission on " + noun(b) + " " + result.pnr());
             if (positive(b.getTds())) {
                 // the credit above can be swallowed by older DUE receivables, so the TDS may itself fall short
                 walletService.debitOrReceivable(b.getTenantId(), WalletEntryType.TDS_DEDUCTED, b.getTds(), "pb-tds:" + id,
@@ -721,7 +748,8 @@ public class PlatformBookingService {
             }
         }
         b.setStatus(PlatformBookingStatus.TICKETED);
-        if (b.getClientId() != null) {
+        // HOTEL stays NONE until the hotel mirror exists (see PlatformBookingMirrorService.sync)
+        if (b.getClientId() != null && b.getProduct() == PricingProduct.FLIGHT) {
             b.setMirrorStatus(MirrorStatus.PENDING); // committed with the debit, so the repair job finds it even after a crash
         }
         b.setPnr(result.pnr());
@@ -789,18 +817,46 @@ public class PlatformBookingService {
         }
     }
 
+    /** Owner or agent; whether the agent handles the booking's product is checked once the row is loaded ({@link #actedOn}). */
     private CustomUserPrincipal requireBooker() {
         CustomUserPrincipal p = SecurityContextUtil.getCurrentUserOrThrow();
-        if (p.isAgencyOwner()) {
+        if (p.isAgencyOwner() || p.isAgent()) {
             return p;
         }
-        if (p.isAgent()) {
-            List<ServiceType> handled = agentRepository.findById(p.userId()).map(Agent::getManageableServices).orElse(null);
-            if (handled != null && handled.contains(ServiceType.FLIGHT)) {
-                return p;
-            }
+        throw new AccessDeniedException("Only the owner or an agent can book through Voyra");
+    }
+
+    private CustomUserPrincipal requireBooker(PricingProduct product) {
+        CustomUserPrincipal p = requireBooker();
+        requireHandles(p, product);
+        return p;
+    }
+
+    /** The owner books everything; an agent only the products in their manageable services (FLIGHT, HOTEL). */
+    private void requireHandles(CustomUserPrincipal p, PricingProduct product) {
+        if (p.isAgencyOwner()) {
+            return;
         }
-        throw new AccessDeniedException("Only the owner or an agent who handles flights can book flights");
+        ServiceType service = product == PricingProduct.HOTEL ? ServiceType.HOTEL : ServiceType.FLIGHT;
+        List<ServiceType> handled = agentRepository.findById(p.userId()).map(Agent::getManageableServices).orElse(null);
+        if (handled == null || !handled.contains(service)) {
+            String what = product == PricingProduct.HOTEL ? "hotels" : "flights";
+            throw new AccessDeniedException("Only the owner or an agent who handles " + what + " can book " + what);
+        }
+    }
+
+    /**
+     * The booking this caller may act on: another agency's is absent (404); an agent must handle its product (403) and
+     * may act only on their own (a colleague's is absent).
+     */
+    private PlatformBooking actedOn(CustomUserPrincipal p, java.util.Optional<PlatformBooking> row) {
+        PlatformBooking b = row.filter(x -> p.tenantId().equals(x.getTenantId()))
+                .orElseThrow(() -> new NotFoundException("Booking not found"));
+        requireHandles(p, b.getProduct());
+        if (!actsOn(p, b)) {
+            throw new NotFoundException("Booking not found");
+        }
+        return b;
     }
 
     private String resolveIssuer(CustomUserPrincipal p, String requested) {
@@ -835,6 +891,73 @@ public class PlatformBookingService {
     private static PaxDetail toPax(PaxInput p) {
         return new PaxDetail(p.getType(), p.getTitle(), p.getFirstName(), p.getLastName(), p.getDob(),
                 p.getPassportNo(), p.getPassportExpiry(), p.getNationality());
+    }
+
+    private static int roomOf(PaxInput p) {
+        return p.getRoomIndex() == null ? 0 : p.getRoomIndex();
+    }
+
+    /** Passengers in request order, split per room (flights: one group); the lead PAN is the first PAN among the room leads. */
+    private static BookRequest bookRequest(PlatformBooking b, PlatformBookingConfirmRequest request) {
+        java.util.TreeMap<Integer, List<PaxInput>> byRoom = new java.util.TreeMap<>();
+        request.getPassengers().forEach(p -> byRoom.computeIfAbsent(roomOf(p), k -> new java.util.ArrayList<>()).add(p));
+        String leadPan = byRoom.values().stream().map(g -> g.get(0).getPan())
+                .filter(pan -> pan != null && !pan.isBlank()).findFirst().orElse(null);
+        return new BookRequest(b.getSupplierReviewId(), b.getGross(),
+                request.getPassengers().stream().map(PlatformBookingService::toPax).toList(),
+                request.getContactEmail(), request.getContactPhone(),
+                byRoom.values().stream().map(g -> g.stream().map(PlatformBookingService::toPax).toList()).toList(), leadPan);
+    }
+
+    /** Hotels: every reviewed room has a lead guest with a title (the first guest given for it); other guests are optional. */
+    private static void requireGuestsPerRoom(PlatformBooking b, List<PaxInput> guests) {
+        Object reviewed = b.getItinerary() == null ? null : b.getItinerary().get("rooms");
+        int rooms = reviewed instanceof List<?> list ? list.size() : 1;
+        if (guests.size() > b.getPaxCount()) {
+            throw new IllegalArgumentException("Enter at most " + b.getPaxCount() + " guests, as reviewed");
+        }
+        for (int room = 0; room < rooms; room++) {
+            int r = room;
+            PaxInput lead = guests.stream().filter(g -> roomOf(g) == r).findFirst()
+                    .orElseThrow(() -> new IllegalArgumentException("Enter the lead guest of room " + (r + 1)));
+            if (lead.getTitle() == null || lead.getTitle().isBlank()) {
+                throw new IllegalArgumentException("Enter the title of the lead guest of room " + (r + 1));
+            }
+        }
+        if (guests.stream().anyMatch(g -> roomOf(g) >= rooms)) {
+            throw new IllegalArgumentException("A guest is in a room that was not reviewed");
+        }
+    }
+
+    /** {@code {hotel:{name, city, address}, stay:{checkIn, checkOut, nights}, rooms:[...], cancellationPolicy, freeCancellationUntil}}. */
+    private static Map<String, Object> hotelItinerary(HotelReviewRequest r, FareReview fare) {
+        Map<String, Object> hotel = new LinkedHashMap<>();
+        hotel.put("name", r.getHotelName());
+        hotel.put("city", r.getCity());
+        hotel.put("address", r.getAddress());
+        Map<String, Object> stay = new LinkedHashMap<>();
+        stay.put("checkIn", r.getCheckIn().toString());
+        stay.put("checkOut", r.getCheckOut().toString());
+        stay.put("nights", java.time.temporal.ChronoUnit.DAYS.between(r.getCheckIn(), r.getCheckOut()));
+        List<Map<String, Object>> rooms = r.getRooms().stream().map(room -> {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("adults", room.getAdults());
+            m.put("childAges", room.getChildAges() == null ? List.of() : room.getChildAges());
+            m.put("roomName", r.getRoomName());
+            m.put("mealBasis", r.getMealBasis());
+            return m;
+        }).toList();
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("hotel", hotel);
+        out.put("stay", stay);
+        out.put("rooms", rooms);
+        out.put("cancellationPolicy", fare.cancellationPolicy());
+        out.put("freeCancellationUntil", fare.freeCancellationUntil() == null ? null : fare.freeCancellationUntil().toString());
+        return out;
+    }
+
+    private static String noun(PlatformBooking b) {
+        return b.getProduct() == PricingProduct.HOTEL ? "hotel booking" : "flight booking";
     }
 
     /** Stores whatever shape the supplier sent: an object as-is, an array (Tripjack tripInfos) under "tripInfos". */

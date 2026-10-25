@@ -27,7 +27,7 @@ public class PlatformBookingConfirmRequest {
 
     @NotEmpty
     @Valid
-    @Schema(description = "One entry per traveller, matching the reviewed party size")
+    @Schema(description = "Flights: one entry per traveller, matching the reviewed party size. Hotels: at least the lead guest of every room (roomIndex), other guests optional")
     private List<PaxInput> passengers;
 
     @NotBlank

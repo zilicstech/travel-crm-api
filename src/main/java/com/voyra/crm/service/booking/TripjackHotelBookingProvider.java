@@ -101,8 +101,7 @@ public class TripjackHotelBookingProvider implements HotelBookingProvider {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("bookingId", r.reviewId());
         body.put("paymentInfos", List.of(Map.of("amount", r.totalFare())));
-        // shortcut: all guests go in one room entry (BookRequest has no room split); split per room once the real shape is known
-        body.put("roomTravellerInfo", List.of(Map.of("travellerInfo", r.passengers().stream().map(TripjackHotelBookingProvider::traveller).toList())));
+        body.put("roomTravellerInfo", roomTravellerInfo(r));
         Map<String, Object> delivery = new LinkedHashMap<>();
         delivery.put("emails", r.email() == null ? List.of() : List.of(r.email()));
         delivery.put("contacts", r.phone() == null ? List.of() : List.of(r.phone()));
@@ -171,6 +170,20 @@ public class TripjackHotelBookingProvider implements HotelBookingProvider {
         } catch (RuntimeException e) {
             return null;
         }
+    }
+
+    /** One entry per room (first guest = lead); the lead PAN goes on the first room's lead. Field names unverified (slice 0). */
+    private static List<Map<String, Object>> roomTravellerInfo(BookRequest r) {
+        List<List<PaxDetail>> rooms = r.rooms() == null || r.rooms().isEmpty() ? List.of(r.passengers()) : r.rooms();
+        List<Map<String, Object>> out = new java.util.ArrayList<>();
+        for (List<PaxDetail> room : rooms) {
+            List<Map<String, Object>> travellers = room.stream().map(TripjackHotelBookingProvider::traveller).toList();
+            if (out.isEmpty() && r.leadPan() != null && !travellers.isEmpty()) {
+                travellers.get(0).put("pan", r.leadPan());
+            }
+            out.add(Map.of("travellerInfo", travellers));
+        }
+        return out;
     }
 
     private static Map<String, Object> traveller(PaxDetail p) {

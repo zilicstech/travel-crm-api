@@ -33,6 +33,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.verify;
@@ -151,5 +152,33 @@ class PlatformBookingControllerTest {
         given(queryService.view(row)).willReturn(PlatformBookingResponse.builder().id("B1").status(PlatformBookingStatus.ABORTED).build());
         mockMvc.perform(post("/api/platform-bookings/B1/abort").with(as(UserType.AGENT)))
                 .andExpect(status().isOk()).andExpect(content().string(org.hamcrest.Matchers.containsString("ABORTED")));
+    }
+
+    private static final String HOTEL_REVIEW = "{\"hotelId\":\"H1\",\"optionId\":\"O1\",\"checkIn\":\"2026-12-01\",\"checkOut\":\"2026-12-03\","
+            + "\"rooms\":[{\"adults\":2,\"childAges\":[6]}],\"hotelName\":\"Sea Breeze Resort\"}";
+
+    @Test
+    void hotelReviewReturnsTheReviewWithItsPolicy() throws Exception {
+        given(service.reviewHotel(any())).willReturn(PlatformBookingReviewResponse.builder().bookingId("B2")
+                .displayedFare(new BigDecimal("4500.00")).cancellationPolicy("Free cancellation until 2026-11-29").build());
+
+        mockMvc.perform(post("/api/platform-bookings/hotels/review").with(as(UserType.AGENT))
+                        .contentType(MediaType.APPLICATION_JSON).content(HOTEL_REVIEW))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.bookingId").value("B2"))
+                .andExpect(jsonPath("$.cancellationPolicy").value("Free cancellation until 2026-11-29"));
+        verify(service).reviewHotel(argThat(r -> r.getRooms().size() == 1 && r.getRooms().get(0).getChildAges().equals(List.of(6))));
+    }
+
+    @Test
+    void hotelReviewRefusesNoRoomsTheAccountantAndAnAgentWithoutHotels() throws Exception {
+        mockMvc.perform(post("/api/platform-bookings/hotels/review").with(as(UserType.AGENT)).contentType(MediaType.APPLICATION_JSON)
+                .content(HOTEL_REVIEW.replace("[{\"adults\":2,\"childAges\":[6]}]", "[]"))).andExpect(status().isBadRequest());
+        mockMvc.perform(post("/api/platform-bookings/hotels/review").with(as(UserType.ACCOUNTANT))
+                .contentType(MediaType.APPLICATION_JSON).content(HOTEL_REVIEW)).andExpect(status().isForbidden());
+        verifyNoInteractions(service);
+
+        given(service.reviewHotel(any())).willThrow(new org.springframework.security.access.AccessDeniedException("hotels"));
+        mockMvc.perform(post("/api/platform-bookings/hotels/review").with(as(UserType.AGENT))
+                .contentType(MediaType.APPLICATION_JSON).content(HOTEL_REVIEW)).andExpect(status().isForbidden());
     }
 }

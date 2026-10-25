@@ -2,6 +2,8 @@ package com.voyra.crm.service.booking;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.voyra.crm.dto.FlightReviewRequest;
+import com.voyra.crm.dto.HotelReviewRequest;
+import com.voyra.crm.dto.HotelRoomRequest;
 import com.voyra.crm.dto.PaxInput;
 import com.voyra.crm.dto.PlatformBookingConfirmRequest;
 import com.voyra.crm.dto.PlatformBookingReviewResponse;
@@ -77,6 +79,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
@@ -98,6 +101,7 @@ class PlatformBookingServiceTest {
     @Mock private PlatformBookingRepository bookingRepository;
     @Mock private PlatformBookingEventRepository eventRepository;
     @Mock private FlightBookingProvider provider;
+    @Mock private HotelBookingProvider hotelProvider;
     @Mock private AgencyPriceQuoter quoter;
     @Mock private AgencyPricingService pricingService;
     @Mock private WalletService walletService;
@@ -133,9 +137,15 @@ class PlatformBookingServiceTest {
                 earned.subtract(new BigDecimal("5000.00").subtract(d)).subtract(c), pricingId, BigDecimal.TEN, new BigDecimal("2.35"));
     }
 
+    private final HotelBookingProviderConfig hotelConfig = new HotelBookingProviderConfig();
+
+    private BookingProviderRegistry registry() {
+        return new BookingProviderRegistry(provider, hotelProvider, config, hotelConfig);
+    }
+
     @BeforeEach
     void setUp() {
-        service = new PlatformBookingService(bookingRepository, provider, config, quoter, pricingService, walletService,
+        service = new PlatformBookingService(bookingRepository, registry(), quoter, pricingService, walletService,
                 walletRepository, tenantRepository, agentRepository, credentialRepository, notificationService,
                 new PlatformBookingEventRecorder(eventRepository, paxCodec), paxCodec, objectMapper, transactionManager,
                 walletEntryRepository, platformAuditService, settings, mirrorService);
@@ -677,7 +687,7 @@ class PlatformBookingServiceTest {
 
     @Test
     void anEncryptionFailureHappensBeforeTheHold() {
-        PlatformBookingService broken = new PlatformBookingService(bookingRepository, provider, config, quoter, pricingService,
+        PlatformBookingService broken = new PlatformBookingService(bookingRepository, registry(), quoter, pricingService,
                 walletService, walletRepository, tenantRepository, agentRepository, credentialRepository, notificationService,
                 new PlatformBookingEventRecorder(eventRepository, paxCodec), new PaxCodec(objectMapper, "bad"), objectMapper,
                 transactionManager, walletEntryRepository, platformAuditService, settings, mirrorService);
@@ -963,5 +973,168 @@ class PlatformBookingServiceTest {
                 objectMapper.valueToTree(Map.of("tripInfos", List.of()))));
 
         assertThat(rows.get(reviewed()).getItinerary()).containsOnlyKeys("tripInfos");
+    }
+
+    // ---- hotels: the same state machine, routed to the hotel supplier ----
+
+    private static final Instant FREE_UNTIL = Instant.parse("2026-11-29T00:00:00Z");
+
+    private void hotelSupplierQuotes(String total) {
+        lenient().when(pricingService.requireInForce(T, PricingProduct.HOTEL)).thenReturn(AgencyPricing.builder().id("PH").build());
+        lenient().when(hotelProvider.review(eq("O1"), eq("H1"), any(), any(), eq(2)))
+                .thenReturn(new FareReview("hrv-1", new BigDecimal(total), new BigDecimal("4250.00"), "INR", "Rate rules",
+                        Instant.now().plus(15, ChronoUnit.MINUTES), null, "Free cancellation until 2026-11-29", FREE_UNTIL));
+        lenient().when(quoter.quote(eq(T), eq(PricingProduct.HOTEL), any(), any())).thenReturn(quote("PH", "4500.00", "100.00", "0.00"));
+        lenient().when(hotelProvider.book(any())).thenReturn(ticketed(null));
+    }
+
+    /** Two rooms: 2 adults + a child of 6, and 1 adult - four guests. */
+    private static HotelReviewRequest hotelReviewRequest() {
+        HotelReviewRequest r = new HotelReviewRequest();
+        r.setHotelId("H1");
+        r.setOptionId("O1");
+        r.setCheckIn(LocalDate.of(2026, 12, 1));
+        r.setCheckOut(LocalDate.of(2026, 12, 3));
+        r.setRooms(List.of(new HotelRoomRequest(2, List.of(6)), new HotelRoomRequest(1, List.of())));
+        r.setHotelName("Sea Breeze Resort");
+        r.setCity("Goa");
+        r.setRoomName("Deluxe Sea View");
+        r.setMealBasis("Breakfast included");
+        return r;
+    }
+
+    /** Lead guests of both rooms (room 0's with a PAN) and one more guest in room 0; the child's name is left out. */
+    private static PlatformBookingConfirmRequest hotelConfirmRequest(String key, String accepted) {
+        PlatformBookingConfirmRequest r = confirmRequest(key, accepted);
+        r.setPassengers(List.of(
+                PaxInput.builder().type("ADULT").title("Mr").firstName("Rahul").lastName("Sharma").roomIndex(0).pan("ABCDE1234F").build(),
+                PaxInput.builder().type("ADULT").title("Mr").firstName("Vikram").lastName("Rao").roomIndex(1).build(),
+                PaxInput.builder().type("ADULT").firstName("Priya").lastName("Sharma").roomIndex(0).build()));
+        return r;
+    }
+
+    @Test
+    void hotelReviewStampsAHotelRowWithTheStayAndPolicy() {
+        hotelSupplierQuotes("5000.00");
+
+        PlatformBookingReviewResponse res = service.reviewHotel(hotelReviewRequest());
+
+        PlatformBooking b = rows.get(res.getBookingId());
+        assertThat(b.getProduct()).isEqualTo(PricingProduct.HOTEL);
+        assertThat(b.getSupplierReviewId()).isEqualTo("hrv-1");
+        assertThat(b.getPaxCount()).isEqualTo(4);
+        assertThat(b.getDisplayed()).isEqualByComparingTo("4500.00");
+        assertThat(b.getPricingSnapshot()).containsEntry("pricingId", "PH");
+        Map<String, Object> it = objectMapper.convertValue(b.getItinerary(), new com.fasterxml.jackson.core.type.TypeReference<>() { });
+        assertThat(it).containsEntry("cancellationPolicy", "Free cancellation until 2026-11-29");
+        assertThat(objectMapper.valueToTree(it).path("hotel").path("name").asText()).isEqualTo("Sea Breeze Resort");
+        assertThat(objectMapper.valueToTree(it).path("stay").path("nights").asInt()).isEqualTo(2);
+        assertThat(objectMapper.valueToTree(it).path("rooms").size()).isEqualTo(2);
+        assertThat(res.getCancellationPolicy()).isEqualTo("Free cancellation until 2026-11-29");
+        assertThat(res.getFreeCancellationUntil()).isEqualTo(FREE_UNTIL);
+        verify(pricingService).requireInForce(T, PricingProduct.HOTEL);
+        verify(provider, never()).review(any(FlightReviewRequest.class));
+    }
+
+    @Test
+    void hotelReviewWithAMissingBaseRateIsAConflict() {
+        hotelSupplierQuotes("5000.00");
+        when(hotelProvider.review(eq("O1"), eq("H1"), any(), any(), eq(2)))
+                .thenReturn(new FareReview("hrv-1", new BigDecimal("5000.00"), null, "INR", null, null, null));
+
+        assertThatThrownBy(() -> service.reviewHotel(hotelReviewRequest()))
+                .isInstanceOfSatisfying(BookingConflictException.class, e -> assertThat(e.getCode()).isEqualTo("BASE_FARE_UNAVAILABLE"));
+        assertThat(rows).isEmpty();
+    }
+
+    /** Review Focus 1: the room repriced between the hotel detail and review - the agency must accept the new price before any hold. */
+    @Test
+    void aRoomRepricedSinceTheDetailMustBeReconfirmed() {
+        hotelSupplierQuotes("5000.00");
+        HotelReviewRequest req = hotelReviewRequest();
+        req.setSearchDisplayedFare(new BigDecimal("4300.00"));
+
+        PlatformBookingReviewResponse res = service.reviewHotel(req);
+
+        assertThat(res.isPriceChanged()).isTrue();
+        assertThat(res.getPreviousDisplayedFare()).isEqualByComparingTo("4300.00");
+        assertThatThrownBy(() -> service.confirm(res.getBookingId(), hotelConfirmRequest("key-00000001", "4300.00")))
+                .isInstanceOfSatisfying(BookingConflictException.class, e -> assertThat(e.getCode()).isEqualTo("PRICE_CHANGED"));
+        verify(walletService, never()).hold(any(), any(), any(), any(), any());
+        verify(hotelProvider, never()).book(any());
+
+        PlatformBooking b = service.confirm(res.getBookingId(), hotelConfirmRequest("key-00000001", "4500.00"));
+        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
+    }
+
+    /** Review Focus 5: an agent who handles flights only cannot book a hotel, nor confirm a hotel booking. */
+    @Test
+    void anAgentWithFlightOnlyCannotBookAHotel() {
+        hotelSupplierQuotes("5000.00");
+        String id = service.reviewHotel(hotelReviewRequest()).getBookingId();
+        rows.get(id).setBookedBy("AG1");
+        loginAs(UserType.AGENT, "AG1");
+        when(agentRepository.findById("AG1")).thenReturn(Optional.of(
+                Agent.builder().id("AG1").manageableServices(List.of(ServiceType.FLIGHT)).build()));
+
+        assertThatThrownBy(() -> service.reviewHotel(hotelReviewRequest())).isInstanceOf(AccessDeniedException.class);
+        assertThatThrownBy(() -> service.confirm(id, hotelConfirmRequest("key-00000001", "4500.00"))).isInstanceOf(AccessDeniedException.class);
+        verify(walletService, never()).hold(any(), any(), any(), any(), any());
+        verify(hotelProvider, times(1)).review(any(), any(), any(), any(), anyInt());
+    }
+
+    @Test
+    void anAgentWhoHandlesHotelsBooksOne() {
+        hotelSupplierQuotes("5000.00");
+        loginAs(UserType.AGENT, "AG1");
+        when(agentRepository.findById("AG1")).thenReturn(Optional.of(
+                Agent.builder().id("AG1").manageableServices(List.of(ServiceType.HOTEL)).build()));
+
+        String id = service.reviewHotel(hotelReviewRequest()).getBookingId();
+        PlatformBooking b = service.confirm(id, hotelConfirmRequest("key-00000001", "4500.00"));
+
+        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
+        assertThat(b.getBookedBy()).isEqualTo("AG1");
+    }
+
+    /** confirm for a hotel reuses the flight path but books through the hotel supplier, one roomTravellerInfo group per room. */
+    @Test
+    void hotelConfirmBooksOnceThroughTheHotelSupplierWithGuestsPerRoom() {
+        hotelSupplierQuotes("5000.00");
+        String id = service.reviewHotel(hotelReviewRequest()).getBookingId();
+        rows.get(id).setClientId("C1"); // a CRM client: the hotel mirror is Task 3, so the row stays NONE
+        when(agentRepository.findByIdAndTenantId("AG1", T)).thenReturn(Optional.of(Agent.builder().id("AG1").build()));
+        PlatformBookingConfirmRequest req = hotelConfirmRequest("key-00000001", "4500.00");
+        req.setIssuedByAgentId("AG1");
+
+        PlatformBooking b = service.confirm(id, req);
+
+        ArgumentCaptor<BookRequest> sent = ArgumentCaptor.forClass(BookRequest.class);
+        verify(hotelProvider, times(1)).book(sent.capture());
+        verify(provider, never()).book(any());
+        assertThat(sent.getValue().reviewId()).isEqualTo("hrv-1");
+        assertThat(sent.getValue().rooms()).hasSize(2);
+        assertThat(sent.getValue().rooms().get(0)).extracting(p -> p.firstName()).containsExactly("Rahul", "Priya");
+        assertThat(sent.getValue().rooms().get(1)).extracting(p -> p.firstName()).containsExactly("Vikram");
+        assertThat(sent.getValue().leadPan()).isEqualTo("ABCDE1234F");
+        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
+        assertThat(b.getMirrorStatus()).isEqualTo(com.voyra.crm.enums.MirrorStatus.NONE);
+        verify(walletService).debitHeld("H1", new BigDecimal("4500.00"), "pb-debit:" + id, REF, id);
+        verify(walletService).credit(eq(T), eq(WalletEntryType.COMMISSION_CREDIT), any(), eq("pb-comm:" + id), eq(REF), eq(id),
+                contains("hotel booking"));
+    }
+
+    @Test
+    void hotelConfirmNeedsATitledLeadGuestInEveryRoom() {
+        hotelSupplierQuotes("5000.00");
+        String id = service.reviewHotel(hotelReviewRequest()).getBookingId();
+        PlatformBookingConfirmRequest oneRoom = hotelConfirmRequest("key-00000001", "4500.00");
+        oneRoom.setPassengers(oneRoom.getPassengers().subList(0, 1));
+        PlatformBookingConfirmRequest untitled = hotelConfirmRequest("key-00000002", "4500.00");
+        untitled.getPassengers().get(1).setTitle(null);
+
+        assertThatThrownBy(() -> service.confirm(id, oneRoom)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.confirm(id, untitled)).isInstanceOf(IllegalArgumentException.class);
+        verify(walletService, never()).hold(any(), any(), any(), any(), any());
     }
 }

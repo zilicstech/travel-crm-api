@@ -3,6 +3,7 @@ package com.voyra.crm.service.booking;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.voyra.crm.dto.BookingTimelineLine;
+import com.voyra.crm.dto.HotelStaySummary;
 import com.voyra.crm.dto.ItinerarySegment;
 import com.voyra.crm.dto.PagedResponse;
 import com.voyra.crm.dto.PaxSummary;
@@ -15,6 +16,7 @@ import com.voyra.crm.entity.PlatformBooking;
 import com.voyra.crm.entity.PlatformBookingEvent;
 import com.voyra.crm.entity.Tenant;
 import com.voyra.crm.enums.PlatformBookingStatus;
+import com.voyra.crm.enums.PricingProduct;
 import com.voyra.crm.exception.NotFoundException;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.ClientRepository;
@@ -33,6 +35,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -64,6 +67,11 @@ public class PlatformBookingQueryService {
             Map.entry("CANCEL_ACCEPTED", "Cancellation accepted by the airline"),
             Map.entry("CANCEL_NO_ANSWER", "Cancellation is pending with the airline"),
             Map.entry("CANCELLED", "Booking cancelled"));
+
+    /** Hotel wording where the flight text would say ticket or airline. */
+    private static final Map<String, String> HOTEL_EVENT_TEXT = Map.of(
+            "TICKETED", "Booking confirmed",
+            "LATE_TICKET", "The hotel confirmed the booking late");
 
     private final PlatformBookingRepository bookingRepository;
     private final PlatformBookingEventRepository eventRepository;
@@ -138,11 +146,11 @@ public class PlatformBookingQueryService {
                 clientRepository::findAllById, Client::getId, Client::getName);
         return rows.stream().<PlatformBookingResponse>map(b -> PlatformBookingResponse.builder()
                 .id(b.getId()).product(b.getProduct()).status(b.getStatus()).pnr(b.getPnr()).ticketNumbers(b.getTicketNumbers())
-                .displayedFare(b.getDisplayed()).agencyEarns(agencyEarns(b)).itinerary(itinerary(b)).passengers(passengers(b))
+                .displayedFare(b.getDisplayed()).agencyEarns(agencyEarns(b)).itinerary(itinerary(b)).hotel(hotel(b)).passengers(passengers(b))
                 .bookedByName(agentNames.get(b.getBookedBy())).clientName(clientNames.get(b.getClientId()))
                 .createdAt(b.getCreatedAt()).ticketedAt(b.getTicketedAt()).cancelRefund(b.getCancelRefund())
                 .supplierMessage(b.getSupplierMessage()).mirrorStatus(b.getMirrorStatus()).tenantBookingId(b.getTenantBookingId())
-                .timeline(detail ? timeline(b.getId()) : null)
+                .timeline(detail ? timeline(b) : null)
                 .build()).toList();
     }
 
@@ -153,7 +161,7 @@ public class PlatformBookingQueryService {
                 agentRepository::findAllById, Agent::getId, Agent::getName);
         return rows.stream().<PlatformAdminBookingResponse>map(b -> PlatformAdminBookingResponse.builder()
                 .id(b.getId()).product(b.getProduct()).status(b.getStatus()).pnr(b.getPnr()).ticketNumbers(b.getTicketNumbers())
-                .displayedFare(b.getDisplayed()).agencyEarns(agencyEarns(b)).itinerary(itinerary(b)).passengers(passengers(b))
+                .displayedFare(b.getDisplayed()).agencyEarns(agencyEarns(b)).itinerary(itinerary(b)).hotel(hotel(b)).passengers(passengers(b))
                 .bookedByName(agentNames.get(b.getBookedBy()))
                 .createdAt(b.getCreatedAt()).ticketedAt(b.getTicketedAt()).cancelRefund(b.getCancelRefund())
                 .supplierMessage(b.getSupplierMessage()).mirrorStatus(b.getMirrorStatus()).tenantBookingId(b.getTenantBookingId())
@@ -202,6 +210,27 @@ public class PlatformBookingQueryService {
                         String.valueOf(m.get("type")))).toList();
     }
 
+    /** The stay from a HOTEL row's itinerary {@code {hotel, stay, rooms}}; null for flights. Missing parts stay null. */
+    HotelStaySummary hotel(PlatformBooking b) {
+        if (b.getProduct() != PricingProduct.HOTEL || b.getItinerary() == null) {
+            return null;
+        }
+        JsonNode it = objectMapper.valueToTree(b.getItinerary());
+        JsonNode stay = it.path("stay");
+        JsonNode rooms = it.path("rooms");
+        return new HotelStaySummary(it.path("hotel").path("name").asText(null), it.path("hotel").path("city").asText(null),
+                date(stay.path("checkIn")), date(stay.path("checkOut")), stay.path("nights").isNumber() ? stay.path("nights").asInt() : null,
+                rooms.isArray() ? rooms.size() : null, rooms.path(0).path("mealBasis").asText(null));
+    }
+
+    private static LocalDate date(JsonNode n) {
+        try {
+            return n.isTextual() ? LocalDate.parse(n.asText()) : null;
+        } catch (java.time.format.DateTimeParseException e) {
+            return null;
+        }
+    }
+
     /** Pulls the legs out of the supplier itinerary by Tripjack's {@code sI} segments; anything unrecognised yields no legs. */
     public List<ItinerarySegment> itinerary(PlatformBooking b) {
         if (b.getItinerary() == null) {
@@ -219,10 +248,14 @@ public class PlatformBookingQueryService {
         return out;
     }
 
-    private List<BookingTimelineLine> timeline(String bookingId) {
+    private List<BookingTimelineLine> timeline(PlatformBooking b) {
+        boolean hotel = b.getProduct() == PricingProduct.HOTEL;
         List<BookingTimelineLine> out = new ArrayList<>();
-        for (PlatformBookingEvent e : eventRepository.findByPlatformBookingIdOrderByCreatedAtAsc(bookingId)) {
+        for (PlatformBookingEvent e : eventRepository.findByPlatformBookingIdOrderByCreatedAtAsc(b.getId())) {
             String text = AGENCY_EVENT_TEXT.get(e.getType());
+            if (text != null && hotel) {
+                text = HOTEL_EVENT_TEXT.getOrDefault(e.getType(), text.replace("airline", "hotel"));
+            }
             if (text != null) {
                 out.add(new BookingTimelineLine(e.getCreatedAt(), text));
             }

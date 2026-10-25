@@ -3,6 +3,7 @@ package com.voyra.crm.service.booking;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.voyra.crm.dto.PagedResponse;
 import com.voyra.crm.dto.PlatformAdminBookingResponse;
+import com.voyra.crm.dto.HotelStaySummary;
 import com.voyra.crm.dto.PlatformBookingResponse;
 import com.voyra.crm.entity.Agent;
 import com.voyra.crm.entity.PlatformBooking;
@@ -234,5 +235,38 @@ class PlatformBookingQueryServiceTest {
         assertThat(service().list(0, 25).getContent()).singleElement().satisfies(r -> assertThat(r.getBookedByName()).isNull());
         assertThat(service().adminView(starter).getBookedByName()).isNull();
         assertThat(service().adminList(0, 25, null, null).getContent()).hasSize(1);
+    }
+
+    @Test
+    void aHotelBookingRendersItsStayAndHotelWordingWithoutPanOrSupplierIds() throws Exception {
+        login("O1", UserType.AGENCY_OWNER, "T1");
+        Map<String, Object> itinerary = new java.util.LinkedHashMap<>();
+        itinerary.put("hotel", Map.of("name", "Sea Breeze Resort", "city", "Goa", "address", "Calangute"));
+        itinerary.put("stay", Map.of("checkIn", "2026-12-01", "checkOut", "2026-12-03", "nights", 2));
+        itinerary.put("rooms", List.of(Map.of("adults", 2, "mealBasis", "Breakfast included"), Map.of("adults", 1, "mealBasis", "Breakfast included")));
+        itinerary.put("cancellationPolicy", "Free cancellation until 2026-11-29");
+        PlatformBooking b = booking("B1", "T1", "O1").toBuilder().product(PricingProduct.HOTEL).itinerary(itinerary).clientId(null)
+                .paxEnc(paxCodec.encrypt(Map.of("passengers", List.of(Map.of("type", "ADULT", "title", "Mr", "firstName", "Rahul",
+                        "lastName", "Sharma", "roomIndex", 0, "pan", "ABCDE1234F"))))).build();
+        given(bookings.findByIdAndTenantId("B1", "T1")).willReturn(Optional.of(b));
+        given(events.findByPlatformBookingIdOrderByCreatedAtAsc("B1")).willReturn(List.of(event("BOOKING"), event("TICKETED")));
+
+        PlatformBookingResponse r = service().get("B1");
+        String json = objectMapper.writeValueAsString(r);
+
+        for (String forbidden : List.of("voyraEarned", "voyraNet", "gross", "RV-SECRET", "TJS-SECRET", "ABCDE1234F", "\"pan\"")) {
+            assertThat(json).as(forbidden).doesNotContain(forbidden);
+        }
+        assertThat(r.getProduct()).isEqualTo(PricingProduct.HOTEL);
+        assertThat(r.getItinerary()).isEmpty();
+        assertThat(r.getHotel()).isEqualTo(new HotelStaySummary("Sea Breeze Resort", "Goa", java.time.LocalDate.of(2026, 12, 1),
+                java.time.LocalDate.of(2026, 12, 3), 2, 2, "Breakfast included"));
+        assertThat(r.getPassengers()).singleElement().satisfies(p -> assertThat(p.getName()).isEqualTo("Mr Rahul Sharma"));
+        assertThat(r.getTimeline()).extracting(l -> l.getText()).containsExactly("Sent to the hotel", "Booking confirmed");
+    }
+
+    @Test
+    void aFlightBookingHasNoHotelSummary() {
+        assertThat(service().hotel(booking("B1", "T1", "O1"))).isNull();
     }
 }

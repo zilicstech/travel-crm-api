@@ -9,7 +9,7 @@ import java.time.LocalDate;
  * (mock default | tripjack). Same contract as {@link FlightBookingProvider}: {@link #book} is sent at most once
  * per review id and a transport timeout surfaces as {@code SupplierTimeoutException}; {@code TICKETED} means confirmed.
  */
-public interface HotelBookingProvider {
+public interface HotelBookingProvider extends BookingSupplier {
 
     /**
      * Re-prices one room option for the stay; {@link FareReview#baseFare()} is the room rate excluding taxes (null when the
@@ -18,13 +18,4 @@ public interface HotelBookingProvider {
      * @throws com.voyra.crm.exception.FareUnavailableException when the room is gone
      */
     FareReview review(String optionId, String hotelId, LocalDate checkIn, LocalDate checkOut, int rooms);
-
-    /** @throws com.voyra.crm.exception.SupplierTimeoutException on a transport timeout (outcome unknown) */
-    BookResult book(BookRequest request);
-
-    BookResult bookingDetails(String supplierBookingId);
-
-    CancelQuote cancelQuote(String supplierBookingId);
-
-    CancelResult cancel(String supplierBookingId);
 }

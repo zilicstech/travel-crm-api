@@ -41,6 +41,9 @@ public class PlatformBookingResponse {
     @Schema(description = "Flight legs")
     private List<ItinerarySegment> itinerary;
 
+    @Schema(description = "Hotel bookings: the stay; null for flights")
+    private HotelStaySummary hotel;
+
     @Schema(description = "Travellers: name and type only")
     private List<PaxSummary> passengers;
 

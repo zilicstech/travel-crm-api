@@ -253,4 +253,18 @@ class PlatformBookingMirrorServiceTest {
         assertThat(service.hasLeadAgent("T1", "S1", "L1")).isTrue();
         assertThat(service.hasLeadAgent("T1", null, null)).isFalse();
     }
+
+    /** Until the hotel mirror (HOTEL_VOUCHER) exists, a hotel booking for a client is skipped: NONE, no failure, no alert. */
+    @Test
+    void aHotelBookingIsNotMirroredYet() {
+        PlatformBooking hotel = ticketed("C1");
+        hotel.setProduct(com.voyra.crm.enums.PricingProduct.HOTEL);
+        hotel.setMirrorStatus(MirrorStatus.NONE);
+
+        service.sync("PB1");
+
+        verifyNoInteractions(tenantService, notificationService);
+        assertThat(hotel.getMirrorStatus()).isEqualTo(MirrorStatus.NONE);
+        assertThat(recorded).isEmpty();
+    }
 }

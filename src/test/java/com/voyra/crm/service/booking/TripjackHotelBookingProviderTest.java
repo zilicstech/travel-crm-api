@@ -119,6 +119,24 @@ class TripjackHotelBookingProviderTest {
     }
 
     @Test
+    void book_sendsOneRoomTravellerInfoPerRoomWithTheLeadPanOnTheFirstLead() {
+        PaxDetail asha = new PaxDetail("ADULT", "Mr", "Asha", "Rao", null, null, null, null);
+        PaxDetail ravi = new PaxDetail("ADULT", null, "Ravi", "Rao", null, null, null, null);
+        PaxDetail meera = new PaxDetail("ADULT", "Ms", "Meera", "Iyer", null, null, null, null);
+        server.expect(requestTo(BASE + "/oms/v3/hotel/book"))
+                .andExpect(jsonPath("$.roomTravellerInfo.length()").value(2))
+                .andExpect(jsonPath("$.roomTravellerInfo[0].travellerInfo[0].fN").value("Asha"))
+                .andExpect(jsonPath("$.roomTravellerInfo[0].travellerInfo[0].pan").value("ABCDE1234F"))
+                .andExpect(jsonPath("$.roomTravellerInfo[0].travellerInfo[1].fN").value("Ravi"))
+                .andExpect(jsonPath("$.roomTravellerInfo[1].travellerInfo[0].fN").value("Meera"))
+                .andExpect(jsonPath("$.roomTravellerInfo[1].travellerInfo[0].pan").doesNotExist())
+                .andRespond(withSuccess(OK + ",\"bookingId\":\"TJH1\"}", MediaType.APPLICATION_JSON));
+        provider.book(new BookRequest("TJH1", new BigDecimal("12000.50"), List.of(asha, ravi, meera), "a@b.com", "9999999999",
+                List.of(List.of(asha, ravi), List.of(meera)), "ABCDE1234F"));
+        server.verify();
+    }
+
+    @Test
     void book_failedOnlyOnExplicitFalse_otherwiseUnknown() {
         server.expect(requestTo(BASE + "/oms/v3/hotel/book")).andRespond(withSuccess(
                 "{\"status\":{\"success\":false},\"errors\":[{\"message\":\"Insufficient deposit\"}]}", MediaType.APPLICATION_JSON));

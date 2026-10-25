@@ -1,6 +1,7 @@
 package com.voyra.crm.controller;
 
 import com.voyra.crm.dto.FlightReviewRequest;
+import com.voyra.crm.dto.HotelReviewRequest;
 import com.voyra.crm.dto.PagedResponse;
 import com.voyra.crm.dto.PlatformBookingCancelRequest;
 import com.voyra.crm.dto.PlatformBookingConfirmRequest;
@@ -26,7 +27,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/platform-bookings")
 @RequiredArgsConstructor
-@Tag(name = "Platform bookings", description = "Book flights through Voyra's supplier account and pay from the agency wallet")
+@Tag(name = "Platform bookings", description = "Book flights and hotels through Voyra's supplier account and pay from the agency wallet")
 @PreAuthorize("hasAnyRole('AGENCY_OWNER','AGENT','ACCOUNTANT')")
 public class PlatformBookingController {
 
@@ -38,6 +39,13 @@ public class PlatformBookingController {
     @Operation(summary = "Re-price a flight offer", description = "Creates a REVIEWING booking with the displayed fare to confirm.")
     public ResponseEntity<PlatformBookingReviewResponse> review(@Valid @RequestBody FlightReviewRequest request) {
         return ResponseEntity.ok(service.review(request));
+    }
+
+    @PostMapping("/hotels/review")
+    @PreAuthorize("hasAnyRole('AGENCY_OWNER','AGENT')")
+    @Operation(summary = "Re-price a hotel room option", description = "Creates a REVIEWING hotel booking with the displayed price and the cancellation policy to confirm.")
+    public ResponseEntity<PlatformBookingReviewResponse> reviewHotel(@Valid @RequestBody HotelReviewRequest request) {
+        return ResponseEntity.ok(service.reviewHotel(request));
     }
 
     @PostMapping("/{id}/confirm")
