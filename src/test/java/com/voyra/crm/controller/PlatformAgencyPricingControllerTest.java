@@ -32,6 +32,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
@@ -116,6 +117,30 @@ class PlatformAgencyPricingControllerTest {
         mockMvc.perform(post(BASE + "/P1/approve").with(admin("U2")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.approvedBy").value("U2"));
+    }
+
+    @Test
+    void withdrawsAPendingRateButNotAnApprovedOne() throws Exception {
+        AgencyPricing pending = AgencyPricing.builder().id("P1").tenantId("T1").product(PricingProduct.FLIGHT)
+                .discountPct(BigDecimal.TEN).commissionPct(BigDecimal.ONE).effectiveFrom(Instant.now())
+                .worstCaseNetPer10k(BigDecimal.ZERO).requiresSecondApproval(true)
+                .createdBy("U1").createdAt(Instant.now()).build();
+        given(repository.findByIdForUpdate("P1")).willReturn(Optional.of(pending));
+        given(repository.save(org.mockito.ArgumentMatchers.any(AgencyPricing.class))).willAnswer(i -> i.getArgument(0));
+        mockMvc.perform(post(BASE + "/P1/withdraw").with(admin("U1")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.withdrawnAt").exists());
+        pending.setWithdrawnAt(null);
+        pending.setApprovedAt(Instant.now());
+        mockMvc.perform(post(BASE + "/P1/withdraw").with(admin("U1"))).andExpect(status().isConflict());
+    }
+
+    @Test
+    void pricingNotConfiguredMapsTo409WithItsCode() {
+        var r = new com.voyra.crm.exception.GlobalExceptionHandler().handlePricingNotConfigured(
+                new com.voyra.crm.exception.PricingNotConfiguredException(), new org.springframework.mock.web.MockHttpServletRequest());
+        assertThat(r.getStatusCode().value()).isEqualTo(409);
+        assertThat(r.getBody().getCode()).isEqualTo("PRICING_NOT_CONFIGURED");
     }
 
     @Test

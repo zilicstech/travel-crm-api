@@ -216,6 +216,17 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
     }
 
+    @ExceptionHandler(PricingNotConfiguredException.class)
+    public ResponseEntity<ApiErrorResponse> handlePricingNotConfigured(PricingNotConfiguredException ex,
+                                                                       HttpServletRequest request) {
+        String path = getPath(request);
+        log.warn("Pricing not configured - path: {}", path);
+        ApiErrorResponse response = ApiErrorResponse.of(ex.getMessage(), "Pricing not configured", null,
+                HttpStatus.CONFLICT.value(), path);
+        response.setCode("PRICING_NOT_CONFIGURED");
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
+    }
+
     @ExceptionHandler(ReceivableDueException.class)
     public ResponseEntity<ApiErrorResponse> handleReceivableDue(ReceivableDueException ex, HttpServletRequest request) {
         String path = getPath(request);

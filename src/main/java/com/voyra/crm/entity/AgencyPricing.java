@@ -69,4 +69,11 @@ public class AgencyPricing {
 
     @Column(name = "approved_at")
     private Instant approvedAt;
+
+    /** Set when a never-approved rate is withdrawn; the row stays for the record and never applies. */
+    @Column(name = "withdrawn_at")
+    private Instant withdrawnAt;
+
+    @Column(name = "withdrawn_by", length = 36)
+    private String withdrawnBy;
 }

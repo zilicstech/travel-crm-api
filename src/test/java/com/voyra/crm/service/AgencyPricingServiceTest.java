@@ -248,4 +248,53 @@ class AgencyPricingServiceTest {
         assertThat(p.getBasketLines().get(2).getVoyraNet()).isEqualByComparingTo("-1130.00");
         assertThat(p.getBasketLines().get(2).getDisplayed()).isEqualByComparingTo("43650.00");
     }
+
+    @Test
+    void requireInForceRefusesWhenNoRow() {
+        assertThatThrownBy(() -> service.requireInForce(T, PricingProduct.FLIGHT))
+                .isInstanceOf(com.voyra.crm.exception.PricingNotConfiguredException.class);
+    }
+
+    @Test
+    void requireInForceReturnsTheResolvedRow() {
+        when(repository.findByTenantIdAndProductOrderByEffectiveFromDesc(T, PricingProduct.FLIGHT))
+                .thenReturn(List.of(row("A", Instant.now().minus(1, ChronoUnit.DAYS), true)));
+        assertThat(service.requireInForce(T, PricingProduct.FLIGHT).getId()).isEqualTo("A");
+    }
+
+    @Test
+    void withdrawnRowIsNeverInForce() {
+        AgencyPricing r = row("A", Instant.now().minus(1, ChronoUnit.DAYS), true);
+        r.setWithdrawnAt(Instant.now());
+        when(repository.findByTenantIdAndProductOrderByEffectiveFromDesc(T, PricingProduct.FLIGHT)).thenReturn(List.of(r));
+        assertThat(service.resolve(T, PricingProduct.FLIGHT, Instant.now())).isEmpty();
+        assertThatThrownBy(() -> service.requireInForce(T, PricingProduct.FLIGHT))
+                .isInstanceOf(com.voyra.crm.exception.PricingNotConfiguredException.class);
+    }
+
+    @Test
+    void approvedRowCannotBeWithdrawn() {
+        when(repository.findByIdForUpdate("P1")).thenReturn(Optional.of(row("P1", Instant.now(), true)));
+        assertThatThrownBy(() -> service.withdraw(T, "P1"))
+                .isInstanceOf(IllegalStateException.class).hasMessage("An approved rate cannot be withdrawn");
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    void pendingRowIsWithdrawnAndAudited() {
+        when(repository.findByIdForUpdate("P1")).thenReturn(Optional.of(row("P1", Instant.now(), false)));
+        AgencyPricingResponse r = service.withdraw(T, "P1");
+        assertThat(r.getWithdrawnAt()).isNotNull();
+        verify(auditService).record(eq(PlatformAuditAction.PRICING_WITHDRAW), eq("AGENCY_PRICING"), eq("P1"), anyMap());
+    }
+
+    @Test
+    void withdrawnRowCannotBeApproved() {
+        AgencyPricing r = row("P1", Instant.now(), false);
+        r.setWithdrawnAt(Instant.now());
+        when(repository.findByIdForUpdate("P1")).thenReturn(Optional.of(r));
+        loginAs("U2");
+        assertThatThrownBy(() -> service.approve(T, "P1"))
+                .isInstanceOf(IllegalStateException.class).hasMessage("This rate was withdrawn");
+    }
 }

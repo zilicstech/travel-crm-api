@@ -28,12 +28,14 @@ public class PlatformSettingService {
     static final String DISCOUNT_BASE = "discount_base";
     static final String TDS_RATE = "tds_rate";
     static final String COMMISSION_ESTIMATE_PCT = "commission_estimate_pct";
+    static final String VOYRA_CANCEL_FEE = "voyra_cancel_fee";
     static final String REFERENCE_FARE_BASKET = "reference_fare_basket";
 
     private static final Map<String, String> DEFAULTS = Map.of(
             DISCOUNT_BASE, "GROSS",
             TDS_RATE, "0",
             COMMISSION_ESTIMATE_PCT, "5",
+            VOYRA_CANCEL_FEE, "0",
             REFERENCE_FARE_BASKET, "[{\"label\":\"Domestic LCC\",\"gross\":5000,\"base\":3500},"
                     + "{\"label\":\"Domestic FSC\",\"gross\":9000,\"base\":6000},"
                     + "{\"label\":\"International\",\"gross\":45000,\"base\":22000}]");
@@ -52,6 +54,12 @@ public class PlatformSettingService {
     @Transactional(readOnly = true)
     public DiscountBase discountBase() {
         return DiscountBase.valueOf(raw(DISCOUNT_BASE));
+    }
+
+    /** INR charged by Voyra on a cancellation, on top of the supplier's own fee. */
+    @Transactional(readOnly = true)
+    public BigDecimal voyraCancelFee() {
+        return new BigDecimal(raw(VOYRA_CANCEL_FEE));
     }
 
     @Transactional(readOnly = true)
@@ -106,6 +114,7 @@ public class PlatformSettingService {
             }
             case TDS_RATE -> requireRange(key, v, 30);
             case COMMISSION_ESTIMATE_PCT -> requireRange(key, v, 100);
+            case VOYRA_CANCEL_FEE -> requireRange(key, v, 1_000_000);
             default -> {
                 List<ReferenceFare> basket;
                 try {

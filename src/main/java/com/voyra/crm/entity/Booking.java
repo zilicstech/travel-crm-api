@@ -113,6 +113,10 @@ public class Booking {
      *  matching supplier bill (see SupplierInvoiceService#createAutoDraft). Flat FK, no JPA
      *  association, same convention as everywhere else (blueprint §8.4); {@link #supplier}
      *  stays the display-name snapshot kept in sync by VendorService on rename. */
+    /** Set on the CRM mirror of a platform booking: marks it read-only in the CRM. */
+    @Column(name = "platform_booking_id", length = 36)
+    private String platformBookingId;
+
     @Column(name = "vendor_id", length = 36)
     private String vendorId;
 

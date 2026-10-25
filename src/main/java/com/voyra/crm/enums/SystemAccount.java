@@ -16,6 +16,8 @@ public enum SystemAccount {
     BANK_ACCOUNTS("1110", "Bank Accounts", LedgerAccountType.ASSET, null, false, null),
     ACCOUNTS_RECEIVABLE("1200", "Accounts Receivable", LedgerAccountType.ASSET, null, true, ControlAccountOf.ACCOUNTS_RECEIVABLE),
     SUPPLIER_ADVANCES("1300", "Supplier Advances", LedgerAccountType.ASSET, null, true, ControlAccountOf.SUPPLIER_ADVANCES),
+    /** Prepaid balance held with Voyra for platform bookings; a child of Supplier Advances (1300). */
+    VOYRA_WALLET_ADVANCE("1310", "Voyra Wallet (advance to supplier)", LedgerAccountType.ASSET, "1300", false, null),
     INPUT_GST_RECEIVABLE("1400", "Input GST Receivable", LedgerAccountType.ASSET, null, false, null),
     /** TDS suppliers deducted on the commission they pay the agency (sec. 194H) - claimed back in its return. */
     TDS_RECEIVABLE("1410", "TDS Receivable", LedgerAccountType.ASSET, null, false, null),

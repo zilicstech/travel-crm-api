@@ -61,4 +61,10 @@ public class PlatformAgencyPricingController {
     public ResponseEntity<AgencyPricingResponse> approve(@PathVariable String id, @PathVariable String pricingId) {
         return ResponseEntity.ok(service.approve(id, pricingId));
     }
+
+    @PostMapping("/{pricingId}/withdraw")
+    @Operation(summary = "Withdraw a rate that has not been approved")
+    public ResponseEntity<AgencyPricingResponse> withdraw(@PathVariable String id, @PathVariable String pricingId) {
+        return ResponseEntity.ok(service.withdraw(id, pricingId));
+    }
 }

@@ -52,6 +52,9 @@ public class AgencyPricingResponse {
     @Schema(description = "Null until approved", example = "2026-10-23T10:00:00Z")
     private Instant approvedAt;
 
+    @Schema(description = "Set when a never-approved rate was withdrawn; such a rate never applies", example = "2026-10-23T10:00:00Z")
+    private Instant withdrawnAt;
+
     @Schema(description = "True for the one row resolve() returns now for this product", example = "true")
     private boolean inForce;
 }

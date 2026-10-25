@@ -8,6 +8,7 @@ import com.voyra.crm.enums.DiscountBase;
 import com.voyra.crm.enums.PlatformAuditAction;
 import com.voyra.crm.enums.PricingProduct;
 import com.voyra.crm.exception.NotFoundException;
+import com.voyra.crm.exception.PricingNotConfiguredException;
 import com.voyra.crm.models.ReferenceFare;
 import com.voyra.crm.repository.AgencyPricingRepository;
 import com.voyra.crm.repository.TenantRepository;
@@ -125,6 +126,9 @@ public class AgencyPricingService {
         AgencyPricing row = repository.findByIdForUpdate(pricingId)
                 .filter(p -> p.getTenantId().equals(tenantId))
                 .orElseThrow(() -> new NotFoundException("Pricing not found: " + pricingId));
+        if (row.getWithdrawnAt() != null) {
+            throw new IllegalStateException("This rate was withdrawn");
+        }
         if (row.getApprovedAt() != null) {
             throw new IllegalStateException("This rate is already approved");
         }
@@ -142,6 +146,30 @@ public class AgencyPricingService {
         detail.put("worstCaseNetPer10k", saved.getWorstCaseNetPer10k());
         auditService.record(PlatformAuditAction.PRICING_APPROVE, ENTITY_TYPE, saved.getId(), detail);
         return toResponse(saved, isInForce(saved));
+    }
+
+    /** A rate that was never approved can be taken back; the row stays (nothing is deleted) and never applies. */
+    @Transactional
+    public AgencyPricingResponse withdraw(String tenantId, String pricingId) {
+        AgencyPricing row = repository.findByIdForUpdate(pricingId)
+                .filter(p -> p.getTenantId().equals(tenantId))
+                .orElseThrow(() -> new NotFoundException("Pricing not found: " + pricingId));
+        if (row.getApprovedAt() != null) {
+            throw new IllegalStateException("An approved rate cannot be withdrawn");
+        }
+        if (row.getWithdrawnAt() != null) {
+            throw new IllegalStateException("This rate is already withdrawn");
+        }
+        String actor = SecurityContextUtil.getCurrentUserOrThrow().userId();
+        row.setWithdrawnAt(Instant.now());
+        row.setWithdrawnBy(actor);
+        AgencyPricing saved = repository.save(row);
+        Map<String, Object> detail = new HashMap<>();
+        detail.put("tenantId", tenantId);
+        detail.put("product", saved.getProduct().name());
+        detail.put("createdBy", saved.getCreatedBy());
+        auditService.record(PlatformAuditAction.PRICING_WITHDRAW, ENTITY_TYPE, saved.getId(), detail);
+        return toResponse(saved, false);
     }
 
     /** Newest effectiveFrom first; {@code product} null means every product. */
@@ -175,8 +203,14 @@ public class AgencyPricingService {
                 .findFirst();
     }
 
+    /** The rate in force now, or {@link PricingNotConfiguredException}: no row means Book is blocked, never a default rate. */
+    @Transactional(readOnly = true)
+    public AgencyPricing requireInForce(String tenantId, PricingProduct product) {
+        return resolve(tenantId, product, Instant.now()).orElseThrow(PricingNotConfiguredException::new);
+    }
+
     private static boolean applies(AgencyPricing r, Instant at) {
-        return r.getApprovedAt() != null && !r.getApprovedAt().isAfter(at) && !r.getEffectiveFrom().isAfter(at);
+        return r.getWithdrawnAt() == null && r.getApprovedAt() != null && !r.getApprovedAt().isAfter(at) && !r.getEffectiveFrom().isAfter(at);
     }
 
     private boolean isInForce(AgencyPricing row) {
@@ -218,6 +252,7 @@ public class AgencyPricingService {
                 .createdAt(p.getCreatedAt())
                 .approvedBy(p.getApprovedBy())
                 .approvedAt(p.getApprovedAt())
+                .withdrawnAt(p.getWithdrawnAt())
                 .inForce(inForce)
                 .build();
     }
