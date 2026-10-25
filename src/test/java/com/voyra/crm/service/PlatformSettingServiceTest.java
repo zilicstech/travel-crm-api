@@ -43,7 +43,7 @@ class PlatformSettingServiceTest {
     @Test
     void discountBaseDefaultsToGross() {
         assertThat(service().discountBase()).isEqualTo(DiscountBase.GROSS);
-        assertThat(service().referenceFareBasket()).hasSize(3);
+        assertThat(service().referenceFareBasket(com.voyra.crm.enums.PricingProduct.FLIGHT)).hasSize(3);
     }
 
     @Test
@@ -195,5 +195,42 @@ class PlatformSettingServiceTest {
 
         assertThat(legal.stateCode()).isEqualTo("27");
         assertThat(legal.legalName()).isEqualTo("Voyra Travel Pvt Ltd");
+    }
+
+    /** Slice 4 minor 3: hotel rates are guarded against a hotel basket, flights keep theirs. */
+    @Test
+    void hotelPricingHasItsOwnReferenceBasket() {
+        var flight = service().referenceFareBasket(com.voyra.crm.enums.PricingProduct.FLIGHT);
+        var hotel = service().referenceFareBasket(com.voyra.crm.enums.PricingProduct.HOTEL);
+        assertThat(hotel).isNotEmpty().isNotEqualTo(flight);
+        assertThat(hotel).allSatisfy(f -> assertThat(f.base()).isLessThanOrEqualTo(f.gross()));
+        when(repository.findById("reference_fare_basket_hotel"))
+                .thenReturn(Optional.of(PlatformSetting.builder().key("reference_fare_basket_hotel").value("[{\"label\":\"Goa 3*\",\"gross\":4720,\"base\":4000}]").build()));
+        assertThat(service().referenceFareBasket(com.voyra.crm.enums.PricingProduct.HOTEL)).singleElement()
+                .satisfies(f -> assertThat(f.label()).isEqualTo("Goa 3*"));
+        bad("reference_fare_basket_hotel", "[{\"label\":\"Z\",\"gross\":100,\"base\":200}]");
+    }
+
+    /** Review Focus 3: the live switch is off by default and can never be turned on through a plain setting write. */
+    @Test
+    void tripjackLiveReadyIsOffByDefaultAndOnlyASecondAdminTurnsItOn() {
+        assertThat(service().tripjackLiveReady()).isFalse();
+        assertThatThrownBy(() -> service().set("tripjack_live_ready", "true"))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("second platform admin");
+        bad("tripjack_live_ready", "yes");
+        when(repository.findById("tripjack_live_ready"))
+                .thenReturn(Optional.of(PlatformSetting.builder().key("tripjack_live_ready").value("true").build()));
+        assertThat(service().tripjackLiveReady()).isTrue();
+    }
+
+    @Test
+    void tripjackLiveReadyCanAlwaysBeTurnedOffAndIsAudited() {
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+                new CustomUserPrincipal("U1", "admin", UserType.SUPER_ADMIN, null), null));
+        when(repository.save(any(PlatformSetting.class))).thenAnswer(i -> i.getArgument(0));
+
+        service().set("tripjack_live_ready", "false");
+
+        verify(auditService).record(eq(PlatformAuditAction.SETTING_SET), eq("PLATFORM_SETTING"), eq("tripjack_live_ready"), any());
     }
 }

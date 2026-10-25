@@ -6,7 +6,7 @@ import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 
-/** Binds {@code app.hotel-booking.*}: the mock's regression switches, same meaning as {@code app.flight-booking.mock.*}. */
+/** Binds {@code app.hotel-booking.*}: the mock's regression switches (same meaning as {@code app.flight-booking.mock.*}) and the poller's give-up window. */
 @Data
 @Component
 @ConfigurationProperties(prefix = "app.hotel-booking")
@@ -14,6 +14,7 @@ public class HotelBookingProviderConfig {
 
     private String provider = "mock";
     private Mock mock = new Mock();
+    private FlightBookingProviderConfig.Poll poll = new FlightBookingProviderConfig.Poll();
 
     @Data
     public static class Mock {

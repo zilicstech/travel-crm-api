@@ -133,4 +133,29 @@ class HotelSearchServiceTest {
         assertThat(service.search(query("gone", 3)).getOffers()).isEmpty();
         verify(provider).search(any());
     }
+
+    /** Slice 4 T1: a searchId is no key to another agency's priced result - another tenant or a platform admin quoting it searches anew. */
+    @Test
+    void anotherTenantsSearchIdNeverServesThatTenantsPricedOffers() {
+        when(quoter.quoterFor("t1", PricingProduct.HOTEL)).thenReturn(Optional.of((g, b) -> quoteOf(new BigDecimal("190"))));
+        when(quoter.quoterFor("t2", PricingProduct.HOTEL)).thenReturn(Optional.of((g, b) -> quoteOf(new BigDecimal("170"))));
+        when(provider.search(any())).thenAnswer(i -> new java.util.ArrayList<>(List.of(offer(new BigDecimal("160")))));
+        TenantContext.setTenantId("t1");
+        String t1Search = service.search(query(null, 0)).getSearchId();
+
+        TenantContext.setTenantId("t2");
+        HotelSearchPageResponse t2 = service.search(query(t1Search, 0));
+        assertThat(t2.getSearchId()).isNotEqualTo(t1Search);
+        assertThat(t2.getOffers().get(0).getDisplayedFare()).isEqualByComparingTo("170");
+
+        TenantContext.clear();
+        HotelSearchPageResponse admin = service.search(query(t1Search, 0));
+        assertThat(admin.getSearchId()).isNotEqualTo(t1Search);
+        assertThat(admin.getOffers().get(0).getDisplayedFare()).isNull();
+
+        // and t1's own id still serves t1 from its cache
+        TenantContext.setTenantId("t1");
+        assertThat(service.search(query(t1Search, 0)).getOffers().get(0).getDisplayedFare()).isEqualByComparingTo("190");
+        verify(provider, times(3)).search(any());
+    }
 }

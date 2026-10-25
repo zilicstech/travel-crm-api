@@ -99,7 +99,7 @@ class TripjackHotelBookingProviderTest {
         server.expect(requestTo(BASE + "/hms/v3/hotel/review")).andRespond(withSuccess(OK + "}", MediaType.APPLICATION_JSON));
         server.expect(requestTo(BASE + "/hms/v3/hotel/review")).andRespond(withSuccess(
                 OK + ",\"bookingId\":\"TJH1\",\"option\":{\"pricing\":{}}}", MediaType.APPLICATION_JSON));
-        assertThatThrownBy(this::review).isInstanceOf(FareUnavailableException.class).hasMessage("Room sold out");
+        assertThatThrownBy(this::review).isInstanceOf(FareUnavailableException.class).hasMessage("The hotel could not confirm this rate");
         assertThatThrownBy(this::review).isInstanceOf(SupplierException.class);
         assertThatThrownBy(this::review).isInstanceOf(SupplierException.class);
     }
@@ -169,11 +169,13 @@ class TripjackHotelBookingProviderTest {
                 .andRespond(withSuccess(OK + ",\"order\":{\"status\":\"SUCCESS\"},\"itemInfos\":{\"HOTEL\":{\"confirmationNumber\":\"HC-778\"}}}", MediaType.APPLICATION_JSON));
         server.expect(requestTo(BASE + "/oms/v3/hotel/booking-details")).andRespond(withSuccess(OK + ",\"order\":{\"status\":\"ABORTED\"}}", MediaType.APPLICATION_JSON));
         server.expect(requestTo(BASE + "/oms/v3/hotel/booking-details")).andRespond(withSuccess(OK + ",\"order\":{\"status\":\"FAILED\"}}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(BASE + "/oms/v3/hotel/booking-details")).andRespond(withSuccess(OK + ",\"order\":{\"status\":\"CANCELLED\"}}", MediaType.APPLICATION_JSON));
         BookResult ok = provider.bookingDetails("TJH1");
         assertThat(ok.status()).isEqualTo(SupplierBookingStatus.TICKETED);
         assertThat(ok.pnr()).isEqualTo("HC-778");
         assertThat(provider.bookingDetails("TJH1").status()).isEqualTo(SupplierBookingStatus.PENDING);
         assertThat(provider.bookingDetails("TJH1").status()).isEqualTo(SupplierBookingStatus.FAILED);
+        assertThat(provider.bookingDetails("TJH1").status()).isEqualTo(SupplierBookingStatus.CANCELLED);
     }
 
     @Test

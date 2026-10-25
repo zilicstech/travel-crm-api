@@ -151,7 +151,7 @@ public class PlatformBookingQueryService {
                 .displayedFare(b.getDisplayed()).agencyEarns(agencyEarns(b)).itinerary(itinerary(b)).hotel(hotel(b)).passengers(passengers(b))
                 .bookedByName(agentNames.get(b.getBookedBy())).clientName(clientNames.get(b.getClientId()))
                 .createdAt(b.getCreatedAt()).ticketedAt(b.getTicketedAt()).cancelRefund(b.getCancelRefund())
-                .supplierMessage(b.getSupplierMessage()).mirrorStatus(b.getMirrorStatus()).tenantBookingId(b.getTenantBookingId())
+                .supplierMessage(AgencySupplierMessage.of(b)).mirrorStatus(b.getMirrorStatus()).tenantBookingId(b.getTenantBookingId())
                 .timeline(detail ? timeline(b) : null)
                 .build()).toList();
     }
@@ -166,7 +166,8 @@ public class PlatformBookingQueryService {
                 .displayedFare(b.getDisplayed()).agencyEarns(agencyEarns(b)).itinerary(itinerary(b)).hotel(hotel(b)).passengers(passengers(b))
                 .bookedByName(agentNames.get(b.getBookedBy()))
                 .createdAt(b.getCreatedAt()).ticketedAt(b.getTicketedAt()).cancelRefund(b.getCancelRefund())
-                .supplierMessage(b.getSupplierMessage()).mirrorStatus(b.getMirrorStatus()).tenantBookingId(b.getTenantBookingId())
+                .supplierMessage(AgencySupplierMessage.of(b)).supplierMessageRaw(b.getSupplierMessage())
+                .mirrorStatus(b.getMirrorStatus()).tenantBookingId(b.getTenantBookingId())
                 .tenantId(b.getTenantId()).agencyName(agencyNames.get(b.getTenantId())).environment(b.getEnvironment())
                 .gross(b.getGross()).base(b.getBase()).discountPct(b.getDiscountPct()).voyraEarned(b.getVoyraEarned())
                 .voyraEarnedSource(b.getVoyraEarnedSource()).voyraEarnedActual(b.getVoyraEarnedActual()).agencyCommission(b.getAgencyCommission()).tds(b.getTds())

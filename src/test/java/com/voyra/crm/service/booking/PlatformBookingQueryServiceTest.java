@@ -282,4 +282,31 @@ class PlatformBookingQueryServiceTest {
     void aFlightBookingHasNoHotelSummary() {
         assertThat(service().hotel(booking("B1", "T1", "O1"))).isNull();
     }
+
+    /** Readiness: the agency never sees the supplier's own words - a fixed plain sentence per state; the raw text is admin-only. */
+    @Test
+    void theAgencySeesAFixedSupplierMessageAndOnlyTheAdminSeesTheRawText() throws Exception {
+        login("O1", UserType.AGENCY_OWNER, "T1");
+        java.util.function.BiFunction<PlatformBookingStatus, String, PlatformBooking> row = (status, raw) ->
+                booking("B1", "T1", "O1").toBuilder().status(status).supplierMessage(raw).build();
+
+        assertThat(service().view(row.apply(PlatformBookingStatus.FAILED, "ERR-4021: TJ fare SOLD OUT at GDS")).getSupplierMessage())
+                .isEqualTo("Fare no longer available");
+        assertThat(service().view(row.apply(PlatformBookingStatus.FAILED, "Duplicate booking - contact ops@tripjack")).getSupplierMessage())
+                .isEqualTo("Booking failed at the supplier");
+        assertThat(service().view(row.apply(PlatformBookingStatus.UNKNOWN, null)).getSupplierMessage())
+                .isEqualTo("We're confirming with the supplier");
+        assertThat(service().view(row.apply(PlatformBookingStatus.CANCELLING, "AMENDMENT_ACCEPTED")).getSupplierMessage())
+                .isEqualTo("We're confirming with the supplier");
+        assertThat(service().view(row.apply(PlatformBookingStatus.TICKETED, "SUCCESS")).getSupplierMessage()).isNull();
+        PlatformBooking hotel = row.apply(PlatformBookingStatus.FAILED, "Room not available").toBuilder().product(PricingProduct.HOTEL).build();
+        assertThat(service().view(hotel).getSupplierMessage()).isEqualTo("Room no longer available");
+        String json = objectMapper.writeValueAsString(service().view(row.apply(PlatformBookingStatus.FAILED, "ERR-4021 raw")));
+        assertThat(json).doesNotContain("ERR-4021").doesNotContain("supplierMessageRaw");
+
+        login("SA1", UserType.SUPER_ADMIN, null);
+        PlatformAdminBookingResponse admin = service().adminView(row.apply(PlatformBookingStatus.FAILED, "ERR-4021: TJ fare SOLD OUT at GDS"));
+        assertThat(admin.getSupplierMessage()).isEqualTo("Fare no longer available");
+        assertThat(admin.getSupplierMessageRaw()).isEqualTo("ERR-4021: TJ fare SOLD OUT at GDS");
+    }
 }

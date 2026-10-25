@@ -61,7 +61,7 @@ class AgencyPricingServiceTest {
         lenient().when(tenantRepository.existsById(T)).thenReturn(true);
         lenient().when(settings.discountBase()).thenReturn(DiscountBase.GROSS);
         lenient().when(settings.commissionEstimatePct()).thenReturn(new BigDecimal("5"));
-        lenient().when(settings.referenceFareBasket()).thenReturn(List.of(
+        lenient().when(settings.referenceFareBasket(com.voyra.crm.enums.PricingProduct.FLIGHT)).thenReturn(List.of(
                 new ReferenceFare("Domestic LCC", new BigDecimal("5000"), new BigDecimal("3500")),
                 new ReferenceFare("Domestic FSC", new BigDecimal("9000"), new BigDecimal("6000")),
                 new ReferenceFare("International", new BigDecimal("45000"), new BigDecimal("22000"))));
@@ -296,5 +296,21 @@ class AgencyPricingServiceTest {
         loginAs("U2");
         assertThatThrownBy(() -> service.approve(T, "P1"))
                 .isInstanceOf(IllegalStateException.class).hasMessage("This rate was withdrawn");
+    }
+
+    /** Slice 4 minor 3: a HOTEL rate is previewed and guarded on the hotel basket, never the flight one. */
+    @Test
+    void hotelRatesAreGuardedOnTheHotelBasket() {
+        lenient().when(settings.referenceFareBasket(PricingProduct.HOTEL)).thenReturn(List.of(
+                new ReferenceFare("City 3*", new BigDecimal("4720"), new BigDecimal("4000"))));
+
+        var preview = service.preview(T, PricingProduct.HOTEL, new BigDecimal("2"), new BigDecimal("1"), false);
+        assertThat(preview.getBasketLines()).singleElement().satisfies(l -> assertThat(l.getLabel()).isEqualTo("City 3*"));
+
+        AgencyPricingCreateRequest r = request("2", "1", Instant.now());
+        r.setProduct(PricingProduct.HOTEL);
+        var created = service.create(T, r);
+        assertThat(created.getWorstCaseNetPer10k()).isEqualByComparingTo(preview.getWorstCaseNetPer10k());
+        verify(settings, never()).referenceFareBasket(PricingProduct.FLIGHT);
     }
 }

@@ -10,6 +10,10 @@ public final class ValidationPatterns {
     public static final String PHONE = "^$|^[0-9+()\\- ]{7,20}$";
     public static final String PHONE_MESSAGE = "Enter a valid phone number (7-20 digits, spaces, +, - or brackets)";
 
+    /** A traveller's first or last name as airlines take it: Latin letters, spaces and . - ' only, starting with a letter. */
+    public static final String PERSON_NAME = "[A-Za-z][A-Za-z .'-]*";
+    public static final String PERSON_NAME_MESSAGE = "Use letters, spaces and . - ' only, starting with a letter";
+
     /** Indian GSTIN format only (2-digit state, PAN, entity digit, Z, check char) - the checksum itself is not verified. Case-insensitive; services store it upper-case. */
     public static final String GSTIN = "^$|(?i)^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$";
     public static final String GSTIN_MESSAGE = "Enter a valid 15-character GSTIN";

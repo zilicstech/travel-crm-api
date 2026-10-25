@@ -55,4 +55,7 @@ public class PlatformAdminBookingResponse extends PlatformBookingResponse {
 
     @Schema(description = "Every audited event, oldest first")
     private List<PlatformBookingEventResponse> events;
+
+    @Schema(description = "The supplier's own last message, as received (admins only; agencies see a fixed plain sentence)", example = "ERR-4021: fare sold out")
+    private String supplierMessageRaw;
 }

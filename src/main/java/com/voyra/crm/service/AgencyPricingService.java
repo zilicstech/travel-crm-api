@@ -59,7 +59,7 @@ public class AgencyPricingService {
         // shortcut: voyraEarnedPct is the platform estimate for every product until slice 3 brings API/statement figures
         BigDecimal earned = settings.commissionEstimatePct();
         DiscountBase db = settings.discountBase();
-        List<ReferenceFare> basket = settings.referenceFareBasket();
+        List<ReferenceFare> basket = settings.referenceFareBasket(product);
         BigDecimal worst = PricingMath.worstCaseNetPer10k(basket, discountPct, commissionPct, earned, db, allowCommissionAboveEarned);
         List<PricingPreviewResponse.BasketLine> lines = basket.stream().map(f -> PricingPreviewResponse.BasketLine.builder()
                 .label(f.label())
@@ -89,7 +89,7 @@ public class AgencyPricingService {
         // stored as NUMERIC(5,2): guard on the value that will actually be saved
         BigDecimal d = request.getDiscountPct().setScale(2, RoundingMode.HALF_UP);
         BigDecimal c = request.getCommissionPct().setScale(2, RoundingMode.HALF_UP);
-        BigDecimal worst = PricingMath.worstCaseNetPer10k(settings.referenceFareBasket(), d, c,
+        BigDecimal worst = PricingMath.worstCaseNetPer10k(settings.referenceFareBasket(request.getProduct()), d, c,
                 settings.commissionEstimatePct(), settings.discountBase(), request.isAllowCommissionAboveEarned());
         boolean second = needsSecondApproval(worst, request.isAllowCommissionAboveEarned());
         String actor = SecurityContextUtil.getCurrentUserOrThrow().userId();

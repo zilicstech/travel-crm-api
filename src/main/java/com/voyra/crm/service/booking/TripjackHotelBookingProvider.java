@@ -81,7 +81,8 @@ public class TripjackHotelBookingProvider implements HotelBookingProvider {
         body.put("rooms", rooms(rooms));
         JsonNode res = post("/hms/v3/hotel/review", body, "review", true);
         if (!succeeded(res)) {
-            throw new FareUnavailableException(message(res, "Room is no longer available"));
+            log.warn("Tripjack hotel review refused option {}: {}", optionId, message(res, "no message"));
+            throw new FareUnavailableException(AgencySupplierMessage.NOT_CONFIRMED_HOTEL);
         }
         JsonNode option = res.path("option").isObject() ? res.path("option") : res.path("options").path(0);
         JsonNode pricing = option.path("pricing");
@@ -130,7 +131,8 @@ public class TripjackHotelBookingProvider implements HotelBookingProvider {
         String orderStatus = res.path("order").path("status").asText("").toUpperCase();
         SupplierBookingStatus status = switch (orderStatus) {
             case "SUCCESS", "CONFIRMED" -> SupplierBookingStatus.TICKETED;
-            case "FAILED", "CANCELLED" -> SupplierBookingStatus.FAILED;
+            case "FAILED" -> SupplierBookingStatus.FAILED;
+            case "CANCELLED" -> SupplierBookingStatus.CANCELLED; // how an accepted cancellation is confirmed
             default -> SupplierBookingStatus.PENDING;
         };
         String confirmation = firstText(res.path("itemInfos").path("HOTEL").path("confirmationNumber"),

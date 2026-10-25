@@ -66,7 +66,7 @@ class PlatformAgencyPricingControllerTest {
         given(tenantRepository.existsById("T1")).willReturn(true);
         given(settings.discountBase()).willReturn(DiscountBase.GROSS);
         given(settings.commissionEstimatePct()).willReturn(new BigDecimal("5"));
-        given(settings.referenceFareBasket()).willReturn(List.of(
+        given(settings.referenceFareBasket(com.voyra.crm.enums.PricingProduct.FLIGHT)).willReturn(List.of(
                 new ReferenceFare("Domestic LCC", new BigDecimal("5000"), new BigDecimal("3500")),
                 new ReferenceFare("Domestic FSC", new BigDecimal("9000"), new BigDecimal("6000")),
                 new ReferenceFare("International", new BigDecimal("45000"), new BigDecimal("22000"))));

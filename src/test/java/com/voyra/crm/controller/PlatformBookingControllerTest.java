@@ -181,4 +181,26 @@ class PlatformBookingControllerTest {
         mockMvc.perform(post("/api/platform-bookings/hotels/review").with(as(UserType.AGENT))
                 .contentType(MediaType.APPLICATION_JSON).content(HOTEL_REVIEW)).andExpect(status().isForbidden());
     }
+
+    /** Readiness: airlines need a first and a last name - a one-word or odd-character name is a 400 on that field, never sent. */
+    @Test
+    void confirmRefusesAOneWordOrNonLetterNameWithAFieldError() throws Exception {
+        for (String[] bad : new String[][]{{"Rahul", ""}, {"Rahul", " "}, {"", "Sharma"}, {"Rahul", "Sh@rma"}, {"R4hul", "Sharma"}, {"Rahul", "-"}}) {
+            String body = CONFIRM.replace("\"firstName\":\"Rahul\",\"lastName\":\"Sharma\"",
+                    "\"firstName\":\"" + bad[0] + "\",\"lastName\":\"" + bad[1] + "\"");
+            mockMvc.perform(post("/api/platform-bookings/B1/confirm").with(as(UserType.AGENT))
+                            .contentType(MediaType.APPLICATION_JSON).content(body))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.details.errors").value(org.hamcrest.Matchers.anyOf(
+                            org.hamcrest.Matchers.hasKey("passengers[0].firstName"), org.hamcrest.Matchers.hasKey("passengers[0].lastName"))));
+        }
+        verifyNoInteractions(service);
+
+        PlatformBooking row = PlatformBooking.builder().id("B1").status(PlatformBookingStatus.TICKETED).build();
+        given(service.confirm(eq("B1"), any())).willReturn(row);
+        given(queryService.view(row)).willReturn(PlatformBookingResponse.builder().id("B1").build());
+        mockMvc.perform(post("/api/platform-bookings/B1/confirm").with(as(UserType.AGENT)).contentType(MediaType.APPLICATION_JSON)
+                        .content(CONFIRM.replace("\"lastName\":\"Sharma\"", "\"lastName\":\"D'Souza-Rao Jr.\"")))
+                .andExpect(status().isOk());
+    }
 }

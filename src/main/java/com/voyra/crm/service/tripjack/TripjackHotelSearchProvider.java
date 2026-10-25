@@ -244,11 +244,12 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
 
     /**
      * The room rate excluding taxes of an option's {@code pricing} node, or null when the supplier does not give it
-     * (never 0: the option is then not bookable). UNVERIFIED: the field names are guesses until a real hotel pricing
-     * response is captured - a rate under one of the common names, else total minus a stated tax.
+     * (never 0: the option is then not bookable). An allow-list, not a guess: only {@code baseRate} / {@code baseFare},
+     * else {@code totalPrice} minus an explicit numeric tax. A net or room rate is never read as the base - commission is
+     * worked off it, so a wrong field would misprice every booking. Confirm the names in slice 0.
      */
     public static BigDecimal baseRate(JsonNode pricing) {
-        for (String key : List.of("baseRate", "roomRate", "baseFare", "netRate")) {
+        for (String key : List.of("baseRate", "baseFare")) {
             BigDecimal v = positive(pricing.path(key));
             if (v != null) return v.setScale(2, java.math.RoundingMode.HALF_UP);
         }

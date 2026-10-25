@@ -78,7 +78,7 @@ class TripjackFlightBookingProviderTest {
         server.expect(requestTo(BASE + "/fms/v1/review")).andRespond(withSuccess(
                 "{\"status\":{\"success\":false},\"errors\":[{\"message\":\"Fare expired\"}]}", MediaType.APPLICATION_JSON));
         assertThatThrownBy(() -> provider.review("off-1", 1, 0, 0))
-                .isInstanceOf(FareUnavailableException.class).hasMessage("Fare expired");
+                .isInstanceOf(FareUnavailableException.class).hasMessage("The airline could not confirm this fare"); // never the supplier's text
     }
 
     @Test
@@ -191,11 +191,14 @@ class TripjackFlightBookingProviderTest {
     void bookingDetails_statusMappingAndMissingFields() {
         server.expect(requestTo(BASE + "/oms/v1/booking-details")).andRespond(withSuccess(OK + ",\"order\":{\"status\":\"PENDING\"}}", MediaType.APPLICATION_JSON));
         server.expect(requestTo(BASE + "/oms/v1/booking-details")).andRespond(withSuccess(OK + ",\"order\":{\"status\":\"FAILED\"}}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(BASE + "/oms/v1/booking-details")).andRespond(withSuccess(OK + ",\"order\":{\"status\":\"CANCELLED\"}}", MediaType.APPLICATION_JSON));
         BookResult pending = provider.bookingDetails("TJS1");
         assertThat(pending.status()).isEqualTo(SupplierBookingStatus.PENDING);
         assertThat(pending.pnr()).isNull();
         assertThat(pending.ticketNumbers()).isEmpty();
         assertThat(provider.bookingDetails("TJS1").status()).isEqualTo(SupplierBookingStatus.FAILED);
+        // a cancelled booking is how an accepted amendment is confirmed - not a failed booking
+        assertThat(provider.bookingDetails("TJS1").status()).isEqualTo(SupplierBookingStatus.CANCELLED);
     }
 
     @Test

@@ -53,7 +53,9 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
     public FareReview review(String offerId, int adults, int children, int infants) {
         JsonNode res = post("/fms/v1/review", Map.of("priceIds", List.of(offerId)), "review");
         if (!succeeded(res)) {
-            throw new FareUnavailableException(message(res, "Fare is no longer available"));
+            // the agency sees a fixed sentence; the supplier's own text stays in the log
+            log.warn("Tripjack review refused offer {}: {}", offerId, message(res, "no message"));
+            throw new FareUnavailableException(AgencySupplierMessage.NOT_CONFIRMED_FLIGHT);
         }
         JsonNode fare = res.path("totalPriceInfo").path("totalFareDetail").path("fC");
         String reviewId = text(res.path("bookingId"));
@@ -97,7 +99,8 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
         String orderStatus = res.path("order").path("status").asText("").toUpperCase();
         SupplierBookingStatus status = switch (orderStatus) {
             case "SUCCESS", "TICKETED" -> SupplierBookingStatus.TICKETED;
-            case "FAILED", "CANCELLED" -> SupplierBookingStatus.FAILED;
+            case "FAILED" -> SupplierBookingStatus.FAILED;
+            case "CANCELLED" -> SupplierBookingStatus.CANCELLED; // how an accepted amendment is confirmed
             default -> SupplierBookingStatus.PENDING;
         };
         String pnr = null;

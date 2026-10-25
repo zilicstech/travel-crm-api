@@ -42,4 +42,12 @@ public class BookingProviderRegistry {
         };
         return "mock".equalsIgnoreCase(provider);
     }
+
+    /** Minutes the poller waits for a booking's final answer before it goes UNKNOWN, per product. */
+    public int pollMaxMinutes(PricingProduct product) {
+        return switch (product) {
+            case FLIGHT -> flightConfig.getPoll().getMaxMinutes();
+            case HOTEL -> hotelConfig.getPoll().getMaxMinutes();
+        };
+    }
 }

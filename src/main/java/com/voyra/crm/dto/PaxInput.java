@@ -1,5 +1,6 @@
 package com.voyra.crm.dto;
 
+import com.voyra.crm.util.ValidationPatterns;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -31,11 +32,14 @@ public class PaxInput {
 
     @NotBlank
     @Size(max = 60)
+    @Pattern(regexp = ValidationPatterns.PERSON_NAME, message = ValidationPatterns.PERSON_NAME_MESSAGE)
     @Schema(description = "First name as on the ID", example = "Rahul")
     private String firstName;
 
-    @NotBlank
+    // airlines need a first and a last name: a one-word name is refused here, never copied into both fields
+    @NotBlank(message = "Enter the last name as on the ID - airlines need a first and a last name")
     @Size(max = 60)
+    @Pattern(regexp = ValidationPatterns.PERSON_NAME, message = ValidationPatterns.PERSON_NAME_MESSAGE)
     @Schema(description = "Last name as on the ID", example = "Sharma")
     private String lastName;
 

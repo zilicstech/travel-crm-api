@@ -32,6 +32,8 @@ class PlatformSettingControllerTest {
     private MockMvc mockMvc;
     @MockBean
     private PlatformSettingService service;
+    @MockBean
+    private com.voyra.crm.service.PlatformSettingRequestService requests;
 
     @Test
     void superAdminCanListAndUpdate() throws Exception {
@@ -46,5 +48,28 @@ class PlatformSettingControllerTest {
     @Test
     void agencyOwnerIsForbidden() throws Exception {
         mockMvc.perform(get("/api/platform/settings").with(user("o").roles("AGENCY_OWNER"))).andExpect(status().isForbidden());
+    }
+
+    /** The live switch: request, list, approve and withdraw are platform-admin only. */
+    @Test
+    void secondApproverEndpointsArePlatformAdminOnly() throws Exception {
+        com.voyra.crm.dto.PlatformSettingRequestResponse r = com.voyra.crm.dto.PlatformSettingRequestResponse.builder()
+                .id("R1").settingKey("tripjack_live_ready").value("true").status("PENDING").build();
+        given(requests.request("tripjack_live_ready", "true")).willReturn(r);
+        given(requests.approve("R1")).willReturn(r);
+        given(requests.withdraw("R1")).willReturn(r);
+        given(requests.pending()).willReturn(List.of(r));
+        var admin = user("a").roles("SUPER_ADMIN");
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/platform/settings/tripjack_live_ready/requests")
+                .with(admin).contentType(MediaType.APPLICATION_JSON).content("{\"value\":\"true\"}"))
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.id").value("R1"));
+        mockMvc.perform(get("/api/platform/settings/requests").with(admin)).andExpect(status().isOk());
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/platform/settings/requests/R1/approve").with(admin))
+                .andExpect(status().isOk());
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/platform/settings/requests/R1/withdraw").with(admin))
+                .andExpect(status().isOk());
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/platform/settings/requests/R1/approve")
+                .with(user("o").roles("AGENCY_OWNER"))).andExpect(status().isForbidden());
     }
 }

@@ -1229,4 +1229,71 @@ class PlatformBookingServiceTest {
         assertThatThrownBy(() -> service.cancelQuote(id)).isInstanceOf(NotFoundException.class);
         verify(walletService, never()).hold(any(), any(), any(), any(), any());
     }
+
+    /** A reviewed flight leaving on 1 Dec 2026, so each traveller's type can be worked out from their date of birth. */
+    private String reviewedLeaving(String departure) {
+        String id = reviewed();
+        rows.get(id).setItinerary(Map.of("tripInfos", List.of(Map.of("sI", List.of(Map.of("dt", departure + "T06:00"))))));
+        return id;
+    }
+
+    private static PlatformBookingConfirmRequest withPax(PaxInput... pax) {
+        PlatformBookingConfirmRequest r = confirmRequest("key-00000001", "4500.00");
+        r.setPassengers(List.of(pax));
+        return r;
+    }
+
+    private static PaxInput pax(String type, LocalDate dob) {
+        return PaxInput.builder().type(type).title("Mr").firstName("Rahul").lastName("Sharma").dob(dob).build();
+    }
+
+    /** Readiness: each traveller goes in the slot their date of birth gives on the travel date - else 400, before any hold. */
+    @Test
+    void aTravellerWhoseAgeDoesNotFitTheirSlotIsRefusedBeforeTheHold() {
+        // turns 12 on 30 Nov 2026: an adult on the 1 Dec departure, though booked as a child
+        String id = reviewedLeaving("2026-12-01");
+        assertThatThrownBy(() -> service.confirm(id, withPax(pax("ADULT", null), pax("ADULT", LocalDate.of(1990, 1, 1)),
+                pax("CHILD", LocalDate.of(2014, 11, 30)))))
+                .isInstanceOf(com.voyra.crm.exception.BookingRequestException.class)
+                .hasMessageContaining("Traveller 3").hasMessageContaining("adult")
+                .extracting("code").isEqualTo("PAX_TYPE_MISMATCH");
+        // an adult who is 11 on the travel date
+        assertThatThrownBy(() -> service.confirm(id, withPax(pax("ADULT", LocalDate.of(2015, 1, 1)), pax("ADULT", null),
+                pax("CHILD", LocalDate.of(2019, 5, 1)))))
+                .extracting("code").isEqualTo("PAX_TYPE_MISMATCH");
+        // an infant who has turned 2
+        assertThatThrownBy(() -> service.confirm(id, withPax(pax("ADULT", null), pax("ADULT", null), pax("INFANT", LocalDate.of(2024, 11, 1)))))
+                .extracting("code").isEqualTo("PAX_TYPE_MISMATCH");
+        verify(walletService, never()).hold(any(), any(), any(), any(), any());
+        verify(provider, never()).book(any());
+
+        // the day before the 12th birthday is still a child
+        assertThat(service.confirm(id, withPax(pax("ADULT", null), pax("ADULT", null), pax("CHILD", LocalDate.of(2014, 12, 2))))
+                .getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
+    }
+
+    @Test
+    void aChildOrInfantWithoutADateOfBirthIsRefused() {
+        String id = reviewedLeaving("2026-12-01");
+        assertThatThrownBy(() -> service.confirm(id, withPax(pax("ADULT", null), pax("ADULT", null), pax("CHILD", null))))
+                .isInstanceOf(com.voyra.crm.exception.BookingRequestException.class)
+                .hasMessageContaining("Traveller 3")
+                .extracting("code").isEqualTo("PAX_DOB_REQUIRED");
+        verify(walletService, never()).hold(any(), any(), any(), any(), any());
+    }
+
+    /** Slice 3 minor 5: the CRM client, lead and service are checked in the caller's tenant before the supplier is asked. */
+    @Test
+    void reviewChecksTheCrmLinksBeforeTheSupplier() {
+        FlightReviewRequest request = reviewRequest();
+        request.setClientId("C-OTHER");
+        request.setLeadId("L1");
+        request.setServiceId("S1");
+        org.mockito.Mockito.doThrow(new IllegalArgumentException("Client not found: C-OTHER"))
+                .when(mirrorService).requireLinks("C-OTHER", "L1", "S1");
+
+        assertThatThrownBy(() -> service.review(request)).isInstanceOf(IllegalArgumentException.class).hasMessage("Client not found: C-OTHER");
+        verify(provider, never()).review(any(FlightReviewRequest.class));
+        assertThat(rows).isEmpty();
+    }
 }

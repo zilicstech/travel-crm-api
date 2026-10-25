@@ -100,7 +100,7 @@ class PlatformBookingPollerTest {
         PlatformBookingService service = new PlatformBookingService(bookingRepository, registry(), quoter, pricingService,
                 walletService, walletRepository, tenantRepository, agentRepository, credentialRepository, notificationService,
                 events, paxCodec, objectMapper, transactionManager, walletEntryRepository, platformAuditService, settings, mirrorService);
-        poller = new PlatformBookingPoller(bookingRepository, eventRepository, registry(), config, service, events,
+        poller = new PlatformBookingPoller(bookingRepository, eventRepository, registry(), service, events,
                 notificationService, transactionManager);
 
         lenient().when(bookingRepository.save(any())).thenAnswer(i -> {
@@ -120,6 +120,10 @@ class PlatformBookingPollerTest {
         });
         lenient().when(eventRepository.findByPlatformBookingIdOrderByCreatedAtAsc(anyString())).thenAnswer(i -> savedEvents.stream()
                 .filter(e -> e.getPlatformBookingId().equals(i.getArgument(0))).toList());
+        lenient().when(eventRepository.findFirstByPlatformBookingIdAndTypeOrderByCreatedAtDesc(anyString(), anyString()))
+                .thenAnswer(i -> savedEvents.stream()
+                        .filter(e -> e.getPlatformBookingId().equals(i.getArgument(0)) && e.getType().equals(i.getArgument(1)))
+                        .reduce((first, second) -> second));
         lenient().when(walletService.debitHeld(anyString(), any(), anyString(), anyString(), anyString()))
                 .thenReturn(WalletEntry.builder().id("D1").tenantId(T).build());
         lenient().when(walletService.debitOrReceivable(any(), any(), any(), anyString(), anyString(), anyString(), any(), any()))
@@ -443,5 +447,83 @@ class PlatformBookingPollerTest {
         assertThat(rows.get("F1").getStatus()).isEqualTo(PlatformBookingStatus.BOOKING);
         assertThat(rows.get("H1").getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
         assertThat(rows.get("H1").getPnr()).isEqualTo("MH42");
+    }
+
+    /** Slice 4 minor: hotels give up after their own app.hotel-booking.poll.max-minutes, not the flight window. */
+    @Test
+    void aHotelUsesItsOwnPollWindow() {
+        hotelConfig.getPoll().setMaxMinutes(90);
+        bookingRow("F1", Instant.now().minus(45, ChronoUnit.MINUTES));
+        bookingRow("H1", Instant.now().minus(45, ChronoUnit.MINUTES)).setProduct(PricingProduct.HOTEL);
+        when(provider.bookingDetails("rv-F1")).thenReturn(pending());
+        when(hotelProvider.bookingDetails("rv-H1")).thenReturn(pending());
+
+        poller.poll();
+
+        assertThat(rows.get("F1").getStatus()).isEqualTo(PlatformBookingStatus.UNKNOWN);
+        assertThat(rows.get("H1").getStatus()).isEqualTo(PlatformBookingStatus.BOOKING);
+    }
+
+    /** A Tripjack cancel the supplier accepted: CANCELLING, refund 4000 on record, hold already debited at ticketing. */
+    private PlatformBooking acceptedCancel(String id, Instant acceptedAt) {
+        PlatformBooking b = bookingRow(id, acceptedAt.minus(1, ChronoUnit.DAYS));
+        b.setStatus(PlatformBookingStatus.CANCELLING);
+        b.setSupplierBookingId("SB-" + id);
+        b.setPnr("PNR1");
+        b.setVoyraEarned(new BigDecimal("127.50"));
+        savedEvents.add(PlatformBookingEvent.builder().id("E-REQ" + id).platformBookingId(id).type("CANCEL_REQUESTED")
+                .payload(Map.of("key", "ck-1")).createdAt(acceptedAt.minusSeconds(5)).build());
+        savedEvents.add(PlatformBookingEvent.builder().id("E-ACC" + id).platformBookingId(id).type("CANCEL_ACCEPTED")
+                .payload(Map.of("refund", 4000.0, "message", "Amendment accepted")).createdAt(acceptedAt).build());
+        return b;
+    }
+
+    /** Readiness: an accepted Tripjack amendment posts the refund only once bookingDetails says the booking is cancelled. */
+    @Test
+    void anAcceptedTripjackCancelSettlesWhenTheSupplierShowsItCancelled() {
+        config.setProvider("tripjack");
+        lenient().when(settings.voyraCancelFee()).thenReturn(BigDecimal.ZERO);
+        lenient().when(walletRepository.findByTenantId(T)).thenReturn(Optional.empty());
+        acceptedCancel("C1", Instant.now().minus(1, ChronoUnit.HOURS));
+        when(provider.bookingDetails("SB-C1"))
+                .thenReturn(new BookResult("SB-C1", SupplierBookingStatus.TICKETED, "PNR1", List.of(), "SUCCESS", null))
+                .thenReturn(new BookResult("SB-C1", SupplierBookingStatus.CANCELLED, "PNR1", List.of(), "CANCELLED", null));
+
+        poller.poll(); // still live at the supplier: nothing moves
+        assertThat(rows.get("C1").getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
+        verify(walletService, never()).credit(any(), any(), any(), any(), any(), any(), any());
+
+        poller.poll(); // within the 10-minute cadence: not asked again
+        verify(provider, times(1)).bookingDetails("SB-C1");
+
+        rows.get("C1").setLastPolledAt(Instant.now().minus(11, ChronoUnit.MINUTES));
+        poller.poll();
+        assertThat(rows.get("C1").getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
+        assertThat(rows.get("C1").getCancelRefund()).isEqualByComparingTo("4000");
+        verify(walletService, times(1)).credit(eq(T), eq(WalletEntryType.REFUND_CREDIT), eq(new BigDecimal("4000.0")),
+                eq("pb-refund:C1"), anyString(), eq("C1"), anyString());
+        verify(notificationService).bookingCancelled(any(), eq(false));
+        verify(mirrorService).sync("C1");
+    }
+
+    /** A cancel with no supplier answer (or one still being submitted), and every mock cancel, is never polled. */
+    @Test
+    void aCancellingRowWithoutAnAcceptanceOrOnTheMockIsNotPolled() {
+        config.setProvider("tripjack");
+        PlatformBooking unanswered = bookingRow("C2", Instant.now().minus(1, ChronoUnit.DAYS));
+        unanswered.setStatus(PlatformBookingStatus.CANCELLING);
+        event("C2", "CANCEL_REQUESTED", Instant.now().minus(2, ChronoUnit.HOURS));
+        // accepted on an earlier attempt, then put back to TICKETED and requested again: the new request has no answer yet
+        acceptedCancel("C3", Instant.now().minus(3, ChronoUnit.HOURS));
+        event("C3", "CANCEL_REQUESTED", Instant.now().minus(1, ChronoUnit.HOURS));
+
+        poller.poll();
+
+        verify(provider, never()).bookingDetails(anyString());
+
+        config.setProvider("mock");
+        acceptedCancel("C4", Instant.now().minus(1, ChronoUnit.HOURS));
+        poller.poll();
+        verify(provider, never()).bookingDetails(anyString());
     }
 }

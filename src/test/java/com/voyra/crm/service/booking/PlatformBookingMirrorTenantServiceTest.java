@@ -82,6 +82,9 @@ class PlatformBookingMirrorTenantServiceTest {
     @Mock private MarkupDefaultRepository markupDefaultRepository;
     @Mock private ExchangeRateProvider exchangeRateProvider;
     @Spy private BaseCurrency baseCurrency = new BaseCurrency(null);
+    @Mock private com.voyra.crm.repository.ClientRepository clientRepository;
+    @Mock private com.voyra.crm.service.LeadService leadAccess;
+    @Mock private com.voyra.crm.service.ServiceInstanceService serviceAccess;
 
     @InjectMocks private PlatformBookingMirrorTenantService service;
 
@@ -399,5 +402,38 @@ class PlatformBookingMirrorTenantServiceTest {
         order.verify(cancellationService).cancel(eq("B1"), request.capture());
         assertThat(request.getValue().getSupplierCharge()).isEqualByComparingTo("16.80"); // 1400 INR at 0.012
         verify(cancellationService).recordVoyraWalletRefund("B1", new BigDecimal("48.00"));
+    }
+
+    /** Slice 3 minor 5: a review's client, lead and service must exist in the caller's tenant, and the agent must reach them. */
+    @Test
+    void requireLinksChecksTheClientLeadAndServiceInTheCallersTenant() {
+        when(clientRepository.existsById("C1")).thenReturn(true);
+        when(leadAccess.findAccessibleLead("L1")).thenReturn(com.voyra.crm.entity.Lead.builder().id("L1").clientId("C1").build());
+        com.voyra.crm.entity.LeadService s1 = com.voyra.crm.entity.LeadService.builder().id("S1").leadId("L1").clientId("C1").build();
+        when(leadServiceRepository.findById("S1")).thenReturn(Optional.of(s1));
+
+        service.requireLinks("C1", "L1", "S1");
+        service.requireLinks(null, null, null);
+        verify(serviceAccess).assertEditAccess(s1);
+
+        // another tenant's (or a made-up) client is simply not found here
+        assertThatThrownBy(() -> service.requireLinks("C-OTHER", null, null))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Client not found");
+        when(leadServiceRepository.findById("S-OTHER")).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> service.requireLinks("C1", null, "S-OTHER"))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Service not found");
+        // the lead belongs to another client, the service to another lead
+        assertThatThrownBy(() -> service.requireLinks("C2", "L1", null)).isInstanceOf(IllegalArgumentException.class);
+        when(clientRepository.existsById("C2")).thenReturn(true);
+        assertThatThrownBy(() -> service.requireLinks("C2", "L1", null))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("lead");
+        when(leadAccess.findAccessibleLead("L2")).thenReturn(com.voyra.crm.entity.Lead.builder().id("L2").clientId("C1").build());
+        assertThatThrownBy(() -> service.requireLinks("C1", "L2", "S1"))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("service");
+        // an agent who may not reach the lead or edit the service is refused (403)
+        when(leadAccess.findAccessibleLead("L3")).thenThrow(new org.springframework.security.access.AccessDeniedException("This lead is not accessible to you"));
+        assertThatThrownBy(() -> service.requireLinks("C1", "L3", null)).isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
+        org.mockito.Mockito.doThrow(new org.springframework.security.access.AccessDeniedException("no")).when(serviceAccess).assertEditAccess(s1);
+        assertThatThrownBy(() -> service.requireLinks("C1", "L1", "S1")).isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
     }
 }

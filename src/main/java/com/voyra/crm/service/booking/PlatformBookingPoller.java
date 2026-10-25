@@ -4,6 +4,7 @@ import com.voyra.crm.entity.PlatformBooking;
 import com.voyra.crm.entity.PlatformBookingEvent;
 import com.voyra.crm.enums.PlatformBookingStatus;
 import com.voyra.crm.models.booking.BookResult;
+import com.voyra.crm.models.booking.SupplierBookingStatus;
 import com.voyra.crm.repository.PlatformBookingEventRepository;
 import com.voyra.crm.repository.PlatformBookingRepository;
 import com.voyra.crm.service.NotificationService;
@@ -31,6 +32,10 @@ import java.util.Optional;
  * {@link PlatformBookingService#applySupplierResult} (keyed wallet calls, so a re-apply posts nothing twice), and the
  * poll is recorded in a separate REQUIRES_NEW transaction.
  * <p>
+ * A Tripjack cancel the supplier accepted stays CANCELLING (amendments are asynchronous): those rows are asked every 10
+ * minutes and settled by {@link PlatformBookingService#settleConfirmedCancel} once bookingDetails shows them cancelled.
+ * Hotels give up after {@code app.hotel-booking.poll.max-minutes}.
+ * <p>
  * The same run sweeps rows that can never go on: an expired REVIEWING row (releasing an orphan hold if it has one), and a
  * HELD row whose book was never sent (crash between hold and BOOKING), are ABORTED.
  */
@@ -46,20 +51,17 @@ public class PlatformBookingPoller {
     private final PlatformBookingRepository bookingRepository;
     private final PlatformBookingEventRepository eventRepository;
     private final BookingProviderRegistry providers;
-    private final FlightBookingProviderConfig config;
     private final PlatformBookingService bookingService;
     private final PlatformBookingEventRecorder events;
     private final NotificationService notificationService;
     private final TransactionTemplate tx;
 
     public PlatformBookingPoller(PlatformBookingRepository bookingRepository, PlatformBookingEventRepository eventRepository,
-                                 BookingProviderRegistry providers, FlightBookingProviderConfig config,
-                                 PlatformBookingService bookingService, PlatformBookingEventRecorder events,
+                                 BookingProviderRegistry providers, PlatformBookingService bookingService, PlatformBookingEventRecorder events,
                                  NotificationService notificationService, PlatformTransactionManager transactionManager) {
         this.bookingRepository = bookingRepository;
         this.eventRepository = eventRepository;
         this.providers = providers;
-        this.config = config;
         this.bookingService = bookingService;
         this.events = events;
         this.notificationService = notificationService;
@@ -85,7 +87,46 @@ public class PlatformBookingPoller {
                 log.error("Polling platform booking {} failed: {}", b.getId(), e.getMessage(), e);
             }
         }
+        for (PlatformBooking b : bookingRepository.findByStatusIn(EnumSet.of(PlatformBookingStatus.CANCELLING))) {
+            if (providers.isMock(b.getProduct()) || (b.getLastPolledAt() != null && b.getLastPolledAt().isAfter(slowDue))
+                    || !acceptedSinceRequested(b.getId())) {
+                continue; // the mock settles at once; an unanswered cancel is an admin's (resolveCancel)
+            }
+            try {
+                pollCancel(b);
+            } catch (Exception e) {
+                log.error("Polling the cancellation of platform booking {} failed: {}", b.getId(), e.getMessage(), e);
+            }
+        }
         sweep(now);
+    }
+
+    /** The supplier accepted the latest cancel request (an acceptance of an earlier, reverted attempt does not count). */
+    private boolean acceptedSinceRequested(String bookingId) {
+        Optional<Instant> accepted = latest(bookingId, "CANCEL_ACCEPTED");
+        Optional<Instant> requested = latest(bookingId, "CANCEL_REQUESTED");
+        return accepted.isPresent() && (requested.isEmpty() || !accepted.get().isBefore(requested.get()));
+    }
+
+    private Optional<Instant> latest(String bookingId, String type) {
+        return eventRepository.findFirstByPlatformBookingIdAndTypeOrderByCreatedAtDesc(bookingId, type).map(PlatformBookingEvent::getCreatedAt);
+    }
+
+    /** Asks whether the supplier has cancelled; only a CANCELLED answer settles. The poll is recorded either way. */
+    private void pollCancel(PlatformBooking b) {
+        BookResult result = null;
+        try {
+            result = providers.supplierFor(b).bookingDetails(b.getSupplierBookingId() != null ? b.getSupplierBookingId() : b.getSupplierReviewId());
+        } catch (RuntimeException e) {
+            log.warn("bookingDetails for the cancellation of platform booking {} gave no answer: {}", b.getId(), e.getClass().getSimpleName());
+        }
+        try {
+            if (result != null && result.status() == SupplierBookingStatus.CANCELLED) {
+                bookingService.settleConfirmedCancel(b.getId());
+            }
+        } finally {
+            tx.executeWithoutResult(s -> recordPoll(b.getId()));
+        }
     }
 
     private void sweep(Instant now) {
@@ -137,13 +178,13 @@ public class PlatformBookingPoller {
         Instant now = Instant.now();
         b.setPollCount(b.getPollCount() + 1);
         b.setLastPolledAt(now);
-        Instant giveUp = bookingStartedAt(b).plus(Duration.ofMinutes(config.getPoll().getMaxMinutes()));
-        if (b.getStatus() == PlatformBookingStatus.BOOKING && now.isAfter(giveUp)) {
+        int maxMinutes = providers.pollMaxMinutes(b.getProduct());
+        if (b.getStatus() == PlatformBookingStatus.BOOKING && now.isAfter(bookingStartedAt(b).plus(Duration.ofMinutes(maxMinutes)))) {
             b.setStatus(PlatformBookingStatus.UNKNOWN);
             events.record(bookingId, "UNKNOWN", Map.of("polls", b.getPollCount()));
             notificationService.platformAlert("Booking " + bookingId + " outcome unknown",
                     "No final answer from the supplier for booking " + bookingId + " (agency " + b.getTenantId() + ") after "
-                            + config.getPoll().getMaxMinutes() + " minutes and " + b.getPollCount()
+                            + maxMinutes + " minutes and " + b.getPollCount()
                             + " polls. The wallet hold is kept; check with the supplier and resolve it.");
         }
         bookingRepository.save(b);

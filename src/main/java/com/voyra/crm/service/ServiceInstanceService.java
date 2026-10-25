@@ -526,7 +526,7 @@ public class ServiceInstanceService {
     /** Owner, or an agent whose manageableServices covers this type, or the agent already on the job. */
     /** Package-private - also called from BookingService so logging a booking on a service
      *  goes through the exact same gate as every other mutation to that service. */
-    void assertEditAccess(LeadService service) {
+    public void assertEditAccess(LeadService service) {
         CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
         if (!principal.isAgent()) {
             return;

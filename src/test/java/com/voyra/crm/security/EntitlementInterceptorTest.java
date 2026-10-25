@@ -84,6 +84,7 @@ class EntitlementInterceptorTest {
     @MockBean private ClientService clientService;
     @MockBean private TopupService topupService;
     @MockBean private PlatformSettingService platformSettingService;
+    @MockBean private com.voyra.crm.service.PlatformSettingRequestService platformSettingRequestService;
     @MockBean private TaxEngine taxEngine;
     @MockBean private InvoiceDocumentService invoiceDocumentService;
     @MockBean private InvoicePurchaseService invoicePurchaseService;

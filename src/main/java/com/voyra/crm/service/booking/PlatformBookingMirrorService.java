@@ -94,6 +94,11 @@ public class PlatformBookingMirrorService {
         return (serviceId != null || leadId != null) && tenantService.leadAgent(tenantId, serviceId, leadId).isPresent();
     }
 
+    /** The CRM client, lead and service a review names exist in the caller's tenant and the caller may reach them. */
+    public void requireLinks(String clientId, String leadId, String serviceId) {
+        tenantService.requireLinks(clientId, leadId, serviceId);
+    }
+
     /**
      * Records the outcome under the row lock; a concurrent sync that already finished the mirror is never marked FAILED.
      * DONE only when the row is still at the status this sync acted on: a cancel that landed meanwhile leaves the mirror

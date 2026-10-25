@@ -48,6 +48,7 @@ public class PlatformSupplierCredentialService {
     private final PlatformSupplierCredentialRepository repository;
     private final PlatformAuditService platformAuditService;
     private final PlatformBookingRepository bookingRepository;
+    private final PlatformSettingService settings;
 
     @Value("${app.security.password-encryption-key}")
     private String encryptionKey;
@@ -59,6 +60,10 @@ public class PlatformSupplierCredentialService {
         if (inFlight > 0) {
             throw new IllegalStateException(inFlight + " booking(s) are still held, booking, unknown or cancelling"
                     + " - wait for them to finish before changing the supplier credential");
+        }
+        if (request.getEnvironment() == SupplierEnvironment.PROD && !settings.tripjackLiveReady()) {
+            throw new IllegalStateException("A PROD Tripjack key needs platform setting tripjack_live_ready, "
+                    + "which a platform admin requests and a second admin approves");
         }
         List<PlatformSupplierCredential> rows = repository.findByProviderOrderByUpdatedAtDesc(request.getProvider());
         PlatformSupplierCredential credential = rows.isEmpty()

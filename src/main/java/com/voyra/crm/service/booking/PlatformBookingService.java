@@ -15,6 +15,7 @@ import com.voyra.crm.entity.Tenant;
 import com.voyra.crm.entity.Wallet;
 import com.voyra.crm.entity.WalletEntry;
 import com.voyra.crm.enums.MirrorStatus;
+import com.voyra.crm.enums.PaxType;
 import com.voyra.crm.enums.PlatformAuditAction;
 import com.voyra.crm.enums.PlatformBookingStatus;
 import com.voyra.crm.enums.PricingProduct;
@@ -51,6 +52,7 @@ import com.voyra.crm.service.NotificationService;
 import com.voyra.crm.service.PlatformAuditService;
 import com.voyra.crm.service.PlatformSettingService;
 import com.voyra.crm.service.WalletService;
+import com.voyra.crm.util.PaxTypeCalculator;
 import com.voyra.crm.util.UniqueIdResolver;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.access.AccessDeniedException;
@@ -256,6 +258,7 @@ public class PlatformBookingService {
         if (walletService.hasDueReceivable(tenantId)) {
             throw new ReceivableDueException();
         }
+        mirrorService.requireLinks(clientId, leadId, serviceId);
         requireIssuingAgent(principal, clientId, resolveIssuer(principal, issuedByAgentId), serviceId, leadId);
         if (providers.isMock(product)) {
             return new ReviewEnv(SupplierEnvironment.MOCK, null);
@@ -392,6 +395,8 @@ public class PlatformBookingService {
      *   <li>the acceptance is recorded in its own transaction, then tx2 posts REFUND_CREDIT and COMMISSION_RECALL under the
      *       per-booking keys. If tx2 fails the row stays CANCELLING with the acceptance on record, for an admin to settle.</li>
      * </ol>
+     * Tripjack only accepts the amendment synchronously, so for it step 3 stops after recording the acceptance: the row
+     * stays CANCELLING and the poller posts the money once bookingDetails shows it cancelled ({@link #settleConfirmedCancel}).
      */
     public PlatformBooking cancel(String bookingId, String idempotencyKey) {
         Assert.state(!TransactionSynchronizationManager.isActualTransactionActive(),
@@ -432,14 +437,20 @@ public class PlatformBookingService {
             throw asSupplierException(e);
         }
         if (!result.accepted()) {
-            String message = result.message() != null ? result.message() : "The supplier refused the cancellation";
+            // the supplier's own words go on the event for Voyra; the agency gets the fixed sentence
+            String message = result.message() != null ? result.message() : AgencySupplierMessage.CANCEL_REFUSED;
             backToTicketed(bookingId, "CANCEL_REFUSED", Map.of("code", "CANCEL_REFUSED", "message", message));
-            throw new BookingConflictException("CANCEL_REFUSED", message, Map.of());
+            throw new BookingConflictException("CANCEL_REFUSED", AgencySupplierMessage.CANCEL_REFUSED, Map.of());
         }
         Map<String, Object> accepted = new LinkedHashMap<>();
         accepted.put("refund", result.refund() == null ? "UNKNOWN" : result.refund());
         accepted.put("message", String.valueOf(result.message()));
         tx.executeWithoutResult(s -> events.record(bookingId, "CANCEL_ACCEPTED", accepted));
+        if (!providers.isMock(claim.booking().getProduct())) {
+            // Tripjack only accepts the amendment here; the booking stays CANCELLING and nothing is posted until
+            // the poller sees bookingDetails say cancelled (settleConfirmedCancel). The mock settles at once.
+            return claim.booking();
+        }
         PlatformBooking cancelled;
         try {
             cancelled = tx.execute(s -> cancelLocked(bookingId, result.refund(), result.message(), fee));
@@ -495,6 +506,34 @@ public class PlatformBookingService {
             scheduleMirrorCancel(booking);
         }
         return booking;
+    }
+
+    /**
+     * The poller saw the supplier show a CANCELLING booking cancelled: posts the refund and recall under the same keys as
+     * {@link #cancel}, with the refund the supplier gave when it accepted the cancellation (unknown: nothing is posted and
+     * Voyra is alerted, as for any cancel without a figure). A row no longer CANCELLING is left alone.
+     */
+    void settleConfirmedCancel(String bookingId) {
+        // shortcut: settles on the refund given at acceptance; Tripjack's final amendment figure (field unknown until
+        // the slice 0 fixtures) should replace it once bookingDetails or the amendment status is mapped
+        BigDecimal fee = settings.voyraCancelFee();
+        PlatformBooking cancelled = tx.execute(s -> {
+            Map<String, Object> accepted = events.lastPayload(bookingId, "CANCEL_ACCEPTED").orElse(Map.of());
+            Object message = accepted.get("message");
+            return cancelLocked(bookingId, refundOnRecord(accepted.get("refund")), message == null ? null : message.toString(), fee);
+        });
+        if (cancelled.getStatus() == PlatformBookingStatus.CANCELLED) {
+            scheduleMirrorCancel(cancelled);
+        }
+    }
+
+    /** The refund stored on the CANCEL_ACCEPTED event: a number, or null for "UNKNOWN" / missing / unreadable. */
+    private static BigDecimal refundOnRecord(Object v) {
+        try {
+            return v == null ? null : new BigDecimal(v.toString());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     private record Claim(PlatformBooking booking, boolean submit) {
@@ -659,6 +698,8 @@ public class PlatformBookingService {
             requireGuestsPerRoom(b, request.getPassengers());
         } else if (request.getPassengers().size() != b.getPaxCount()) {
             throw new IllegalArgumentException("Enter " + b.getPaxCount() + " travellers, as reviewed");
+        } else {
+            requirePaxTypesFit(request.getPassengers(), firstDeparture(b));
         }
         if (request.getAcceptedDisplayedFare().compareTo(b.getDisplayed()) != 0) {
             throw priceChanged(b.getProduct(), b.getDisplayed());
@@ -716,7 +757,7 @@ public class PlatformBookingService {
                     ticket(b, result);
                 }
             }
-            case FAILED -> {
+            case FAILED, CANCELLED -> { // a booking cancelled before it ever ticketed is a failed booking
                 if (PlatformBookingStatus.IN_FLIGHT.contains(b.getStatus())) {
                     walletService.releaseHold(b.getHoldEntryId(), "pb-release:" + bookingId);
                     b.setStatus(PlatformBookingStatus.FAILED);
@@ -902,6 +943,54 @@ public class PlatformBookingService {
     private static PaxDetail toPax(PaxInput p) {
         return new PaxDetail(p.getType(), p.getTitle(), p.getFirstName(), p.getLastName(), p.getDob(),
                 p.getPassportNo(), p.getPassportExpiry(), p.getNationality());
+    }
+
+    /**
+     * Each traveller is booked in the slot their date of birth gives on the travel date ({@link PaxTypeCalculator}): a
+     * child who turns 12 before departure flies as an adult, and the airline refuses a mismatch. A child or infant needs
+     * a date of birth; an adult without one is taken as given. With no travel date on the row only the DOB rule applies.
+     */
+    private static void requirePaxTypesFit(List<PaxInput> passengers, java.time.LocalDate travelDate) {
+        for (int i = 0; i < passengers.size(); i++) {
+            PaxInput p = passengers.get(i);
+            String who = "Traveller " + (i + 1);
+            if (!"ADULT".equals(p.getType()) && p.getDob() == null) {
+                throw new BookingRequestException("PAX_DOB_REQUIRED", who + " needs a date of birth to travel as " + slot(p.getType()));
+            }
+            PaxType actual = PaxTypeCalculator.paxTypeAt(p.getDob(), travelDate);
+            if (actual != PaxType.UNKNOWN && !actual.name().equals(p.getType())) {
+                throw new BookingRequestException("PAX_TYPE_MISMATCH", who + " is " + slot(actual.name()) + " on the travel date ("
+                        + travelDate + ") but was entered as " + slot(p.getType()) + " - review the fare with the right travellers");
+            }
+        }
+    }
+
+    private static String slot(String type) {
+        return switch (type == null ? "" : type) {
+            case "CHILD" -> "a child (2-11)";
+            case "INFANT" -> "an infant (under 2)";
+            default -> "an adult";
+        };
+    }
+
+    /** The earliest departure date among the itinerary's segments ({@code sI[].dt}, Tripjack's and the mock's shape); null if none. */
+    private java.time.LocalDate firstDeparture(PlatformBooking b) {
+        if (b.getItinerary() == null) {
+            return null;
+        }
+        java.time.LocalDate first = null;
+        for (JsonNode legs : objectMapper.valueToTree(b.getItinerary()).findValues("sI")) {
+            for (JsonNode seg : legs) {
+                String dt = seg.path("dt").asText("");
+                try {
+                    java.time.LocalDate d = java.time.LocalDate.parse(dt.length() >= 10 ? dt.substring(0, 10) : dt);
+                    first = first == null || d.isBefore(first) ? d : first;
+                } catch (java.time.format.DateTimeParseException e) {
+                    // an unreadable date is skipped, not guessed
+                }
+            }
+        }
+        return first;
     }
 
     private static int roomOf(PaxInput p) {

@@ -90,6 +90,9 @@ public class PlatformBookingMirrorTenantService {
     private final MarkupDefaultRepository markupDefaultRepository;
     private final ExchangeRateProvider exchangeRateProvider;
     private final BaseCurrency baseCurrency;
+    private final com.voyra.crm.repository.ClientRepository clientRepository;
+    private final com.voyra.crm.service.LeadService leadAccess;
+    private final com.voyra.crm.service.ServiceInstanceService serviceAccess;
 
     /**
      * The flight mirror (spec 6): CONFIRMED with vendor Voyra Platform, one E_TICKET bought in INR at the displayed fare
@@ -273,6 +276,32 @@ public class PlatformBookingMirrorTenantService {
         pay.setInstrumentRef(pb.getPnr());
         pay.setNotes("Paid from the Voyra wallet");
         supplierPaymentService.pay(pay);
+    }
+
+    /**
+     * Refuses, before any money moves, a review naming a CRM client, lead or service that is not in the caller's tenant
+     * (the repositories read the caller's schema) or that the caller may not reach: a missing one is 400, an agent's
+     * out-of-reach lead or service 403 (the CRM's own lead and service rules). The lead must be the client's and the
+     * service the lead's, so the mirror lands on the records the agency picked.
+     */
+    @Transactional(readOnly = true)
+    public void requireLinks(String clientId, String leadId, String serviceId) {
+        String client = blankToNull(clientId);
+        if (client != null && !clientRepository.existsById(client)) {
+            throw new IllegalArgumentException("Client not found in this agency: " + client);
+        }
+        Lead lead = blankToNull(leadId) == null ? null : leadAccess.findAccessibleLead(leadId);
+        if (lead != null && client != null && !client.equals(lead.getClientId())) {
+            throw new IllegalArgumentException("This lead belongs to another client");
+        }
+        if (blankToNull(serviceId) != null) {
+            LeadService service = leadServiceRepository.findById(serviceId)
+                    .orElseThrow(() -> new IllegalArgumentException("Service not found in this agency: " + serviceId));
+            if (lead != null && !lead.getId().equals(service.getLeadId())) {
+                throw new IllegalArgumentException("This service belongs to another lead");
+            }
+            serviceAccess.assertEditAccess(service);
+        }
     }
 
     /** The lead's agent in the current tenant: the service's assigned agent, else the lead's creator when an agent. */

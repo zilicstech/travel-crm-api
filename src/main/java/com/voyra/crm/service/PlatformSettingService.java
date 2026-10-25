@@ -6,6 +6,7 @@ import com.voyra.crm.dto.PlatformSettingResponse;
 import com.voyra.crm.entity.PlatformSetting;
 import com.voyra.crm.enums.DiscountBase;
 import com.voyra.crm.enums.PlatformAuditAction;
+import com.voyra.crm.enums.PricingProduct;
 import com.voyra.crm.models.ReferenceFare;
 import com.voyra.crm.repository.PlatformSettingRepository;
 import com.voyra.crm.security.SecurityContextUtil;
@@ -37,6 +38,9 @@ public class PlatformSettingService {
     static final String COMMISSION_ESTIMATE_PCT = "commission_estimate_pct";
     static final String VOYRA_CANCEL_FEE = "voyra_cancel_fee";
     static final String REFERENCE_FARE_BASKET = "reference_fare_basket";
+    static final String REFERENCE_FARE_BASKET_HOTEL = "reference_fare_basket_hotel";
+    /** Off until a second platform admin approves it ({@link PlatformSettingRequestService}); guards the Tripjack live switch. */
+    static final String TRIPJACK_LIVE_READY = "tripjack_live_ready";
     static final String SKU_PRICES = "sku_prices";
     static final String FOUNDING_AGENCIES = "founding_agencies";
     static final String VOYRA_LEGAL_NAME = "voyra_legal_name";
@@ -57,6 +61,10 @@ public class PlatformSettingService {
             Map.entry(REFERENCE_FARE_BASKET, "[{\"label\":\"Domestic LCC\",\"gross\":5000,\"base\":3500},"
                     + "{\"label\":\"Domestic FSC\",\"gross\":9000,\"base\":6000},"
                     + "{\"label\":\"International\",\"gross\":45000,\"base\":22000}]"),
+            Map.entry(REFERENCE_FARE_BASKET_HOTEL, "[{\"label\":\"Budget 3*\",\"gross\":3150,\"base\":3000},"
+                    + "{\"label\":\"Mid 4*\",\"gross\":9440,\"base\":8000},"
+                    + "{\"label\":\"Premium 5*\",\"gross\":23600,\"base\":20000}]"),
+            Map.entry(TRIPJACK_LIVE_READY, "false"),
             Map.entry(VOYRA_LEGAL_NAME, ""),
             Map.entry(VOYRA_GSTIN, ""),
             Map.entry(VOYRA_ADDRESS, ""),
@@ -95,9 +103,22 @@ public class PlatformSettingService {
         return new BigDecimal(raw(COMMISSION_ESTIMATE_PCT));
     }
 
+    /** The sample fares the pricing guard tests a rate against: hotel rooms for HOTEL, flights otherwise. */
     @Transactional(readOnly = true)
-    public List<ReferenceFare> referenceFareBasket() {
-        return parseBasket(raw(REFERENCE_FARE_BASKET));
+    public List<ReferenceFare> referenceFareBasket(PricingProduct product) {
+        return parseBasket(raw(product == PricingProduct.HOTEL ? REFERENCE_FARE_BASKET_HOTEL : REFERENCE_FARE_BASKET));
+    }
+
+    /** Whether a second platform admin has cleared Tripjack for live (PROD credential, Tripjack booking providers). */
+    @Transactional(readOnly = true)
+    public boolean tripjackLiveReady() {
+        return "true".equals(raw(TRIPJACK_LIVE_READY));
+    }
+
+    /** Only for {@link PlatformSettingRequestService}: writes a change a second admin just approved, in the approval's transaction, audited like {@link #set}. */
+    @Transactional
+    public void applyApproved(String key, String value) {
+        write(key, value);
     }
 
     /** Monthly INR price per key of {@link #SKU_PRICE_KEYS}; annual billing is 10 of these. */
@@ -154,6 +175,10 @@ public class PlatformSettingService {
             throw new IllegalArgumentException(key + " must be at most 4000 characters");
         }
         validate(key, v);
+        return write(key, v);
+    }
+
+    private PlatformSettingResponse write(String key, String v) {
         String from = raw(key);
         PlatformSetting row = repository.findById(key).orElseGet(() -> PlatformSetting.builder().key(key).build());
         row.setValue(v);
@@ -209,6 +234,14 @@ public class PlatformSettingService {
                     throw new IllegalArgumentException(key + " must be a 4-8 digit SAC code");
                 }
             }
+            case TRIPJACK_LIVE_READY -> {
+                if (v.equals("true")) {
+                    throw new IllegalArgumentException(key + " is turned on by a second platform admin: request the change, and another admin approves it");
+                }
+                if (!v.equals("false")) {
+                    throw new IllegalArgumentException(key + " must be true or false");
+                }
+            }
             case FOUNDING_AGENCIES -> {
                 List<String> names = readJson(key, v, new TypeReference<>() { });
                 if (names == null || names.stream().anyMatch(n -> n == null || n.isBlank() || n.length() > 150)) {
@@ -260,7 +293,7 @@ public class PlatformSettingService {
         try {
             return objectMapper.readValue(json, new TypeReference<>() { });
         } catch (Exception e) {
-            throw new IllegalArgumentException("reference_fare_basket is not valid JSON", e);
+            throw new IllegalArgumentException("The reference fare basket is not valid JSON", e);
         }
     }
 

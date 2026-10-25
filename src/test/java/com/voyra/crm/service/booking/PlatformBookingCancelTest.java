@@ -109,8 +109,10 @@ class PlatformBookingCancelTest {
 
     private final HotelBookingProviderConfig hotelConfig = new HotelBookingProviderConfig();
 
+    private final FlightBookingProviderConfig flightConfig = new FlightBookingProviderConfig();
+
     private BookingProviderRegistry registry() {
-        return new BookingProviderRegistry(provider, hotelProvider, new FlightBookingProviderConfig(), hotelConfig);
+        return new BookingProviderRegistry(provider, hotelProvider, flightConfig, hotelConfig);
     }
 
     @BeforeEach
@@ -266,8 +268,11 @@ class PlatformBookingCancelTest {
         assertThatThrownBy(() -> service.cancel(ID, "ck-1"))
                 .isInstanceOfSatisfying(BookingConflictException.class, e -> {
                     assertThat(e.getCode()).isEqualTo("CANCEL_REFUSED");
-                    assertThat(e.getMessage()).isEqualTo("Ticket already flown");
+                    // readiness: the agency gets the fixed sentence; the supplier's words stay on the event for Voyra
+                    assertThat(e.getMessage()).isEqualTo("The supplier refused the cancellation");
                 });
+        assertThat(savedEvents.stream().filter(ev -> ev.getType().equals("CANCEL_REFUSED")).findFirst().orElseThrow()
+                .getPayload()).containsEntry("message", "Ticket already flown");
 
         verifyNothingPosted();
         assertThat(rows.get(ID).getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
@@ -656,5 +661,28 @@ class PlatformBookingCancelTest {
         verify(walletService, never()).credit(anyString(), eq(WalletEntryType.REFUND_CREDIT), any(), anyString(), anyString(), anyString(), anyString());
         verify(walletService).debitOrReceivable(T, WalletEntryType.COMMISSION_RECALL, new BigDecimal("95.00"),
                 "pb-recall:" + ID, REF, ID, ReceivableReason.CANCEL_NET_NEGATIVE);
+    }
+
+    /**
+     * Readiness: a Tripjack amendment is only accepted by submit-amendment; the refund is final later. The booking stays
+     * CANCELLING and nothing is posted until the poller sees bookingDetails say cancelled. The mock keeps settling at once.
+     */
+    @Test
+    void anAcceptedTripjackCancelStaysCancellingAndPostsNothing() {
+        flightConfig.setProvider("tripjack");
+        supplierRefunds("4000.00");
+
+        PlatformBooking b = service.cancel(ID, "ck-1");
+
+        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
+        assertThat(rows.get(ID).getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
+        verifyNothingPosted();
+        verify(notificationService, never()).bookingCancelled(any(), org.mockito.ArgumentMatchers.anyBoolean());
+        verify(mirrorService, never()).sync(anyString());
+        assertThat(eventTypes()).containsSubsequence("CANCEL_REQUESTED", "CANCEL_ACCEPTED").doesNotContain("CANCELLED");
+
+        // a retry with the same key never submits again
+        assertThat(service.cancel(ID, "ck-1").getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
+        verify(provider, times(1)).cancel("SB-1");
     }
 }
