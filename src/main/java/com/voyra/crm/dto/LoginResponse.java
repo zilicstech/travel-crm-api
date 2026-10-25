@@ -1,7 +1,6 @@
 package com.voyra.crm.dto;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
-import com.voyra.crm.models.Entitlements;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -40,8 +39,8 @@ public class LoginResponse {
     @Schema(description = "Bearer JWT - pass as 'Authorization: Bearer <token>' on subsequent requests")
     private String token;
 
-    @Schema(description = "What the agency's subscription unlocks right now. Omitted for SUPER_ADMIN")
-    private Entitlements entitlements;
+    @Schema(description = "What the agency's subscription unlocks right now, and the agency status. Omitted for SUPER_ADMIN")
+    private AgencyEntitlementsResponse entitlements;
 
     public static LoginResponse failure(String message) {
         return LoginResponse.builder().success(false).message(message).build();

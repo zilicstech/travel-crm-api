@@ -85,8 +85,18 @@ class AuthServiceTenantStatusTest {
         ownerWithStatus(TenantStatus.ACTIVE);
         agentInTenantWithStatus(TenantStatus.ACTIVE);
 
-        assertThat(authService.loginOwner(credentials("owner@a.com")).getEntitlements()).isEqualTo(trial);
-        assertThat(authService.loginAgent(credentials("agent@a.com")).getEntitlements()).isEqualTo(trial);
+        assertThat(authService.loginOwner(credentials("owner@a.com")).getEntitlements().getEntitlements()).isEqualTo(trial);
+        assertThat(authService.loginAgent(credentials("agent@a.com")).getEntitlements().getEntitlements()).isEqualTo(trial);
+    }
+
+    /** The suspended-agency banner reads the agency status from the login (and from the entitlements refresh). */
+    @Test
+    void loginsCarryTheAgencyStatus() {
+        ownerWithStatus(TenantStatus.SUSPENDED);
+        agentInTenantWithStatus(TenantStatus.SUSPENDED);
+
+        assertThat(authService.loginOwner(credentials("owner@a.com")).getEntitlements().getAgencyStatus()).isEqualTo(TenantStatus.SUSPENDED);
+        assertThat(authService.loginAgent(credentials("agent@a.com")).getEntitlements().getAgencyStatus()).isEqualTo(TenantStatus.SUSPENDED);
     }
 
     /** Built with the builder, so isActive keeps its default true - only status can refuse. */
@@ -119,10 +129,13 @@ class AuthServiceTenantStatusTest {
         com.voyra.crm.models.Entitlements e = new com.voyra.crm.models.Entitlements(com.voyra.crm.enums.SubscriptionPlan.SUITE,
                 com.voyra.crm.enums.SubscriptionStatus.ACTIVE, java.util.Set.of(), 5, false, null);
         org.mockito.Mockito.when(entitlementService.resolve("T9")).thenReturn(e);
+        com.voyra.crm.cache.TenantCache.put("T9", "Nine", TenantStatus.SUSPENDED);
         try {
-            org.assertj.core.api.Assertions.assertThat(authService.currentEntitlements()).isSameAs(e);
+            org.assertj.core.api.Assertions.assertThat(authService.currentEntitlements().getEntitlements()).isSameAs(e);
+            org.assertj.core.api.Assertions.assertThat(authService.currentEntitlements().getAgencyStatus()).isEqualTo(TenantStatus.SUSPENDED);
         } finally {
             org.springframework.security.core.context.SecurityContextHolder.clearContext();
+            com.voyra.crm.cache.TenantCache.remove("T9");
         }
     }
 }

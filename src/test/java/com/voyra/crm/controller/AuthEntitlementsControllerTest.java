@@ -46,12 +46,13 @@ class AuthEntitlementsControllerTest {
 
     @Test
     void everyAgencyRoleReadsItsEntitlements() throws Exception {
-        given(authService.currentEntitlements()).willReturn(new Entitlements(SubscriptionPlan.SUITE, SubscriptionStatus.TRIAL,
-                Set.of(), 5, true, null));
+        given(authService.currentEntitlements()).willReturn(new com.voyra.crm.dto.AgencyEntitlementsResponse(new Entitlements(
+                SubscriptionPlan.SUITE, SubscriptionStatus.TRIAL, Set.of(), 5, true, null), com.voyra.crm.enums.TenantStatus.SUSPENDED));
         for (UserType role : List.of(UserType.AGENCY_OWNER, UserType.AGENT, UserType.ACCOUNTANT)) {
             mockMvc.perform(get("/api/auth/entitlements").with(as(role)))
                     .andExpect(status().isOk()).andExpect(jsonPath("$.plan").value("SUITE"))
-                    .andExpect(jsonPath("$.readOnly").value(true)).andExpect(jsonPath("$.seats").value(5));
+                    .andExpect(jsonPath("$.readOnly").value(true)).andExpect(jsonPath("$.seats").value(5))
+                    .andExpect(jsonPath("$.agencyStatus").value("SUSPENDED")).andExpect(jsonPath("$.entitlements").doesNotExist());
         }
     }
 

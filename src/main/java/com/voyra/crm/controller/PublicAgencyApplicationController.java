@@ -7,6 +7,7 @@ import com.voyra.crm.dto.SimpleAckResponse;
 import com.voyra.crm.enums.KycDocumentType;
 import com.voyra.crm.security.InquiryRateLimiter;
 import com.voyra.crm.security.KycUploadRateLimiter;
+import com.voyra.crm.security.TurnstileVerifier;
 import com.voyra.crm.service.AgencyApplicationService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -38,14 +39,19 @@ public class PublicAgencyApplicationController {
     private final AgencyApplicationService agencyApplicationService;
     private final InquiryRateLimiter inquiryRateLimiter;
     private final KycUploadRateLimiter kycUploadRateLimiter;
+    private final TurnstileVerifier turnstileVerifier;
 
     @PostMapping
     @Operation(summary = "Start an agency application", description = "No auth required. Returns the application id "
             + "and a one-time upload token (valid 24 hours) for the document and submit calls.")
     @ApiResponse(responseCode = "429", description = "More than 5 requests a minute from one connection")
+    @ApiResponse(responseCode = "400", description = "CAPTCHA_FAILED when the Turnstile token is missing or rejected")
+    @ApiResponse(responseCode = "503", description = "CAPTCHA_UNAVAILABLE when Cloudflare cannot check the token - try again")
     public ResponseEntity<AgencyApplicationCreatedResponse> create(@Valid @RequestBody AgencyApplicationCreateRequest request,
                                                                    HttpServletRequest http) {
-        inquiryRateLimiter.check(InquiryRateLimiter.callerOf(http));
+        String caller = InquiryRateLimiter.callerOf(http);
+        inquiryRateLimiter.check(caller);
+        turnstileVerifier.verify(request.getCaptchaToken(), caller);
         return ResponseEntity.status(HttpStatus.CREATED).body(agencyApplicationService.create(request));
     }
 

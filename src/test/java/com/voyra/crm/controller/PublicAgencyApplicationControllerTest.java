@@ -8,6 +8,9 @@ import com.voyra.crm.security.JwtAuthenticationFilter;
 import com.voyra.crm.security.JwtService;
 import com.voyra.crm.security.KycUploadRateLimiter;
 import com.voyra.crm.security.RestAuthenticationEntryPoint;
+import com.voyra.crm.security.TurnstileVerifier;
+import com.voyra.crm.exception.CaptchaException;
+import org.springframework.http.HttpStatus;
 import com.voyra.crm.service.AgencyApplicationService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -50,6 +53,9 @@ class PublicAgencyApplicationControllerTest {
     @MockBean
     private KycUploadRateLimiter kycUploadRateLimiter;
 
+    @MockBean
+    private TurnstileVerifier turnstileVerifier;
+
     @Test
     void createIsOpenToAnonymousAndRateLimited() throws Exception {
         given(agencyApplicationService.create(any()))
@@ -60,6 +66,49 @@ class PublicAgencyApplicationControllerTest {
                 .andExpect(content().json("{\"id\":\"app-1\",\"uploadToken\":\"tok\"}"));
         verify(inquiryRateLimiter).check(anyString());
         verify(kycUploadRateLimiter, never()).check(anyString());
+    }
+
+    @Test
+    void createPassesTheCaptchaTokenToTheVerifier() throws Exception {
+        given(agencyApplicationService.create(any()))
+                .willReturn(AgencyApplicationCreatedResponse.builder().id("app-1").uploadToken("tok").build());
+
+        mockMvc.perform(post("/api/public/agency-applications").contentType(MediaType.APPLICATION_JSON)
+                        .content(VALID.replace("}", ",\"captchaToken\":\"cf-token\"}")))
+                .andExpect(status().isCreated());
+        verify(turnstileVerifier).verify(org.mockito.ArgumentMatchers.eq("cf-token"), anyString());
+    }
+
+    @Test
+    void aFailedCaptchaIs400AndNothingIsCreated() throws Exception {
+        org.mockito.Mockito.doThrow(new CaptchaException(HttpStatus.BAD_REQUEST, "CAPTCHA_FAILED", "Verification failed, please try again."))
+                .when(turnstileVerifier).verify(any(), anyString());
+
+        mockMvc.perform(post("/api/public/agency-applications").contentType(MediaType.APPLICATION_JSON).content(VALID))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().json("{\"code\":\"CAPTCHA_FAILED\",\"message\":\"Verification failed, please try again.\"}"));
+        verify(agencyApplicationService, never()).create(any());
+    }
+
+    @Test
+    void captchaUnavailableIs503AndNothingIsCreated() throws Exception {
+        org.mockito.Mockito.doThrow(new CaptchaException(HttpStatus.SERVICE_UNAVAILABLE, "CAPTCHA_UNAVAILABLE", "Verification failed, please try again."))
+                .when(turnstileVerifier).verify(any(), anyString());
+
+        mockMvc.perform(post("/api/public/agency-applications").contentType(MediaType.APPLICATION_JSON).content(VALID))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(content().json("{\"code\":\"CAPTCHA_UNAVAILABLE\"}"));
+        verify(agencyApplicationService, never()).create(any());
+    }
+
+    @Test
+    void uploadsAndSubmitNeverAskForTheCaptcha() throws Exception {
+        MockMultipartFile file = new MockMultipartFile("file", "pan.pdf", "application/pdf", "%PDF-1.4".getBytes());
+        mockMvc.perform(multipart("/api/public/agency-applications/app-1/documents").file(file).param("type", "PAN")
+                .header("X-Upload-Token", "tok")).andExpect(status().isOk());
+        mockMvc.perform(post("/api/public/agency-applications/app-1/submit").header("X-Upload-Token", "tok"))
+                .andExpect(status().isOk());
+        org.mockito.Mockito.verifyNoInteractions(turnstileVerifier);
     }
 
     @Test

@@ -2,7 +2,7 @@ package com.voyra.crm.controller;
 
 import com.voyra.crm.dto.LoginRequest;
 import com.voyra.crm.dto.LoginResponse;
-import com.voyra.crm.models.Entitlements;
+import com.voyra.crm.dto.AgencyEntitlementsResponse;
 import com.voyra.crm.service.AuthService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -57,8 +57,8 @@ public class AuthController {
 
     @GetMapping("/entitlements")
     @PreAuthorize("hasAnyRole('AGENCY_OWNER','AGENT','ACCOUNTANT')")
-    @Operation(summary = "The caller's agency entitlements", description = "Same shape as LoginResponse.entitlements; never gated, works while read-only.")
-    public ResponseEntity<Entitlements> entitlements() {
+    @Operation(summary = "The caller's agency entitlements", description = "Same shape as LoginResponse.entitlements (incl. agencyStatus); never gated, works while read-only or suspended.")
+    public ResponseEntity<AgencyEntitlementsResponse> entitlements() {
         return ResponseEntity.ok(authService.currentEntitlements());
     }
 

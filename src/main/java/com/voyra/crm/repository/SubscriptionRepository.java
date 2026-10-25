@@ -1,5 +1,6 @@
 package com.voyra.crm.repository;
 
+import com.voyra.crm.enums.SubscriptionStatus;
 import com.voyra.crm.entity.Subscription;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -21,4 +22,6 @@ public interface SubscriptionRepository extends JpaRepository<Subscription, Stri
 
     @Query("select s.tenantId from Subscription s")
     List<String> findAllTenantIds();
+
+    long countByStatus(SubscriptionStatus status);
 }

@@ -306,6 +306,15 @@ public class GlobalExceptionHandler {
                 ApiErrorResponse.of(ex.getMessage(), "Too many requests", null, HttpStatus.TOO_MANY_REQUESTS.value(), path));
     }
 
+    @ExceptionHandler(CaptchaException.class)
+    public ResponseEntity<ApiErrorResponse> handleCaptcha(CaptchaException ex, HttpServletRequest request) {
+        String path = getPath(request);
+        log.warn("CAPTCHA refused {} - path: {}", ex.getCode(), path);
+        ApiErrorResponse response = ApiErrorResponse.of(ex.getMessage(), "Verification failed", null, ex.getStatus().value(), path);
+        response.setCode(ex.getCode());
+        return ResponseEntity.status(ex.getStatus()).body(response);
+    }
+
     @ExceptionHandler(SupplierException.class)
     public ResponseEntity<ApiErrorResponse> handleSupplierException(SupplierException ex, HttpServletRequest request) {
         String path = getPath(request);

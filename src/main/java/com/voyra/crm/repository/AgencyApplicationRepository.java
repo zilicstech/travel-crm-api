@@ -30,4 +30,6 @@ public interface AgencyApplicationRepository extends JpaRepository<AgencyApplica
     Optional<AgencyApplication> findFirstByTenantId(String tenantId);
 
     List<AgencyApplication> findByStatusAndUpdatedAtBefore(ApplicationStatus status, Instant before);
+
+    long countByStatusIn(Collection<ApplicationStatus> statuses);
 }

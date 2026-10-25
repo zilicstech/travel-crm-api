@@ -33,4 +33,6 @@ public interface TopupRequestRepository extends JpaRepository<TopupRequest, Stri
     List<TopupRequest> findByStatusOrderByCreatedAtDesc(TopupStatus status);
 
     List<TopupRequest> findAllByOrderByCreatedAtDesc();
+
+    long countByStatusAndMode(TopupStatus status, TopupMode mode);
 }

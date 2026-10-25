@@ -1,5 +1,6 @@
 package com.voyra.crm.repository;
 
+import com.voyra.crm.enums.NotificationOutboxStatus;
 import com.voyra.crm.entity.NotificationOutbox;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -38,4 +39,6 @@ public interface NotificationOutboxRepository extends JpaRepository<Notification
             + "AND o.status IN (com.voyra.crm.enums.NotificationOutboxStatus.PENDING, com.voyra.crm.enums.NotificationOutboxStatus.SENDING) "
             + "AND o.nextAttemptAt <= :now")
     int claim(@Param("id") String id, @Param("now") Instant now, @Param("leaseUntil") Instant leaseUntil);
+
+    long countByStatus(NotificationOutboxStatus status);
 }

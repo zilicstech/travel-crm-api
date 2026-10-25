@@ -91,4 +91,8 @@ public class AgencyApplicationCreateRequest {
     @Schema(description = "Honeypot - a hidden field people never fill; a non-empty value means a bot and nothing is saved",
             example = "")
     private String website;
+
+    @Schema(description = "Cloudflare Turnstile token from the apply form; required when the server has TURNSTILE_SECRET set",
+            example = "0.AbCdEf...")
+    private String captchaToken;
 }
