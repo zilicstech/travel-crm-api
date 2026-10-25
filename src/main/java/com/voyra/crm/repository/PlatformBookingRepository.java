@@ -34,4 +34,6 @@ public interface PlatformBookingRepository extends JpaRepository<PlatformBooking
     List<PlatformBooking> findAllByOrderByCreatedAtDesc(Pageable pageable);
 
     boolean existsByStatusIn(Collection<PlatformBookingStatus> statuses);
+
+    long countByStatusIn(Collection<PlatformBookingStatus> statuses);
 }

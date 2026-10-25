@@ -311,6 +311,28 @@ class WalletServiceTest {
     }
 
     @Test
+    void lateBookingDebitAfterTheHoldWasReleasedOpensALateTicketReceivable() {
+        fund("400");
+        WalletEntry hold = service.hold(T, d("400"), "h1", "PLATFORM_BOOKING", "B1");
+        service.releaseHold(hold.getId(), "pb-release:B1");
+        fund("300"); // the released 400 was partly spent before the late ticket arrived
+
+        WalletEntry debit = service.debitOrReceivable(T, WalletEntryType.BOOKING_DEBIT, d("400"), "pb-debit:B1",
+                "PLATFORM_BOOKING", "B1", ReceivableReason.LATE_TICKET);
+        WalletEntry again = service.debitOrReceivable(T, WalletEntryType.BOOKING_DEBIT, d("400"), "pb-debit:B1",
+                "PLATFORM_BOOKING", "B1", ReceivableReason.LATE_TICKET);
+
+        assertThat(again).isSameAs(debit);
+        assertThat(debit.getType()).isEqualTo(WalletEntryType.BOOKING_DEBIT);
+        assertThat(debit.getAmount()).isEqualByComparingTo("-300");
+        assertThat(wallet.getBalance()).isEqualByComparingTo("0");
+        assertThat(receivables).singleElement().satisfies(r -> {
+            assertThat(r.getAmount()).isEqualByComparingTo("100");
+            assertThat(r.getReason()).isEqualTo(ReceivableReason.LATE_TICKET);
+        });
+    }
+
+    @Test
     void releasingAClosedHoldIsRefused() {
         fund("1000");
         WalletEntry hold = service.hold(T, d("400"), "h1", "PLATFORM_BOOKING", "B1");

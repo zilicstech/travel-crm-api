@@ -4,10 +4,12 @@ import com.voyra.crm.dto.PlatformSupplierCredentialRequest;
 import com.voyra.crm.dto.PlatformSupplierCredentialResponse;
 import com.voyra.crm.entity.PlatformSupplierCredential;
 import com.voyra.crm.enums.PlatformAuditAction;
+import com.voyra.crm.enums.PlatformBookingStatus;
 import com.voyra.crm.enums.SupplierEnvironment;
 import com.voyra.crm.enums.SupplierProvider;
 import com.voyra.crm.exception.NotFoundException;
 import com.voyra.crm.models.ResolvedCredential;
+import com.voyra.crm.repository.PlatformBookingRepository;
 import com.voyra.crm.repository.PlatformSupplierCredentialRepository;
 import com.voyra.crm.security.SecurityContextUtil;
 import com.voyra.crm.util.PasswordEncryptionUtil;
@@ -45,12 +47,19 @@ public class PlatformSupplierCredentialService {
 
     private final PlatformSupplierCredentialRepository repository;
     private final PlatformAuditService platformAuditService;
+    private final PlatformBookingRepository bookingRepository;
 
     @Value("${app.security.password-encryption-key}")
     private String encryptionKey;
 
     @Transactional
     public PlatformSupplierCredentialResponse upsert(PlatformSupplierCredentialRequest request) {
+        // in-flight bookings are polled with the stamped credential; switching it mid-flight strands them
+        long inFlight = bookingRepository.countByStatusIn(PlatformBookingStatus.IN_FLIGHT);
+        if (inFlight > 0) {
+            throw new IllegalStateException(inFlight + " booking(s) are still held, booking or unknown"
+                    + " - wait for them to finish before changing the supplier credential");
+        }
         List<PlatformSupplierCredential> rows = repository.findByProviderOrderByUpdatedAtDesc(request.getProvider());
         PlatformSupplierCredential credential = rows.isEmpty()
                 ? PlatformSupplierCredential.builder()

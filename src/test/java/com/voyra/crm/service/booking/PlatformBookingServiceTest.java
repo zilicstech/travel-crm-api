@@ -38,10 +38,13 @@ import com.voyra.crm.repository.PlatformBookingEventRepository;
 import com.voyra.crm.repository.PlatformBookingRepository;
 import com.voyra.crm.repository.PlatformSupplierCredentialRepository;
 import com.voyra.crm.repository.TenantRepository;
+import com.voyra.crm.repository.WalletEntryRepository;
 import com.voyra.crm.repository.WalletRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.service.AgencyPricingService;
 import com.voyra.crm.service.NotificationService;
+import com.voyra.crm.service.PlatformAuditService;
+import com.voyra.crm.enums.PlatformAuditAction;
 import com.voyra.crm.service.WalletService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -99,12 +102,16 @@ class PlatformBookingServiceTest {
     @Mock private PlatformSupplierCredentialRepository credentialRepository;
     @Mock private NotificationService notificationService;
     @Mock private PlatformTransactionManager transactionManager;
+    @Mock private WalletEntryRepository walletEntryRepository;
+    @Mock private PlatformAuditService platformAuditService;
 
     private final FlightBookingProviderConfig config = new FlightBookingProviderConfig();
     private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
     private final PaxCodec paxCodec = new PaxCodec(objectMapper, KEY);
     private final Map<String, PlatformBooking> rows = new HashMap<>();
     private final List<PlatformBookingEvent> savedEvents = new ArrayList<>();
+    /** Wallet entries the mocked WalletService "posted", by idempotency key. */
+    private final Map<String, WalletEntry> walletEntries = new HashMap<>();
     private PlatformBookingService service;
     private Wallet wallet;
     private Tenant tenant;
@@ -123,7 +130,8 @@ class PlatformBookingServiceTest {
     void setUp() {
         service = new PlatformBookingService(bookingRepository, provider, config, quoter, pricingService, walletService,
                 walletRepository, tenantRepository, agentRepository, credentialRepository, notificationService,
-                new PlatformBookingEventRecorder(eventRepository, paxCodec), paxCodec, objectMapper, transactionManager);
+                new PlatformBookingEventRecorder(eventRepository, paxCodec), paxCodec, objectMapper, transactionManager,
+                walletEntryRepository, platformAuditService);
         wallet = Wallet.builder().id("W1").tenantId(T).balance(new BigDecimal("10000.00")).held(BigDecimal.ZERO)
                 .isTest(true).build();
         tenant = Tenant.builder().id(T).status(TenantStatus.ACTIVE).bookingBlocked(false).build();
@@ -147,8 +155,24 @@ class PlatformBookingServiceTest {
                 .thenReturn(new FareReview("rv-1", new BigDecimal("5000.00"), new BigDecimal("4250.00"), "INR",
                         "Refundable", Instant.now().plus(15, ChronoUnit.MINUTES), null));
         lenient().when(quoter.quote(eq(T), eq(PricingProduct.FLIGHT), any(), any())).thenReturn(quote("P1", "4500.00", "100.00", "0.00"));
-        lenient().when(walletService.hold(eq(T), any(), anyString(), anyString(), anyString()))
-                .thenReturn(WalletEntry.builder().id("H1").tenantId(T).build());
+        lenient().when(walletService.hold(eq(T), any(), anyString(), anyString(), anyString())).thenAnswer(i -> {
+            WalletEntry h = WalletEntry.builder().id("H1").tenantId(T).type(WalletEntryType.HOLD).idempotencyKey(i.getArgument(2)).build();
+            walletEntries.put(h.getIdempotencyKey(), h);
+            return h;
+        });
+        lenient().when(walletService.releaseHold(anyString(), anyString())).thenAnswer(i -> {
+            WalletEntry r = WalletEntry.builder().id("R-" + i.getArgument(0)).tenantId(T).type(WalletEntryType.HOLD_RELEASE)
+                    .relatedEntryId(i.getArgument(0)).idempotencyKey(i.getArgument(1)).build();
+            walletEntries.put(r.getIdempotencyKey(), r);
+            return r;
+        });
+        lenient().when(walletEntryRepository.findByIdempotencyKey(anyString()))
+                .thenAnswer(i -> Optional.ofNullable(walletEntries.get(i.<String>getArgument(0))));
+        lenient().when(walletEntryRepository.existsByRelatedEntryIdAndType(anyString(), eq(WalletEntryType.HOLD_RELEASE)))
+                .thenAnswer(i -> walletEntries.values().stream().anyMatch(e -> e.getType() == WalletEntryType.HOLD_RELEASE
+                        && i.<String>getArgument(0).equals(e.getRelatedEntryId())));
+        lenient().when(walletService.debitOrReceivable(eq(T), eq(WalletEntryType.BOOKING_DEBIT), any(), anyString(), anyString(), anyString(), any()))
+                .thenReturn(WalletEntry.builder().id("D2").tenantId(T).build());
         lenient().when(walletService.debitHeld(anyString(), any(), anyString(), anyString(), anyString()))
                 .thenReturn(WalletEntry.builder().id("D1").tenantId(T).build());
         lenient().when(provider.book(any())).thenReturn(ticketed(null));
@@ -577,7 +601,7 @@ class PlatformBookingServiceTest {
         PlatformBookingService broken = new PlatformBookingService(bookingRepository, provider, config, quoter, pricingService,
                 walletService, walletRepository, tenantRepository, agentRepository, credentialRepository, notificationService,
                 new PlatformBookingEventRecorder(eventRepository, paxCodec), new PaxCodec(objectMapper, "bad"), objectMapper,
-                transactionManager);
+                transactionManager, walletEntryRepository, platformAuditService);
         String id = broken.review(reviewRequest()).getBookingId();
 
         assertThatThrownBy(() -> broken.confirm(id, confirmRequest("key-00000001", "4500.00"))).isInstanceOf(RuntimeException.class);
@@ -655,5 +679,148 @@ class PlatformBookingServiceTest {
 
         assertThatThrownBy(() -> service.confirm(id, confirmRequest("key-00000001", "4500.00")))
                 .isInstanceOf(com.voyra.crm.exception.NotFoundException.class);
+    }
+
+    // ---- Task 5: admin resolve, late ticket, abort ----
+
+    private String timedOut() {
+        String id = reviewed();
+        when(provider.book(any())).thenThrow(new SupplierTimeoutException("timed out", null));
+        service.confirm(id, confirmRequest("key-00000001", "4500.00"));
+        return id;
+    }
+
+    private static void loginAsPlatformAdmin() {
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+                new CustomUserPrincipal("SA1", "root", UserType.SUPER_ADMIN, null), null));
+    }
+
+    @Test
+    void adminResolveTicketedDebits() {
+        String id = timedOut();
+        rows.get(id).setStatus(PlatformBookingStatus.UNKNOWN);
+        loginAsPlatformAdmin();
+
+        PlatformBooking b = service.resolve(id, PlatformBookingStatus.TICKETED, "PNR9", List.of("TKT-9"), "Confirmed on Tripjack portal");
+
+        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
+        assertThat(b.getPnr()).isEqualTo("PNR9");
+        assertThat(b.getTicketNumbers()).containsExactly("TKT-9");
+        verify(walletService).debitHeld("H1", new BigDecimal("4500.00"), "pb-debit:" + id, REF, id);
+        verify(walletService).credit(eq(T), eq(WalletEntryType.COMMISSION_CREDIT), any(), eq("pb-comm:" + id), eq(REF), eq(id), anyString());
+        verify(walletService, never()).releaseHold(any(), any());
+        PlatformBookingEvent resolved = savedEvents.stream().filter(e -> e.getType().equals("RESOLVED")).findFirst().orElseThrow();
+        assertThat(String.valueOf(resolved.getPayload())).contains("SA1").contains("TICKETED");
+        verify(platformAuditService).record(eq(PlatformAuditAction.BOOKING_RESOLVE), eq(REF), eq(id), any());
+    }
+
+    @Test
+    void adminResolveFailedReleases() {
+        String id = timedOut();
+        loginAsPlatformAdmin();
+
+        PlatformBooking b = service.resolve(id, PlatformBookingStatus.FAILED, null, null, "Tripjack has no such booking");
+
+        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.FAILED);
+        verify(walletService).releaseHold("H1", "pb-release:" + id);
+        verify(walletService, never()).debitHeld(any(), any(), any(), any(), any());
+        verify(platformAuditService).record(eq(PlatformAuditAction.BOOKING_RESOLVE), eq(REF), eq(id), any());
+    }
+
+    @Test
+    void onlyAPlatformAdminCanResolve() {
+        String id = timedOut();
+
+        assertThatThrownBy(() -> service.resolve(id, PlatformBookingStatus.FAILED, null, null, "no"))
+                .isInstanceOf(AccessDeniedException.class);
+        verify(walletService, never()).releaseHold(any(), any());
+    }
+
+    @Test
+    void resolveRefusesATerminalBookingAndATicketWithoutPnr() {
+        String id = reviewed();
+        service.confirm(id, confirmRequest("key-00000001", "4500.00")); // TICKETED
+        loginAsPlatformAdmin();
+
+        assertThatThrownBy(() -> service.resolve(id, PlatformBookingStatus.FAILED, null, null, "late"))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> service.resolve(id, PlatformBookingStatus.TICKETED, " ", null, "x"))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(walletService, never()).releaseHold(any(), any());
+    }
+
+    @Test
+    void lateTicketAfterResolveFailedDebitsViaReceivable() {
+        String id = timedOut();
+        loginAsPlatformAdmin();
+        service.resolve(id, PlatformBookingStatus.FAILED, null, null, "Tripjack said no booking");
+
+        // a poll that read TICKETED before the resolve committed applies it afterwards
+        PlatformBooking b = service.applySupplierResult(id, ticketed(null));
+
+        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
+        assertThat(b.getDebitEntryId()).isEqualTo("D2");
+        verify(walletService).debitOrReceivable(T, WalletEntryType.BOOKING_DEBIT, new BigDecimal("4500.00"), "pb-debit:" + id,
+                REF, id, ReceivableReason.LATE_TICKET);
+        verify(walletService, never()).debitHeld(any(), any(), any(), any(), any());
+        verify(walletService).credit(eq(T), eq(WalletEntryType.COMMISSION_CREDIT), any(), eq("pb-comm:" + id), eq(REF), eq(id), anyString());
+        verify(notificationService).platformAlert(org.mockito.ArgumentMatchers.contains("Late ticket"), anyString());
+    }
+
+    private void committedHold(String id) {
+        walletEntries.put("pb-hold:" + id, WalletEntry.builder().id("H1").tenantId(T).type(WalletEntryType.HOLD)
+                .idempotencyKey("pb-hold:" + id).build());
+    }
+
+    @Test
+    void abortHeldReleasesTheHold() {
+        String id = reviewed();
+        committedHold(id);
+        rows.get(id).setStatus(PlatformBookingStatus.HELD);
+        rows.get(id).setHoldEntryId("H1");
+
+        PlatformBooking b = service.abort(id);
+        PlatformBooking again = service.abort(id);
+
+        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.ABORTED);
+        assertThat(again.getStatus()).isEqualTo(PlatformBookingStatus.ABORTED);
+        verify(walletService, times(1)).releaseHold("H1", "pb-release:" + id);
+        assertThat(savedEvents).extracting(PlatformBookingEvent::getType).contains("ABORTED");
+    }
+
+    @Test
+    void abortReviewingReleasesAnOrphanHold() {
+        String id = reviewed();
+        // tx1 rolled back after the REQUIRES_NEW hold committed: the row is REVIEWING with no holdEntryId
+        committedHold(id);
+
+        PlatformBooking b = service.abort(id);
+
+        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.ABORTED);
+        verify(walletService).releaseHold("H1", "pb-release:" + id);
+    }
+
+    @Test
+    void abortReviewingWithoutAHoldPostsNothing() {
+        String id = reviewed();
+
+        assertThat(service.abort(id).getStatus()).isEqualTo(PlatformBookingStatus.ABORTED);
+        verify(walletService, never()).releaseHold(any(), any());
+    }
+
+    @Test
+    void abortAfterTheBookWasSentIsRefused() {
+        String id = timedOut();
+
+        assertThatThrownBy(() -> service.abort(id)).isInstanceOf(IllegalStateException.class);
+        verify(walletService, never()).releaseHold(any(), any());
+    }
+
+    @Test
+    void anotherAgencyCannotAbort() {
+        String id = reviewed();
+        rows.get(id).setTenantId("T2");
+
+        assertThatThrownBy(() -> service.abort(id)).isInstanceOf(com.voyra.crm.exception.NotFoundException.class);
     }
 }

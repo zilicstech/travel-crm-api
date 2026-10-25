@@ -40,6 +40,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /** The platform's one Tripjack key: stored encrypted, shown masked, never revealed, resolved only for the providers. */
@@ -51,6 +52,7 @@ class PlatformSupplierCredentialServiceTest {
 
     @Mock private PlatformSupplierCredentialRepository repository;
     @Mock private PlatformAuditService platformAuditService;
+    @Mock private com.voyra.crm.repository.PlatformBookingRepository bookingRepository;
 
     @InjectMocks private PlatformSupplierCredentialService service;
 
@@ -274,6 +276,17 @@ class PlatformSupplierCredentialServiceTest {
         assertThatThrownBy(() -> service.resolveActive(SupplierProvider.TRIPJACK))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("Tripjack is not configured on the platform");
+    }
+
+    @Test
+    void credentialSwitchBlockedWhileBookingsInFlight() {
+        when(bookingRepository.countByStatusIn(com.voyra.crm.enums.PlatformBookingStatus.IN_FLIGHT)).thenReturn(2L);
+
+        assertThatThrownBy(() -> service.upsert(request("tj_new_key_1234")))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("2 booking");
+        verify(repository, never()).save(any());
+        verifyNoInteractions(platformAuditService);
     }
 
     @Test

@@ -45,8 +45,9 @@ public class WalletService {
 
     private static final Set<WalletEntryType> CREDIT_TYPES = EnumSet.of(WalletEntryType.TOPUP,
             WalletEntryType.COMMISSION_CREDIT, WalletEntryType.REFUND_CREDIT, WalletEntryType.ADJUSTMENT);
+    // BOOKING_DEBIT here is the late ticket: the supplier ticketed after the hold was already released
     private static final Set<WalletEntryType> DEBIT_OR_RECEIVABLE_TYPES = EnumSet.of(WalletEntryType.COMMISSION_RECALL,
-            WalletEntryType.TDS_DEDUCTED, WalletEntryType.ADJUSTMENT);
+            WalletEntryType.TDS_DEDUCTED, WalletEntryType.ADJUSTMENT, WalletEntryType.BOOKING_DEBIT);
     private static final String RECEIVABLE_REF = "PLATFORM_RECEIVABLE";
 
     private final WalletRepository walletRepository;
@@ -147,7 +148,7 @@ public class WalletService {
         return entry;
     }
 
-    /** Recalls, TDS and chargebacks: posts what available covers and opens a DUE receivable for the rest. */
+    /** Recalls, TDS, chargebacks and late tickets: posts what available covers and opens a DUE receivable for the rest. */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public WalletEntry debitOrReceivable(String tenantId, WalletEntryType type, BigDecimal amount, String idempotencyKey,
                                          String refType, String refId, ReceivableReason reason) {

@@ -12,6 +12,7 @@ import com.voyra.crm.entity.PlatformSupplierCredential;
 import com.voyra.crm.entity.Tenant;
 import com.voyra.crm.entity.Wallet;
 import com.voyra.crm.entity.WalletEntry;
+import com.voyra.crm.enums.PlatformAuditAction;
 import com.voyra.crm.enums.PlatformBookingStatus;
 import com.voyra.crm.enums.PricingProduct;
 import com.voyra.crm.enums.ReceivableReason;
@@ -28,15 +29,18 @@ import com.voyra.crm.models.booking.BookRequest;
 import com.voyra.crm.models.booking.BookResult;
 import com.voyra.crm.models.booking.FareReview;
 import com.voyra.crm.models.booking.PaxDetail;
+import com.voyra.crm.models.booking.SupplierBookingStatus;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.PlatformBookingRepository;
 import com.voyra.crm.repository.PlatformSupplierCredentialRepository;
 import com.voyra.crm.repository.TenantRepository;
+import com.voyra.crm.repository.WalletEntryRepository;
 import com.voyra.crm.repository.WalletRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.security.SecurityContextUtil;
 import com.voyra.crm.service.AgencyPricingService;
 import com.voyra.crm.service.NotificationService;
+import com.voyra.crm.service.PlatformAuditService;
 import com.voyra.crm.service.WalletService;
 import com.voyra.crm.util.UniqueIdResolver;
 import lombok.extern.slf4j.Slf4j;
@@ -50,11 +54,9 @@ import org.springframework.util.Assert;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 @Slf4j
 @Service
@@ -62,8 +64,6 @@ public class PlatformBookingService {
 
     private static final String REF_TYPE = "PLATFORM_BOOKING";
     private static final Duration DEFAULT_REVIEW_TTL = Duration.ofMinutes(15);
-    private static final Set<PlatformBookingStatus> IN_FLIGHT = EnumSet.of(PlatformBookingStatus.HELD,
-            PlatformBookingStatus.BOOKING, PlatformBookingStatus.UNKNOWN);
     private static final TypeReference<Map<String, Object>> MAP = new TypeReference<>() { };
 
     private final PlatformBookingRepository bookingRepository;
@@ -81,6 +81,8 @@ public class PlatformBookingService {
     private final PaxCodec paxCodec;
     private final ObjectMapper objectMapper;
     private final TransactionTemplate tx;
+    private final WalletEntryRepository walletEntryRepository;
+    private final PlatformAuditService platformAuditService;
 
     public PlatformBookingService(PlatformBookingRepository bookingRepository, FlightBookingProvider provider,
                                   FlightBookingProviderConfig providerConfig, AgencyPriceQuoter quoter,
@@ -88,7 +90,8 @@ public class PlatformBookingService {
                                   WalletRepository walletRepository, TenantRepository tenantRepository,
                                   AgentRepository agentRepository, PlatformSupplierCredentialRepository credentialRepository,
                                   NotificationService notificationService, PlatformBookingEventRecorder events,
-                                  PaxCodec paxCodec, ObjectMapper objectMapper, PlatformTransactionManager transactionManager) {
+                                  PaxCodec paxCodec, ObjectMapper objectMapper, PlatformTransactionManager transactionManager,
+                                  WalletEntryRepository walletEntryRepository, PlatformAuditService platformAuditService) {
         this.bookingRepository = bookingRepository;
         this.provider = provider;
         this.providerConfig = providerConfig;
@@ -104,6 +107,75 @@ public class PlatformBookingService {
         this.paxCodec = paxCodec;
         this.objectMapper = objectMapper;
         this.tx = new TransactionTemplate(transactionManager);
+        this.walletEntryRepository = walletEntryRepository;
+        this.platformAuditService = platformAuditService;
+    }
+
+    /**
+     * The agency drops a booking the supplier was never asked to book (REVIEWING or HELD). Releases the hold found by
+     * its key, not by {@code holdEntryId}: a REVIEWING row can carry an orphan hold whose tx1 rolled back. Aborting twice
+     * returns the aborted row.
+     */
+    public PlatformBooking abort(String bookingId) {
+        CustomUserPrincipal principal = requireBooker();
+        return tx.execute(s -> {
+            PlatformBooking b = bookingRepository.findByIdForUpdate(bookingId)
+                    .filter(x -> principal.tenantId().equals(x.getTenantId()))
+                    .orElseThrow(() -> new NotFoundException("Booking not found"));
+            if (b.getStatus() == PlatformBookingStatus.ABORTED) {
+                return b;
+            }
+            if (b.getStatus() != PlatformBookingStatus.REVIEWING && b.getStatus() != PlatformBookingStatus.HELD) {
+                throw new IllegalStateException("This booking was already sent to the supplier and cannot be aborted");
+            }
+            walletEntryRepository.findByIdempotencyKey("pb-hold:" + bookingId)
+                    .filter(h -> !walletEntryRepository.existsByRelatedEntryIdAndType(h.getId(), WalletEntryType.HOLD_RELEASE))
+                    .ifPresent(h -> walletService.releaseHold(h.getId(), "pb-release:" + bookingId));
+            b.setStatus(PlatformBookingStatus.ABORTED);
+            b.setAbortReason("Aborted by the agency");
+            events.record(bookingId, "ABORTED", Map.of("by", principal.userId()));
+            return bookingRepository.save(b);
+        });
+    }
+
+    /**
+     * Platform admin settles a BOOKING/UNKNOWN row the poller could not: TICKETED debits like a supplier ticket,
+     * FAILED releases the hold. Applied through {@link #applyLocked} under the same lock as the poller.
+     */
+    public PlatformBooking resolve(String bookingId, PlatformBookingStatus outcome, String pnr, List<String> ticketNumbers, String note) {
+        CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
+        if (!principal.isSuperAdmin()) {
+            throw new AccessDeniedException("Only a platform admin can resolve a booking");
+        }
+        if (outcome != PlatformBookingStatus.TICKETED && outcome != PlatformBookingStatus.FAILED) {
+            throw new IllegalArgumentException("A booking can only be resolved as TICKETED or FAILED");
+        }
+        if (outcome == PlatformBookingStatus.TICKETED && (pnr == null || pnr.isBlank())) {
+            throw new IllegalArgumentException("The PNR is required to resolve a booking as ticketed");
+        }
+        if (note == null || note.isBlank()) {
+            throw new IllegalArgumentException("A note is required to resolve a booking");
+        }
+        PlatformBooking booking = tx.execute(s -> {
+            PlatformBooking b = bookingRepository.findByIdForUpdate(bookingId).orElseThrow(() -> new NotFoundException("Booking not found"));
+            if (b.getStatus() != PlatformBookingStatus.BOOKING && b.getStatus() != PlatformBookingStatus.UNKNOWN) {
+                throw new IllegalStateException("Only a booking whose supplier outcome is unknown can be resolved (it is " + b.getStatus() + ")");
+            }
+            Map<String, Object> detail = new LinkedHashMap<>();
+            detail.put("outcome", outcome.name());
+            detail.put("from", b.getStatus().name());
+            detail.put("by", principal.userId());
+            detail.put("note", note);
+            events.record(bookingId, "RESOLVED", detail);
+            platformAuditService.record(PlatformAuditAction.BOOKING_RESOLVE, REF_TYPE, bookingId, detail);
+            SupplierBookingStatus status = outcome == PlatformBookingStatus.TICKETED ? SupplierBookingStatus.TICKETED : SupplierBookingStatus.FAILED;
+            return applyLocked(bookingId, new BookResult(null, status, pnr, ticketNumbers == null ? List.of() : ticketNumbers,
+                    "Resolved by Voyra", null));
+        });
+        if (booking.getStatus() == PlatformBookingStatus.TICKETED) {
+            scheduleMirror(booking);
+        }
+        return booking;
     }
 
     /** Re-prices the offer with the supplier and stamps a REVIEWING row; every refusal happens before the supplier call. */
@@ -301,7 +373,7 @@ public class PlatformBookingService {
                 }
             }
             case FAILED -> {
-                if (IN_FLIGHT.contains(b.getStatus())) {
+                if (PlatformBookingStatus.IN_FLIGHT.contains(b.getStatus())) {
                     walletService.releaseHold(b.getHoldEntryId(), "pb-release:" + bookingId);
                     b.setStatus(PlatformBookingStatus.FAILED);
                     b.setSupplierMessage(truncate(result.message()));
@@ -315,10 +387,21 @@ public class PlatformBookingService {
 
     private void ticket(PlatformBooking b, BookResult result) {
         String id = b.getId();
-        if (b.getHoldEntryId() == null) {
-            throw new IllegalStateException("Booking " + id + " has no wallet hold to debit");
+        WalletEntry debit;
+        if (walletEntryRepository.findByIdempotencyKey("pb-release:" + id).isPresent()) {
+            // late ticket: the hold went back to the agency (resolved FAILED) - still debited, receivable if short
+            debit = walletService.debitOrReceivable(b.getTenantId(), WalletEntryType.BOOKING_DEBIT, b.getDisplayed(),
+                    "pb-debit:" + id, REF_TYPE, id, ReceivableReason.LATE_TICKET);
+            events.record(id, "LATE_TICKET", Map.of("previousStatus", b.getStatus().name()));
+            notificationService.platformAlert("Late ticket on booking " + id,
+                    "Booking " + id + " for agency " + b.getTenantId() + " ticketed after its hold was released ("
+                            + b.getStatus() + "); debited " + b.getDisplayed() + ", with a receivable for any shortfall.");
+        } else {
+            if (b.getHoldEntryId() == null) {
+                throw new IllegalStateException("Booking " + id + " has no wallet hold to debit");
+            }
+            debit = walletService.debitHeld(b.getHoldEntryId(), b.getDisplayed(), "pb-debit:" + id, REF_TYPE, id);
         }
-        WalletEntry debit = walletService.debitHeld(b.getHoldEntryId(), b.getDisplayed(), "pb-debit:" + id, REF_TYPE, id);
         b.setDebitEntryId(debit.getId());
         if (positive(b.getAgencyCommission())) {
             walletService.credit(b.getTenantId(), WalletEntryType.COMMISSION_CREDIT, b.getAgencyCommission(), "pb-comm:" + id,
