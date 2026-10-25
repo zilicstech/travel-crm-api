@@ -13,6 +13,7 @@ import com.voyra.crm.enums.ReceivableReason;
 import com.voyra.crm.enums.TopupStatus;
 import com.voyra.crm.enums.WalletStatus;
 import com.voyra.crm.enums.WalletEntryType;
+import com.voyra.crm.models.GatewayPayment;
 import com.voyra.crm.repository.GatewayOrderRepository;
 import com.voyra.crm.repository.GatewayWebhookOrphanRepository;
 import com.voyra.crm.repository.TopupRequestRepository;
@@ -107,13 +108,19 @@ public class GatewayWebhookService {
     }
 
     private WebhookOutcome captured(GatewayOrder order, JsonNode payment) {
+        return applyCapture(order, new GatewayPayment(payment.path("id").asText(), order.getGatewayOrderId(), paise(payment),
+                payment.path("currency").asText(), payment.path("status").asText()));
+    }
+
+    /** The one capture path, shared with the reconciliation job. Caller holds the order row lock inside a transaction. */
+    public WebhookOutcome applyCapture(GatewayOrder order, GatewayPayment payment) {
         if (order.getStatus() == GatewayOrderStatus.FLAGGED) {
             return WebhookOutcome.IGNORED;
         }
-        String paymentId = payment.path("id").asText();
-        BigDecimal amount = paise(payment);
-        String currency = payment.path("currency").asText();
-        String status = payment.path("status").asText();
+        String paymentId = payment.paymentId();
+        BigDecimal amount = payment.amountInr();
+        String currency = payment.currency();
+        String status = payment.status();
         if (amount.compareTo(order.getAmount()) != 0 || !"INR".equals(currency) || !"INR".equals(order.getCurrency())
                 || !"captured".equals(status)) {
             order.setStatus(GatewayOrderStatus.FLAGGED);
