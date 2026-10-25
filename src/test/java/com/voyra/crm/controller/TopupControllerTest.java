@@ -1,0 +1,86 @@
+package com.voyra.crm.controller;
+
+import com.voyra.crm.config.SecurityConfig;
+import com.voyra.crm.dto.TopupResponse;
+import com.voyra.crm.enums.TopupStatus;
+import com.voyra.crm.enums.UserType;
+import com.voyra.crm.security.CustomUserPrincipal;
+import com.voyra.crm.security.JwtAuthenticationFilter;
+import com.voyra.crm.security.JwtService;
+import com.voyra.crm.security.RestAuthenticationEntryPoint;
+import com.voyra.crm.service.TopupService;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.context.annotation.Import;
+import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.RequestPostProcessor;
+
+import java.util.List;
+
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+@WebMvcTest(TopupController.class)
+@ActiveProfiles("test")
+@Import({SecurityConfig.class, JwtAuthenticationFilter.class, JwtService.class, RestAuthenticationEntryPoint.class})
+class TopupControllerTest {
+
+    @Autowired
+    private MockMvc mockMvc;
+    @MockBean
+    private TopupService service;
+
+    private static RequestPostProcessor as(UserType type) {
+        return authentication(new UsernamePasswordAuthenticationToken(
+                new CustomUserPrincipal("U1", "u", type, "T1"), null,
+                List.of(new SimpleGrantedAuthority("ROLE_" + type.name()))));
+    }
+
+    private static MockMultipartFile proof() {
+        return new MockMultipartFile("proof", "slip.pdf", "application/pdf", "%PDF-1.4".getBytes());
+    }
+
+    @Test
+    void ownerRequestsATopup() throws Exception {
+        given(service.createBank(any(), any(), any(), any())).willReturn(TopupResponse.builder().id("R1").status(TopupStatus.PENDING).build());
+        mockMvc.perform(multipart("/api/wallet/topups/bank").file(proof()).param("amount", "50000").param("bankRef", "SBIN1234")
+                        .with(as(UserType.AGENCY_OWNER)))
+                .andExpect(status().isCreated()).andExpect(jsonPath("$.id").value("R1"));
+    }
+
+    @Test
+    void shortBankRefIsAFieldError() throws Exception {
+        mockMvc.perform(multipart("/api/wallet/topups/bank").file(proof()).param("amount", "50000").param("bankRef", "ab")
+                        .with(as(UserType.AGENCY_OWNER)))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.details.errors.bankRef").exists());
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void accountantAndAgentCannotRequest() throws Exception {
+        for (UserType t : new UserType[]{UserType.ACCOUNTANT, UserType.AGENT}) {
+            mockMvc.perform(multipart("/api/wallet/topups/bank").file(proof()).param("amount", "50000").param("bankRef", "SBIN1234")
+                    .with(as(t))).andExpect(status().isForbidden());
+        }
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void accountantListsButAgentCannot() throws Exception {
+        given(service.listForAgency("T1")).willReturn(List.of());
+        mockMvc.perform(get("/api/wallet/topups").with(as(UserType.ACCOUNTANT))).andExpect(status().isOk());
+        mockMvc.perform(get("/api/wallet/topups").with(as(UserType.AGENT))).andExpect(status().isForbidden());
+    }
+}

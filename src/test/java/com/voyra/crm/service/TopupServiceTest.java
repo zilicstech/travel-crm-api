@@ -1,0 +1,158 @@
+package com.voyra.crm.service;
+
+import com.voyra.crm.dto.BankTopupCreateRequest;
+import com.voyra.crm.dto.TopupApproveRequest;
+import com.voyra.crm.dto.TopupRejectRequest;
+import com.voyra.crm.dto.TopupResponse;
+import com.voyra.crm.entity.TopupRequest;
+import com.voyra.crm.entity.Wallet;
+import com.voyra.crm.entity.WalletEntry;
+import com.voyra.crm.enums.TopupMode;
+import com.voyra.crm.enums.TopupStatus;
+import com.voyra.crm.enums.WalletEntryType;
+import com.voyra.crm.enums.WalletStatus;
+import com.voyra.crm.exception.FieldValidationException;
+import com.voyra.crm.repository.TenantRepository;
+import com.voyra.crm.repository.TopupRequestRepository;
+import com.voyra.crm.repository.WalletRepository;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.mock.web.MockMultipartFile;
+
+import java.math.BigDecimal;
+import java.util.Optional;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+
+@ExtendWith(MockitoExtension.class)
+class TopupServiceTest {
+
+    private static final byte[] PDF = "%PDF-1.4 test".getBytes();
+
+    @Mock
+    private TopupRequestRepository topupRepository;
+    @Mock
+    private WalletRepository walletRepository;
+    @Mock
+    private TenantRepository tenantRepository;
+    @Mock
+    private WalletService walletService;
+    @Mock
+    private FileStorageService fileStorageService;
+    @Mock
+    private PlatformAuditService platformAuditService;
+    @InjectMocks
+    private TopupService service;
+
+    private static BankTopupCreateRequest request(String ref, byte[] bytes) {
+        BankTopupCreateRequest r = new BankTopupCreateRequest();
+        r.setAmount(new BigDecimal("50000.00"));
+        r.setBankRef(ref);
+        r.setProof(new MockMultipartFile("proof", "slip.pdf", "application/pdf", bytes));
+        return r;
+    }
+
+    private static Wallet wallet(WalletStatus status) {
+        return Wallet.builder().id("W1").tenantId("T1").status(status).build();
+    }
+
+    private static TopupRequest pending() {
+        return TopupRequest.builder().id("R1").tenantId("T1").walletId("W1").mode(TopupMode.BANK_TRANSFER)
+                .amount(new BigDecimal("50000.00")).status(TopupStatus.PENDING).bankRef("UTR1").build();
+    }
+
+    @Test
+    void normalizeUpperCasesAndDropsWhitespace() {
+        assertThat(TopupService.normalize(" sbin 12\t3x ")).isEqualTo("SBIN123X");
+    }
+
+    @Test
+    void bankRefIsUniqueIgnoringCaseAndSpaces() {
+        given(walletRepository.findByTenantId("T1")).willReturn(Optional.of(wallet(WalletStatus.OPEN)));
+        given(topupRepository.existsByBankRefNormalized("SBIN1234")).willReturn(true);
+        assertThatThrownBy(() -> service.createBank("T1", "U1", "Asha", request("sbin 1234", PDF)))
+                .isInstanceOfSatisfying(FieldValidationException.class, e -> assertThat(e.getField()).isEqualTo("bankRef"));
+        verifyNoInteractions(fileStorageService);
+    }
+
+    @Test
+    void aClosedWalletCannotRequestATopup() {
+        given(walletRepository.findByTenantId("T1")).willReturn(Optional.of(wallet(WalletStatus.CLOSED)));
+        assertThatThrownBy(() -> service.createBank("T1", "U1", "Asha", request("SBIN1234", PDF)))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("closed");
+    }
+
+    @Test
+    void proofOver5MbIsRefused() {
+        given(walletRepository.findByTenantId("T1")).willReturn(Optional.of(wallet(WalletStatus.OPEN)));
+        byte[] big = new byte[5 * 1024 * 1024 + 1];
+        System.arraycopy(PDF, 0, big, 0, PDF.length);
+        assertThatThrownBy(() -> service.createBank("T1", "U1", "Asha", request("SBIN1234", big)))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("5 MB");
+        verify(topupRepository, never()).save(any());
+    }
+
+    @Test
+    void createStoresProofAndSavesPending() {
+        given(walletRepository.findByTenantId("T1")).willReturn(Optional.of(wallet(WalletStatus.OPEN)));
+        given(fileStorageService.store(anyString(), anyString(), anyString(), any())).willReturn("k/slip.pdf");
+        given(topupRepository.save(any(TopupRequest.class))).willAnswer(i -> i.getArgument(0));
+        TopupResponse r = service.createBank("T1", "U1", "Asha", request("sbin 1234", PDF));
+        assertThat(r.getStatus()).isEqualTo(TopupStatus.PENDING);
+        assertThat(r.getBankRef()).isEqualTo("sbin 1234");
+        assertThat(r.getRequestedByName()).isEqualTo("Asha");
+    }
+
+    @Test
+    void approveCreditsTheApprovedAmountNotTheRequested() {
+        TopupRequest t = pending();
+        given(topupRepository.findByIdForUpdate("R1")).willReturn(Optional.of(t));
+        WalletEntry entry = WalletEntry.builder().id("E1").build();
+        given(walletService.credit(eq("T1"), eq(WalletEntryType.TOPUP), eq(new BigDecimal("49500.00")),
+                eq("topup:R1"), eq("TOPUP_REQUEST"), eq("R1"), anyString())).willReturn(entry);
+        TopupApproveRequest req = new TopupApproveRequest();
+        req.setApprovedAmount(new BigDecimal("49500.00"));
+        TopupResponse r = service.approve("R1", "A1", req);
+        assertThat(r.getStatus()).isEqualTo(TopupStatus.APPROVED);
+        assertThat(r.getApprovedAmount()).isEqualByComparingTo("49500.00");
+        assertThat(t.getCreditEntryId()).isEqualTo("E1");
+        verify(platformAuditService).record(eq(com.voyra.crm.enums.PlatformAuditAction.TOPUP_DECISION), anyString(), eq("R1"), any());
+    }
+
+    @Test
+    void approvingTwiceIs409() {
+        TopupRequest t = pending();
+        t.setStatus(TopupStatus.APPROVED);
+        given(topupRepository.findByIdForUpdate("R1")).willReturn(Optional.of(t));
+        TopupApproveRequest req = new TopupApproveRequest();
+        req.setApprovedAmount(BigDecimal.TEN);
+        assertThatThrownBy(() -> service.approve("R1", "A1", req))
+                .isInstanceOf(IllegalStateException.class).hasMessage("This top-up was already approved");
+        verifyNoInteractions(walletService);
+    }
+
+    @Test
+    void rejectNeedsANoteAndPostsNothing() {
+        TopupRequest t = pending();
+        given(topupRepository.findByIdForUpdate("R1")).willReturn(Optional.of(t));
+        TopupRejectRequest req = new TopupRejectRequest();
+        req.setNote("Not in statement");
+        TopupResponse r = service.reject("R1", "A1", req);
+        assertThat(r.getStatus()).isEqualTo(TopupStatus.REJECTED);
+        assertThat(r.getReviewNote()).isEqualTo("Not in statement");
+        verifyNoInteractions(walletService);
+        t.setStatus(TopupStatus.REJECTED);
+        assertThatThrownBy(() -> service.reject("R1", "A1", req)).hasMessage("This top-up was already rejected");
+    }
+}

@@ -69,6 +69,16 @@ public class GlobalExceptionHandler {
         return ResponseEntity.badRequest().body(response);
     }
 
+    @ExceptionHandler(FieldValidationException.class)
+    public ResponseEntity<ApiErrorResponse> handleFieldValidation(FieldValidationException ex, HttpServletRequest request) {
+        String path = getPath(request);
+        log.warn("Validation failed - path: {}, field: {}", path, ex.getField());
+        ApiErrorResponse response = ApiErrorResponse.of("Validation failed",
+                "One or more request fields are invalid", null, HttpStatus.BAD_REQUEST.value(), path);
+        response.setDetails(Map.of("errors", Map.of(ex.getField(), ex.getMessage())));
+        return ResponseEntity.badRequest().body(response);
+    }
+
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<ApiErrorResponse> handleMessageNotReadable(HttpMessageNotReadableException ex,
                                                                         HttpServletRequest request) {

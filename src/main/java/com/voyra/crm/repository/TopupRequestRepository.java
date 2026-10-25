@@ -27,4 +27,10 @@ public interface TopupRequestRepository extends JpaRepository<TopupRequest, Stri
     boolean existsByWalletIdAndStatus(String walletId, TopupStatus status);
 
     List<TopupRequest> findByStatusAndModeAndCreatedAtBefore(TopupStatus status, TopupMode mode, Instant before);
+
+    List<TopupRequest> findByTenantIdOrderByCreatedAtDesc(String tenantId);
+
+    List<TopupRequest> findByStatusOrderByCreatedAtDesc(TopupStatus status);
+
+    List<TopupRequest> findAllByOrderByCreatedAtDesc();
 }
