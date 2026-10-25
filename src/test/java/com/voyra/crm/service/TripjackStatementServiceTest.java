@@ -4,6 +4,7 @@ import com.voyra.crm.dto.StatementImportResponse;
 import com.voyra.crm.dto.StatementLineResponse;
 import com.voyra.crm.entity.PlatformBooking;
 import com.voyra.crm.entity.PlatformStatementImport;
+import com.voyra.crm.entity.PlatformStatementLine;
 import com.voyra.crm.enums.PlatformAuditAction;
 import com.voyra.crm.enums.PlatformBookingStatus;
 import com.voyra.crm.enums.StatementLineStatus;
@@ -36,6 +37,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.times;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
@@ -124,21 +126,47 @@ class TripjackStatementServiceTest {
         verify(auditService).record(eq(PlatformAuditAction.STATEMENT_IMPORT), eq("STATEMENT_IMPORT"), anyString(), any());
     }
 
+    /**
+     * Review Focus 2, after the final review: the same file may be uploaded again (an operator fixes an unmatched cause and
+     * re-imports), but per-line idempotency still reconciles each line once - the second upload shows the applied lines as
+     * DUPLICATE and changes nothing, while a line unmatched the first time can now apply.
+     */
     @Test
-    void sameFileTwiceIsRefusedAndReconcilesNothing() {
-        given(importRepository.existsByFileSha256(anyString())).willReturn(true);
-        assertThatThrownBy(() -> run(HEADER + "TJ-1,ABC123,SALE,10000,180,2026-10-05\n"))
-                .isInstanceOf(IllegalStateException.class).hasMessage("Already imported");
-        verify(bookingRepository, never()).findByIdForUpdate(anyString());
-        verify(bookingRepository, never()).save(any());
-        verify(importRepository, never()).save(any());
+    @SuppressWarnings("unchecked")
+    void theSameFileTwiceAppliesEachLineOnce() {
+        List<PlatformStatementLine> stored = new java.util.ArrayList<>();
+        given(lineRepository.saveAll(any())).willAnswer(i -> {
+            ((Iterable<PlatformStatementLine>) i.getArgument(0)).forEach(stored::add);
+            return i.getArgument(0);
+        });
+        given(lineRepository.existsByPlatformBookingIdAndTypeAndStatus(anyString(), any(), any())).willAnswer(i -> stored.stream()
+                .anyMatch(l -> i.getArgument(0).equals(l.getPlatformBookingId()) && l.getType() == i.getArgument(1)
+                        && l.getStatus() == i.getArgument(2)));
+        PlatformBooking b = ticketed();
+        found(b);
+        String file = HEADER + "TJ-1,ABC123,SALE,10000,180,2026-10-05\n" + "TJ-2,XYZ789,SALE,10000,170,2026-10-05\n";
+
+        StatementImportResponse first = run(file);
+        assertThat(line(first, 2).getStatus()).isEqualTo(StatementLineStatus.APPLIED);
+        assertThat(line(first, 3).getStatus()).isEqualTo(StatementLineStatus.UNMATCHED);
+
+        PlatformBooking other = cancelled().toBuilder().status(PlatformBookingStatus.TICKETED).build(); // the unmatched cause, fixed
+        found(other);
+        StatementImportResponse second = run(file);
+
+        assertThat(line(second, 2).getStatus()).isEqualTo(StatementLineStatus.DUPLICATE);
+        assertThat(line(second, 3).getStatus()).isEqualTo(StatementLineStatus.APPLIED);
+        assertThat(b.getVoyraNet()).isEqualByComparingTo("-440.00"); // applied once, not twice
+        verify(bookingRepository, times(1)).save(b);
+        verify(importRepository, times(2)).save(any());
     }
 
     @Test
-    void theFileHashIsSha256OfTheBytes() {
+    void theFileHashIsSha256OfTheBytesAndRecordedOnTheImport() {
         run(HEADER + "TJ-9,,SALE,1,1,2026-10-05\n");
-        // sha256("booking_id,pnr,type,amount,commission,date\nTJ-9,,SALE,1,1,2026-10-05\n")
-        verify(importRepository).existsByFileSha256(TripjackStatementService.sha256(
+        org.mockito.ArgumentCaptor<PlatformStatementImport> imp = org.mockito.ArgumentCaptor.forClass(PlatformStatementImport.class);
+        verify(importRepository).save(imp.capture());
+        assertThat(imp.getValue().getFileSha256()).isEqualTo(TripjackStatementService.sha256(
                 (HEADER + "TJ-9,,SALE,1,1,2026-10-05\n").getBytes(StandardCharsets.UTF_8)));
         assertThat(TripjackStatementService.sha256("abc".getBytes(StandardCharsets.UTF_8)))
                 .isEqualTo("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");

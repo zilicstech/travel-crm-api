@@ -46,7 +46,8 @@ import java.util.Set;
  * Imports a Tripjack statement (spec 5.1): a SALE line records what Voyra actually earned
  * ({@code voyra_earned_actual}, source STATEMENT - the estimate in {@code voyra_earned} is kept), a REFUND line
  * records the actual clawback as the reversal, and voyra_net is re-derived on the earning in force.
- * Idempotent twice over: a file (by SHA-256) imports once, and a (booking, type) line applies once.
+ * A (booking, type) line applies once, however often it is imported: the same file may be uploaded again after an
+ * unmatched cause is fixed, and its applied lines then show as DUPLICATE. The file's SHA-256 is recorded on the import.
  * A file with any unreadable line is refused whole, so nothing is half-imported. Only bookings of the
  * import's supplier environment match, so a live statement never touches test bookings.
  */
@@ -83,10 +84,8 @@ public class TripjackStatementService {
             throw new IllegalArgumentException("The file could not be read - try uploading it again");
         }
         List<Parsed> parsed = parse(bytes);
+        // the same file may come again (after fixing an unmatched line): per-line idempotency keeps every line applied once
         String sha = sha256(bytes);
-        if (importRepository.existsByFileSha256(sha)) {
-            throw new IllegalStateException("Already imported");
-        }
 
         String importId = UniqueIdResolver.resolve(importRepository::existsById);
         Set<String> appliedHere = new HashSet<>();

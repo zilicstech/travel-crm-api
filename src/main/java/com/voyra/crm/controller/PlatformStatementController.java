@@ -30,7 +30,7 @@ public class PlatformStatementController {
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @Operation(summary = "Import a Tripjack statement CSV",
             description = "Columns booking_id, pnr, type (SALE|REFUND), amount, commission, date - mapped by header name. "
-                    + "CSV only, up to 5 MB. Only bookings of ?environment= (default PROD; UAT or MOCK to test) match. The same file again is 409 \"Already imported\"; a line already applied is listed as DUPLICATE. Audited.")
+                    + "CSV only, up to 5 MB. Only bookings of ?environment= (default PROD; UAT or MOCK to test) match. The same file may be imported again; a line already applied is listed as DUPLICATE and not applied twice. Audited.")
     public ResponseEntity<StatementImportResponse> importStatement(
             @RequestPart("file") MultipartFile file,
             @RequestParam(value = "environment", defaultValue = "PROD") SupplierEnvironment environment) {

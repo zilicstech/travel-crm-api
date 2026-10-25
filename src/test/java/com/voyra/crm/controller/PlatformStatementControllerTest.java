@@ -60,13 +60,6 @@ class PlatformStatementControllerTest {
     }
 
     @Test
-    void theSameFileAgainIs409() throws Exception {
-        given(service.importStatement(any(), any(), any(), any())).willThrow(new IllegalStateException("Already imported"));
-        mockMvc.perform(multipart("/api/platform/statements").file(FILE).with(as(UserType.SUPER_ADMIN)))
-                .andExpect(status().isConflict()).andExpect(jsonPath("$.message").value("Already imported"));
-    }
-
-    @Test
     void theAdminMayImportAgainstATestEnvironment() throws Exception {
         given(service.importStatement(any(), eq(SupplierEnvironment.MOCK), eq("A1"), eq("admin")))
                 .willReturn(StatementImportResponse.builder().id("I2").appliedLines(2).lines(List.of()).build());

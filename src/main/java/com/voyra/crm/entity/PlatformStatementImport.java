@@ -12,7 +12,7 @@ import lombok.Setter;
 
 import java.time.Instant;
 
-/** One Tripjack statement file imported by a platform admin - public schema. The SHA-256 is unique: a file imports once. */
+/** One Tripjack statement file imported by a platform admin - public schema. The SHA-256 is recorded, not unique: a file may be re-imported (lines apply once). */
 @Entity
 @Table(name = "platform_statement_import")
 @Getter
