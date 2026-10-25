@@ -184,6 +184,13 @@ public class GatewayWebhookService {
     }
 
     private WebhookOutcome reversed(GatewayOrder order, String reversalId, BigDecimal amount, String paymentId) {
+        if (order.getPurpose() == GatewayOrderPurpose.SUBSCRIPTION) {
+            // Subscription invoices are not reversed automatically: a human decides (void, credit note, refund).
+            notificationService.platformAlert("Refund or dispute on a subscription payment",
+                    "Order " + order.getGatewayOrderId() + ": " + reversalId + " (INR " + amount.toPlainString() + ") for payment "
+                            + paymentId + ". The invoice was not changed - handle it by hand.");
+            return WebhookOutcome.IGNORED;
+        }
         if (order.getPurpose() != GatewayOrderPurpose.TOPUP || amount.signum() <= 0) {
             return WebhookOutcome.IGNORED;
         }

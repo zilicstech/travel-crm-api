@@ -37,6 +37,7 @@ import java.util.stream.Collectors;
 public class EntitlementService {
 
     public static final int SUITE_INCLUDED_SEATS = 5;
+    static final Duration CACHE_TTL = Duration.ofMinutes(2);
     public static final Duration TRIAL_LENGTH = Duration.ofDays(14);
 
     private final SubscriptionRepository subscriptionRepository;
@@ -52,7 +53,9 @@ public class EntitlementService {
     /** Cached value while it still holds; a trial or waiver that has since ended is recomputed. */
     public Entitlements resolve(String tenantId) {
         Optional<Entitlements> cached = TenantCache.entitlements(tenantId);
-        if (cached.isPresent() && (cached.get().accessEndsAt() == null || Instant.now().isBefore(cached.get().accessEndsAt()))) {
+        // The TTL bounds staleness when another node (or a direct DB change) altered the subscription.
+        boolean young = TenantCache.entitlementsAt(tenantId).map(at -> at.isAfter(Instant.now().minus(CACHE_TTL))).orElse(false);
+        if (cached.isPresent() && young && (cached.get().accessEndsAt() == null || Instant.now().isBefore(cached.get().accessEndsAt()))) {
             return cached.get();
         }
         return refresh(tenantId);
@@ -126,7 +129,8 @@ public class EntitlementService {
      * status; CANCELLED and a missing row are Starter.
      */
     public static Entitlements compute(Subscription s, Instant now) {
-        if (s == null || s.getStatus() == SubscriptionStatus.CANCELLED) {
+        // Starter is the portal-only floor: never read-only, whatever stale trial or status the row carries.
+        if (s == null || s.getStatus() == SubscriptionStatus.CANCELLED || s.getPlan() == SubscriptionPlan.STARTER) {
             return new Entitlements(SubscriptionPlan.STARTER, s == null ? null : s.getStatus(), Set.of(), 0, false, null);
         }
         Instant waiverEnd = s.getPeriodEnd();

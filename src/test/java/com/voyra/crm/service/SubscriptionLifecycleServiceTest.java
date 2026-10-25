@@ -45,13 +45,14 @@ class SubscriptionLifecycleServiceTest {
     @Mock private EntitlementService entitlementService;
     @Mock private NotificationService notificationService;
     @Mock private PlatformTransactionManager transactionManager;
+    @Mock private com.voyra.crm.repository.TenantRepository tenantRepository;
 
     private SubscriptionLifecycleService service;
 
     @BeforeEach
     void setUp() {
         service = new SubscriptionLifecycleService(subscriptionRepository, invoiceRepository, billingService,
-                entitlementService, notificationService, transactionManager);
+                entitlementService, notificationService, transactionManager, tenantRepository);
         lenient().when(invoiceRepository.findFirstByTenantIdAndStatusOrderByDueAtAsc("T1", "ISSUED")).thenReturn(Optional.empty());
     }
 
@@ -235,5 +236,18 @@ class SubscriptionLifecycleServiceTest {
         service.runDaily();
 
         verify(billingService).ensurePdfQuietly("I9");
+    }
+
+    @Test
+    void deactivatedTenantGetsNoInvoiceNoticeAndNoChange() {
+        Subscription s = stub(paid(NOW.minus(Duration.ofHours(2))));
+        com.voyra.crm.entity.Tenant t = new com.voyra.crm.entity.Tenant();
+        t.setStatus(com.voyra.crm.enums.TenantStatus.DEACTIVATED);
+        given(tenantRepository.findById("T1")).willReturn(Optional.of(t));
+
+        assertThat(service.processTenant("T1", NOW)).isNull();
+
+        verifyNoInteractions(billingService, notificationService, entitlementService);
+        verify(subscriptionRepository, never()).save(s);
     }
 }

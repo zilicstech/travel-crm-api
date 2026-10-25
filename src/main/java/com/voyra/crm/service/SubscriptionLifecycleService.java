@@ -5,7 +5,9 @@ import com.voyra.crm.entity.SubscriptionInvoice;
 import com.voyra.crm.enums.SubscriptionPlan;
 import com.voyra.crm.enums.SubscriptionStatus;
 import com.voyra.crm.repository.SubscriptionInvoiceRepository;
+import com.voyra.crm.enums.TenantStatus;
 import com.voyra.crm.repository.SubscriptionRepository;
+import com.voyra.crm.repository.TenantRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -36,16 +38,19 @@ public class SubscriptionLifecycleService {
     private final SubscriptionBillingService billingService;
     private final EntitlementService entitlementService;
     private final NotificationService notificationService;
+    private final TenantRepository tenantRepository;
     private final TransactionTemplate tx;
 
     public SubscriptionLifecycleService(SubscriptionRepository subscriptionRepository, SubscriptionInvoiceRepository invoiceRepository,
                                         SubscriptionBillingService billingService, EntitlementService entitlementService,
-                                        NotificationService notificationService, PlatformTransactionManager transactionManager) {
+                                        NotificationService notificationService, PlatformTransactionManager transactionManager,
+                                        TenantRepository tenantRepository) {
         this.subscriptionRepository = subscriptionRepository;
         this.invoiceRepository = invoiceRepository;
         this.billingService = billingService;
         this.entitlementService = entitlementService;
         this.notificationService = notificationService;
+        this.tenantRepository = tenantRepository;
         this.tx = new TransactionTemplate(transactionManager);
     }
 
@@ -73,6 +78,9 @@ public class SubscriptionLifecycleService {
         if (s == null || s.getStatus() == SubscriptionStatus.CANCELLED || s.getPlan() == SubscriptionPlan.STARTER
                 || (s.getWaivedReason() != null && s.getPeriodEnd() == null)) {
             return null;  // founding agency: no expiry, no invoice, never READ_ONLY
+        }
+        if (tenantRepository.findById(tenantId).map(t -> t.getStatus() == TenantStatus.DEACTIVATED).orElse(false)) {
+            return null;  // a deactivated agency is billed and told nothing
         }
         SubscriptionStatus before = s.getStatus();
         boolean noticed = false;

@@ -69,7 +69,7 @@ class SubscriptionServiceTest {
                 .status(SubscriptionStatus.ACTIVE).billingCycle(BillingCycle.MONTHLY)
                 .waivedReason(WaivedReason.COMPLIMENTARY).periodEnd(Instant.now().plus(Duration.ofDays(30)))
                 .updatedAt(Instant.now()).build();
-        lenient().when(subscriptionRepository.findByTenantId("T1")).thenReturn(Optional.of(sub));
+        lenient().when(subscriptionRepository.findByTenantIdForUpdate("T1")).thenReturn(Optional.of(sub));
         lenient().when(entitlementService.refresh("T1")).thenReturn(new Entitlements(SubscriptionPlan.SUITE,
                 SubscriptionStatus.ACTIVE, EnumSet.allOf(Sku.class), 5, false, null));
     }
@@ -221,7 +221,7 @@ class SubscriptionServiceTest {
 
     @Test
     void unknownTenantIs404() {
-        when(subscriptionRepository.findByTenantId("NOPE")).thenReturn(Optional.empty());
+        when(subscriptionRepository.findByTenantIdForUpdate("NOPE")).thenReturn(Optional.empty());
         when(tenantRepository.existsById("NOPE")).thenReturn(false);
         assertThatThrownBy(() -> service.adminView("NOPE")).isInstanceOf(NotFoundException.class);
         verify(entitlementService, never()).startMissingTrial(any());
@@ -230,7 +230,7 @@ class SubscriptionServiceTest {
     @Test
     void aTenantWithoutARowGetsTheTrialInsteadOf404() {
         Subscription trial = EntitlementService.newTrial("S9", "T9", Instant.now());
-        when(subscriptionRepository.findByTenantId("T9")).thenReturn(Optional.empty());
+        when(subscriptionRepository.findByTenantIdForUpdate("T9")).thenReturn(Optional.empty());
         when(tenantRepository.existsById("T9")).thenReturn(true);
         when(entitlementService.startMissingTrial("T9")).thenReturn(trial);
         when(entitlementService.resolve("T9")).thenReturn(new Entitlements(SubscriptionPlan.SUITE, SubscriptionStatus.TRIAL,
@@ -263,6 +263,43 @@ class SubscriptionServiceTest {
     void customSeatsNeedTheStaffSeatsSku() {
         assertThatThrownBy(() -> service.update("T1", update(SubscriptionPlan.CUSTOM, List.of(Sku.CRM_CORE), 2, BillingCycle.MONTHLY)))
                 .isInstanceOf(IllegalArgumentException.class).hasMessage("Add the Staff seats SKU to give seats");
+        verify(subscriptionRepository, never()).save(any());
+    }
+
+    @Test
+    void updateWaiveAndExtendTrialAllLockTheRow() {
+        SubscriptionWaiveRequest w = new SubscriptionWaiveRequest();
+        w.setReason(WaivedReason.COMPLIMENTARY);
+        TrialExtendRequest t = new TrialExtendRequest();
+        t.setDays(7);
+        service.update("T1", update(SubscriptionPlan.SUITE, List.of(), 0, BillingCycle.MONTHLY));
+        service.waive("T1", w);
+        sub.setWaivedReason(null);
+        service.extendTrial("T1", t);
+        verify(subscriptionRepository, org.mockito.Mockito.times(3)).findByTenantIdForUpdate("T1");
+        verify(subscriptionRepository, never()).findByTenantId(any());
+    }
+
+    @Test
+    void movingToStarterResetsStatusTrialPeriodAndWaiver() {
+        sub.setStatus(SubscriptionStatus.READ_ONLY);
+        sub.setTrialEndsAt(Instant.now().minusSeconds(60));
+        service.update("T1", update(SubscriptionPlan.STARTER, List.of(), 0, BillingCycle.MONTHLY));
+        assertThat(sub.getStatus()).isEqualTo(SubscriptionStatus.ACTIVE);
+        assertThat(sub.getTrialEndsAt()).isNull();
+        assertThat(sub.getPeriodStart()).isNull();
+        assertThat(sub.getPeriodEnd()).isNull();
+        assertThat(sub.getWaivedReason()).isNull();
+    }
+
+    @Test
+    void extendTrialRefusesAFoundingAgency() {
+        sub.setWaivedReason(WaivedReason.FOUNDING_AGENCY);
+        sub.setPeriodEnd(null);
+        TrialExtendRequest t = new TrialExtendRequest();
+        t.setDays(7);
+        assertThatThrownBy(() -> service.extendTrial("T1", t)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Founding agencies don't need a trial");
         verify(subscriptionRepository, never()).save(any());
     }
 }

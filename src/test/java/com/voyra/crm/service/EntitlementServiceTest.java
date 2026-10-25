@@ -285,4 +285,22 @@ class EntitlementServiceTest {
     private static Subscription waived(WaivedReason reason, Instant end, SubscriptionStatus status) {
         return sub(SubscriptionPlan.SUITE, status).waivedReason(reason).periodEnd(end).build();
     }
+
+    @Test
+    void starterIsNeverReadOnlyEvenWithAStaleTrialRow() {
+        Entitlements e = EntitlementService.compute(sub(SubscriptionPlan.STARTER, SubscriptionStatus.TRIAL).trialEndsAt(PAST).periodEnd(PAST).build(), NOW);
+        assertThat(e.readOnly()).isFalse();
+        assertThat(e.accessEndsAt()).isNull();
+        assertThat(EntitlementService.compute(sub(SubscriptionPlan.STARTER, SubscriptionStatus.READ_ONLY).build(), NOW).readOnly()).isFalse();
+    }
+
+    @Test
+    void cachedValueOlderThanTwoMinutesIsRecomputed() {
+        Entitlements stale = new Entitlements(SubscriptionPlan.SUITE, SubscriptionStatus.ACTIVE, ALL, 5, false, null);
+        TenantCache.putEntitlements("T1", stale);
+        when(subscriptionRepository.findByTenantId("T1")).thenReturn(Optional.of(sub(SubscriptionPlan.STARTER, SubscriptionStatus.ACTIVE).build()));
+        assertThat(entitlementService.resolve("T1")).isSameAs(stale);  // fresh: no reload
+        TenantCache.backdateEntitlements("T1", Duration.ofMinutes(3));
+        assertThat(entitlementService.resolve("T1").plan()).isEqualTo(SubscriptionPlan.STARTER);
+    }
 }

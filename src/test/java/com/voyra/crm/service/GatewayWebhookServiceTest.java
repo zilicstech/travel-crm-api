@@ -351,4 +351,14 @@ class GatewayWebhookServiceTest {
                 .isInstanceOf(IllegalArgumentException.class);
         verifyNoInteractions(orderRepository, orphanRepository, topupRepository, walletService);
     }
+
+    @Test
+    void refundOnASubscriptionOrderAlertsAndLeavesTheInvoiceAlone() {
+        order(GatewayOrderPurpose.SUBSCRIPTION);
+
+        assertThat(service.handle(reversal("refund.processed", "refund", "rfnd_1", 50000), "sig")).isEqualTo(WebhookOutcome.IGNORED);
+
+        verify(notificationService).platformAlert(anyString(), contains("rfnd_1"));
+        verifyNoInteractions(billingService, walletService);
+    }
 }

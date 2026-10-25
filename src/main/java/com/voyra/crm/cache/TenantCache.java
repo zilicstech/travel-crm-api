@@ -3,6 +3,7 @@ package com.voyra.crm.cache;
 import com.voyra.crm.enums.TenantStatus;
 import com.voyra.crm.models.Entitlements;
 
+import java.time.Instant;
 import java.util.Collection;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -16,14 +17,15 @@ public final class TenantCache {
     }
 
     /** entitlements null = not resolved yet (EntitlementService loads it on first use). */
-    public record TenantInfo(String name, TenantStatus status, Entitlements entitlements) {
+    public record TenantInfo(String name, TenantStatus status, Entitlements entitlements, Instant entitlementsAt) {
     }
 
     /** Keeps any cached entitlements - a rename or status change does not touch the subscription. */
     public static void put(String tenantId, String name, TenantStatus status) {
         if (tenantId != null && !tenantId.isBlank()) {
             CACHE.compute(key(tenantId), (k, old) ->
-                    new TenantInfo(name == null ? "" : name, status, old == null ? null : old.entitlements()));
+                    new TenantInfo(name == null ? "" : name, status, old == null ? null : old.entitlements(),
+                            old == null ? null : old.entitlementsAt()));
         }
     }
 
@@ -31,8 +33,8 @@ public final class TenantCache {
     public static void putEntitlements(String tenantId, Entitlements entitlements) {
         if (tenantId != null && !tenantId.isBlank()) {
             CACHE.compute(key(tenantId), (k, old) -> old == null
-                    ? new TenantInfo("", null, entitlements)
-                    : new TenantInfo(old.name(), old.status(), entitlements));
+                    ? new TenantInfo("", null, entitlements, Instant.now())
+                    : new TenantInfo(old.name(), old.status(), entitlements, Instant.now()));
         }
     }
 
@@ -41,6 +43,19 @@ public final class TenantCache {
             return Optional.empty();
         }
         return Optional.ofNullable(CACHE.get(key(tenantId))).map(TenantInfo::entitlements);
+    }
+
+    /** When the cached entitlements were stored; empty when none. */
+    public static Optional<Instant> entitlementsAt(String tenantId) {
+        if (tenantId == null || tenantId.isBlank()) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(CACHE.get(key(tenantId))).map(TenantInfo::entitlementsAt);
+    }
+
+    /** Test hook: pretend the cached entitlements were stored {@code age} ago. */
+    public static void backdateEntitlements(String tenantId, java.time.Duration age) {
+        CACHE.computeIfPresent(key(tenantId), (k, o) -> new TenantInfo(o.name(), o.status(), o.entitlements(), Instant.now().minus(age)));
     }
 
     public static void remove(String tenantId) {

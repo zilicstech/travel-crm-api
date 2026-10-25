@@ -58,7 +58,7 @@ public class PublicFeedbackService {
             throw new IllegalArgumentException(NOT_FOUND_MESSAGE);
         }
         if (!entitlementService.publicLinksAvailable(link.getTenantId())) {
-            throw new IllegalArgumentException(NO_LONGER_AVAILABLE);
+            throw new com.voyra.crm.exception.NotFoundException(NO_LONGER_AVAILABLE);
         }
         return link;
     }

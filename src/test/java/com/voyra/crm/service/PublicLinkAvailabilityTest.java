@@ -65,8 +65,8 @@ class PublicLinkAvailabilityTest {
         assertThatThrownBy(() -> proposals.getProposal("P")).isInstanceOf(NotFoundException.class).hasMessage(GONE);
         assertThatThrownBy(() -> proposals.approveProposal("P")).isInstanceOf(NotFoundException.class).hasMessage(GONE);
         assertThatThrownBy(() -> proposals.selectOptions("P", List.of("I1"))).isInstanceOf(NotFoundException.class).hasMessage(GONE);
-        assertThatThrownBy(() -> feedback.getFeedbackPage("F")).hasMessage(GONE);
-        assertThatThrownBy(() -> feedback.submit("F", new FeedbackSubmitRequest())).hasMessage(GONE);
+        assertThatThrownBy(() -> feedback.getFeedbackPage("F")).isInstanceOf(NotFoundException.class).hasMessage(GONE);
+        assertThatThrownBy(() -> feedback.submit("F", new FeedbackSubmitRequest())).isInstanceOf(NotFoundException.class).hasMessage(GONE);
         verifyNoInteractions(proposalTenantService, feedbackTenantService);
     }
 

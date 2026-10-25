@@ -109,6 +109,13 @@ public class SubscriptionService {
         s.setSkus(skus);
         s.setSeats(plan == SubscriptionPlan.STARTER ? 0 : request.getSeats());
         s.setBillingCycle(request.getBillingCycle());
+        if (plan == SubscriptionPlan.STARTER) {  // Starter is free and never read-only: drop any trial, period and waiver
+            s.setStatus(SubscriptionStatus.ACTIVE);
+            s.setTrialEndsAt(null);
+            s.setPeriodStart(null);
+            s.setPeriodEnd(null);
+            s.setWaivedReason(null);
+        }
         // A paid plan with no period would never be renewed: start one ending now, so the next daily run bills it.
         boolean paidPlan = plan != SubscriptionPlan.STARTER && s.getWaivedReason() == null
                 && (s.getStatus() == SubscriptionStatus.ACTIVE || s.getStatus() == SubscriptionStatus.PAST_DUE);
@@ -152,6 +159,9 @@ public class SubscriptionService {
     @Transactional
     public SubscriptionAdminResponse extendTrial(String tenantId, TrialExtendRequest request) {
         Subscription s = load(tenantId);
+        if (s.getWaivedReason() == WaivedReason.FOUNDING_AGENCY) {
+            throw new IllegalArgumentException("Founding agencies don't need a trial");
+        }
         Instant now = Instant.now();
         Instant base = s.getStatus() == SubscriptionStatus.TRIAL && s.getTrialEndsAt() != null && s.getTrialEndsAt().isAfter(now)
                 ? s.getTrialEndsAt() : now;
@@ -172,7 +182,7 @@ public class SubscriptionService {
     }
 
     private Subscription load(String tenantId) {
-        return subscriptionRepository.findByTenantId(tenantId).orElseGet(() -> {
+        return subscriptionRepository.findByTenantIdForUpdate(tenantId).orElseGet(() -> {
             if (!tenantRepository.existsById(tenantId)) {
                 throw new NotFoundException("Agency not found");
             }
