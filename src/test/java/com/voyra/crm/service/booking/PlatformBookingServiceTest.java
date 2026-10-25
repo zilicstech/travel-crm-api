@@ -46,6 +46,7 @@ import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.service.AgencyPricingService;
 import com.voyra.crm.service.NotificationService;
 import com.voyra.crm.service.PlatformAuditService;
+import com.voyra.crm.service.PlatformSettingService;
 import com.voyra.crm.service.WalletService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -106,6 +107,7 @@ class PlatformBookingServiceTest {
     @Mock private PlatformTransactionManager transactionManager;
     @Mock private WalletEntryRepository walletEntryRepository;
     @Mock private PlatformAuditService platformAuditService;
+    @Mock private PlatformSettingService settings;
 
     private final FlightBookingProviderConfig config = new FlightBookingProviderConfig();
     private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
@@ -133,7 +135,7 @@ class PlatformBookingServiceTest {
         service = new PlatformBookingService(bookingRepository, provider, config, quoter, pricingService, walletService,
                 walletRepository, tenantRepository, agentRepository, credentialRepository, notificationService,
                 new PlatformBookingEventRecorder(eventRepository, paxCodec), paxCodec, objectMapper, transactionManager,
-                walletEntryRepository, platformAuditService);
+                walletEntryRepository, platformAuditService, settings);
         wallet = Wallet.builder().id("W1").tenantId(T).balance(new BigDecimal("10000.00")).held(BigDecimal.ZERO)
                 .isTest(true).build();
         tenant = Tenant.builder().id(T).status(TenantStatus.ACTIVE).bookingBlocked(false).build();
@@ -603,7 +605,7 @@ class PlatformBookingServiceTest {
         PlatformBookingService broken = new PlatformBookingService(bookingRepository, provider, config, quoter, pricingService,
                 walletService, walletRepository, tenantRepository, agentRepository, credentialRepository, notificationService,
                 new PlatformBookingEventRecorder(eventRepository, paxCodec), new PaxCodec(objectMapper, "bad"), objectMapper,
-                transactionManager, walletEntryRepository, platformAuditService);
+                transactionManager, walletEntryRepository, platformAuditService, settings);
         String id = broken.review(reviewRequest()).getBookingId();
 
         assertThatThrownBy(() -> broken.confirm(id, confirmRequest("key-00000001", "4500.00"))).isInstanceOf(RuntimeException.class);

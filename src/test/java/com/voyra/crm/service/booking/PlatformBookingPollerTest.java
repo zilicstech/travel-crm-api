@@ -22,6 +22,7 @@ import com.voyra.crm.repository.WalletRepository;
 import com.voyra.crm.service.AgencyPricingService;
 import com.voyra.crm.service.NotificationService;
 import com.voyra.crm.service.PlatformAuditService;
+import com.voyra.crm.service.PlatformSettingService;
 import com.voyra.crm.service.WalletService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -72,6 +73,7 @@ class PlatformBookingPollerTest {
     @Mock private PlatformSupplierCredentialRepository credentialRepository;
     @Mock private NotificationService notificationService;
     @Mock private PlatformAuditService platformAuditService;
+    @Mock private PlatformSettingService settings;
     @Mock private PlatformTransactionManager transactionManager;
 
     private final FlightBookingProviderConfig config = new FlightBookingProviderConfig();
@@ -88,7 +90,7 @@ class PlatformBookingPollerTest {
         PlatformBookingEventRecorder events = new PlatformBookingEventRecorder(eventRepository, paxCodec);
         PlatformBookingService service = new PlatformBookingService(bookingRepository, provider, config, quoter, pricingService,
                 walletService, walletRepository, tenantRepository, agentRepository, credentialRepository, notificationService,
-                events, paxCodec, objectMapper, transactionManager, walletEntryRepository, platformAuditService);
+                events, paxCodec, objectMapper, transactionManager, walletEntryRepository, platformAuditService, settings);
         poller = new PlatformBookingPoller(bookingRepository, eventRepository, provider, config, service, events,
                 notificationService, transactionManager);
 

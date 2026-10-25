@@ -25,8 +25,11 @@ import com.voyra.crm.enums.WalletEntryType;
 import com.voyra.crm.exception.BookingConflictException;
 import com.voyra.crm.exception.NotFoundException;
 import com.voyra.crm.exception.ReceivableDueException;
+import com.voyra.crm.exception.SupplierException;
 import com.voyra.crm.models.booking.BookRequest;
 import com.voyra.crm.models.booking.BookResult;
+import com.voyra.crm.models.booking.CancelQuote;
+import com.voyra.crm.models.booking.CancelResult;
 import com.voyra.crm.models.booking.FareReview;
 import com.voyra.crm.models.booking.PaxDetail;
 import com.voyra.crm.models.booking.SupplierBookingStatus;
@@ -41,6 +44,7 @@ import com.voyra.crm.security.SecurityContextUtil;
 import com.voyra.crm.service.AgencyPricingService;
 import com.voyra.crm.service.NotificationService;
 import com.voyra.crm.service.PlatformAuditService;
+import com.voyra.crm.service.PlatformSettingService;
 import com.voyra.crm.service.WalletService;
 import com.voyra.crm.util.UniqueIdResolver;
 import lombok.extern.slf4j.Slf4j;
@@ -83,6 +87,7 @@ public class PlatformBookingService {
     private final TransactionTemplate tx;
     private final WalletEntryRepository walletEntryRepository;
     private final PlatformAuditService platformAuditService;
+    private final PlatformSettingService settings;
 
     public PlatformBookingService(PlatformBookingRepository bookingRepository, FlightBookingProvider provider,
                                   FlightBookingProviderConfig providerConfig, AgencyPriceQuoter quoter,
@@ -91,7 +96,8 @@ public class PlatformBookingService {
                                   AgentRepository agentRepository, PlatformSupplierCredentialRepository credentialRepository,
                                   NotificationService notificationService, PlatformBookingEventRecorder events,
                                   PaxCodec paxCodec, ObjectMapper objectMapper, PlatformTransactionManager transactionManager,
-                                  WalletEntryRepository walletEntryRepository, PlatformAuditService platformAuditService) {
+                                  WalletEntryRepository walletEntryRepository, PlatformAuditService platformAuditService,
+                                  PlatformSettingService settings) {
         this.bookingRepository = bookingRepository;
         this.provider = provider;
         this.providerConfig = providerConfig;
@@ -109,6 +115,7 @@ public class PlatformBookingService {
         this.tx = new TransactionTemplate(transactionManager);
         this.walletEntryRepository = walletEntryRepository;
         this.platformAuditService = platformAuditService;
+        this.settings = settings;
     }
 
     /**
@@ -309,6 +316,145 @@ public class PlatformBookingService {
         return booking;
     }
 
+    /** What cancelling this ticketed booking would refund and recall, from the supplier's quote. Posts nothing. */
+    public CancelPreview cancelQuote(String bookingId) {
+        Assert.state(!TransactionSynchronizationManager.isActualTransactionActive(),
+                "cancelQuote must not run inside a transaction - the supplier call would hold a connection");
+        CustomUserPrincipal principal = requireBooker();
+        PlatformBooking b = bookingRepository.findByIdAndTenantId(bookingId, principal.tenantId())
+                .orElseThrow(() -> new NotFoundException("Booking not found"));
+        requireCancellable(b);
+        BigDecimal fee = settings.voyraCancelFee();
+        BigDecimal refund = refundOf(provider.cancelQuote(supplierId(b)).refund(), b.getDisplayed(), fee);
+        BigDecimal recall = recallOf(b);
+        return new CancelPreview(refund, recall, refund == null ? null : refund.subtract(recall), fee, refund == null);
+    }
+
+    /**
+     * Cancels a ticketed booking whole (spec 7.5). Like {@link #confirm}, the supplier calls hold no connection or row
+     * lock: tx1 locks and validates, the supplier quotes and cancels with no transaction open, tx2 re-locks and posts
+     * REFUND_CREDIT then COMMISSION_RECALL (receivable on shortfall). Both posts are keyed per booking, and a CANCELLED
+     * row is returned as is, so the same request twice posts once.
+     */
+    public PlatformBooking cancel(String bookingId, String idempotencyKey) {
+        Assert.state(!TransactionSynchronizationManager.isActualTransactionActive(),
+                "cancel must not run inside a transaction - the supplier cancel call would hold a connection and the row lock");
+        if (idempotencyKey == null || idempotencyKey.isBlank()) {
+            throw new IllegalArgumentException("An idempotency key is required to cancel a booking");
+        }
+        CustomUserPrincipal principal = requireBooker();
+        PlatformBooking b = tx.execute(s -> {
+            PlatformBooking x = bookingRepository.findByIdForUpdate(bookingId)
+                    .filter(r -> principal.tenantId().equals(r.getTenantId()))
+                    .orElseThrow(() -> new NotFoundException("Booking not found"));
+            if (x.getStatus() == PlatformBookingStatus.CANCELLED) {
+                return x;
+            }
+            requireCancellable(x);
+            events.record(bookingId, "CANCEL_REQUESTED", Map.of("by", principal.userId(), "key", idempotencyKey));
+            return x;
+        });
+        if (b.getStatus() == PlatformBookingStatus.CANCELLED) {
+            return b;
+        }
+        String supplierId = supplierId(b);
+        BigDecimal fee = settings.voyraCancelFee();
+        CancelResult result;
+        try {
+            CancelQuote quote = provider.cancelQuote(supplierId);
+            if (quote.refund() == null) {
+                refuseCancel(bookingId, "REFUND_UNKNOWN", "Voyra will process this cancellation - please contact support");
+            }
+            result = provider.cancel(supplierId);
+        } catch (SupplierException e) {
+            tx.executeWithoutResult(s -> events.record(bookingId, "CANCEL_NO_ANSWER", Map.of("error", e.getClass().getSimpleName())));
+            throw e;
+        }
+        if (!result.accepted()) {
+            refuseCancel(bookingId, "CANCEL_REFUSED", result.message() != null ? result.message() : "The supplier refused the cancellation");
+        }
+        PlatformBooking cancelled = tx.execute(s -> cancelLocked(bookingId, result, fee));
+        if (cancelled.getStatus() == PlatformBookingStatus.CANCELLED) {
+            scheduleMirrorCancel(cancelled);
+        }
+        return cancelled;
+    }
+
+    private void refuseCancel(String bookingId, String code, String message) {
+        tx.executeWithoutResult(s -> events.record(bookingId, "CANCEL_REFUSED", Map.of("code", code, "message", message)));
+        throw new BookingConflictException(code, message, Map.of());
+    }
+
+    private PlatformBooking cancelLocked(String bookingId, CancelResult result, BigDecimal fee) {
+        PlatformBooking b = bookingRepository.findByIdForUpdate(bookingId).orElseThrow(() -> new NotFoundException("Booking not found"));
+        if (b.getStatus() != PlatformBookingStatus.TICKETED) {
+            return b; // a concurrent cancel already applied
+        }
+        String id = b.getId();
+        BigDecimal earned = nz(b.getVoyraEarned());
+        b.setVoyraEarnedReversal(earned); // the supplier claws back Voyra's commission on the fare
+        Map<String, Object> detail = new LinkedHashMap<>();
+        if (result.refund() == null) {
+            // accepted without a figure: nothing is posted until Voyra confirms the refund with the supplier
+            b.setVoyraNet(b.getVoyraNet().subtract(earned));
+            detail.put("refund", "UNKNOWN");
+            notificationService.platformAlert("Cancelled booking " + id + " needs a manual refund",
+                    "The supplier cancelled booking " + id + " for agency " + b.getTenantId()
+                            + " without a refund figure - post refund manually and recall the commission.");
+        } else {
+            BigDecimal refund = refundOf(result.refund(), b.getDisplayed(), fee);
+            BigDecimal recall = recallOf(b);
+            if (refund.signum() > 0) {
+                walletService.credit(b.getTenantId(), WalletEntryType.REFUND_CREDIT, refund, "pb-refund:" + id, REF_TYPE, id,
+                        "Refund on cancelled flight booking " + b.getPnr());
+            }
+            if (recall.signum() > 0) {
+                walletService.debitOrReceivable(b.getTenantId(), WalletEntryType.COMMISSION_RECALL, recall, "pb-recall:" + id,
+                        REF_TYPE, id, ReceivableReason.CANCEL_NET_NEGATIVE);
+            }
+            b.setCancelRefund(refund);
+            // earned reversed, the commission recovered in full (net recall + TDS reversed in the quarterly return),
+            // and Voyra keeps whatever of the supplier refund it did not pass on (its fee, or above the cap)
+            b.setVoyraNet(b.getVoyraNet().subtract(earned).add(nz(b.getAgencyCommission())).add(result.refund().subtract(refund)));
+            detail.put("refund", refund);
+            detail.put("recall", recall);
+        }
+        b.setStatus(PlatformBookingStatus.CANCELLED);
+        b.setCancelledAt(Instant.now());
+        b.setSupplierMessage(truncate(result.message()));
+        events.record(id, "CANCELLED", detail);
+        if (b.getVoyraNet().signum() < 0) {
+            notificationService.platformAlert("Loss-making booking " + id,
+                    "Voyra net on cancelled booking " + id + " for agency " + b.getTenantId() + " is " + b.getVoyraNet());
+        }
+        return bookingRepository.save(b);
+    }
+
+    private static void requireCancellable(PlatformBooking b) {
+        if (b.getStatus() != PlatformBookingStatus.TICKETED) {
+            throw new IllegalStateException("Only a ticketed booking can be cancelled (it is " + b.getStatus() + ")");
+        }
+    }
+
+    /** Tripjack books under the review id, so a booking that never reported its own id is addressed by that. */
+    private static String supplierId(PlatformBooking b) {
+        return b.getSupplierBookingId() != null ? b.getSupplierBookingId() : b.getSupplierReviewId();
+    }
+
+    /** {@code max(0, R - fee)} capped at what the agency paid; null when the supplier gave no figure. */
+    private static BigDecimal refundOf(BigDecimal supplierRefund, BigDecimal displayed, BigDecimal fee) {
+        return supplierRefund == null ? null : supplierRefund.subtract(fee).max(BigDecimal.ZERO).min(displayed);
+    }
+
+    /** What the agency was credited for the ticket: commission net of TDS, or nothing when there was no commission. */
+    private static BigDecimal recallOf(PlatformBooking b) {
+        return positive(b.getAgencyCommission()) ? b.getAgencyCommission().subtract(nz(b.getTds())) : BigDecimal.ZERO;
+    }
+
+    private static BigDecimal nz(BigDecimal v) {
+        return v == null ? BigDecimal.ZERO : v;
+    }
+
     private record Held(PlatformBooking booking, RuntimeException refusal, boolean sendBook) {
     }
 
@@ -449,6 +595,10 @@ public class PlatformBookingService {
 
     /** Task 8 hook: writes the CRM mirror after the debit has committed. No-op until then. */
     private void scheduleMirror(PlatformBooking booking) {
+    }
+
+    /** Task 8 hook: cancels the CRM mirror after the refund and recall have committed. No-op until then. */
+    private void scheduleMirrorCancel(PlatformBooking booking) {
     }
 
     private void stamp(PlatformBooking b, PriceQuote q) {
