@@ -619,16 +619,15 @@ class PlatformBookingCancelTest {
         verifyNothingPosted();
     }
 
-    /** Review Focus 2: past the free-cancellation deadline the supplier refunds 0 - that is what is posted, and the recall still applies. */
+    /** Review Focus 2: past the free-cancellation deadline the supplier's cancel RESULT (0) is what is posted, not the earlier quote (200), and the recall still applies. */
     @Test
     void aHotelCancelledPastTheDeadlinePostsTheQuotedZeroAndStillRecalls() {
         hotelRow();
-        when(hotelProvider.cancelQuote("SB-1")).thenReturn(new CancelQuote(BigDecimal.ZERO, "nothing, past the deadline"));
+        when(hotelProvider.cancelQuote("SB-1")).thenReturn(new CancelQuote(new BigDecimal("200.00"), "quoted before the deadline passed"));
         when(hotelProvider.cancel("SB-1")).thenReturn(new CancelResult(true, BigDecimal.ZERO, "Cancelled"));
 
         CancelPreview q = service.cancelQuote(ID);
-        assertThat(q.refund()).isEqualByComparingTo("0");
-        assertThat(q.net()).isEqualByComparingTo("-95.00");
+        assertThat(q.refund()).isEqualByComparingTo("200.00");
         assertThat(q.refundToBeConfirmed()).isFalse();
 
         PlatformBooking b = service.cancel(ID, "ck-1");

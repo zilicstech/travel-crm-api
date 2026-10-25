@@ -642,7 +642,7 @@ public class PlatformBookingService {
             return new Held(b, null, false);
         }
         if (b.getStatus() == PlatformBookingStatus.ABORTED && REVIEW_EXPIRED_REASON.equals(b.getAbortReason())) {
-            throw reviewExpired(); // the poller swept it
+            throw reviewExpired(b.getProduct()); // the poller swept it
         }
         if (b.getStatus() != PlatformBookingStatus.REVIEWING) {
             throw new IllegalStateException("This booking was already confirmed");
@@ -657,7 +657,7 @@ public class PlatformBookingService {
             throw new IllegalArgumentException("Enter " + b.getPaxCount() + " travellers, as reviewed");
         }
         if (request.getAcceptedDisplayedFare().compareTo(b.getDisplayed()) != 0) {
-            throw priceChanged(b.getDisplayed());
+            throw priceChanged(b.getProduct(), b.getDisplayed());
         }
         PriceQuote quote = quoter.quote(tenantId, b.getProduct(), b.getGross(), b.getBase());
         if (!quote.pricingId().equals(String.valueOf(b.getPricingSnapshot().get("pricingId")))) {
@@ -665,10 +665,10 @@ public class PlatformBookingService {
             bookingRepository.save(b);
             events.record(bookingId, "REPRICED", Map.of("displayed", b.getDisplayed(), "pricingId", quote.pricingId()));
             // returned, not thrown, so the re-stamp commits
-            return new Held(b, priceChanged(b.getDisplayed()), false);
+            return new Held(b, priceChanged(b.getProduct(), b.getDisplayed()), false);
         }
         if (b.getReviewExpiresAt() != null && Instant.now().isAfter(b.getReviewExpiresAt())) {
-            throw reviewExpired();
+            throw reviewExpired(b.getProduct());
         }
         walletRepository.findByTenantId(tenantId).ifPresent(w -> requireMatchingWallet(b.getEnvironment(), w));
         // everything that can fail runs before the hold, so a refusal never leaves a committed hold behind
@@ -879,12 +879,17 @@ public class PlatformBookingService {
         throw new BookingRequestException("ISSUING_AGENT_REQUIRED", "Choose the agent this booking is issued by");
     }
 
-    private static BookingConflictException reviewExpired() {
-        return new BookingConflictException("REVIEW_EXPIRED", "This fare review has expired - review the fare again", Map.of());
+    private static String priceWord(PricingProduct product) {
+        return product == PricingProduct.HOTEL ? "rate" : "fare";
     }
 
-    private static BookingConflictException priceChanged(BigDecimal displayed) {
-        return new BookingConflictException("PRICE_CHANGED", "The fare is now " + displayed + " - confirm the new price",
+    private static BookingConflictException reviewExpired(PricingProduct product) {
+        String w = priceWord(product);
+        return new BookingConflictException("REVIEW_EXPIRED", "This " + w + " review has expired - review the " + w + " again", Map.of());
+    }
+
+    private static BookingConflictException priceChanged(PricingProduct product, BigDecimal displayed) {
+        return new BookingConflictException("PRICE_CHANGED", "The " + priceWord(product) + " is now " + displayed + " - confirm the new price",
                 Map.of("displayedFare", displayed));
     }
 

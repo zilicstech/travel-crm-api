@@ -249,7 +249,7 @@ class PlatformBookingQueryServiceTest {
                 .paxEnc(paxCodec.encrypt(Map.of("passengers", List.of(Map.of("type", "ADULT", "title", "Mr", "firstName", "Rahul",
                         "lastName", "Sharma", "roomIndex", 0, "pan", "ABCDE1234F"))))).build();
         given(bookings.findByIdAndTenantId("B1", "T1")).willReturn(Optional.of(b));
-        given(events.findByPlatformBookingIdOrderByCreatedAtAsc("B1")).willReturn(List.of(event("BOOKING"), event("TICKETED")));
+        given(events.findByPlatformBookingIdOrderByCreatedAtAsc("B1")).willReturn(List.of(event("REVIEWED"), event("BOOKING"), event("TICKETED")));
 
         PlatformBookingResponse r = service().get("B1");
         String json = objectMapper.writeValueAsString(r);
@@ -262,7 +262,7 @@ class PlatformBookingQueryServiceTest {
         assertThat(r.getHotel()).isEqualTo(new HotelStaySummary("Sea Breeze Resort", "Goa", java.time.LocalDate.of(2026, 12, 1),
                 java.time.LocalDate.of(2026, 12, 3), 2, 2, "Breakfast included"));
         assertThat(r.getPassengers()).singleElement().satisfies(p -> assertThat(p.getName()).isEqualTo("Mr Rahul Sharma"));
-        assertThat(r.getTimeline()).extracting(l -> l.getText()).containsExactly("Sent to the hotel", "Booking confirmed");
+        assertThat(r.getTimeline()).extracting(l -> l.getText()).containsExactly("Rate reviewed", "Sent to the hotel", "Booking confirmed");
     }
 
     @Test

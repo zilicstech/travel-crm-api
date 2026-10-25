@@ -419,6 +419,19 @@ class PlatformBookingServiceTest {
         verify(walletService, never()).hold(any(), any(), any(), any(), any());
     }
 
+    @Test
+    void anExpiredHotelReviewSaysRateNotFare() {
+        hotelSupplierQuotes("4500.00");
+        String id = service.reviewHotel(hotelReviewRequest()).getBookingId();
+        rows.get(id).setReviewExpiresAt(Instant.now().minusSeconds(1));
+
+        assertThatThrownBy(() -> service.confirm(id, hotelConfirmRequest("key-00000001", "4500.00")))
+                .isInstanceOfSatisfying(BookingConflictException.class, e -> {
+                    assertThat(e.getCode()).isEqualTo("REVIEW_EXPIRED");
+                    assertThat(e.getMessage()).contains("rate").doesNotContain("fare");
+                });
+    }
+
     /** The poller sweeps an expired review to ABORTED; confirming it afterwards still says "review again". */
     @Test
     void confirmingAReviewTheSweepClosedIsReviewExpired() {
@@ -1060,7 +1073,10 @@ class PlatformBookingServiceTest {
         assertThat(res.isPriceChanged()).isTrue();
         assertThat(res.getPreviousDisplayedFare()).isEqualByComparingTo("4300.00");
         assertThatThrownBy(() -> service.confirm(res.getBookingId(), hotelConfirmRequest("key-00000001", "4300.00")))
-                .isInstanceOfSatisfying(BookingConflictException.class, e -> assertThat(e.getCode()).isEqualTo("PRICE_CHANGED"));
+                .isInstanceOfSatisfying(BookingConflictException.class, e -> {
+                    assertThat(e.getCode()).isEqualTo("PRICE_CHANGED");
+                    assertThat(e.getMessage()).contains("rate").doesNotContain("fare");
+                });
         verify(walletService, never()).hold(any(), any(), any(), any(), any());
         verify(hotelProvider, never()).book(any());
 

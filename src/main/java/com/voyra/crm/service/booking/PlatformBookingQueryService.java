@@ -70,6 +70,8 @@ public class PlatformBookingQueryService {
 
     /** Hotel wording where the flight text would say ticket or airline. */
     private static final Map<String, String> HOTEL_EVENT_TEXT = Map.of(
+            "REVIEWED", "Rate reviewed",
+            "REPRICED", "The rate changed while booking",
             "TICKETED", "Booking confirmed",
             "LATE_TICKET", "The hotel confirmed the booking late");
 
