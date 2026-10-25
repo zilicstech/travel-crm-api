@@ -15,6 +15,11 @@ import com.voyra.crm.dto.LoginResponse;
 import com.voyra.crm.enums.TenantStatus;
 import com.voyra.crm.enums.UserType;
 import com.voyra.crm.service.AuthService;
+import com.voyra.crm.service.EntitlementService;
+import com.voyra.crm.enums.Sku;
+import com.voyra.crm.enums.SubscriptionPlan;
+import com.voyra.crm.enums.SubscriptionStatus;
+import com.voyra.crm.models.Entitlements;
 import com.voyra.crm.service.VendorService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -29,6 +34,7 @@ import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.util.EnumSet;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -43,7 +49,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @WebMvcTest({VendorController.class, AuthController.class, PlatformBookingController.class})
 @ActiveProfiles("test")
 @Import({SecurityConfig.class, JwtAuthenticationFilter.class, JwtService.class, RestAuthenticationEntryPoint.class,
-        WebMvcConfig.class, TenantStatusInterceptor.class})
+        WebMvcConfig.class, TenantStatusInterceptor.class, EntitlementInterceptor.class})
 class TenantStatusInterceptorTest {
 
     private static final String TENANT = "TSUSP1";
@@ -51,6 +57,7 @@ class TenantStatusInterceptorTest {
     @Autowired private MockMvc mockMvc;
     @Autowired private JwtService jwtService;
     @MockBean private VendorService vendorService;
+    @MockBean private EntitlementService entitlementService;
     @MockBean private AuthService authService;
     @MockBean private PlatformBookingService platformBookingService;
     @MockBean private PlatformBookingQueryService platformBookingQueryService;
@@ -60,6 +67,8 @@ class TenantStatusInterceptorTest {
     @BeforeEach
     void suspendedOwner() {
         TenantCache.put(TENANT, "A", TenantStatus.SUSPENDED);
+        when(entitlementService.resolve(TENANT)).thenReturn(new Entitlements(SubscriptionPlan.SUITE, SubscriptionStatus.ACTIVE,
+                EnumSet.allOf(Sku.class), 5, false, null));
         bearer = "Bearer " + jwtService.generateToken("owner@a.com", UserType.AGENCY_OWNER, TENANT, TENANT);
     }
 

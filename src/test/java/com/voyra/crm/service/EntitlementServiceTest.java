@@ -13,9 +13,13 @@ import com.voyra.crm.repository.SubscriptionRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.transaction.PlatformTransactionManager;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -25,6 +29,7 @@ import java.util.Optional;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -39,6 +44,7 @@ class EntitlementServiceTest {
     private static final Set<Sku> ALL = EnumSet.allOf(Sku.class);
 
     @Mock private SubscriptionRepository subscriptionRepository;
+    @Mock private PlatformTransactionManager transactionManager;
     @InjectMocks private EntitlementService entitlementService;
 
     @AfterEach
@@ -180,6 +186,46 @@ class EntitlementServiceTest {
         entitlementService.refresh("T1");
 
         assertThat(TenantCache.entitlements("T1")).get().extracting(Entitlements::skus).isEqualTo(Set.of());
+    }
+
+    /** Rolling-deploy window: a tenant with no row yet gets a 14-day Suite trial, never a lockout. */
+    @Test
+    void missingRowStartsAFourteenDaySuiteTrial() {
+        when(subscriptionRepository.findByTenantId("T1")).thenReturn(Optional.empty());
+        when(subscriptionRepository.saveAndFlush(any(Subscription.class))).thenAnswer(i -> i.getArgument(0));
+
+        Entitlements e = entitlementService.resolve("T1");
+
+        ArgumentCaptor<Subscription> saved = ArgumentCaptor.forClass(Subscription.class);
+        verify(subscriptionRepository).saveAndFlush(saved.capture());
+        assertThat(saved.getValue().getTenantId()).isEqualTo("T1");
+        assertThat(saved.getValue().getPlan()).isEqualTo(SubscriptionPlan.SUITE);
+        assertThat(saved.getValue().getStatus()).isEqualTo(SubscriptionStatus.TRIAL);
+        assertThat(Duration.between(Instant.now(), saved.getValue().getTrialEndsAt()).toDays()).isEqualTo(13);
+        assertThat(e.skus()).isEqualTo(ALL);
+        assertThat(e.readOnly()).isFalse();
+        assertThat(TenantCache.entitlements("T1")).contains(e);
+    }
+
+    @Test
+    void aConcurrentlyCreatedRowWinsOverOurTrial() {
+        when(subscriptionRepository.findByTenantId("T1")).thenReturn(Optional.empty(),
+                Optional.of(sub(SubscriptionPlan.CUSTOM, SubscriptionStatus.ACTIVE).skus(List.of("VISA")).build()));
+        when(subscriptionRepository.saveAndFlush(any(Subscription.class))).thenThrow(new DataIntegrityViolationException("dup"));
+
+        assertThat(entitlementService.resolve("T1").skus()).isEqualTo(Set.of(Sku.VISA));
+    }
+
+    @Test
+    void publicLinksNeedCrmCoreAndAWritableSubscription() {
+        TenantCache.putEntitlements("T1", new Entitlements(SubscriptionPlan.SUITE, SubscriptionStatus.ACTIVE, ALL, 5, false, null));
+        assertThat(entitlementService.publicLinksAvailable("T1")).isTrue();
+        TenantCache.putEntitlements("T1", new Entitlements(SubscriptionPlan.SUITE, SubscriptionStatus.READ_ONLY, ALL, 5, true, null));
+        assertThat(entitlementService.publicLinksAvailable("T1")).isFalse();
+        TenantCache.putEntitlements("T1", new Entitlements(SubscriptionPlan.CUSTOM, SubscriptionStatus.ACTIVE, Set.of(Sku.VISA), 0, false, null));
+        assertThat(entitlementService.publicLinksAvailable("T1")).isFalse();
+        TenantCache.putEntitlements("T1", new Entitlements(SubscriptionPlan.STARTER, SubscriptionStatus.ACTIVE, Set.of(), 0, false, null));
+        assertThat(entitlementService.publicLinksAvailable("T1")).isFalse();
     }
 
     private static Subscription.SubscriptionBuilder sub(SubscriptionPlan plan, SubscriptionStatus status) {

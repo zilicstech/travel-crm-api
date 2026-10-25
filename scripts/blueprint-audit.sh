@@ -21,6 +21,14 @@ for f in $SRC/controller/*.java; do
 done
 check "§5.3 all controllers guarded by @PreAuthorize" 0 "$UNGUARDED"
 
+# Spec §8 - every controller is classified in ControllerSkuTable (NEVER_GATED or one SKU);
+# ControllerSkuTableContractTest checks the same against the live handler mapping.
+UNCLASSIFIED=0
+for f in $SRC/controller/*Controller.java; do
+  grep -q "\b$(basename "$f" .java)\.class" $SRC/security/ControllerSkuTable.java || { echo "    unclassified controller: $f"; UNCLASSIFIED=$((UNCLASSIFIED+1)); }
+done
+check "spec §8 every controller in ControllerSkuTable" 0 "$UNCLASSIFIED"
+
 # §7.3 - controllers never return JPA entities.
 # The alternation is an explicit allowlist of entity class names, so it has to be extended
 # whenever entity/ gains a class - an entity missing from this list is silently unguarded.
