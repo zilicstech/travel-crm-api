@@ -215,11 +215,10 @@ public class PlatformBookingService {
         ReviewEnv env = admit(principal, PricingProduct.FLIGHT, request.getClientId(), request.getIssuedByAgentId(),
                 request.getServiceId(), request.getLeadId());
         FareReview fare = providers.flights().review(request);
-        PlatformBookingReviewResponse response = stampReview(principal, PricingProduct.FLIGHT, env, fare, request.getClientId(),
+        return stampReview(principal, PricingProduct.FLIGHT, env, fare, request.getClientId(),
                 request.getLeadId(), request.getServiceId(), request.getAdults() + request.getChildren() + request.getInfants(),
                 itineraryMap(fare.itinerary()), request.getSearchDisplayedFare(),
                 Map.of("adults", request.getAdults(), "children", request.getChildren(), "infants", request.getInfants()));
-        return response;
     }
 
     /**
@@ -269,11 +268,7 @@ public class PlatformBookingService {
         }
         PlatformSupplierCredential credential = credentialRepository.findByProviderAndIsActiveTrue(SupplierProvider.TRIPJACK)
                 .orElseThrow(() -> new IllegalStateException("Tripjack is not configured on the platform"));
-        if (credential.getEnvironment() == SupplierEnvironment.PROD && !settings.tripjackLiveReady()) {
-            // kill switch: tripjack_live_ready off stops new live bookings; rows already in flight keep settling
-            throw new BookingConflictException("LIVE_BOOKINGS_PAUSED",
-                    "Booking through Voyra is paused for now - please try again later or contact Voyra", Map.of());
-        }
+        requireLiveAllowed(credential.getEnvironment());
         return new ReviewEnv(credential.getEnvironment(), credential.getId());
     }
 
@@ -704,6 +699,7 @@ public class PlatformBookingService {
         if (b.getStatus() != PlatformBookingStatus.REVIEWING) {
             throw new IllegalStateException("This booking was already confirmed");
         }
+        requireLiveAllowed(b.getEnvironment()); // switched off since the review: stays REVIEWING, the sweep expires it
         if (bookingRepository.findByIdempotencyKey(request.getIdempotencyKey()).isPresent()) {
             throw new IllegalStateException("This confirmation key was already used for another booking");
         }
@@ -943,6 +939,14 @@ public class PlatformBookingService {
             return;
         }
         throw new BookingRequestException("ISSUING_AGENT_REQUIRED", "Choose the agent this booking is issued by");
+    }
+
+    /** Kill switch: with tripjack_live_ready off no new live booking is reviewed or confirmed; rows already sent keep settling. */
+    private void requireLiveAllowed(SupplierEnvironment environment) {
+        if (environment == SupplierEnvironment.PROD && !settings.tripjackLiveReady()) {
+            throw new BookingConflictException("LIVE_BOOKINGS_PAUSED",
+                    "Booking through Voyra is paused for now - please try again later or contact Voyra", Map.of());
+        }
     }
 
     private static String priceWord(PricingProduct product) {

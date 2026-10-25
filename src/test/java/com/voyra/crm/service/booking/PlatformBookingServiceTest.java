@@ -1333,4 +1333,24 @@ class PlatformBookingServiceTest {
         verify(provider, never()).review(any(FlightReviewRequest.class));
         assertThat(rows).isEmpty();
     }
+
+    /** Fix round 2: a live row reviewed while the switch was on, confirmed after it went off, is refused before any hold or book. */
+    @Test
+    void aLiveReviewConfirmedAfterTheSwitchWentOffIsRefused() {
+        config.setProvider("tripjack");
+        when(credentialRepository.findByProviderAndIsActiveTrue(SupplierProvider.TRIPJACK)).thenReturn(Optional.of(
+                PlatformSupplierCredential.builder().id("CRED1").environment(SupplierEnvironment.PROD).build()));
+        when(settings.tripjackLiveReady()).thenReturn(true, false);
+        wallet.setIsTest(false);
+        String id = reviewed();
+
+        assertThatThrownBy(() -> service.confirm(id, confirmRequest("key-00000001", "4500.00")))
+                .isInstanceOfSatisfying(BookingConflictException.class, e -> {
+                    assertThat(e.getCode()).isEqualTo("LIVE_BOOKINGS_PAUSED");
+                    assertThat(e.getMessage()).doesNotContain("tripjack_live_ready").doesNotContain("PROD");
+                });
+        verify(walletService, never()).hold(any(), any(), any(), any(), any());
+        verify(provider, never()).book(any());
+        assertThat(rows.get(id).getStatus()).isEqualTo(PlatformBookingStatus.REVIEWING);
+    }
 }
