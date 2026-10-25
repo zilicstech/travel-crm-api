@@ -39,7 +39,7 @@ public class CsvStatementParser implements StatementParser {
     }
 
     /** Excel's "CSV UTF-8" export starts with a byte-order mark that would otherwise glue itself to the first header name. */
-    private static String stripBom(String text) {
+    static String stripBom(String text) {
         return !text.isEmpty() && text.charAt(0) == '\uFEFF' ? text.substring(1) : text;
     }
 
@@ -137,7 +137,7 @@ public class CsvStatementParser implements StatementParser {
     }
 
     /** Strips thousands separators and a leading currency marker (₹, Rs, INR, $) before parsing. */
-    private static BigDecimal toDecimal(String raw) {
+    static BigDecimal toDecimal(String raw) {
         String cleaned = raw.replaceAll("(?i)(₹|rs\\.?|inr|\\$)", "").replace(",", "").trim();
         try {
             return new BigDecimal(cleaned);
@@ -178,7 +178,7 @@ public class CsvStatementParser implements StatementParser {
     }
 
     /** Minimal RFC4180 line splitter - handles quoted fields with embedded commas and doubled-quote escaping. */
-    private static List<String> splitCsvLine(String line) {
+    static List<String> splitCsvLine(String line) {
         List<String> fields = new ArrayList<>();
         StringBuilder current = new StringBuilder();
         boolean inQuotes = false;

@@ -50,7 +50,7 @@ public class AgencyPriceQuoter {
             commission = commission.min(earned);
         }
         BigDecimal tds = round(commission.multiply(tdsPct).divide(HUNDRED));
-        BigDecimal net = earned.subtract(gross.subtract(displayed)).subtract(commission);
+        BigDecimal net = PricingMath.voyraNetOf(earned, gross, displayed, commission);
         return new PriceQuote(displayed, commission.subtract(tds), earned, commission, tds, net,
                 row.getId(), row.getDiscountPct(), row.getCommissionPct());
     }

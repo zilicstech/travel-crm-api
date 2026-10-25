@@ -28,6 +28,13 @@ public interface PlatformBookingRepository extends JpaRepository<PlatformBooking
 
     Optional<PlatformBooking> findBySupplierReviewId(String supplierReviewId);
 
+    List<PlatformBooking> findBySupplierBookingId(String supplierBookingId);
+
+    List<PlatformBooking> findByPnr(String pnr);
+
+    /** The P&L window: bookings ticketed in [from, to). */
+    List<PlatformBooking> findByTicketedAtGreaterThanEqualAndTicketedAtLessThan(Instant from, Instant to);
+
     Optional<PlatformBooking> findByIdempotencyKey(String idempotencyKey);
 
     List<PlatformBooking> findByStatusIn(Collection<PlatformBookingStatus> statuses);

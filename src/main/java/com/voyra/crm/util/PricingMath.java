@@ -37,6 +37,11 @@ public final class PricingMath {
         return round(rawNet(gross, base, discountPct, commissionPct, voyraEarnedPct, db, allowCommissionAboveEarned));
     }
 
+    /** Spec 5.1 on a booking's stamped figures: voyraNet = voyraEarned - (gross - displayed) - agencyCommission. */
+    public static BigDecimal voyraNetOf(BigDecimal voyraEarned, BigDecimal gross, BigDecimal displayed, BigDecimal agencyCommission) {
+        return round(voyraEarned.subtract(gross.subtract(displayed)).subtract(agencyCommission));
+    }
+
     /** The lowest Voyra net per 10,000 of gross across the basket. */
     public static BigDecimal worstCaseNetPer10k(List<ReferenceFare> basket, BigDecimal discountPct, BigDecimal commissionPct,
                                                 BigDecimal voyraEarnedPct, DiscountBase db) {
