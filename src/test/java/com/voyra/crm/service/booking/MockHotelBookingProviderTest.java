@@ -2,6 +2,7 @@ package com.voyra.crm.service.booking;
 
 import com.voyra.crm.dto.HotelDetailResponse;
 import com.voyra.crm.dto.HotelOfferResponse;
+import com.voyra.crm.dto.HotelRoomRequest;
 import com.voyra.crm.dto.HotelSearchQuery;
 import com.voyra.crm.exception.FareUnavailableException;
 import com.voyra.crm.exception.SupplierTimeoutException;
@@ -24,11 +25,15 @@ class MockHotelBookingProviderTest {
     private static final LocalDate IN = LocalDate.now().plusDays(30);
     private static final LocalDate OUT = IN.plusDays(3);
 
+    private static final List<HotelRoomRequest> ONE_ROOM = List.of(new HotelRoomRequest(2, List.of()));
+    /** Two rooms: 2 adults + a child of 6, and 1 adult. */
+    private static final List<HotelRoomRequest> TWO_ROOMS = List.of(new HotelRoomRequest(2, List.of(6)), new HotelRoomRequest(1, List.of()));
+
     private final HotelBookingProviderConfig config = new HotelBookingProviderConfig();
     private final MockHotelBookingProvider provider = new MockHotelBookingProvider(config);
 
     private FareReview review() {
-        return provider.review("mock-mock-ibis-budget-std", "mock-ibis-budget", IN, OUT, 1);
+        return provider.review("mock-mock-ibis-budget-std", "mock-ibis-budget", IN, OUT, ONE_ROOM);
     }
 
     private BookResult book(FareReview r) {
@@ -54,10 +59,13 @@ class MockHotelBookingProviderTest {
         q.setCheckIn(IN);
         q.setCheckOut(OUT);
         q.setRooms(2);
+        q.setAdults(3);
+        q.setChildren(1);
+        q.setChildAges(List.of(6));
         for (HotelOfferResponse offer : search.search(q)) {
             assertThat(offer.getBaseFare()).isEqualByComparingTo(offer.getPrice().multiply(new BigDecimal("0.82")).setScale(2, RoundingMode.HALF_UP));
             for (HotelDetailResponse.RoomOption o : search.detail(offer.getHotelId(), q).getOptions()) {
-                FareReview r = provider.review(o.getOptionId(), offer.getHotelId(), IN, OUT, 2);
+                FareReview r = provider.review(o.getOptionId(), offer.getHotelId(), IN, OUT, TWO_ROOMS);
                 assertThat(r.totalFare()).as(o.getOptionId()).isEqualByComparingTo(o.getPrice());
                 assertThat(r.baseFare()).as(o.getOptionId()).isEqualByComparingTo(o.getBaseFare());
             }
@@ -117,7 +125,7 @@ class MockHotelBookingProviderTest {
 
     @Test
     void afterTheFreeCancellationDeadlineTheRefundIsZero() {
-        FareReview late = provider.review("mock-mock-ibis-budget-std", "mock-ibis-budget", LocalDate.now().plusDays(1), LocalDate.now().plusDays(3), 1);
+        FareReview late = provider.review("mock-mock-ibis-budget-std", "mock-ibis-budget", LocalDate.now().plusDays(1), LocalDate.now().plusDays(3), ONE_ROOM);
         assertThat(late.freeCancellationUntil()).isBefore(Instant.now());
         assertThat(provider.cancelQuote(book(late).supplierBookingId()).refund()).isEqualByComparingTo("0");
     }

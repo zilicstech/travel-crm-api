@@ -1,8 +1,10 @@
 package com.voyra.crm.service.booking;
 
+import com.voyra.crm.dto.HotelRoomRequest;
 import com.voyra.crm.models.booking.*;
 
 import java.time.LocalDate;
+import java.util.List;
 
 /**
  * Supplier abstraction for booking hotel rooms, selected by {@code app.hotel-booking.provider}
@@ -12,10 +14,10 @@ import java.time.LocalDate;
 public interface HotelBookingProvider extends BookingSupplier {
 
     /**
-     * Re-prices one room option for the stay; {@link FareReview#baseFare()} is the room rate excluding taxes (null when the
+     * Re-prices one room option for the stay and each room's occupancy (adults, child ages); {@link FareReview#baseFare()} is the room rate excluding taxes (null when the
      * supplier does not say), {@code cancellationPolicy} and {@code freeCancellationUntil} describe the rate's rules.
      *
      * @throws com.voyra.crm.exception.FareUnavailableException when the room is gone
      */
-    FareReview review(String optionId, String hotelId, LocalDate checkIn, LocalDate checkOut, int rooms);
+    FareReview review(String optionId, String hotelId, LocalDate checkIn, LocalDate checkOut, List<HotelRoomRequest> rooms);
 }

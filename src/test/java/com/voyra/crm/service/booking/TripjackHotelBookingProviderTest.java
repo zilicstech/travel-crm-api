@@ -1,5 +1,6 @@
 package com.voyra.crm.service.booking;
 
+import com.voyra.crm.dto.HotelRoomRequest;
 import com.voyra.crm.enums.SupplierEnvironment;
 import com.voyra.crm.enums.SupplierProvider;
 import com.voyra.crm.exception.FareUnavailableException;
@@ -54,7 +55,8 @@ class TripjackHotelBookingProviderTest {
     }
 
     private FareReview review() {
-        return provider.review("opt-1", "100012", LocalDate.of(2026, 12, 1), LocalDate.of(2026, 12, 4), 1);
+        return provider.review("opt-1", "100012", LocalDate.of(2026, 12, 1), LocalDate.of(2026, 12, 4),
+                List.of(new HotelRoomRequest(2, List.of(6)), new HotelRoomRequest(1, List.of())));
     }
 
     private static final String REVIEW_OK = OK + ",\"bookingId\":\"TJH1\",\"option\":{\"pricing\":{\"totalPrice\":12000.5,\"baseRate\":10000,\"currency\":\"INR\"},"
@@ -66,6 +68,10 @@ class TripjackHotelBookingProviderTest {
                 .andExpect(header("apikey", "test-key"))
                 .andExpect(jsonPath("$.optionId").value("opt-1")).andExpect(jsonPath("$.hid").value("100012"))
                 .andExpect(jsonPath("$.checkIn").value("2026-12-01")).andExpect(jsonPath("$.checkOut").value("2026-12-04"))
+                .andExpect(jsonPath("$.roomInfo.length()").value(2))
+                .andExpect(jsonPath("$.roomInfo[0].adults").value(2)).andExpect(jsonPath("$.roomInfo[0].children").value(1))
+                .andExpect(jsonPath("$.roomInfo[0].childAge[0]").value(6))
+                .andExpect(jsonPath("$.roomInfo[1].adults").value(1)).andExpect(jsonPath("$.roomInfo[1].children").doesNotExist())
                 .andRespond(withSuccess(REVIEW_OK, MediaType.APPLICATION_JSON));
         FareReview r = review();
         server.verify();
@@ -195,6 +201,20 @@ class TripjackHotelBookingProviderTest {
                 .andRespond(withSuccess(OK + ",\"order\":{\"status\":\"SUCCESS\"},\"cancellation\":{\"refundAmount\":8000}}", MediaType.APPLICATION_JSON));
         server.expect(requestTo(BASE + "/oms/v3/hotel/booking-details")).andRespond(withSuccess(OK + ",\"order\":{\"status\":\"SUCCESS\"}}", MediaType.APPLICATION_JSON));
         assertThat(provider.cancelQuote("TJH1").refund()).isEqualByComparingTo("8000");
+        assertThat(provider.cancelQuote("TJH1").refund()).isNull();
+        server.verify();
+    }
+
+    /** A refund is quoted only for a booking the supplier still shows as confirmed; anything else goes to Voyra support (null). */
+    @Test
+    void cancelQuote_onABookingNoLongerConfirmedAtTheSupplierIsUnknown() {
+        server.expect(requestTo(BASE + "/oms/v3/hotel/booking-details"))
+                .andRespond(withSuccess(OK + ",\"order\":{\"status\":\"CANCELLED\"},\"cancellation\":{\"refundAmount\":8000}}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(BASE + "/oms/v3/hotel/booking-details"))
+                .andRespond(withSuccess(OK + ",\"cancellation\":{\"refundAmount\":8000}}", MediaType.APPLICATION_JSON));
+        CancelQuote cancelled = provider.cancelQuote("TJH1");
+        assertThat(cancelled.refund()).isNull();
+        assertThat(cancelled.message()).contains("CANCELLED");
         assertThat(provider.cancelQuote("TJH1").refund()).isNull();
         server.verify();
     }

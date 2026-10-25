@@ -3,6 +3,7 @@ package com.voyra.crm.service.booking;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.voyra.crm.dto.HotelRoomRequest;
 import com.voyra.crm.enums.SupplierEnvironment;
 import com.voyra.crm.enums.SupplierProvider;
 import com.voyra.crm.exception.FareUnavailableException;
@@ -43,7 +44,8 @@ import java.util.Map;
  * Same rulings as the flight provider: FAILED only on an explicit {@code status.success=false}; an empty or odd body is
  * a {@link SupplierException}; guessed statuses are PENDING; an unknown refund is null; book error bodies are never
  * logged (guest PII), others are cut to 200 characters. The cancel quote reads booking-details and never calls
- * cancel-booking, because a guessed dry-run flag could really cancel.
+ * cancel-booking, because a guessed dry-run flag could really cancel, and quotes a refund only while that order is
+ * still confirmed (SUCCESS / CONFIRMED).
  */
 @Service
 @ConditionalOnProperty(name = "app.hotel-booking.provider", havingValue = "tripjack")
@@ -70,13 +72,13 @@ public class TripjackHotelBookingProvider implements HotelBookingProvider {
     }
 
     @Override
-    public FareReview review(String optionId, String hotelId, LocalDate checkIn, LocalDate checkOut, int rooms) {
+    public FareReview review(String optionId, String hotelId, LocalDate checkIn, LocalDate checkOut, List<HotelRoomRequest> rooms) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("optionId", optionId);
         body.put("hid", hotelId);
         body.put("checkIn", checkIn.toString());
         body.put("checkOut", checkOut.toString());
-        body.put("roomCount", rooms);
+        body.put("roomInfo", roomInfo(rooms));
         JsonNode res = post("/hms/v3/hotel/review", body, "review", true);
         if (!succeeded(res)) {
             throw new FareUnavailableException(message(res, "Room is no longer available"));
@@ -140,8 +142,13 @@ public class TripjackHotelBookingProvider implements HotelBookingProvider {
     @Override
     public CancelQuote cancelQuote(String supplierBookingId) {
         JsonNode res = post("/oms/v3/hotel/booking-details", Map.of("bookingId", supplierBookingId), "cancel quote", true);
-        JsonNode cancellation = res == null ? null : res.path("cancellation");
-        BigDecimal refund = cancellation == null ? null : decimal(cancellation.path("refundAmount"));
+        String orderStatus = res == null ? "" : res.path("order").path("status").asText("").toUpperCase();
+        if (!orderStatus.equals("SUCCESS") && !orderStatus.equals("CONFIRMED")) {
+            // only a booking the supplier still shows as confirmed gets a figure; anything else is Voyra support's (refund unknown)
+            return new CancelQuote(null, "The supplier shows this booking as " + (orderStatus.isEmpty() ? "unknown" : orderStatus));
+        }
+        JsonNode cancellation = res.path("cancellation");
+        BigDecimal refund = decimal(cancellation.path("refundAmount"));
         return new CancelQuote(refund != null && refund.signum() >= 0 ? refund : null, message(res, null));
     }
 
@@ -170,6 +177,23 @@ public class TripjackHotelBookingProvider implements HotelBookingProvider {
         } catch (RuntimeException e) {
             return null;
         }
+    }
+
+    /**
+     * Each reviewed room's occupancy as {@code roomInfo}, in the per-room shape of the v3 listing/pricing {@code rooms}
+     * ({@code adults}, {@code children}, {@code childAge}). Unverified (slice 0): the field name and shape are a guess.
+     */
+    private static List<Map<String, Object>> roomInfo(List<HotelRoomRequest> rooms) {
+        return rooms.stream().map(r -> {
+            List<Integer> ages = r.getChildAges() == null ? List.of() : r.getChildAges();
+            Map<String, Object> room = new LinkedHashMap<>();
+            room.put("adults", r.getAdults());
+            if (!ages.isEmpty()) {
+                room.put("children", ages.size());
+                room.put("childAge", ages);
+            }
+            return room;
+        }).toList();
     }
 
     /** One entry per room (first guest = lead); the lead PAN goes on the first room's lead. Field names unverified (slice 0). */

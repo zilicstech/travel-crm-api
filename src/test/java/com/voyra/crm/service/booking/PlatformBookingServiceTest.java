@@ -79,7 +79,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
-import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
@@ -735,6 +735,7 @@ class PlatformBookingServiceTest {
     @Test
     void agentWithoutFlightServiceIs403() {
         String id = reviewed();
+        rows.get(id).setBookedBy("AG1"); // their own booking: a colleague's would be 404 before the product check
         loginAs(UserType.AGENT, "AG1");
         when(agentRepository.findById("AG1")).thenReturn(Optional.of(
                 Agent.builder().id("AG1").manageableServices(List.of(ServiceType.HOTEL)).build()));
@@ -929,7 +930,7 @@ class PlatformBookingServiceTest {
         rows.get(id).setStatus(PlatformBookingStatus.TICKETED);
         lenient().when(bookingRepository.findByIdAndTenantId(id, T)).thenAnswer(i -> Optional.of(rows.get(id)));
         loginAs(UserType.AGENT, "AG2");
-        when(agentRepository.findById("AG2")).thenReturn(Optional.of(
+        lenient().when(agentRepository.findById("AG2")).thenReturn(Optional.of(
                 Agent.builder().id("AG2").manageableServices(List.of(ServiceType.FLIGHT)).build()));
 
         assertThatThrownBy(() -> service.confirm(id, confirmRequest("key-00000001", "4500.00"))).isInstanceOf(NotFoundException.class);
@@ -981,7 +982,7 @@ class PlatformBookingServiceTest {
 
     private void hotelSupplierQuotes(String total) {
         lenient().when(pricingService.requireInForce(T, PricingProduct.HOTEL)).thenReturn(AgencyPricing.builder().id("PH").build());
-        lenient().when(hotelProvider.review(eq("O1"), eq("H1"), any(), any(), eq(2)))
+        lenient().when(hotelProvider.review(eq("O1"), eq("H1"), any(), any(), anyList()))
                 .thenReturn(new FareReview("hrv-1", new BigDecimal(total), new BigDecimal("4250.00"), "INR", "Rate rules",
                         Instant.now().plus(15, ChronoUnit.MINUTES), null, "Free cancellation until 2026-11-29", FREE_UNTIL));
         lenient().when(quoter.quote(eq(T), eq(PricingProduct.HOTEL), any(), any())).thenReturn(quote("PH", "4500.00", "100.00", "0.00"));
@@ -993,8 +994,8 @@ class PlatformBookingServiceTest {
         HotelReviewRequest r = new HotelReviewRequest();
         r.setHotelId("H1");
         r.setOptionId("O1");
-        r.setCheckIn(LocalDate.of(2026, 12, 1));
-        r.setCheckOut(LocalDate.of(2026, 12, 3));
+        r.setCheckIn(LocalDate.now().plusDays(37));
+        r.setCheckOut(LocalDate.now().plusDays(39));
         r.setRooms(List.of(new HotelRoomRequest(2, List.of(6)), new HotelRoomRequest(1, List.of())));
         r.setHotelName("Sea Breeze Resort");
         r.setCity("Goa");
@@ -1039,7 +1040,7 @@ class PlatformBookingServiceTest {
     @Test
     void hotelReviewWithAMissingBaseRateIsAConflict() {
         hotelSupplierQuotes("5000.00");
-        when(hotelProvider.review(eq("O1"), eq("H1"), any(), any(), eq(2)))
+        when(hotelProvider.review(eq("O1"), eq("H1"), any(), any(), anyList()))
                 .thenReturn(new FareReview("hrv-1", new BigDecimal("5000.00"), null, "INR", null, null, null));
 
         assertThatThrownBy(() -> service.reviewHotel(hotelReviewRequest()))
@@ -1080,7 +1081,7 @@ class PlatformBookingServiceTest {
         assertThatThrownBy(() -> service.reviewHotel(hotelReviewRequest())).isInstanceOf(AccessDeniedException.class);
         assertThatThrownBy(() -> service.confirm(id, hotelConfirmRequest("key-00000001", "4500.00"))).isInstanceOf(AccessDeniedException.class);
         verify(walletService, never()).hold(any(), any(), any(), any(), any());
-        verify(hotelProvider, times(1)).review(any(), any(), any(), any(), anyInt());
+        verify(hotelProvider, times(1)).review(any(), any(), any(), any(), anyList());
     }
 
     @Test
@@ -1102,7 +1103,7 @@ class PlatformBookingServiceTest {
     void hotelConfirmBooksOnceThroughTheHotelSupplierWithGuestsPerRoom() {
         hotelSupplierQuotes("5000.00");
         String id = service.reviewHotel(hotelReviewRequest()).getBookingId();
-        rows.get(id).setClientId("C1"); // a CRM client: the hotel mirror is Task 3, so the row stays NONE
+        rows.get(id).setClientId("C1"); // a CRM client: the hotel gets its CRM mirror like a flight
         when(agentRepository.findByIdAndTenantId("AG1", T)).thenReturn(Optional.of(Agent.builder().id("AG1").build()));
         PlatformBookingConfirmRequest req = hotelConfirmRequest("key-00000001", "4500.00");
         req.setIssuedByAgentId("AG1");
@@ -1118,7 +1119,8 @@ class PlatformBookingServiceTest {
         assertThat(sent.getValue().rooms().get(1)).extracting(p -> p.firstName()).containsExactly("Vikram");
         assertThat(sent.getValue().leadPan()).isEqualTo("ABCDE1234F");
         assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
-        assertThat(b.getMirrorStatus()).isEqualTo(com.voyra.crm.enums.MirrorStatus.NONE);
+        assertThat(b.getMirrorStatus()).isEqualTo(com.voyra.crm.enums.MirrorStatus.PENDING);
+        verify(mirrorService).sync(id);
         verify(walletService).debitHeld("H1", new BigDecimal("4500.00"), "pb-debit:" + id, REF, id);
         verify(walletService).credit(eq(T), eq(WalletEntryType.COMMISSION_CREDIT), any(), eq("pb-comm:" + id), eq(REF), eq(id),
                 contains("hotel booking"));
@@ -1135,6 +1137,64 @@ class PlatformBookingServiceTest {
 
         assertThatThrownBy(() -> service.confirm(id, oneRoom)).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> service.confirm(id, untitled)).isInstanceOf(IllegalArgumentException.class);
+        verify(walletService, never()).hold(any(), any(), any(), any(), any());
+    }
+
+    /** Task 2 follow-up: the supplier prices the stay for each room's adults and child ages, not a bare room count. */
+    @Test
+    void hotelReviewSendsEachRoomsOccupancyToTheSupplier() {
+        hotelSupplierQuotes("5000.00");
+
+        service.reviewHotel(hotelReviewRequest());
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<HotelRoomRequest>> rooms = ArgumentCaptor.forClass(List.class);
+        verify(hotelProvider).review(eq("O1"), eq("H1"), any(), any(), rooms.capture());
+        assertThat(rooms.getValue()).extracting(HotelRoomRequest::getAdults).containsExactly(2, 1);
+        assertThat(rooms.getValue().get(0).getChildAges()).containsExactly(6);
+    }
+
+    @Test
+    void aCheckInInThePastIsRefusedBeforeTheSupplier() {
+        hotelSupplierQuotes("5000.00");
+        HotelReviewRequest r = hotelReviewRequest();
+        r.setCheckIn(LocalDate.now().minusDays(1));
+        r.setCheckOut(LocalDate.now().plusDays(1));
+
+        assertThatThrownBy(() -> service.reviewHotel(r)).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("past");
+        verify(hotelProvider, never()).review(any(), any(), any(), any(), anyList());
+        assertThat(rows).isEmpty();
+    }
+
+    /** Room 2 was reviewed for one adult: a second guest there is refused even though the booking total (4) is not exceeded. */
+    @Test
+    void moreGuestsInARoomThanItWasReviewedForAreRefused() {
+        hotelSupplierQuotes("5000.00");
+        String id = service.reviewHotel(hotelReviewRequest()).getBookingId();
+        PlatformBookingConfirmRequest req = hotelConfirmRequest("key-00000001", "4500.00");
+        req.setPassengers(List.of(
+                PaxInput.builder().type("ADULT").title("Mr").firstName("Rahul").lastName("Sharma").roomIndex(0).build(),
+                PaxInput.builder().type("ADULT").title("Mr").firstName("Vikram").lastName("Rao").roomIndex(1).build(),
+                PaxInput.builder().type("ADULT").firstName("Asha").lastName("Rao").roomIndex(1).build()));
+
+        assertThatThrownBy(() -> service.confirm(id, req)).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("room 2");
+        verify(walletService, never()).hold(any(), any(), any(), any(), any());
+        verify(hotelProvider, never()).book(any());
+    }
+
+    /** Ownership first: an agent without hotels never learns that a colleague's hotel booking exists (404, not 403). */
+    @Test
+    void anAgentWithoutHotelsGetsNotFoundOnAColleaguesHotelBooking() {
+        hotelSupplierQuotes("5000.00");
+        String id = service.reviewHotel(hotelReviewRequest()).getBookingId();
+        rows.get(id).setBookedBy("AG2");
+        loginAs(UserType.AGENT, "AG1");
+        lenient().when(agentRepository.findById("AG1")).thenReturn(Optional.of(
+                Agent.builder().id("AG1").manageableServices(List.of(ServiceType.FLIGHT)).build()));
+
+        assertThatThrownBy(() -> service.confirm(id, hotelConfirmRequest("key-00000001", "4500.00"))).isInstanceOf(NotFoundException.class);
+        assertThatThrownBy(() -> service.abort(id)).isInstanceOf(NotFoundException.class);
+        assertThatThrownBy(() -> service.cancelQuote(id)).isInstanceOf(NotFoundException.class);
         verify(walletService, never()).hold(any(), any(), any(), any(), any());
     }
 }

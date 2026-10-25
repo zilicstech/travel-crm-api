@@ -480,6 +480,8 @@ class PlatformBookingCancelTest {
         assertThat(q.net()).isEqualByComparingTo("3655.00");
         assertThat(q.voyraFee()).isEqualByComparingTo("250.00");
         assertThat(q.refundToBeConfirmed()).isFalse();
+        assertThat(q.cancellationPolicy()).isNull(); // flights carry no hotel policy
+        assertThat(q.freeCancellationUntil()).isNull();
         verifyNothingPosted();
     }
 
@@ -583,6 +585,57 @@ class PlatformBookingCancelTest {
         verify(provider, never()).cancel(any());
         verify(walletService).credit(eq(T), eq(WalletEntryType.REFUND_CREDIT), eq(new BigDecimal("4000.00")),
                 eq("pb-refund:" + ID), eq(REF), eq(ID), contains("hotel booking"));
+        verify(walletService).debitOrReceivable(T, WalletEntryType.COMMISSION_RECALL, new BigDecimal("95.00"),
+                "pb-recall:" + ID, REF, ID, ReceivableReason.CANCEL_NET_NEGATIVE);
+    }
+
+    /** A HOTEL row as reviewed: the rate's policy and free-cancellation deadline are stored on the itinerary. */
+    private PlatformBooking hotelRow() {
+        PlatformBooking b = rows.get(ID);
+        b.setProduct(PricingProduct.HOTEL);
+        Map<String, Object> itinerary = new LinkedHashMap<>();
+        itinerary.put("hotel", Map.of("name", "Sea Breeze Resort", "city", "Goa"));
+        itinerary.put("cancellationPolicy", "Free cancellation until 2026-11-29");
+        itinerary.put("freeCancellationUntil", "2026-11-29T00:00:00Z");
+        b.setItinerary(itinerary);
+        return b;
+    }
+
+    @Test
+    void aHotelCancelQuoteShowsThePolicyAndTheFreeCancellationDeadline() {
+        hotelRow();
+        when(hotelProvider.cancelQuote("SB-1")).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"),
+                new CancelQuote(null, "unknown"));
+
+        CancelPreview q = service.cancelQuote(ID);
+        assertThat(q.cancellationPolicy()).isEqualTo("Free cancellation until 2026-11-29");
+        assertThat(q.freeCancellationUntil()).isEqualTo(Instant.parse("2026-11-29T00:00:00Z"));
+        assertThat(q.refund()).isEqualByComparingTo("4000.00");
+
+        CancelPreview unknown = service.cancelQuote(ID); // the slice 3 rule: no figure, Voyra support settles it
+        assertThat(unknown.refund()).isNull();
+        assertThat(unknown.refundToBeConfirmed()).isTrue();
+        assertThat(unknown.cancellationPolicy()).isEqualTo("Free cancellation until 2026-11-29");
+        verifyNothingPosted();
+    }
+
+    /** Review Focus 2: past the free-cancellation deadline the supplier refunds 0 - that is what is posted, and the recall still applies. */
+    @Test
+    void aHotelCancelledPastTheDeadlinePostsTheQuotedZeroAndStillRecalls() {
+        hotelRow();
+        when(hotelProvider.cancelQuote("SB-1")).thenReturn(new CancelQuote(BigDecimal.ZERO, "nothing, past the deadline"));
+        when(hotelProvider.cancel("SB-1")).thenReturn(new CancelResult(true, BigDecimal.ZERO, "Cancelled"));
+
+        CancelPreview q = service.cancelQuote(ID);
+        assertThat(q.refund()).isEqualByComparingTo("0");
+        assertThat(q.net()).isEqualByComparingTo("-95.00");
+        assertThat(q.refundToBeConfirmed()).isFalse();
+
+        PlatformBooking b = service.cancel(ID, "ck-1");
+
+        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
+        assertThat(b.getCancelRefund()).isEqualByComparingTo("0");
+        verify(walletService, never()).credit(anyString(), eq(WalletEntryType.REFUND_CREDIT), any(), anyString(), anyString(), anyString(), anyString());
         verify(walletService).debitOrReceivable(T, WalletEntryType.COMMISSION_RECALL, new BigDecimal("95.00"),
                 "pb-recall:" + ID, REF, ID, ReceivableReason.CANCEL_NET_NEGATIVE);
     }

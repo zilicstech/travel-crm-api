@@ -225,10 +225,13 @@ public class PlatformBookingService {
         if (!request.getCheckOut().isAfter(request.getCheckIn())) {
             throw new IllegalArgumentException("Check-out must be after check-in");
         }
+        if (request.getCheckIn().isBefore(java.time.LocalDate.now())) {
+            throw new IllegalArgumentException("Check-in can't be in the past");
+        }
         ReviewEnv env = admit(principal, PricingProduct.HOTEL, request.getClientId(), request.getIssuedByAgentId(),
                 request.getServiceId(), request.getLeadId());
         FareReview fare = providers.hotels().review(request.getOptionId(), request.getHotelId(), request.getCheckIn(),
-                request.getCheckOut(), request.getRooms().size());
+                request.getCheckOut(), request.getRooms());
         int guests = request.getRooms().stream()
                 .mapToInt(r -> r.getAdults() + (r.getChildAges() == null ? 0 : r.getChildAges().size())).sum();
         return stampReview(principal, PricingProduct.HOTEL, env, fare, request.getClientId(), request.getLeadId(),
@@ -374,7 +377,9 @@ public class PlatformBookingService {
         BigDecimal fee = settings.voyraCancelFee();
         BigDecimal refund = refundOf(providers.supplierFor(b).cancelQuote(supplierId(b)).refund(), b.getDisplayed(), fee);
         BigDecimal recall = recallOf(b);
-        return new CancelPreview(refund, recall, refund == null ? null : refund.subtract(recall), fee, refund == null);
+        Map<String, Object> it = b.getProduct() == PricingProduct.HOTEL && b.getItinerary() != null ? b.getItinerary() : Map.of();
+        return new CancelPreview(refund, recall, refund == null ? null : refund.subtract(recall), fee, refund == null,
+                it.get("cancellationPolicy") == null ? null : it.get("cancellationPolicy").toString(), instantOrNull(it.get("freeCancellationUntil")));
     }
 
     /**
@@ -748,8 +753,7 @@ public class PlatformBookingService {
             }
         }
         b.setStatus(PlatformBookingStatus.TICKETED);
-        // HOTEL stays NONE until the hotel mirror exists (see PlatformBookingMirrorService.sync)
-        if (b.getClientId() != null && b.getProduct() == PricingProduct.FLIGHT) {
+        if (b.getClientId() != null) {
             b.setMirrorStatus(MirrorStatus.PENDING); // committed with the debit, so the repair job finds it even after a crash
         }
         b.setPnr(result.pnr());
@@ -846,16 +850,12 @@ public class PlatformBookingService {
     }
 
     /**
-     * The booking this caller may act on: another agency's is absent (404); an agent must handle its product (403) and
-     * may act only on their own (a colleague's is absent).
+     * The booking this caller may act on: another agency's, or for an agent a colleague's, is absent (404) - checked
+     * before the product (403), so an agent never learns a colleague's booking exists.
      */
     private PlatformBooking actedOn(CustomUserPrincipal p, java.util.Optional<PlatformBooking> row) {
-        PlatformBooking b = row.filter(x -> p.tenantId().equals(x.getTenantId()))
-                .orElseThrow(() -> new NotFoundException("Booking not found"));
+        PlatformBooking b = row.filter(x -> actsOn(p, x)).orElseThrow(() -> new NotFoundException("Booking not found"));
         requireHandles(p, b.getProduct());
-        if (!actsOn(p, b)) {
-            throw new NotFoundException("Booking not found");
-        }
         return b;
     }
 
@@ -909,10 +909,14 @@ public class PlatformBookingService {
                 byRoom.values().stream().map(g -> g.stream().map(PlatformBookingService::toPax).toList()).toList(), leadPan);
     }
 
-    /** Hotels: every reviewed room has a lead guest with a title (the first guest given for it); other guests are optional. */
+    /**
+     * Hotels: every reviewed room has a lead guest with a title (the first guest given for it) and no more guests than its
+     * reviewed adults + children; other guests are optional.
+     */
     private static void requireGuestsPerRoom(PlatformBooking b, List<PaxInput> guests) {
         Object reviewed = b.getItinerary() == null ? null : b.getItinerary().get("rooms");
-        int rooms = reviewed instanceof List<?> list ? list.size() : 1;
+        List<?> occupancy = reviewed instanceof List<?> list ? list : List.of();
+        int rooms = occupancy.isEmpty() ? 1 : occupancy.size();
         if (guests.size() > b.getPaxCount()) {
             throw new IllegalArgumentException("Enter at most " + b.getPaxCount() + " guests, as reviewed");
         }
@@ -922,6 +926,12 @@ public class PlatformBookingService {
                     .orElseThrow(() -> new IllegalArgumentException("Enter the lead guest of room " + (r + 1)));
             if (lead.getTitle() == null || lead.getTitle().isBlank()) {
                 throw new IllegalArgumentException("Enter the title of the lead guest of room " + (r + 1));
+            }
+            if (r < occupancy.size() && occupancy.get(r) instanceof Map<?, ?> m && m.get("adults") instanceof Number adults) {
+                int cap = adults.intValue() + (m.get("childAges") instanceof List<?> ages ? ages.size() : 0);
+                if (guests.stream().filter(g -> roomOf(g) == r).count() > cap) {
+                    throw new IllegalArgumentException("Enter at most " + cap + " guests in room " + (r + 1) + ", as reviewed");
+                }
             }
         }
         if (guests.stream().anyMatch(g -> roomOf(g) >= rooms)) {
@@ -971,6 +981,15 @@ public class PlatformBookingService {
     /** A booking this caller may act on: same agency, and an agent only their own (a colleague's is simply absent). */
     private static boolean actsOn(CustomUserPrincipal p, PlatformBooking b) {
         return p.tenantId().equals(b.getTenantId()) && (!p.isAgent() || p.userId().equals(b.getBookedBy()));
+    }
+
+    /** An ISO instant stored in the itinerary JSON, or null when absent or unreadable. */
+    private static Instant instantOrNull(Object v) {
+        try {
+            return v == null ? null : Instant.parse(v.toString());
+        } catch (java.time.format.DateTimeParseException e) {
+            return null;
+        }
     }
 
     private static boolean positive(BigDecimal v) {

@@ -1,5 +1,6 @@
 package com.voyra.crm.service.booking;
 
+import com.voyra.crm.dto.HotelRoomRequest;
 import com.voyra.crm.exception.FareUnavailableException;
 import com.voyra.crm.exception.SupplierTimeoutException;
 import com.voyra.crm.models.booking.*;
@@ -45,7 +46,8 @@ public class MockHotelBookingProvider implements HotelBookingProvider {
     private final Map<String, Integer> pendingLeft = new ConcurrentHashMap<>();
 
     @Override
-    public FareReview review(String optionId, String hotelId, LocalDate checkIn, LocalDate checkOut, int rooms) {
+    public FareReview review(String optionId, String hotelId, LocalDate checkIn, LocalDate checkOut, List<HotelRoomRequest> occupancy) {
+        int rooms = occupancy.size(); // the mock search prices per room, whoever is in it - so does the review
         var mock = config.getMock();
         if (mock.isFareExpired()) {
             throw new FareUnavailableException("The selected room is no longer available");

@@ -254,17 +254,38 @@ class PlatformBookingMirrorServiceTest {
         assertThat(service.hasLeadAgent("T1", null, null)).isFalse();
     }
 
-    /** Until the hotel mirror (HOTEL_VOUCHER) exists, a hotel booking for a client is skipped: NONE, no failure, no alert. */
+    /** A hotel booking for a client is mirrored from its stay (a HOTEL_VOUCHER), never from flight legs. */
     @Test
-    void aHotelBookingIsNotMirroredYet() {
+    void aHotelBookingIsMirroredFromItsStay() {
         PlatformBooking hotel = ticketed("C1");
         hotel.setProduct(com.voyra.crm.enums.PricingProduct.HOTEL);
-        hotel.setMirrorStatus(MirrorStatus.NONE);
+        com.voyra.crm.dto.HotelStaySummary stay = new com.voyra.crm.dto.HotelStaySummary("Sea Breeze Resort", "Goa",
+                java.time.LocalDate.of(2026, 12, 1), java.time.LocalDate.of(2026, 12, 3), 2, 1, "Breakfast included");
+        when(queryService.hotel(hotel)).thenReturn(stay);
+        when(tenantService.createHotel(any(), any(), anyList())).thenReturn("B1");
 
         service.sync("PB1");
 
-        verifyNoInteractions(tenantService, notificationService);
-        assertThat(hotel.getMirrorStatus()).isEqualTo(MirrorStatus.NONE);
-        assertThat(recorded).isEmpty();
+        verify(tenantService).createHotel(eq(hotel), eq(stay), anyList());
+        verify(tenantService, never()).create(any(), anyList(), anyList());
+        verify(queryService, never()).itinerary(any());
+        assertThat(hotel.getMirrorStatus()).isEqualTo(MirrorStatus.DONE);
+        assertThat(hotel.getTenantBookingId()).isEqualTo("B1");
+    }
+
+    /** A cancelled hotel booking is mirrored, then its mirror cancelled through the same cancel as a flight. */
+    @Test
+    void aCancelledHotelBookingCancelsItsMirror() {
+        PlatformBooking hotel = ticketed("C1");
+        hotel.setProduct(com.voyra.crm.enums.PricingProduct.HOTEL);
+        hotel.setStatus(PlatformBookingStatus.CANCELLED);
+        when(queryService.hotel(hotel)).thenReturn(new com.voyra.crm.dto.HotelStaySummary("Sea Breeze Resort", "Goa",
+                java.time.LocalDate.of(2026, 12, 1), java.time.LocalDate.of(2026, 12, 3), 2, 1, null));
+        when(tenantService.createHotel(any(), any(), anyList())).thenReturn("B1");
+
+        service.sync("PB1");
+
+        verify(tenantService).cancel("B1", hotel);
+        assertThat(hotel.getMirrorStatus()).isEqualTo(MirrorStatus.DONE);
     }
 }

@@ -4,6 +4,7 @@ import com.voyra.crm.dto.BookingCancelRequest;
 import com.voyra.crm.dto.BookingCreateRequest;
 import com.voyra.crm.dto.BookingPassengerRequest;
 import com.voyra.crm.dto.BookingSectorRequest;
+import com.voyra.crm.dto.HotelStaySummary;
 import com.voyra.crm.dto.ItinerarySegment;
 import com.voyra.crm.dto.PaxInput;
 import com.voyra.crm.dto.SupplierInvoiceResponse;
@@ -44,6 +45,7 @@ import com.voyra.crm.util.FxMath;
 import com.voyra.crm.util.PaxTypeCalculator;
 import com.voyra.crm.util.UniqueIdResolver;
 import com.voyra.crm.util.VoucherCharges;
+import com.voyra.crm.util.VoucherDetails;
 import com.voyra.crm.util.VoucherTrip;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -57,6 +59,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -72,6 +75,7 @@ public class PlatformBookingMirrorTenantService {
 
     static final String VOYRA_VENDOR = "Voyra Platform";
     private static final String INR = "INR";
+    private static final java.util.Set<BookingDocumentType> MIRROR_VOUCHERS = java.util.EnumSet.of(BookingDocumentType.E_TICKET, BookingDocumentType.HOTEL_VOUCHER);
 
     private final BookingService bookingService;
     private final BookingRepository bookingRepository;
@@ -88,36 +92,18 @@ public class PlatformBookingMirrorTenantService {
     private final BaseCurrency baseCurrency;
 
     /**
-     * The mirror booking (spec 6): CONFIRMED with vendor Voyra Platform, one E_TICKET bought in INR at the displayed fare
+     * The flight mirror (spec 6): CONFIRMED with vendor Voyra Platform, one E_TICKET bought in INR at the displayed fare
      * with the fare's base/tax split and the agency's default flight markup, and its supplier bill paid from the Voyra
      * wallet. Returns the existing mirror when there is one, so a retry never writes a second.
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public String create(PlatformBooking pb, List<ItinerarySegment> segments, List<PaxInput> passengers) {
-        Optional<Booking> existing = bookingRepository.findByPlatformBookingId(pb.getId());
-        if (existing.isPresent()) {
-            return existing.get().getId();
-        }
-        // an agency may keep an old, deactivated vendor of the same name next to the seeded one
-        Vendor vendor = vendorRepository.findAllByNameIgnoreCase(VOYRA_VENDOR).stream().filter(v -> Boolean.TRUE.equals(v.getIsActive()))
-                .findFirst().orElseThrow(() -> new IllegalStateException("This agency has no active " + VOYRA_VENDOR + " vendor"));
         List<VoucherLeg> legs = VoucherTrip.cleanLegs(segments.stream().map(PlatformBookingMirrorTenantService::leg).toList());
         Map<String, String> trip = Optional.ofNullable(VoucherTrip.details(legs, null)).orElse(Map.of());
         LocalDate firstFlight = VoucherTrip.firstDate(legs);
-        String base = baseCurrency.code();
-        // the ticket was bought in rupees; a non-INR agency needs today's rate, and a missing one fails the mirror, never the ticket
-        BigDecimal rate = exchangeRateProvider.resolve(INR, base, LocalDate.now()).rate();
-        FxMath.Converted purchase = FxMath.toBase(INR, pb.getDisplayed(), rate, base);
-        MarkupDefault markup = markupDefaultRepository.findById(ServiceType.FLIGHT).orElse(null);
 
         BookingCreateRequest request = new BookingCreateRequest();
         request.setType(BookingType.FLIGHT);
-        request.setClientId(pb.getClientId());
-        request.setAgentId(agentFor(pb));
-        request.setServiceId(pb.getServiceId());
-        request.setLeadId(pb.getLeadId());
-        request.setVendorId(vendor.getId());
-        request.setSupplier(vendor.getName());
         request.setPnr(pb.getPnr());
         request.setTicketNo(ticketNo(pb.getTicketNumbers()));
         request.setAirline(trip.get("airline"));
@@ -130,35 +116,103 @@ public class PlatformBookingMirrorTenantService {
         request.setReturnDate(date(trip.get("returnDate")));
         request.setTripType(legs.isEmpty() ? null : request.getReturnDate() != null ? "Round Trip" : "One Way");
         request.setDestination(trip.getOrDefault("flightTo", "Flight"));
+        request.setPassengers(passengers.stream().map(p -> passenger(p, legs, firstFlight)).toList());
+
+        return mirror(pb, request, ServiceType.FLIGHT, BookingDocumentType.E_TICKET, ticket -> {
+            ticket.setLegs(legs.isEmpty() ? null : legs);
+            ticket.setTravellers(passengers.isEmpty() ? null : passengers.stream()
+                    .map(p -> VoucherTraveller.builder().memberId(blankToNull(p.getMemberId())).name(name(p))
+                            .paxType(paxType(p, firstFlight)).build()).toList());
+            ticket.setDetails(VoucherTrip.details(legs, ticket.getDetails()));
+        });
+    }
+
+    /**
+     * The hotel mirror: as {@link #create}, but a HOTEL booking with one HOTEL_VOUCHER carrying the stay (hotel, city,
+     * check-in/out, rooms, room type, meal basis) under the hotel's confirmation number, and the agency's default hotel markup.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public String createHotel(PlatformBooking pb, HotelStaySummary stay, List<PaxInput> passengers) {
+        if (stay == null || stay.checkIn() == null || stay.checkOut() == null) {
+            throw new IllegalStateException("Platform booking " + pb.getId() + " has no stay to mirror");
+        }
+        BookingCreateRequest request = new BookingCreateRequest();
+        request.setType(BookingType.HOTEL);
+        request.setHotelConfirmationNo(pb.getPnr());
+        request.setHotelName(stay.hotelName());
+        request.setHotelCity(stay.city());
+        request.setHotelCheckIn(stay.checkIn());
+        request.setHotelCheckOut(stay.checkOut());
+        request.setHotelRooms(stay.rooms());
+        request.setHotelRoomType(roomName(pb));
+        request.setHotelBoardBasis(stay.mealBasis());
+        request.setJourneyDate(stay.checkIn()); // as a logged hotel booking: the stay is the journey
+        request.setReturnDate(stay.checkOut());
+        request.setDestination(Stream.of(stay.city(), stay.hotelName()).filter(s -> s != null && !s.isBlank()).findFirst().orElse("Hotel"));
+        request.setPassengers(passengers.stream().map(p -> passenger(p, List.of(), stay.checkIn())).toList());
+
+        Map<String, String> details = new LinkedHashMap<>();
+        details.put("hotelName", stay.hotelName());
+        details.put("hotelCity", stay.city());
+        details.put("hotelCheckIn", stay.checkIn().toString());
+        details.put("hotelCheckOut", stay.checkOut().toString());
+        details.put("hotelRooms", stay.rooms() == null ? null : stay.rooms().toString());
+        details.put("hotelRoomType", request.getHotelRoomType());
+        details.put("hotelBoardBasis", stay.mealBasis());
+        return mirror(pb, request, ServiceType.HOTEL, BookingDocumentType.HOTEL_VOUCHER,
+                voucher -> voucher.setDetails(VoucherDetails.clean(BookingType.HOTEL, details)));
+    }
+
+    /**
+     * What every mirror shares: vendor Voyra Platform, bought in INR at the displayed fare (in the agency's base at today's
+     * rate) with the fare's base/tax split, the agency's default markup for the product, the voucher described by
+     * {@code describe}, and its supplier bill paid from the Voyra wallet. The existing mirror is returned untouched.
+     */
+    private String mirror(PlatformBooking pb, BookingCreateRequest request, ServiceType product, BookingDocumentType docType,
+                          Consumer<BookingDocument> describe) {
+        Optional<Booking> existing = bookingRepository.findByPlatformBookingId(pb.getId());
+        if (existing.isPresent()) {
+            return existing.get().getId();
+        }
+        // an agency may keep an old, deactivated vendor of the same name next to the seeded one
+        Vendor vendor = vendorRepository.findAllByNameIgnoreCase(VOYRA_VENDOR).stream().filter(v -> Boolean.TRUE.equals(v.getIsActive()))
+                .findFirst().orElseThrow(() -> new IllegalStateException("This agency has no active " + VOYRA_VENDOR + " vendor"));
+        String base = baseCurrency.code();
+        // bought in rupees; a non-INR agency needs today's rate, and a missing one fails the mirror, never the booking
+        BigDecimal rate = exchangeRateProvider.resolve(INR, base, LocalDate.now()).rate();
+        FxMath.Converted purchase = FxMath.toBase(INR, pb.getDisplayed(), rate, base);
+        MarkupDefault markup = markupDefaultRepository.findById(product).orElse(null);
+
+        request.setClientId(pb.getClientId());
+        request.setAgentId(agentFor(pb));
+        request.setServiceId(pb.getServiceId());
+        request.setLeadId(pb.getLeadId());
+        request.setVendorId(vendor.getId());
+        request.setSupplier(vendor.getName());
         request.setNotes("Booked with Voyra - managed from Platform Bookings");
         request.setNetCost(purchase.base());
         request.setMarkupMode(markup != null && markup.getMode() != null ? markup.getMode() : MarkupMode.PERCENT);
         request.setMarkupValue(markup != null && markup.getValue() != null ? markup.getValue() : BigDecimal.ZERO);
-        request.setOverrideCreditLimit(true); // the ticket is already bought and paid for
-        request.setPassengers(passengers.stream().map(p -> passenger(p, legs, firstFlight)).toList());
+        request.setOverrideCreditLimit(true); // already bought and paid for
 
         String documentId = UniqueIdResolver.resolve(bookingDocumentRepository::existsById);
-        String bookingId = bookingService.logBooking(request, documentId, null, null, null, BookingDocumentType.E_TICKET,
+        String bookingId = bookingService.logBooking(request, documentId, null, null, null, docType,
                 pb.getPnr(), new FxMath.Pricing(purchase.base(), request.getMarkupValue(), purchase, null)).getId();
 
-        BookingDocument ticket = bookingDocumentRepository.findById(documentId)
-                .orElseThrow(() -> new IllegalStateException("The mirror's e-ticket was not saved"));
-        ticket.setPurchaseCurrency(INR);
-        ticket.setPurchasePrice(pb.getDisplayed());
-        ticket.setPurchaseRate(rate);
-        ticket.setCharges(charges(pb));
-        ticket.setIssuedDate(LocalDate.now());
-        ticket.setLegs(legs.isEmpty() ? null : legs);
-        ticket.setTravellers(passengers.isEmpty() ? null : passengers.stream()
-                .map(p -> VoucherTraveller.builder().memberId(blankToNull(p.getMemberId())).name(name(p))
-                        .paxType(paxType(p, firstFlight)).build()).toList());
-        ticket.setDetails(VoucherTrip.details(legs, ticket.getDetails()));
-        bookingDocumentRepository.save(ticket);
+        BookingDocument voucher = bookingDocumentRepository.findById(documentId)
+                .orElseThrow(() -> new IllegalStateException("The mirror's voucher was not saved"));
+        voucher.setPurchaseCurrency(INR);
+        voucher.setPurchasePrice(pb.getDisplayed());
+        voucher.setPurchaseRate(rate);
+        voucher.setCharges(charges(pb));
+        voucher.setIssuedDate(LocalDate.now());
+        describe.accept(voucher);
+        bookingDocumentRepository.save(voucher);
 
         Booking booking = bookingRepository.findById(bookingId).orElseThrow(() -> new NotFoundException("Booking not found: " + bookingId));
         booking.setPlatformBookingId(pb.getId());
         bookingRepository.save(booking);
-        payFromVoyraWallet(ticket.getSupplierInvoiceId(), vendor.getId(), rate, pb);
+        payFromVoyraWallet(voucher.getSupplierInvoiceId(), vendor.getId(), rate, pb);
         return bookingId;
     }
 
@@ -178,9 +232,9 @@ public class PlatformBookingMirrorTenantService {
         if (pb.getCancelRefund() == null) {
             throw new IllegalStateException("Platform booking " + pb.getId() + " was cancelled without a refund figure - settle the mirror by hand");
         }
-        // INR figures in the agency's base, at the e-ticket's own rate - as create bought it
+        // INR figures in the agency's base, at the voucher's own rate - as create bought it
         BigDecimal rate = bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc(bookingId).stream()
-                .filter(d -> d.getDocType() == BookingDocumentType.E_TICKET && d.getPurchaseRate() != null)
+                .filter(d -> MIRROR_VOUCHERS.contains(d.getDocType()) && d.getPurchaseRate() != null)
                 .map(BookingDocument::getPurchaseRate).findFirst().orElse(BigDecimal.ONE);
         String base = baseCurrency.code();
         BigDecimal refund = FxMath.toBase(INR, pb.getCancelRefund(), rate, base).base();
@@ -196,7 +250,7 @@ public class PlatformBookingMirrorTenantService {
         }
     }
 
-    /** Approves the e-ticket's auto-drafted bill and pays it in full with {@link PaymentMode#VOYRA_WALLET} (Cr 1310). */
+    /** Approves the voucher's auto-drafted bill and pays it in full with {@link PaymentMode#VOYRA_WALLET} (Cr 1310). */
     private void payFromVoyraWallet(String billId, String vendorId, BigDecimal rate, PlatformBooking pb) {
         if (billId == null) {
             throw new IllegalStateException("The mirror's supplier bill was not drafted");
@@ -322,6 +376,13 @@ public class PlatformBookingMirrorTenantService {
         }
         // shortcut: a single number over 49 characters (none are) is cut; the platform booking keeps it whole
         return (shown.isEmpty() ? numbers.get(0).substring(0, 49) : shown.toString()) + "…";
+    }
+
+    /** The reviewed room's name (every room of one option shares it), or null. */
+    private static String roomName(PlatformBooking pb) {
+        Object rooms = pb.getItinerary() == null ? null : pb.getItinerary().get("rooms");
+        return rooms instanceof List<?> list && !list.isEmpty() && list.get(0) instanceof Map<?, ?> room && room.get("roomName") != null
+                ? room.get("roomName").toString() : null;
     }
 
     private static String blankToNull(String s) {

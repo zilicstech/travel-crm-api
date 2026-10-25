@@ -1,6 +1,7 @@
 package com.voyra.crm.service.booking;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.voyra.crm.dto.HotelStaySummary;
 import com.voyra.crm.dto.ItinerarySegment;
 import com.voyra.crm.dto.PaxInput;
 import com.voyra.crm.entity.PlatformBooking;
@@ -65,18 +66,17 @@ public class PlatformBookingMirrorService {
                 || (b.getStatus() != PlatformBookingStatus.TICKETED && b.getStatus() != PlatformBookingStatus.CANCELLED)) {
             return; // no CRM client (a Starter agency's record is the platform row), already in line, or still moving
         }
-        if (b.getProduct() == PricingProduct.HOTEL) {
-            // shortcut: no hotel mirror yet - HOTEL rows keep mirror_status NONE (no failure, no alert) until Task 3 writes a HOTEL_VOUCHER
-            return;
-        }
         PlatformBookingStatus acted = b.getStatus();
         try {
             Assert.state(!TransactionSynchronizationManager.isActualTransactionActive(),
                     "The mirror must run after the platform booking's transaction committed, not inside it");
-            List<ItinerarySegment> legs = queryService.itinerary(b);
-            List<PaxInput> pax = b.getPaxEnc() == null ? List.of() : paxCodec.decrypt(b.getPaxEnc(), StoredPax.class).passengers();
+            boolean hotel = b.getProduct() == PricingProduct.HOTEL;
+            HotelStaySummary stay = hotel ? queryService.hotel(b) : null;
+            List<ItinerarySegment> legs = hotel ? List.of() : queryService.itinerary(b);
+            List<PaxInput> stored = b.getPaxEnc() == null ? List.of() : paxCodec.decrypt(b.getPaxEnc(), StoredPax.class).passengers();
+            List<PaxInput> pax = stored == null ? List.of() : stored;
             String bookingId = SystemActor.call(b.getTenantId(), () -> {
-                String id = tenantService.create(b, legs, pax == null ? List.of() : pax);
+                String id = hotel ? tenantService.createHotel(b, stay, pax) : tenantService.create(b, legs, pax);
                 if (acted == PlatformBookingStatus.CANCELLED) {
                     tenantService.cancel(id, b);
                 }

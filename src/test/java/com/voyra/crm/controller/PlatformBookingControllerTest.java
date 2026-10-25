@@ -132,7 +132,7 @@ class PlatformBookingControllerTest {
 
     @Test
     void cancelQuoteAndCancel() throws Exception {
-        given(service.cancelQuote("B1")).willReturn(new CancelPreview(null, new BigDecimal("95.00"), null, BigDecimal.ZERO, true));
+        given(service.cancelQuote("B1")).willReturn(new CancelPreview(null, new BigDecimal("95.00"), null, BigDecimal.ZERO, true, null, null));
         mockMvc.perform(get("/api/platform-bookings/B1/cancel-quote").with(as(UserType.AGENCY_OWNER)))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.refundToBeConfirmed").value(true));
 

@@ -297,4 +297,106 @@ class PlatformBookingMirrorTenantServiceTest {
                 LocalDate.of(2026, 12, 2))).isEqualTo(PaxType.CHILD);
         assertThat(PlatformBookingMirrorTenantService.paxType(PaxInput.builder().type("INFANT").build(), null)).isEqualTo(PaxType.INFANT);
     }
+
+    // ---- hotels: one HOTEL_VOUCHER, same money path as a flight ----
+
+    private static PlatformBooking hotelBooking() {
+        PlatformBooking pb = platformBooking();
+        pb.setProduct(com.voyra.crm.enums.PricingProduct.HOTEL);
+        pb.setPnr("HC-778"); // the hotel's confirmation number
+        pb.setTicketNumbers(List.of());
+        pb.setItinerary(java.util.Map.of("rooms", List.of(java.util.Map.of("roomName", "Deluxe Sea View"))));
+        return pb;
+    }
+
+    private static com.voyra.crm.dto.HotelStaySummary stay() {
+        return new com.voyra.crm.dto.HotelStaySummary("Sea Breeze Resort", "Goa", LocalDate.of(2026, 12, 1),
+                LocalDate.of(2026, 12, 3), 2, 2, "Breakfast included");
+    }
+
+    /** Review Focus 4: the hotel mirror is a HOTEL booking with a HOTEL_VOUCHER carrying the stay - not an E_TICKET. */
+    @Test
+    void hotelMirrorIsAConfirmedVoyraHotelVoucherPaidFromTheVoyraWallet() {
+        when(markupDefaultRepository.findById(ServiceType.HOTEL)).thenReturn(Optional.of(MarkupDefault.builder()
+                .serviceType(ServiceType.HOTEL).mode(MarkupMode.PERCENT).value(new BigDecimal("10.00")).build()));
+
+        String id = service.createHotel(hotelBooking(), stay(), pax());
+
+        assertThat(id).isEqualTo("B1");
+        ArgumentCaptor<BookingCreateRequest> request = ArgumentCaptor.forClass(BookingCreateRequest.class);
+        ArgumentCaptor<FxMath.Pricing> pricing = ArgumentCaptor.forClass(FxMath.Pricing.class);
+        verify(bookingService).logBooking(request.capture(), anyString(), any(), any(), any(),
+                eq(BookingDocumentType.HOTEL_VOUCHER), eq("HC-778"), pricing.capture());
+        BookingCreateRequest r = request.getValue();
+        assertThat(r.getType()).isEqualTo(BookingType.HOTEL);
+        assertThat(r.getAgentId()).isEqualTo("A1");
+        assertThat(r.getVendorId()).isEqualTo("V-VOYRA");
+        assertThat(r.getHotelConfirmationNo()).isEqualTo("HC-778");
+        assertThat(r.getPnr()).isNull();
+        assertThat(r.getHotelName()).isEqualTo("Sea Breeze Resort");
+        assertThat(r.getHotelCity()).isEqualTo("Goa");
+        assertThat(r.getHotelCheckIn()).isEqualTo(LocalDate.of(2026, 12, 1));
+        assertThat(r.getHotelCheckOut()).isEqualTo(LocalDate.of(2026, 12, 3));
+        assertThat(r.getHotelRooms()).isEqualTo(2);
+        assertThat(r.getHotelBoardBasis()).isEqualTo("Breakfast included");
+        assertThat(r.getHotelRoomType()).isEqualTo("Deluxe Sea View");
+        assertThat(r.getJourneyDate()).isEqualTo(LocalDate.of(2026, 12, 1));
+        assertThat(r.getReturnDate()).isEqualTo(LocalDate.of(2026, 12, 3));
+        assertThat(r.getDestination()).isEqualTo("Goa");
+        assertThat(r.getNetCost()).isEqualByComparingTo("5400.00");
+        assertThat(r.getMarkupMode()).isEqualTo(MarkupMode.PERCENT); // the agency's default hotel markup
+        assertThat(r.getMarkupValue()).isEqualByComparingTo("10.00");
+        assertThat(r.getOverrideCreditLimit()).isTrue();
+        assertThat(r.getPassengers()).extracting(p -> p.getPassengerName()).containsExactly("Mr Rahul Sharma", "Anya Sharma");
+        assertThat(r.getPassengers().get(0).getSectors()).isNullOrEmpty();
+        assertThat(pricing.getValue().purchase().amount()).isEqualByComparingTo("5400.00");
+
+        BookingDocument doc = ticket.get();
+        assertThat(doc.getPurchaseCurrency()).isEqualTo("INR");
+        assertThat(doc.getPurchasePrice()).isEqualByComparingTo("5400.00");
+        assertThat(doc.getPurchaseRate()).isEqualByComparingTo("1");
+        assertThat(doc.getLegs()).isNull();
+        assertThat(doc.getDetails()).containsEntry("hotelName", "Sea Breeze Resort").containsEntry("hotelCity", "Goa")
+                .containsEntry("hotelCheckIn", "2026-12-01").containsEntry("hotelCheckOut", "2026-12-03")
+                .containsEntry("hotelRooms", "2").containsEntry("hotelBoardBasis", "Breakfast included")
+                .containsEntry("hotelRoomType", "Deluxe Sea View");
+        assertThat(booking.getPlatformBookingId()).isEqualTo("PB1");
+
+        ArgumentCaptor<SupplierPaymentRequest> pay = ArgumentCaptor.forClass(SupplierPaymentRequest.class);
+        verify(supplierPaymentService).pay(pay.capture());
+        assertThat(pay.getValue().getPaymentMode()).isEqualTo(PaymentMode.VOYRA_WALLET);
+        assertThat(pay.getValue().getSupplierInvoiceId()).isEqualTo("SI1");
+        assertThat(pay.getValue().getInstrumentRef()).isEqualTo("HC-778");
+    }
+
+    @Test
+    void anExistingHotelMirrorIsReturnedNotWrittenTwice() {
+        when(bookingRepository.findByPlatformBookingId("PB1")).thenReturn(Optional.of(booking));
+
+        assertThat(service.createHotel(hotelBooking(), stay(), pax())).isEqualTo("B1");
+
+        verify(bookingService, never()).logBooking(any(), anyString(), any(), any(), any(), any(), any(), any());
+        verify(supplierPaymentService, never()).pay(any());
+    }
+
+    /** A USD-base agency cancels its hotel mirror at the voucher's own rate, through the same cancel as a flight. */
+    @Test
+    void aHotelMirrorCancelsAtTheVouchersRate() {
+        org.mockito.Mockito.doReturn("USD").when(baseCurrency).code();
+        when(bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc("B1")).thenReturn(List.of(BookingDocument.builder()
+                .id("D1").bookingId("B1").docType(BookingDocumentType.HOTEL_VOUCHER).purchaseCurrency("INR")
+                .purchasePrice(new BigDecimal("5400.00")).purchaseRate(new BigDecimal("0.012")).build()));
+        PlatformBooking pb = hotelBooking();
+        pb.setStatus(PlatformBookingStatus.CANCELLED);
+        pb.setCancelRefund(new BigDecimal("4000.00"));
+
+        service.cancel("B1", pb);
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(bookingRepository, cancellationService);
+        order.verify(bookingRepository).findByIdForUpdate("B1");
+        ArgumentCaptor<BookingCancelRequest> request = ArgumentCaptor.forClass(BookingCancelRequest.class);
+        order.verify(cancellationService).cancel(eq("B1"), request.capture());
+        assertThat(request.getValue().getSupplierCharge()).isEqualByComparingTo("16.80"); // 1400 INR at 0.012
+        verify(cancellationService).recordVoyraWalletRefund("B1", new BigDecimal("48.00"));
+    }
 }
