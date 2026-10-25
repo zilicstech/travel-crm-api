@@ -126,6 +126,23 @@ class TripjackFlightBookingProviderTest {
     }
 
     @Test
+    void emptyOkBodyOnCancelIsUnknownNotRefused() {
+        server.expect(requestTo(BASE + "/oms/v1/air/amendment/submit-amendment")).andRespond(withSuccess("", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(BASE + "/oms/v1/air/amendment/submit-amendment")).andRespond(withSuccess("{\"status\":{\"success\":\"no\"}}", MediaType.APPLICATION_JSON));
+        assertThatThrownBy(() -> provider.cancel("TJS1")).isInstanceOf(SupplierException.class);
+        assertThatThrownBy(() -> provider.cancel("TJS1")).isInstanceOf(SupplierException.class);
+    }
+
+    @Test
+    void cancel_successFalseIsRefusedWithMessage() {
+        server.expect(requestTo(BASE + "/oms/v1/air/amendment/submit-amendment")).andRespond(withSuccess(
+                "{\"status\":{\"success\":false},\"errors\":[{\"message\":\"Flown sector\"}]}", MediaType.APPLICATION_JSON));
+        CancelResult c = provider.cancel("TJS1");
+        assertThat(c.accepted()).isFalse();
+        assertThat(c.message()).isEqualTo("Flown sector");
+    }
+
+    @Test
     void unknownOrderStatusIsPendingAndMissingRefundIsNull() {
         server.expect(requestTo(BASE + "/oms/v1/booking-details")).andRespond(withSuccess(OK + ",\"order\":{\"status\":\"ABORTED\"}}", MediaType.APPLICATION_JSON));
         server.expect(requestTo(BASE + "/oms/v1/air/amendment/amendment-charges")).andRespond(withSuccess(OK + "}", MediaType.APPLICATION_JSON));

@@ -64,6 +64,7 @@ public class PlatformBookingMirrorService {
                 || (b.getStatus() != PlatformBookingStatus.TICKETED && b.getStatus() != PlatformBookingStatus.CANCELLED)) {
             return; // no CRM client (a Starter agency's record is the platform row), already in line, or still moving
         }
+        PlatformBookingStatus acted = b.getStatus();
         try {
             Assert.state(!TransactionSynchronizationManager.isActualTransactionActive(),
                     "The mirror must run after the platform booking's transaction committed, not inside it");
@@ -71,15 +72,15 @@ public class PlatformBookingMirrorService {
             List<PaxInput> pax = b.getPaxEnc() == null ? List.of() : paxCodec.decrypt(b.getPaxEnc(), StoredPax.class).passengers();
             String bookingId = SystemActor.call(b.getTenantId(), () -> {
                 String id = tenantService.create(b, legs, pax == null ? List.of() : pax);
-                if (b.getStatus() == PlatformBookingStatus.CANCELLED) {
+                if (acted == PlatformBookingStatus.CANCELLED) {
                     tenantService.cancel(id, b);
                 }
                 return id;
             });
-            finish(platformBookingId, bookingId, null);
+            finish(platformBookingId, acted, bookingId, null);
         } catch (RuntimeException e) {
             log.warn("CRM mirror of platform booking {} failed: {}", platformBookingId, e.toString());
-            finish(platformBookingId, null, e);
+            finish(platformBookingId, acted, null, e);
         }
     }
 
@@ -88,8 +89,12 @@ public class PlatformBookingMirrorService {
         return (serviceId != null || leadId != null) && tenantService.leadAgent(tenantId, serviceId, leadId).isPresent();
     }
 
-    /** Records the outcome under the row lock; a concurrent sync that already finished the mirror is never marked FAILED. */
-    private void finish(String id, String tenantBookingId, RuntimeException error) {
+    /**
+     * Records the outcome under the row lock; a concurrent sync that already finished the mirror is never marked FAILED.
+     * DONE only when the row is still at the status this sync acted on: a cancel that landed meanwhile leaves the mirror
+     * PENDING, so the next sync (the cancel's own, or the repair job) cancels the CRM booking.
+     */
+    private void finish(String id, PlatformBookingStatus acted, String tenantBookingId, RuntimeException error) {
         boolean alert = Boolean.TRUE.equals(tx.execute(s -> {
             PlatformBooking b = repository.findByIdForUpdate(id).orElse(null);
             if (b == null || (error != null && b.getMirrorStatus() == MirrorStatus.DONE)) {
@@ -97,6 +102,13 @@ public class PlatformBookingMirrorService {
             }
             MirrorStatus before = b.getMirrorStatus();
             Map<String, Object> detail = new LinkedHashMap<>();
+            if (error == null && b.getStatus() != acted) {
+                if (b.getTenantBookingId() == null) {
+                    b.setTenantBookingId(tenantBookingId);
+                    repository.save(b);
+                }
+                return false;
+            }
             if (error == null) {
                 b.setMirrorStatus(MirrorStatus.DONE);
                 b.setTenantBookingId(tenantBookingId);

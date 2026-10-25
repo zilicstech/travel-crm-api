@@ -52,6 +52,7 @@ import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -334,7 +335,7 @@ class PlatformBookingPollerTest {
         b.setHoldEntryId(null);
         b.setReviewExpiresAt(Instant.now().minus(1, ChronoUnit.MINUTES));
         committedHold("B1");
-        when(bookingRepository.findExpiredReviewsWithOpenHold(any(), any())).thenReturn(List.of(b.toBuilder().build()));
+        when(bookingRepository.findExpiredReviews(any(), any())).thenReturn(List.of(b.toBuilder().build()));
 
         poller.poll();
 
@@ -342,6 +343,38 @@ class PlatformBookingPollerTest {
         assertThat(rows.get("B1").getAbortReason()).isEqualTo("Review expired");
         verify(walletService).releaseHold("H1", "pb-release:B1");
         verify(provider, never()).bookingDetails(anyString());
+    }
+
+    /** An expired review the agency simply walked away from (no hold at all) is closed too, with no wallet call. */
+    @Test
+    void sweepAbortsAnExpiredReviewWithNoHoldWithoutTouchingTheWallet() {
+        PlatformBooking expired = bookingRow("B1", Instant.now().minus(1, ChronoUnit.HOURS));
+        expired.setStatus(PlatformBookingStatus.REVIEWING);
+        expired.setHoldEntryId(null);
+        expired.setReviewExpiresAt(Instant.now().minus(1, ChronoUnit.MINUTES));
+        PlatformBooking undated = bookingRow("B2", Instant.now().minus(3, ChronoUnit.HOURS));
+        undated.setStatus(PlatformBookingStatus.REVIEWING);
+        undated.setHoldEntryId(null);
+        undated.setReviewExpiresAt(null);
+        PlatformBooking fresh = bookingRow("B3", Instant.now());
+        fresh.setStatus(PlatformBookingStatus.REVIEWING);
+        fresh.setReviewExpiresAt(Instant.now().plus(10, ChronoUnit.MINUTES));
+        // the query as the database runs it: REVIEWING, past expiry (or created over 2 h ago without one)
+        when(bookingRepository.findExpiredReviews(any(), any())).thenAnswer(i -> {
+            Instant now = i.getArgument(0);
+            Instant staleBefore = i.getArgument(1);
+            return rows.values().stream().filter(b -> b.getStatus() == PlatformBookingStatus.REVIEWING)
+                    .filter(b -> b.getReviewExpiresAt() != null ? b.getReviewExpiresAt().isBefore(now) : b.getCreatedAt().isBefore(staleBefore))
+                    .map(b -> b.toBuilder().build()).toList();
+        });
+
+        poller.poll();
+
+        assertThat(rows.get("B1").getStatus()).isEqualTo(PlatformBookingStatus.ABORTED);
+        assertThat(rows.get("B1").getAbortReason()).isEqualTo("Review expired");
+        assertThat(rows.get("B2").getStatus()).isEqualTo(PlatformBookingStatus.ABORTED);
+        assertThat(rows.get("B3").getStatus()).isEqualTo(PlatformBookingStatus.REVIEWING);
+        verifyNoInteractions(walletService);
     }
 
     @Test

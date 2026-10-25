@@ -18,6 +18,9 @@ public interface VendorRepository extends JpaRepository<Vendor, String> {
 
     Optional<Vendor> findByNameIgnoreCase(String name);
 
+    /** Every vendor of that name - names are unique only among live vendors, so an old inactive one can share it. */
+    List<Vendor> findAllByNameIgnoreCase(String name);
+
     boolean existsByNameIgnoreCase(String name);
 
     long countByNameNotIgnoreCase(String name);

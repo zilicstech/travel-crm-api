@@ -279,6 +279,18 @@ class PlatformBookingServiceTest {
         assertThat(b.getCredentialId()).isEqualTo("CRED1");
     }
 
+    /** The discount and commission are worked off the base fare: without it there is no price to show, so 409, not a 500. */
+    @Test
+    void reviewWithAMissingBaseFareIsAConflictAndSavesNothing() {
+        when(provider.review(any(FlightReviewRequest.class)))
+                .thenReturn(new FareReview("rv-1", new BigDecimal("5000.00"), null, "INR", null, null, null));
+
+        assertThatThrownBy(() -> service.review(reviewRequest()))
+                .isInstanceOfSatisfying(BookingConflictException.class, e -> assertThat(e.getCode()).isEqualTo("BASE_FARE_UNAVAILABLE"));
+        verify(quoter, never()).quote(any(), any(), any(), any());
+        assertThat(rows).isEmpty();
+    }
+
     @Test
     void reviewWithoutPricingIsRefusedBeforeTheSupplier() {
         when(pricingService.requireInForce(T, PricingProduct.FLIGHT)).thenThrow(new PricingNotConfiguredException());
@@ -391,6 +403,18 @@ class PlatformBookingServiceTest {
     void expiredReviewIsRefused() {
         String id = reviewed();
         rows.get(id).setReviewExpiresAt(Instant.now().minusSeconds(1));
+
+        assertThatThrownBy(() -> service.confirm(id, confirmRequest("key-00000001", "4500.00")))
+                .isInstanceOfSatisfying(BookingConflictException.class, e -> assertThat(e.getCode()).isEqualTo("REVIEW_EXPIRED"));
+        verify(walletService, never()).hold(any(), any(), any(), any(), any());
+    }
+
+    /** The poller sweeps an expired review to ABORTED; confirming it afterwards still says "review again". */
+    @Test
+    void confirmingAReviewTheSweepClosedIsReviewExpired() {
+        String id = reviewed();
+        rows.get(id).setReviewExpiresAt(Instant.now().minusSeconds(1));
+        service.sweepAbort(id, PlatformBookingStatus.REVIEWING, "Review expired");
 
         assertThatThrownBy(() -> service.confirm(id, confirmRequest("key-00000001", "4500.00")))
                 .isInstanceOfSatisfying(BookingConflictException.class, e -> assertThat(e.getCode()).isEqualTo("REVIEW_EXPIRED"));

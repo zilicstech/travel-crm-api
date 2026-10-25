@@ -147,6 +147,34 @@ class PlatformBookingMirrorServiceTest {
         verify(notificationService).platformAlert(anyString(), anyString());
     }
 
+    /** A cancel that commits while create runs: the mirror is not marked DONE for a status it never saw, so a later sync cancels it. */
+    @Test
+    void aCancelLandingWhileCreateRunsLeavesTheMirrorPendingAndALaterSyncCancelsIt() {
+        PlatformBooking seen = ticketed("C1");
+        PlatformBooking live = ticketed("C1"); // the row as it is after the concurrent cancel committed
+        when(repository.findById("PB1")).thenReturn(Optional.of(seen));
+        when(repository.findByIdForUpdate("PB1")).thenReturn(Optional.of(live));
+        when(tenantService.create(any(), anyList(), anyList())).thenAnswer(i -> {
+            live.setStatus(PlatformBookingStatus.CANCELLED);
+            live.setCancelRefund(new BigDecimal("4000.00"));
+            return "B1";
+        });
+
+        service.sync("PB1");
+
+        verify(tenantService, never()).cancel(anyString(), any());
+        assertThat(live.getMirrorStatus()).isEqualTo(MirrorStatus.PENDING);
+        assertThat(live.getTenantBookingId()).isEqualTo("B1");
+
+        // the repair job (or the cancel's own sync) now sees CANCELLED and cancels the CRM booking
+        when(repository.findById("PB1")).thenReturn(Optional.of(live));
+        service.sync("PB1");
+
+        verify(tenantService).cancel("B1", live);
+        assertThat(live.getMirrorStatus()).isEqualTo(MirrorStatus.DONE);
+        assertThat(recorded).extracting(PlatformBookingEvent::getType).contains("MIRROR_CANCELLED");
+    }
+
     @Test
     void aMirrorAlreadyDoneIsLeftAlone() {
         PlatformBooking b = ticketed("C1");

@@ -31,8 +31,8 @@ import java.util.Optional;
  * {@link PlatformBookingService#applySupplierResult} (keyed wallet calls, so a re-apply posts nothing twice), and the
  * poll is recorded in a separate REQUIRES_NEW transaction.
  * <p>
- * The same run sweeps holds that can never be used: an expired REVIEWING row with an orphan hold, and a HELD row whose
- * book was never sent (crash between hold and BOOKING), are released and ABORTED.
+ * The same run sweeps rows that can never go on: an expired REVIEWING row (releasing an orphan hold if it has one), and a
+ * HELD row whose book was never sent (crash between hold and BOOKING), are ABORTED.
  */
 @Slf4j
 @Service
@@ -89,8 +89,8 @@ public class PlatformBookingPoller {
     }
 
     private void sweep(Instant now) {
-        for (PlatformBooking b : bookingRepository.findExpiredReviewsWithOpenHold(now, now.minus(REVIEW_STALE))) {
-            abortQuietly(b.getId(), PlatformBookingStatus.REVIEWING, "Review expired");
+        for (PlatformBooking b : bookingRepository.findExpiredReviews(now, now.minus(REVIEW_STALE))) {
+            abortQuietly(b.getId(), PlatformBookingStatus.REVIEWING, PlatformBookingService.REVIEW_EXPIRED_REASON);
         }
         for (PlatformBooking b : bookingRepository.findByStatusIn(EnumSet.of(PlatformBookingStatus.HELD))) {
             List<PlatformBookingEvent> history = eventRepository.findByPlatformBookingIdOrderByCreatedAtAsc(b.getId());

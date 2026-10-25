@@ -125,7 +125,14 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
     @Override
     public CancelResult cancel(String supplierBookingId) {
         JsonNode res = post("/oms/v1/air/amendment/submit-amendment", amendmentBody(supplierBookingId), "cancel");
-        return new CancelResult(succeeded(res), refundOf(res), message(res, null));
+        if (explicitlyFailed(res)) {
+            return new CancelResult(false, null, message(res, null));
+        }
+        if (!succeeded(res)) {
+            // Empty or unexpected answer: the supplier may have cancelled, so this is unknown, not refused.
+            throw new SupplierException("Tripjack cancel returned an ambiguous response", null);
+        }
+        return new CancelResult(true, refundOf(res), message(res, null));
     }
 
     private String fareRules(String reviewId) {

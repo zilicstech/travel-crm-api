@@ -50,19 +50,14 @@ public interface PlatformBookingRepository extends JpaRepository<PlatformBooking
     List<PlatformBooking> findByStatusAndResolvedFailedAtAfter(PlatformBookingStatus status, Instant after);
 
     /**
-     * REVIEWING rows past their review expiry (or created before {@code staleBefore} when it has none) that still carry
-     * an open {@code pb-hold:<id>} - a hold whose confirm transaction rolled back. Bounded by the open-hold check.
+     * REVIEWING rows past their review expiry (or created before {@code staleBefore} when it has none): the sweep aborts
+     * them, releasing a hold left behind by a confirm transaction that rolled back if there is one.
      */
     @Query("""
             SELECT b FROM PlatformBooking b
             WHERE b.status = com.voyra.crm.enums.PlatformBookingStatus.REVIEWING
               AND ((b.reviewExpiresAt IS NOT NULL AND b.reviewExpiresAt < :now)
                    OR (b.reviewExpiresAt IS NULL AND b.createdAt < :staleBefore))
-              AND EXISTS (SELECT 1 FROM WalletEntry h
-                          WHERE h.idempotencyKey = CONCAT('pb-hold:', b.id)
-                            AND NOT EXISTS (SELECT 1 FROM WalletEntry r
-                                            WHERE r.type = com.voyra.crm.enums.WalletEntryType.HOLD_RELEASE
-                                              AND r.relatedEntryId = h.id))
             """)
-    List<PlatformBooking> findExpiredReviewsWithOpenHold(@Param("now") Instant now, @Param("staleBefore") Instant staleBefore);
+    List<PlatformBooking> findExpiredReviews(@Param("now") Instant now, @Param("staleBefore") Instant staleBefore);
 }

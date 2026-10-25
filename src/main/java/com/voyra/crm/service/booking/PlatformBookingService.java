@@ -72,6 +72,8 @@ public class PlatformBookingService {
 
     private static final String REF_TYPE = "PLATFORM_BOOKING";
     private static final Duration DEFAULT_REVIEW_TTL = Duration.ofMinutes(15);
+    /** The abort reason the poller's sweep gives an expired review. */
+    static final String REVIEW_EXPIRED_REASON = "Review expired";
     private static final TypeReference<Map<String, Object>> MAP = new TypeReference<>() { };
 
     private final PlatformBookingRepository bookingRepository;
@@ -233,6 +235,11 @@ public class PlatformBookingService {
         }
 
         FareReview fare = provider.review(request);
+        if (fare.baseFare() == null) {
+            // discount and commission are worked off the base fare, so there is no price to show without it
+            throw new BookingConflictException("BASE_FARE_UNAVAILABLE",
+                    "The supplier did not give this fare's base fare - pick another fare", Map.of());
+        }
         PriceQuote quote = quoter.quote(tenantId, PricingProduct.FLIGHT, fare.totalFare(), fare.baseFare());
         PlatformBooking booking = PlatformBooking.builder()
                 .id(UniqueIdResolver.resolve(bookingRepository::existsById))
@@ -604,6 +611,9 @@ public class PlatformBookingService {
             }
             return new Held(b, null, false);
         }
+        if (b.getStatus() == PlatformBookingStatus.ABORTED && REVIEW_EXPIRED_REASON.equals(b.getAbortReason())) {
+            throw reviewExpired(); // the poller swept it
+        }
         if (b.getStatus() != PlatformBookingStatus.REVIEWING) {
             throw new IllegalStateException("This booking was already confirmed");
         }
@@ -626,7 +636,7 @@ public class PlatformBookingService {
             return new Held(b, priceChanged(b.getDisplayed()), false);
         }
         if (b.getReviewExpiresAt() != null && Instant.now().isAfter(b.getReviewExpiresAt())) {
-            throw new BookingConflictException("REVIEW_EXPIRED", "This fare review has expired - review the fare again", Map.of());
+            throw reviewExpired();
         }
         walletRepository.findByTenantId(tenantId).ifPresent(w -> requireMatchingWallet(b.getEnvironment(), w));
         // everything that can fail runs before the hold, so a refusal never leaves a committed hold behind
@@ -811,6 +821,10 @@ public class PlatformBookingService {
             return;
         }
         throw new BookingRequestException("ISSUING_AGENT_REQUIRED", "Choose the agent this booking is issued by");
+    }
+
+    private static BookingConflictException reviewExpired() {
+        return new BookingConflictException("REVIEW_EXPIRED", "This fare review has expired - review the fare again", Map.of());
     }
 
     private static BookingConflictException priceChanged(BigDecimal displayed) {

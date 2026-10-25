@@ -98,8 +98,9 @@ public class PlatformBookingMirrorTenantService {
         if (existing.isPresent()) {
             return existing.get().getId();
         }
-        Vendor vendor = vendorRepository.findByNameIgnoreCase(VOYRA_VENDOR).filter(v -> Boolean.TRUE.equals(v.getIsActive()))
-                .orElseThrow(() -> new IllegalStateException("This agency has no active " + VOYRA_VENDOR + " vendor"));
+        // an agency may keep an old, deactivated vendor of the same name next to the seeded one
+        Vendor vendor = vendorRepository.findAllByNameIgnoreCase(VOYRA_VENDOR).stream().filter(v -> Boolean.TRUE.equals(v.getIsActive()))
+                .findFirst().orElseThrow(() -> new IllegalStateException("This agency has no active " + VOYRA_VENDOR + " vendor"));
         List<VoucherLeg> legs = VoucherTrip.cleanLegs(segments.stream().map(PlatformBookingMirrorTenantService::leg).toList());
         Map<String, String> trip = Optional.ofNullable(VoucherTrip.details(legs, null)).orElse(Map.of());
         LocalDate firstFlight = VoucherTrip.firstDate(legs);
