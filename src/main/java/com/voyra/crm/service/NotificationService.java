@@ -47,6 +47,6 @@ public interface NotificationService {
     /** To whoever booked it. */
     void bookingFailed(PlatformBooking booking);
 
-    /** To whoever booked it. */
-    void bookingCancelled(PlatformBooking booking);
+    /** To whoever booked it. {@code refundOffline}: the wallet was closed, nothing was posted, Voyra refunds by bank. */
+    void bookingCancelled(PlatformBooking booking, boolean refundOffline);
 }

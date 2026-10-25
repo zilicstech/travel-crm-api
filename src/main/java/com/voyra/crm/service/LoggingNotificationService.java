@@ -78,7 +78,7 @@ public class LoggingNotificationService implements NotificationService {
     }
 
     @Override
-    public void bookingCancelled(PlatformBooking booking) {
+    public void bookingCancelled(PlatformBooking booking, boolean refundOffline) {
         log.info("Booking cancelled - booking: {}, tenantId: {}", booking.getId(), booking.getTenantId());
     }
 }

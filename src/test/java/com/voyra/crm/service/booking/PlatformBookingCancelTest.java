@@ -199,7 +199,7 @@ class PlatformBookingCancelTest {
         assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
         assertThat(b.getCancelRefund()).isEqualByComparingTo("4000.00");
         assertThat(b.getCancelledAt()).isNotNull();
-        verify(notificationService).bookingCancelled(b);
+        verify(notificationService).bookingCancelled(b, false);
         assertThat(eventTypes()).containsSubsequence("CANCEL_REQUESTED", "CANCELLED");
     }
 
@@ -360,6 +360,8 @@ class PlatformBookingCancelTest {
         assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
         verifyNothingPosted();
         verify(notificationService).platformAlert(contains(ID), contains("offline"));
+        // the agency email must say the refund comes by bank, not to the wallet
+        verify(notificationService).bookingCancelled(b, true);
     }
 
     @Test

@@ -124,12 +124,19 @@ public final class NotificationTemplates {
                 "Open the booking", url);
     }
 
-    public static Email bookingCancelled(String product, String bookingId, String pnr, BigDecimal refund, String url) {
+    public static Email bookingCancelled(String product, String bookingId, String pnr, BigDecimal refund, boolean refundOffline, String url) {
         String ref = pnr == null ? "" : " (" + ("hotel".equals(product) ? "confirmation " : "PNR ") + pnr + ")";
-        String money = refund == null
-                ? "Voyra will confirm the refund with the supplier and credit your wallet once it is known."
-                : refund.signum() > 0 ? inr(refund) + " has been refunded to your Voyra wallet."
-                : "No refund applies under the fare's cancellation rules.";
+        String money;
+        if (refund == null) {
+            money = refundOffline ? "Voyra will confirm the refund with the supplier and pay it to your bank account."
+                    : "Voyra will confirm the refund with the supplier and credit your wallet once it is known.";
+        } else if (refund.signum() <= 0) {
+            money = "No refund applies under the fare's cancellation rules.";
+        } else {
+            // offline: the wallet was closed and nothing was posted to it
+            money = refundOffline ? "Voyra will refund " + inr(refund) + " to your bank account."
+                    : inr(refund) + " has been refunded to your Voyra wallet.";
+        }
         return email("Your " + product + " booking" + ref + " is cancelled", "Booking cancelled",
                 List.of("Booking " + bookingId + ref + " has been cancelled.", money), "Open the booking", url);
     }

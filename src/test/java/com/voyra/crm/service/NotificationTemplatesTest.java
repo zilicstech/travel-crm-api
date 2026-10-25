@@ -28,7 +28,7 @@ class NotificationTemplatesTest {
                 NotificationTemplates.applicationApproved("Asha", "Sky Tours", "asha@sky.test", URL + "/login"),
                 NotificationTemplates.bookingTicketed("flight", "PB1", "PNR123", new BigDecimal("4500"), URL + "/agency/platform-bookings/PB1"),
                 NotificationTemplates.bookingFailed("hotel", "PB2", URL + "/agency/platform-bookings/PB2"),
-                NotificationTemplates.bookingCancelled("flight", "PB1", "PNR123", new BigDecimal("4000"), URL + "/agency/platform-bookings/PB1"));
+                NotificationTemplates.bookingCancelled("flight", "PB1", "PNR123", new BigDecimal("4000"), false, URL + "/agency/platform-bookings/PB1"));
     }
 
     @Test
@@ -85,11 +85,21 @@ class NotificationTemplatesTest {
 
     @Test
     void aCancellationWithoutAKnownRefundSaysVoyraWillConfirmIt() {
-        Email unknown = NotificationTemplates.bookingCancelled("flight", "PB1", "PNR123", null, URL);
-        Email known = NotificationTemplates.bookingCancelled("flight", "PB1", "PNR123", new BigDecimal("4000"), URL);
+        Email unknown = NotificationTemplates.bookingCancelled("flight", "PB1", "PNR123", null, false, URL);
+        Email known = NotificationTemplates.bookingCancelled("flight", "PB1", "PNR123", new BigDecimal("4000"), false, URL);
 
         assertThat(unknown.text()).contains("PNR123").contains("confirm");
         assertThat(known.text()).contains("₹4,000.00");
+    }
+
+    /** Closed wallet: nothing was posted, so the email must not claim a wallet refund. */
+    @Test
+    void anOfflineRefundSaysBankAccountNotWallet() {
+        Email offline = NotificationTemplates.bookingCancelled("flight", "PB1", "PNR123", new BigDecimal("4000"), true, URL);
+        Email offlineUnknown = NotificationTemplates.bookingCancelled("flight", "PB1", "PNR123", null, true, URL);
+
+        assertThat(offline.text()).contains("Voyra will refund ₹4,000.00 to your bank account").doesNotContain("wallet");
+        assertThat(offlineUnknown.text()).contains("confirm").doesNotContain("credit your wallet");
     }
 
     @Test

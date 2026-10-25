@@ -50,7 +50,19 @@ class NotificationWiringTest {
             assertThat(sender.getHost()).isEqualTo("smtp.voyra.test");
             assertThat(sender.getPort()).isEqualTo(2525);
             assertThat(sender.getJavaMailProperties()).containsEntry("mail.smtp.auth", "true")
-                    .containsEntry("mail.smtp.starttls.enable", "true");
+                    .containsEntry("mail.smtp.starttls.enable", "true").containsEntry("mail.smtp.ssl.checkserveridentity", "true");
+        });
+    }
+
+    /** SMTP_SSL=true: implicit TLS (port 465), no STARTTLS, and the server certificate must match the host. */
+    @Test
+    void smtpSslUsesImplicitTlsAndChecksTheServerIdentity() {
+        runner.withPropertyValues("app.mail.smtp-host=smtp.voyra.test", "app.mail.smtp-port=465", "app.mail.smtp-ssl=true",
+                "app.mail.from=no-reply@voyra.test").run(ctx -> {
+            JavaMailSenderImpl sender = ctx.getBean(JavaMailSenderImpl.class);
+            assertThat(sender.getPort()).isEqualTo(465);
+            assertThat(sender.getJavaMailProperties()).containsEntry("mail.smtp.ssl.enable", "true")
+                    .containsEntry("mail.smtp.starttls.enable", "false").containsEntry("mail.smtp.ssl.checkserveridentity", "true");
         });
     }
 

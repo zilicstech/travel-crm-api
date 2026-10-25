@@ -27,10 +27,11 @@ import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Supplier;
 
 /**
  * The email outbox. {@link #enqueue} writes rows only after the caller's transaction commits (a rollback queues nothing);
- * {@link #drainDue} sends them: each row is claimed by a conditional update in its own transaction (so two instances never
+ * recipients are resolved then too. {@link #drainDue} sends them: each row is claimed by a conditional update in its own transaction (so two instances never
  * both send it), sent outside any transaction, then marked SENT, retried with exponential backoff, or FAILED after
  * {@code maxAttempts}. A claim leases the row for {@link #LEASE}, so a crash mid-send is retried once the lease runs out.
  */
@@ -65,40 +66,54 @@ public class NotificationOutboxService {
         this.maxAttempts = maxAttempts;
     }
 
-    /** One row per distinct recipient, written after the current transaction commits (at once when there is none). Never throws. */
-    public void enqueue(NotificationKind kind, Collection<String> recipients, NotificationTemplates.Email email) {
-        Instant now = Instant.now();
-        List<NotificationOutbox> rows = recipients.stream().filter(StringUtils::hasText).map(String::trim).distinct()
-                .map(to -> NotificationOutbox.builder().kind(kind).recipient(to).subject(truncate(email.subject(), 300))
-                        .bodyHtml(email.html()).bodyText(email.text()).status(NotificationOutboxStatus.PENDING)
-                        .attempts(0).nextAttemptAt(now).createdAt(now).build())
-                .toList();
-        if (rows.isEmpty()) {
-            log.warn("No recipient for a {} notification - nothing queued", kind);
-            return;
-        }
+    /** Who gets it and what it says. */
+    public record Outgoing(Collection<String> recipients, NotificationTemplates.Email email) {
+    }
+
+    /**
+     * Queues one row per distinct recipient after the current transaction commits (at once when there is none). {@code build}
+     * (recipient lookup + rendering) runs then too, in its own transaction: a failing lookup can never mark the caller's
+     * transaction rollback-only, and a rolled-back caller never even looks anyone up. Never throws; null means no recipient.
+     */
+    public void enqueue(NotificationKind kind, Supplier<Outgoing> build) {
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void afterCommit() {
-                    save(kind, rows);
+                    write(kind, build);
                 }
             });
         } else {
-            save(kind, rows);
+            write(kind, build);
         }
     }
 
-    private void save(NotificationKind kind, List<NotificationOutbox> rows) {
+    private void write(NotificationKind kind, Supplier<Outgoing> build) {
         try {
             tx.executeWithoutResult(s -> {
+                Outgoing out = build.get();
+                List<NotificationOutbox> rows = out == null ? List.of() : rows(kind, out);
+                if (rows.isEmpty()) {
+                    log.warn("No recipient for a {} notification - nothing queued", kind);
+                    return;
+                }
                 rows.forEach(r -> r.setId(UniqueIdResolver.resolve(repository::existsById)));
                 repository.saveAll(rows);
             });
         } catch (RuntimeException e) {
             // the business transaction already committed: losing a notice is logged, never thrown at the caller
-            log.error("Could not queue {} {} notification(s): {}", rows.size(), kind, e.getClass().getSimpleName());
+            log.error("{} notification not queued: {}", kind, e.getClass().getSimpleName());
         }
+    }
+
+    private static List<NotificationOutbox> rows(NotificationKind kind, Outgoing out) {
+        Instant now = Instant.now();
+        NotificationTemplates.Email email = out.email();
+        return out.recipients().stream().filter(StringUtils::hasText).map(String::trim).distinct()
+                .map(to -> NotificationOutbox.builder().kind(kind).recipient(to).subject(truncate(email.subject(), 300))
+                        .bodyHtml(email.html()).bodyText(email.text()).status(NotificationOutboxStatus.PENDING)
+                        .attempts(0).nextAttemptAt(now).createdAt(now).build())
+                .toList();
     }
 
     public void drainDue() {
@@ -156,6 +171,9 @@ public class NotificationOutboxService {
         } else if (row.getAttempts() >= maxAttempts) {
             row.setStatus(NotificationOutboxStatus.FAILED);
             row.setLastError(truncate(error, 500));
+            // dead row: subject, recipient and error stay for the admin; the body (resume token, personal details) goes
+            row.setBodyHtml(null);
+            row.setBodyText(null);
             log.error("Notification {} ({}) failed after {} attempts: {}", id, row.getKind(), row.getAttempts(), error.split(":", 2)[0]);
         } else {
             row.setStatus(NotificationOutboxStatus.PENDING);

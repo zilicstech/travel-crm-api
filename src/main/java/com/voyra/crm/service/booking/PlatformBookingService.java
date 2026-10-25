@@ -540,6 +540,7 @@ public class PlatformBookingService {
         BigDecimal earned = nz(b.getVoyraEarned());
         b.setVoyraEarnedReversal(earned); // the supplier claws back Voyra's commission on the fare
         Map<String, Object> detail = new LinkedHashMap<>();
+        boolean offline = false;
         if (!known(supplierRefund)) {
             // accepted without a usable figure: nothing is posted until Voyra confirms the refund with the supplier
             b.setVoyraNet(b.getVoyraNet().subtract(earned));
@@ -554,6 +555,7 @@ public class PlatformBookingService {
                     .map(w -> w.getStatus() == WalletStatus.CLOSED).orElse(false);
             if (walletClosed) {
                 // a closed wallet takes no postings: the agency is settled by bank transfer
+                offline = true;
                 detail.put("offline", true);
                 notificationService.platformAlert("Cancelled booking " + id + " - refund offline",
                         "The wallet of agency " + b.getTenantId() + " is closed: refund ₹" + refund + " offline for booking " + id
@@ -582,7 +584,7 @@ public class PlatformBookingService {
         b.setCancelledAt(Instant.now());
         b.setSupplierMessage(truncate(message));
         events.record(id, "CANCELLED", detail);
-        notificationService.bookingCancelled(b);
+        notificationService.bookingCancelled(b, offline);
         if (b.getVoyraNet().signum() < 0 && b.getVoyraNet().compareTo(netBefore) < 0) {
             notificationService.platformAlert("Loss-making booking " + id,
                     "Voyra net on cancelled booking " + id + " for agency " + b.getTenantId() + " fell to " + b.getVoyraNet());

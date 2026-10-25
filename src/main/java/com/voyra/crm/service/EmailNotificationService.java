@@ -25,8 +25,8 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
- * Emails through the outbox (SMTP_HOST set). Recipients are resolved and the email rendered in the caller's transaction; the row is
- * written only after it commits. Nothing here ever throws into the caller: a notice that cannot be built is logged and dropped.
+ * Emails through the outbox (SMTP_HOST set). Recipients are resolved and the email rendered only after the caller's transaction
+ * commits, in the outbox's own transaction. Nothing here ever throws into the caller: a notice that cannot be built is logged and dropped.
  */
 @Slf4j
 @Service
@@ -48,6 +48,10 @@ public class EmailNotificationService implements NotificationService {
         this.outbox = outbox;
         this.appBaseUrl = appBaseUrl.replaceAll("/+$", "");
         log.info("Email notifications are on (SMTP); links point at {}", this.appBaseUrl);
+        if (this.appBaseUrl.contains("localhost")) {
+            log.error("APP_BASE_URL is {} while SMTP is on - links in emails will point at localhost. Set APP_BASE_URL to the frontend origin.",
+                    this.appBaseUrl);
+        }
     }
 
     @Override
@@ -58,7 +62,7 @@ public class EmailNotificationService implements NotificationService {
 
     @Override
     public void platformAlert(String subject, String body) {
-        send(NotificationKind.PLATFORM_ALERT, () -> new Queued(
+        send(NotificationKind.PLATFORM_ALERT, () -> new NotificationOutboxService.Outgoing(
                 platformAdminRepository.findByIsActiveTrue().stream().map(PlatformAdmin::getEmail).toList(),
                 NotificationTemplates.platformAlert(subject, body)));
     }
@@ -91,21 +95,21 @@ public class EmailNotificationService implements NotificationService {
 
     @Override
     public void applicationMoreInfo(AgencyApplication application, String resumePath) {
-        send(NotificationKind.APPLICATION_MORE_INFO, () -> new Queued(List.of(application.getOwnerEmail()),
+        send(NotificationKind.APPLICATION_MORE_INFO, () -> new NotificationOutboxService.Outgoing(List.of(application.getOwnerEmail()),
                 NotificationTemplates.applicationMoreInfo(application.getOwnerName(), application.getAgencyName(),
                         application.getReviewNote(), url(resumePath))));
     }
 
     @Override
     public void applicationRejected(AgencyApplication application) {
-        send(NotificationKind.APPLICATION_REJECTED, () -> new Queued(List.of(application.getOwnerEmail()),
+        send(NotificationKind.APPLICATION_REJECTED, () -> new NotificationOutboxService.Outgoing(List.of(application.getOwnerEmail()),
                 NotificationTemplates.applicationRejected(application.getOwnerName(), application.getAgencyName(),
                         application.getRejectionReason())));
     }
 
     @Override
     public void applicationApproved(AgencyApplication application) {
-        send(NotificationKind.APPLICATION_APPROVED, () -> new Queued(List.of(application.getOwnerEmail()),
+        send(NotificationKind.APPLICATION_APPROVED, () -> new NotificationOutboxService.Outgoing(List.of(application.getOwnerEmail()),
                 NotificationTemplates.applicationApproved(application.getOwnerName(), application.getAgencyName(),
                         application.getOwnerEmail(), url("/login"))));
     }
@@ -122,19 +126,16 @@ public class EmailNotificationService implements NotificationService {
     }
 
     @Override
-    public void bookingCancelled(PlatformBooking b) {
+    public void bookingCancelled(PlatformBooking b, boolean refundOffline) {
         toBooker(NotificationKind.BOOKING_CANCELLED, b,
-                link -> NotificationTemplates.bookingCancelled(product(b), b.getId(), b.getPnr(), b.getCancelRefund(), link));
+                link -> NotificationTemplates.bookingCancelled(product(b), b.getId(), b.getPnr(), b.getCancelRefund(), refundOffline, link));
     }
 
     // ---- recipients
 
-    private record Queued(List<String> recipients, NotificationTemplates.Email email) {
-    }
-
     private void toOwner(NotificationKind kind, String tenantId, Function<Tenant, NotificationTemplates.Email> render) {
         send(kind, () -> tenantRepository.findById(tenantId)
-                .map(t -> new Queued(List.of(t.getOwnerEmail()), render.apply(t)))
+                .map(t -> new NotificationOutboxService.Outgoing(List.of(t.getOwnerEmail()), render.apply(t)))
                 .orElse(null));
     }
 
@@ -146,22 +147,18 @@ public class EmailNotificationService implements NotificationService {
                     .filter(a -> b.getTenantId().equals(a.getTenantId()) && Boolean.TRUE.equals(a.getIsActive()))
                     .map(a -> a.getEmail());
             if (agentEmail.isPresent()) {
-                return new Queued(List.of(agentEmail.get()), render.apply(url("/agents/platform-bookings/" + b.getId())));
+                return new NotificationOutboxService.Outgoing(List.of(agentEmail.get()), render.apply(url("/agents/platform-bookings/" + b.getId())));
             }
             return tenantRepository.findById(b.getTenantId())
-                    .map(t -> new Queued(List.of(t.getOwnerEmail()), render.apply(url("/agency/platform-bookings/" + b.getId()))))
+                    .map(t -> new NotificationOutboxService.Outgoing(List.of(t.getOwnerEmail()), render.apply(url("/agency/platform-bookings/" + b.getId()))))
                     .orElse(null);
         });
     }
 
-    private void send(NotificationKind kind, Supplier<Queued> build) {
+    /** {@code build} runs after the caller's commit, in the outbox's own transaction (see NotificationOutboxService#enqueue). */
+    private void send(NotificationKind kind, Supplier<NotificationOutboxService.Outgoing> build) {
         try {
-            Queued q = build.get();
-            if (q == null) {
-                log.warn("No recipient for a {} notification - nothing queued", kind);
-                return;
-            }
-            outbox.enqueue(kind, q.recipients(), q.email());
+            outbox.enqueue(kind, build);
         } catch (RuntimeException e) {
             log.error("{} notification not queued: {}", kind, e.getClass().getSimpleName());
         }

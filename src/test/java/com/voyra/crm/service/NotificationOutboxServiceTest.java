@@ -17,9 +17,6 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.mail.MailSendException;
 import org.springframework.mail.javamail.JavaMailSender;
-import org.springframework.transaction.TransactionDefinition;
-import org.springframework.transaction.support.AbstractPlatformTransactionManager;
-import org.springframework.transaction.support.DefaultTransactionStatus;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
@@ -70,7 +67,7 @@ class NotificationOutboxServiceTest {
     @Test
     void queuedOnlyAfterTheTransactionCommits() {
         new TransactionTemplate(txManager).executeWithoutResult(s -> {
-            outbox.enqueue(NotificationKind.LOW_BALANCE, List.of("owner@agency.test"), EMAIL);
+            outbox.enqueue(NotificationKind.LOW_BALANCE, out(List.of("owner@agency.test")));
             verify(repository, never()).saveAll(anyList());
         });
 
@@ -92,12 +89,12 @@ class NotificationOutboxServiceTest {
     @Test
     void aRolledBackTransactionQueuesNothing() {
         assertThatThrownBy(() -> new TransactionTemplate(txManager).executeWithoutResult(s -> {
-            outbox.enqueue(NotificationKind.TOPUP_APPROVED, List.of("owner@agency.test"), EMAIL);
+            outbox.enqueue(NotificationKind.TOPUP_APPROVED, out(List.of("owner@agency.test")));
             throw new IllegalStateException("credit failed");
         })).hasMessage("credit failed");
 
         new TransactionTemplate(txManager).executeWithoutResult(s -> {
-            outbox.enqueue(NotificationKind.TOPUP_APPROVED, List.of("owner@agency.test"), EMAIL);
+            outbox.enqueue(NotificationKind.TOPUP_APPROVED, out(List.of("owner@agency.test")));
             s.setRollbackOnly();
         });
 
@@ -106,21 +103,21 @@ class NotificationOutboxServiceTest {
 
     @Test
     void withoutATransactionItIsQueuedAtOnce() {
-        outbox.enqueue(NotificationKind.PLATFORM_ALERT, List.of("a@voyra.test", "b@voyra.test"), EMAIL);
+        outbox.enqueue(NotificationKind.PLATFORM_ALERT, out(List.of("a@voyra.test", "b@voyra.test")));
 
         assertThat(savedRows()).extracting(NotificationOutbox::getRecipient).containsExactly("a@voyra.test", "b@voyra.test");
     }
 
     @Test
     void oneRowPerDistinctRecipientAndBlanksAreSkipped() {
-        outbox.enqueue(NotificationKind.PLATFORM_ALERT, Arrays.asList("a@voyra.test", " ", null, "a@voyra.test"), EMAIL);
+        outbox.enqueue(NotificationKind.PLATFORM_ALERT, out(Arrays.asList("a@voyra.test", " ", null, "a@voyra.test")));
 
         assertThat(savedRows()).extracting(NotificationOutbox::getRecipient).containsExactly("a@voyra.test");
     }
 
     @Test
     void noRecipientQueuesNothing() {
-        outbox.enqueue(NotificationKind.LOW_BALANCE, List.of(), EMAIL);
+        outbox.enqueue(NotificationKind.LOW_BALANCE, out(List.of()));
 
         verifyNoInteractions(repository);
     }
@@ -131,7 +128,7 @@ class NotificationOutboxServiceTest {
         given(repository.saveAll(anyList())).willThrow(new IllegalStateException("db down"));
 
         assertThatCode(() -> new TransactionTemplate(txManager).executeWithoutResult(s ->
-                outbox.enqueue(NotificationKind.LOW_BALANCE, List.of("owner@agency.test"), EMAIL))).doesNotThrowAnyException();
+                outbox.enqueue(NotificationKind.LOW_BALANCE, out(List.of("owner@agency.test"))))).doesNotThrowAnyException();
     }
 
     // ---- sending
@@ -186,6 +183,11 @@ class NotificationOutboxServiceTest {
 
         assertThat(row.getStatus()).isEqualTo(NotificationOutboxStatus.FAILED);
         assertThat(row.getLastError()).contains("MailSendException");
+        // a dead row must not keep a resume token in plain text; subject and recipient stay for the admin
+        assertThat(row.getBodyHtml()).isNull();
+        assertThat(row.getBodyText()).isNull();
+        assertThat(row.getSubject()).isEqualTo("Wallet low");
+        assertThat(row.getRecipient()).isEqualTo("owner@agency.test");
         verify(repository).save(row);
     }
 
@@ -234,7 +236,51 @@ class NotificationOutboxServiceTest {
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("MAIL_FROM");
     }
 
+    /** Recipients are looked up inside the after-commit hook, never in the caller's transaction. */
+    @Test
+    void recipientsAreResolvedOnlyAfterTheCommit() {
+        java.util.concurrent.atomic.AtomicInteger builds = new java.util.concurrent.atomic.AtomicInteger();
+
+        new TransactionTemplate(txManager).executeWithoutResult(s -> {
+            outbox.enqueue(NotificationKind.LOW_BALANCE, () -> {
+                builds.incrementAndGet();
+                return new NotificationOutboxService.Outgoing(List.of("owner@agency.test"), EMAIL);
+            });
+            assertThat(builds).hasValue(0);
+        });
+
+        assertThat(builds).hasValue(1);
+        assertThat(savedRows()).hasSize(1);
+    }
+
+    @Test
+    void aRolledBackTransactionNeverEvenResolvesRecipients() {
+        java.util.concurrent.atomic.AtomicInteger builds = new java.util.concurrent.atomic.AtomicInteger();
+
+        new TransactionTemplate(txManager).executeWithoutResult(s -> {
+            outbox.enqueue(NotificationKind.LOW_BALANCE, () -> {
+                builds.incrementAndGet();
+                return null;
+            });
+            s.setRollbackOnly();
+        });
+
+        assertThat(builds).hasValue(0);
+        verifyNoInteractions(repository);
+    }
+
+    @Test
+    void aBuildThatFindsNoRecipientQueuesNothing() {
+        outbox.enqueue(NotificationKind.LOW_BALANCE, () -> null);
+
+        verify(repository, never()).saveAll(anyList());
+    }
+
     // ---- helpers
+
+    private static java.util.function.Supplier<NotificationOutboxService.Outgoing> out(java.util.Collection<String> to) {
+        return () -> new NotificationOutboxService.Outgoing(to, EMAIL);
+    }
 
     @SuppressWarnings("unchecked")
     private List<NotificationOutbox> savedRows() {
@@ -256,49 +302,5 @@ class NotificationOutboxServiceTest {
         return NotificationOutbox.builder().id(id).kind(NotificationKind.LOW_BALANCE).recipient("owner@agency.test")
                 .subject("Wallet low").bodyHtml("<p>Top up</p>").bodyText("Top up").status(NotificationOutboxStatus.SENDING)
                 .attempts(attempts).nextAttemptAt(Instant.now().plus(NotificationOutboxService.LEASE)).createdAt(Instant.now()).build();
-    }
-
-    /** Spring's real transaction-synchronization lifecycle (commit, rollback, REQUIRES_NEW suspend/resume) without a database. */
-    static class FakeTransactionManager extends AbstractPlatformTransactionManager {
-        private final ThreadLocal<Boolean> active = ThreadLocal.withInitial(() -> false);
-
-        @Override
-        protected Object doGetTransaction() {
-            return new Object();
-        }
-
-        @Override
-        protected boolean isExistingTransaction(Object transaction) {
-            return active.get();
-        }
-
-        @Override
-        protected void doBegin(Object transaction, TransactionDefinition definition) {
-            active.set(true);
-        }
-
-        @Override
-        protected Object doSuspend(Object transaction) {
-            active.set(false);
-            return Boolean.TRUE;
-        }
-
-        @Override
-        protected void doResume(Object transaction, Object suspendedResources) {
-            active.set(true);
-        }
-
-        @Override
-        protected void doCommit(DefaultTransactionStatus status) {
-        }
-
-        @Override
-        protected void doRollback(DefaultTransactionStatus status) {
-        }
-
-        @Override
-        protected void doCleanupAfterCompletion(Object transaction) {
-            active.set(false);
-        }
     }
 }
