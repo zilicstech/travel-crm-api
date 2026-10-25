@@ -49,6 +49,7 @@ public class AgencyPricingService {
     private final TenantRepository tenantRepository;
     private final PlatformSettingService settings;
     private final PlatformAuditService auditService;
+    private final SecondApproverRule secondApproverRule;
 
     @Transactional(readOnly = true)
     public PricingPreviewResponse preview(String tenantId, PricingProduct product, BigDecimal discountPct,
@@ -136,6 +137,7 @@ public class AgencyPricingService {
         if (actor.equals(row.getCreatedBy())) {
             throw new IllegalStateException("A different platform admin must approve this rate");
         }
+        secondApproverRule.requireIndependent(actor, row.getCreatedBy(), row.getCreatedAt());
         row.setApprovedBy(actor);
         row.setApprovedAt(Instant.now());
         AgencyPricing saved = repository.save(row);

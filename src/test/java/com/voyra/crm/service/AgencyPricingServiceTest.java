@@ -53,6 +53,8 @@ class AgencyPricingServiceTest {
     private PlatformSettingService settings;
     @Mock
     private PlatformAuditService auditService;
+    @Mock
+    private SecondApproverRule secondApproverRule;
     @InjectMocks
     private AgencyPricingService service;
 
@@ -312,5 +314,19 @@ class AgencyPricingServiceTest {
         var created = service.create(T, r);
         assertThat(created.getWorstCaseNetPer10k()).isEqualByComparingTo(preview.getWorstCaseNetPer10k());
         verify(settings, never()).referenceFareBasket(PricingProduct.FLIGHT);
+    }
+
+    /** Final review Important 2: the slice 1 pricing second approver obeys the same independence rule. */
+    @Test
+    void approveByAnAdminTheRuleRefusesStampsNothing() {
+        AgencyPricing pending = row("P1", Instant.now(), false);
+        when(repository.findByIdForUpdate("P1")).thenReturn(Optional.of(pending));
+        loginAs("U2");
+        org.mockito.Mockito.doThrow(new IllegalStateException("not independent"))
+                .when(secondApproverRule).requireIndependent("U2", "U1", pending.getCreatedAt());
+
+        assertThatThrownBy(() -> service.approve(T, "P1")).isInstanceOf(IllegalStateException.class).hasMessage("not independent");
+        verify(repository, never()).save(any());
+        verify(auditService, never()).record(any(), any(), any(), any());
     }
 }

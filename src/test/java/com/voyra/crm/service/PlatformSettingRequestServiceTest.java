@@ -38,6 +38,7 @@ class PlatformSettingRequestServiceTest {
     @Mock private PlatformSettingRequestRepository repository;
     @Mock private PlatformSettingService settings;
     @Mock private PlatformAuditService auditService;
+    @Mock private SecondApproverRule secondApproverRule;
     @InjectMocks private PlatformSettingRequestService service;
 
     private final Map<String, PlatformSettingRequest> rows = new HashMap<>();
@@ -140,5 +141,18 @@ class PlatformSettingRequestServiceTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("A change to tripjack_live_ready is already waiting for a second platform admin");
         verify(auditService, never()).record(any(), any(), any(), any());
+    }
+
+    /** Final review Important 2: an approver linked to the requester (one added the other's login) is refused; nothing applies. */
+    @Test
+    void anApproverTheRuleRefusesCannotApprove() {
+        PlatformSettingRequestResponse req = service.request("tripjack_live_ready", "true");
+        loginAs("SA2");
+        org.mockito.Mockito.doThrow(new IllegalStateException("not independent"))
+                .when(secondApproverRule).requireIndependent("SA2", "SA1", rows.get(req.getId()).getRequestedAt());
+
+        assertThatThrownBy(() -> service.approve(req.getId())).isInstanceOf(IllegalStateException.class).hasMessage("not independent");
+        verify(settings, never()).applyApproved(anyString(), anyString());
+        assertThat(rows.get(req.getId()).getDecidedAt()).isNull();
     }
 }

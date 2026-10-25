@@ -20,7 +20,8 @@ import java.util.Set;
 
 /**
  * Setting changes that need a second platform admin (the slice 1 pricing second-approver rule): one admin requests, a
- * different admin approves and the change applies at once; either may withdraw an open request. Only
+ * different admin, independent of the requester ({@link SecondApproverRule}), approves and the change applies at once;
+ * either may withdraw an open request (and deactivating the requester withdraws it). Only
  * {@code tripjack_live_ready = true} goes this way - turning it off is a plain setting write.
  */
 @Service
@@ -37,6 +38,7 @@ public class PlatformSettingRequestService {
     private final PlatformSettingRequestRepository repository;
     private final PlatformSettingService settings;
     private final PlatformAuditService auditService;
+    private final SecondApproverRule secondApproverRule;
 
     @Transactional
     public PlatformSettingRequestResponse request(String key, String value) {
@@ -76,6 +78,7 @@ public class PlatformSettingRequestService {
         if (actor.equals(row.getRequestedBy())) {
             throw new IllegalStateException("A different platform admin must approve this change");
         }
+        secondApproverRule.requireIndependent(actor, row.getRequestedBy(), row.getRequestedAt());
         decide(row, actor, APPROVED);
         settings.applyApproved(row.getSettingKey(), row.getValue());
         audit(PlatformAuditAction.SETTING_CHANGE_APPROVE, row);

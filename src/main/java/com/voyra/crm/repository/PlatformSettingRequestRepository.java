@@ -20,4 +20,6 @@ public interface PlatformSettingRequestRepository extends JpaRepository<Platform
     Optional<PlatformSettingRequest> findFirstBySettingKeyAndDecidedAtIsNull(String settingKey);
 
     List<PlatformSettingRequest> findByDecidedAtIsNullOrderByRequestedAtAsc();
+
+    List<PlatformSettingRequest> findByRequestedByAndDecidedAtIsNull(String requestedBy);
 }

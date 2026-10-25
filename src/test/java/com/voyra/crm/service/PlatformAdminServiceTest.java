@@ -7,7 +7,9 @@ import com.voyra.crm.entity.PlatformAdmin;
 import com.voyra.crm.enums.PlatformAuditAction;
 import com.voyra.crm.enums.UserType;
 import com.voyra.crm.exception.NotFoundException;
+import com.voyra.crm.entity.PlatformSettingRequest;
 import com.voyra.crm.repository.PlatformAdminRepository;
+import com.voyra.crm.repository.PlatformSettingRequestRepository;
 import com.voyra.crm.security.AesPasswordEncoder;
 import com.voyra.crm.security.CustomUserPrincipal;
 import org.junit.jupiter.api.AfterEach;
@@ -20,6 +22,9 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import java.time.Instant;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -46,6 +51,7 @@ class PlatformAdminServiceTest {
     @Mock private AesPasswordEncoder passwordEncoder;
     @Mock private LoginEmailService loginEmailService;
     @Mock private PlatformAuditService auditService;
+    @Mock private PlatformSettingRequestRepository settingRequestRepository;
     @InjectMocks private PlatformAdminService service;
 
     private final Map<String, PlatformAdmin> rows = new LinkedHashMap<>();
@@ -174,5 +180,53 @@ class PlatformAdminServiceTest {
         admin("SA1", true);
         assertThatThrownBy(() -> service.deactivate("NOPE")).isInstanceOf(NotFoundException.class);
         assertThatThrownBy(() -> service.reactivate("NOPE")).isInstanceOf(NotFoundException.class);
+    }
+
+    /** Final review minor 9: a deactivated admin's open setting requests are withdrawn (audited), so nobody can approve them later. */
+    @Test
+    void deactivatingAnAdminWithdrawsTheirOpenSettingRequests() {
+        admin("SA1", true);
+        admin("SA2", true);
+        PlatformSettingRequest open = PlatformSettingRequest.builder().id("R1").settingKey("tripjack_live_ready").value("true")
+                .requestedBy("SA2").requestedAt(Instant.now()).build();
+        when(settingRequestRepository.findByRequestedByAndDecidedAtIsNull("SA2")).thenReturn(List.of(open));
+
+        service.deactivate("SA2");
+
+        assertThat(open.getOutcome()).isEqualTo("WITHDRAWN");
+        assertThat(open.getDecidedBy()).isEqualTo("SA1");
+        assertThat(open.getDecidedAt()).isNotNull();
+        verify(settingRequestRepository).save(open);
+        verify(auditService).record(eq(PlatformAuditAction.SETTING_CHANGE_WITHDRAW), eq("PLATFORM_SETTING"), eq("tripjack_live_ready"), anyMap());
+    }
+
+    /** Carried minor: the liveness cache changes only after the commit; a rolled-back deactivate leaves it as it was. */
+    @Test
+    void theCacheChangesOnlyWhenTheTransactionCommits() {
+        admin("SA1", true);
+        admin("SA2", true);
+        PlatformAdminCache.put("SA2", true);
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            service.deactivate("SA2");
+            assertThat(PlatformAdminCache.isActive("SA2")).isTrue(); // not yet committed
+            TransactionSynchronizationManager.getSynchronizations()
+                    .forEach(sync -> sync.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
+            assertThat(PlatformAdminCache.isActive("SA2")).isTrue();
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            admin("SA3", true);
+            PlatformAdminCache.put("SA3", true);
+            service.deactivate("SA3");
+            assertThat(PlatformAdminCache.isActive("SA3")).isTrue();
+            TransactionSynchronizationManager.getSynchronizations().forEach(TransactionSynchronization::afterCommit);
+            assertThat(PlatformAdminCache.isActive("SA3")).isFalse();
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
     }
 }

@@ -6,7 +6,10 @@ import com.voyra.crm.dto.PlatformAdminResponse;
 import com.voyra.crm.entity.PlatformAdmin;
 import com.voyra.crm.enums.PlatformAuditAction;
 import com.voyra.crm.exception.NotFoundException;
+import com.voyra.crm.entity.PlatformSettingRequest;
 import com.voyra.crm.repository.PlatformAdminRepository;
+import com.voyra.crm.repository.PlatformSettingRequestRepository;
+import com.voyra.crm.security.SecurityContextUtil;
 import com.voyra.crm.security.AesPasswordEncoder;
 import com.voyra.crm.util.UniqueIdResolver;
 import lombok.RequiredArgsConstructor;
@@ -14,14 +17,19 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.security.SecureRandom;
+import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
  * Platform admins (SUPER_ADMIN logins, the platform_admin table the seed runner fills): add one with a generated password
  * shown once (stored reversibly per blueprint 4.7, like every login), deactivate, reactivate. At least one stays active.
+ * Deactivating an admin withdraws their open setting requests.
  */
 @Slf4j
 @Service
@@ -38,6 +46,7 @@ public class PlatformAdminService {
     private final AesPasswordEncoder passwordEncoder;
     private final LoginEmailService loginEmailService;
     private final PlatformAuditService auditService;
+    private final PlatformSettingRequestRepository settingRequestRepository;
 
     @Transactional(readOnly = true)
     public List<PlatformAdminResponse> list() {
@@ -57,7 +66,7 @@ public class PlatformAdminService {
                 .isActive(true)
                 .build());
         auditService.record(PlatformAuditAction.PLATFORM_ADMIN_CREATE, ENTITY_TYPE, admin.getId(), Map.of("email", email));
-        PlatformAdminCache.put(admin.getId(), true);
+        cacheAfterCommit(admin.getId(), true);
         log.info("Platform admin added: id={}", admin.getId());
         return toResponse(admin, password);
     }
@@ -75,7 +84,8 @@ public class PlatformAdminService {
         admin.setIsActive(false);
         repository.save(admin);
         auditService.record(PlatformAuditAction.PLATFORM_ADMIN_DEACTIVATE, ENTITY_TYPE, id, Map.of("email", admin.getEmail()));
-        PlatformAdminCache.put(id, false);
+        withdrawOpenRequests(id);
+        cacheAfterCommit(id, false);
         log.info("Platform admin deactivated: id={}", id);
         return toResponse(admin, null);
     }
@@ -87,10 +97,42 @@ public class PlatformAdminService {
             admin.setIsActive(true);
             repository.save(admin);
             auditService.record(PlatformAuditAction.PLATFORM_ADMIN_REACTIVATE, ENTITY_TYPE, id, Map.of("email", admin.getEmail()));
-            PlatformAdminCache.put(id, true);
+            cacheAfterCommit(id, true);
             log.info("Platform admin reactivated: id={}", id);
         }
         return toResponse(admin, null);
+    }
+
+    /** A deactivated admin's open setting requests are withdrawn, so nobody approves a request its author can no longer stand behind. */
+    private void withdrawOpenRequests(String adminId) {
+        String actor = SecurityContextUtil.getCurrentUserOrThrow().userId();
+        for (PlatformSettingRequest r : settingRequestRepository.findByRequestedByAndDecidedAtIsNull(adminId)) {
+            r.setDecidedBy(actor);
+            r.setDecidedAt(Instant.now());
+            r.setOutcome("WITHDRAWN");
+            settingRequestRepository.save(r);
+            Map<String, Object> detail = new LinkedHashMap<>();
+            detail.put("requestId", r.getId());
+            detail.put("value", r.getValue());
+            detail.put("requestedBy", r.getRequestedBy());
+            detail.put("decidedBy", actor);
+            detail.put("reason", "Requester deactivated");
+            auditService.record(PlatformAuditAction.SETTING_CHANGE_WITHDRAW, "PLATFORM_SETTING", r.getSettingKey(), detail);
+        }
+    }
+
+    /** The liveness cache follows the committed row only: a rolled-back change never reaches it. */
+    private static void cacheAfterCommit(String adminId, boolean active) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    PlatformAdminCache.put(adminId, active);
+                }
+            });
+        } else {
+            PlatformAdminCache.put(adminId, active);
+        }
     }
 
     private PlatformAdmin find(String id) {
