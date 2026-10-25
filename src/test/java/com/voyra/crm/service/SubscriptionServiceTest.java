@@ -70,6 +70,7 @@ class SubscriptionServiceTest {
                 .waivedReason(WaivedReason.COMPLIMENTARY).periodEnd(Instant.now().plus(Duration.ofDays(30)))
                 .updatedAt(Instant.now()).build();
         lenient().when(subscriptionRepository.findByTenantIdForUpdate("T1")).thenReturn(Optional.of(sub));
+        lenient().when(subscriptionRepository.findByTenantId("T1")).thenReturn(Optional.of(sub));
         lenient().when(entitlementService.refresh("T1")).thenReturn(new Entitlements(SubscriptionPlan.SUITE,
                 SubscriptionStatus.ACTIVE, EnumSet.allOf(Sku.class), 5, false, null));
     }
@@ -221,7 +222,7 @@ class SubscriptionServiceTest {
 
     @Test
     void unknownTenantIs404() {
-        when(subscriptionRepository.findByTenantIdForUpdate("NOPE")).thenReturn(Optional.empty());
+        when(subscriptionRepository.findByTenantId("NOPE")).thenReturn(Optional.empty());
         when(tenantRepository.existsById("NOPE")).thenReturn(false);
         assertThatThrownBy(() -> service.adminView("NOPE")).isInstanceOf(NotFoundException.class);
         verify(entitlementService, never()).startMissingTrial(any());
@@ -230,7 +231,7 @@ class SubscriptionServiceTest {
     @Test
     void aTenantWithoutARowGetsTheTrialInsteadOf404() {
         Subscription trial = EntitlementService.newTrial("S9", "T9", Instant.now());
-        when(subscriptionRepository.findByTenantIdForUpdate("T9")).thenReturn(Optional.empty());
+        when(subscriptionRepository.findByTenantId("T9")).thenReturn(Optional.empty());
         when(tenantRepository.existsById("T9")).thenReturn(true);
         when(entitlementService.startMissingTrial("T9")).thenReturn(trial);
         when(entitlementService.resolve("T9")).thenReturn(new Entitlements(SubscriptionPlan.SUITE, SubscriptionStatus.TRIAL,
@@ -278,6 +279,14 @@ class SubscriptionServiceTest {
         service.extendTrial("T1", t);
         verify(subscriptionRepository, org.mockito.Mockito.times(3)).findByTenantIdForUpdate("T1");
         verify(subscriptionRepository, never()).findByTenantId(any());
+    }
+
+    @Test
+    void readsNeverTakeTheLockBecauseTheirTransactionIsReadOnly() {
+        when(entitlementService.resolve("T1")).thenReturn(new Entitlements(SubscriptionPlan.SUITE, SubscriptionStatus.ACTIVE,
+                EnumSet.allOf(Sku.class), 5, false, null));
+        service.adminView("T1");
+        verify(subscriptionRepository, never()).findByTenantIdForUpdate(any());
     }
 
     @Test

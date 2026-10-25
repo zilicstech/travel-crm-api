@@ -95,7 +95,7 @@ public class SubscriptionService {
                 && (request.getSkus() == null || !request.getSkus().contains(Sku.STAFF_SEATS))) {
             throw new IllegalArgumentException("Add the Staff seats SKU to give seats");
         }
-        Subscription s = load(tenantId);
+        Subscription s = loadForUpdate(tenantId);
         SubscriptionPlan plan = request.getPlan();
         List<String> skus = switch (plan) {
             case SUITE -> Arrays.stream(Sku.values()).map(Enum::name).toList();
@@ -138,7 +138,7 @@ public class SubscriptionService {
         if (request.getUntil() != null && !request.getUntil().isAfter(Instant.now())) {
             throw new IllegalArgumentException("until must be in the future");
         }
-        Subscription s = load(tenantId);
+        Subscription s = loadForUpdate(tenantId);
         if (s.getPlan() == SubscriptionPlan.STARTER || s.getStatus() == SubscriptionStatus.CANCELLED) {
             throw new IllegalArgumentException("Set a plan before waiving");
         }
@@ -158,7 +158,7 @@ public class SubscriptionService {
     /** Back to a Suite trial ending {@code days} after the current end (or after now when it has ended); a trial is not a waiver. */
     @Transactional
     public SubscriptionAdminResponse extendTrial(String tenantId, TrialExtendRequest request) {
-        Subscription s = load(tenantId);
+        Subscription s = loadForUpdate(tenantId);
         if (s.getWaivedReason() == WaivedReason.FOUNDING_AGENCY) {
             throw new IllegalArgumentException("Founding agencies don't need a trial");
         }
@@ -181,8 +181,18 @@ public class SubscriptionService {
         return adminView(s, fresh);
     }
 
+    /** Reads run in read-only transactions, where FOR UPDATE is illegal. */
     private Subscription load(String tenantId) {
-        return subscriptionRepository.findByTenantIdForUpdate(tenantId).orElseGet(() -> {
+        return orMissing(tenantId, subscriptionRepository.findByTenantId(tenantId));
+    }
+
+    /** Writes lock the row so concurrent admin changes and the daily job serialise. */
+    private Subscription loadForUpdate(String tenantId) {
+        return orMissing(tenantId, subscriptionRepository.findByTenantIdForUpdate(tenantId));
+    }
+
+    private Subscription orMissing(String tenantId, java.util.Optional<Subscription> found) {
+        return found.orElseGet(() -> {
             if (!tenantRepository.existsById(tenantId)) {
                 throw new NotFoundException("Agency not found");
             }
