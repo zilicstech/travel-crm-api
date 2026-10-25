@@ -3,6 +3,7 @@ package com.voyra.crm.service.booking;
 import com.voyra.crm.dto.ItinerarySegment;
 import com.voyra.crm.entity.PlatformBooking;
 import com.voyra.crm.entity.PlatformBookingEvent;
+import com.voyra.crm.enums.MirrorStatus;
 import com.voyra.crm.enums.PlatformBookingStatus;
 import com.voyra.crm.enums.PricingProduct;
 import com.voyra.crm.repository.PlatformBookingEventRepository;
@@ -36,10 +37,14 @@ public class PlatformBookingPurgeTxService {
     public static final Set<PlatformBookingStatus> TERMINAL = Set.of(
             PlatformBookingStatus.TICKETED, PlatformBookingStatus.CANCELLED, PlatformBookingStatus.FAILED, PlatformBookingStatus.ABORTED);
 
+    /** What one purge call did. SKIPPED_MIRROR: due, but the CRM mirror (built from these passengers) is still PENDING or FAILED. */
+    public enum PurgeOutcome { PURGED, NOT_DUE, SKIPPED_MIRROR }
+
     static final String REMOVED = "[removed]";
-    /** Event payload keys (lower case, no underscores) that can hold a passenger's details or supplier free text naming one. */
+    /** Event payload keys (lower case, no underscores; exact match, never substrings) that can hold a passenger's details or supplier free text naming one. */
     private static final Set<String> PERSONAL_KEYS = Set.of("title", "firstname", "lastname", "name", "email", "phone", "mobile", "pan",
-            "dob", "dateofbirth", "contact", "address", "message", "note", "reason", "error");
+            "dob", "dateofbirth", "contact", "address", "message", "note", "reason", "error", "passport", "passportno", "nationality",
+            "contactemail", "contactphone");
     /** A ticketed booking with no readable travel date is treated as travelling a year after ticketing (the longest an airline sells ahead). */
     private static final Duration UNDATED_TRAVEL_ALLOWANCE = Duration.ofDays(365);
 
@@ -47,16 +52,18 @@ public class PlatformBookingPurgeTxService {
     private final PlatformBookingEventRepository eventRepository;
     private final PlatformBookingQueryService queryService;
 
-    /** @return true when this call purged the booking */
     @Transactional
-    public boolean purge(String bookingId, Instant now, int retentionDays) {
+    public PurgeOutcome purge(String bookingId, Instant now, int retentionDays) {
         PlatformBooking b = bookingRepository.findByIdForUpdate(bookingId).orElse(null);
         if (b == null || b.getPaxPurgedAt() != null || !TERMINAL.contains(b.getStatus())) {
-            return false;
+            return PurgeOutcome.NOT_DUE;
         }
         List<PlatformBookingEvent> events = eventRepository.findByPlatformBookingIdOrderByCreatedAtAsc(bookingId);
         if (now.isBefore(dueAt(b, events, retentionDays))) {
-            return false;
+            return PurgeOutcome.NOT_DUE;
+        }
+        if (b.getClientId() != null && (b.getMirrorStatus() == MirrorStatus.PENDING || b.getMirrorStatus() == MirrorStatus.FAILED)) {
+            return PurgeOutcome.SKIPPED_MIRROR; // the mirror repair job still needs the travellers; purged once the mirror is done
         }
         b.setPaxEnc(null);
         b.setConfirmPayloadHash(null); // a hash of the passengers and contact: guessable, and useless once terminal
@@ -70,7 +77,7 @@ public class PlatformBookingPurgeTxService {
                 eventRepository.save(e);
             }
         }
-        return true;
+        return PurgeOutcome.PURGED;
     }
 
     /** TICKETED: travel date (hotel check-out, last flight departure) + retention. Others: last activity + retention. */

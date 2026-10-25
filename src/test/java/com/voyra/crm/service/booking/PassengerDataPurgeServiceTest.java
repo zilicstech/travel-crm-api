@@ -37,11 +37,13 @@ class PassengerDataPurgeServiceTest {
     @SuppressWarnings("unchecked")
     void purgesEachCandidateIsolatesFailuresAndAuditsCountsOnly() {
         given(settings.paxRetentionDays()).willReturn(90);
-        given(bookings.findPurgeCandidateIds(eq(PlatformBookingPurgeTxService.TERMINAL), any())).willReturn(List.of("a", "b", "c"));
-        given(purgeTx.purge(eq("a"), any(), eq(90))).willReturn(true);
-        given(purgeTx.purge(eq("b"), any(), eq(90))).willReturn(false);
+        given(bookings.findPurgeCandidateIds(eq(PlatformBookingPurgeTxService.TERMINAL), any())).willReturn(List.of("a", "b", "c", "d"));
+        given(purgeTx.purge(eq("a"), any(), eq(90))).willReturn(PlatformBookingPurgeTxService.PurgeOutcome.PURGED);
+        given(purgeTx.purge(eq("b"), any(), eq(90))).willReturn(PlatformBookingPurgeTxService.PurgeOutcome.NOT_DUE);
         given(purgeTx.purge(eq("c"), any(), eq(90))).willThrow(new IllegalStateException("boom with Rahul Sharma"));
+        given(purgeTx.purge(eq("d"), any(), eq(90))).willReturn(PlatformBookingPurgeTxService.PurgeOutcome.SKIPPED_MIRROR);
         given(outbox.clearOldBodies(any())).willReturn(4);
+        given(outbox.expireUnsent(any())).willReturn(2);
 
         service.run();
 
@@ -51,10 +53,12 @@ class PassengerDataPurgeServiceTest {
         ArgumentCaptor<Instant> bodies = ArgumentCaptor.forClass(Instant.class);
         verify(outbox).clearOldBodies(bodies.capture());
         assertThat(bodies.getValue()).isBefore(Instant.now().minus(Duration.ofDays(6)));
+        verify(outbox).expireUnsent(bodies.getValue()); // SMTP off for a week: unsent rows give up their bodies too
         ArgumentCaptor<Map<String, Object>> detail = ArgumentCaptor.forClass(Map.class);
         verify(audit).recordSystem(eq(PlatformAuditAction.PASSENGER_DATA_PURGE), any(), any(), detail.capture());
         assertThat(detail.getValue()).containsEntry("bookingsPurged", 1).containsEntry("bookingsFailed", 1)
-                .containsEntry("examined", 3).containsEntry("outboxBodiesCleared", 4);
+                .containsEntry("examined", 4).containsEntry("skippedMirror", 1).containsEntry("outboxBodiesCleared", 4)
+                .containsEntry("outboxExpired", 2);
     }
 
     @Test

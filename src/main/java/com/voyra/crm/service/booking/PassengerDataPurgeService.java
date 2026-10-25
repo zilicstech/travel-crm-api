@@ -40,22 +40,27 @@ public class PassengerDataPurgeService {
         List<String> candidates = bookingRepository.findPurgeCandidateIds(
                 PlatformBookingPurgeTxService.TERMINAL, now.minus(Duration.ofDays(retentionDays)));
         int purged = 0;
+        int skippedMirror = 0;
         int failed = 0;
         for (String id : candidates) {
             try {
-                if (purgeTx.purge(id, now, retentionDays)) {
-                    purged++;
+                switch (purgeTx.purge(id, now, retentionDays)) {
+                    case PURGED -> purged++;
+                    case SKIPPED_MIRROR -> skippedMirror++;
+                    case NOT_DUE -> { }
                 }
             } catch (RuntimeException e) {
                 failed++;
                 log.error("Passenger data purge failed for platform booking {}: {}", id, e.getClass().getSimpleName());
             }
         }
-        int bodies = outboxRepository.clearOldBodies(now.minus(OUTBOX_BODY_RETENTION));
+        Instant outboxCutoff = now.minus(OUTBOX_BODY_RETENTION);
+        int expired = outboxRepository.expireUnsent(outboxCutoff); // SMTP off: unsent rows give up their bodies too
+        int bodies = outboxRepository.clearOldBodies(outboxCutoff);
         auditService.recordSystem(PlatformAuditAction.PASSENGER_DATA_PURGE, "PASSENGER_PURGE", LocalDate.now(ZoneOffset.UTC).toString(),
                 Map.of("retentionDays", retentionDays, "examined", candidates.size(), "bookingsPurged", purged,
-                        "bookingsFailed", failed, "outboxBodiesCleared", bodies));
-        log.info("Passenger data purge done: {} booking(s) purged of {} examined, {} failed, {} outbox body(ies) cleared",
-                purged, candidates.size(), failed, bodies);
+                        "skippedMirror", skippedMirror, "bookingsFailed", failed, "outboxBodiesCleared", bodies, "outboxExpired", expired));
+        log.info("Passenger data purge done: {} booking(s) purged of {} examined, {} waiting for their CRM mirror, {} failed, "
+                + "{} outbox body(ies) cleared, {} unsent outbox row(s) expired", purged, candidates.size(), skippedMirror, failed, bodies, expired);
     }
 }

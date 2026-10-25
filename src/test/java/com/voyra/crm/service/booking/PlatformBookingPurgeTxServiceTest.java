@@ -3,7 +3,9 @@ package com.voyra.crm.service.booking;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.voyra.crm.entity.PlatformBooking;
 import com.voyra.crm.entity.PlatformBookingEvent;
+import com.voyra.crm.enums.MirrorStatus;
 import com.voyra.crm.enums.PlatformBookingStatus;
+import com.voyra.crm.service.booking.PlatformBookingPurgeTxService.PurgeOutcome;
 import com.voyra.crm.enums.PricingProduct;
 import com.voyra.crm.enums.SupplierEnvironment;
 import com.voyra.crm.repository.PlatformBookingEventRepository;
@@ -77,7 +79,7 @@ class PlatformBookingPurgeTxServiceTest {
         PlatformBooking b = booking(status, daysAgo(5000));
         given(bookings.findByIdForUpdate("b1")).willReturn(Optional.of(b));
 
-        assertThat(service().purge("b1", NOW, DAYS)).isFalse();
+        assertThat(service().purge("b1", NOW, DAYS)).isNotEqualTo(PurgeOutcome.PURGED);
 
         assertThat(b.getPaxEnc()).isEqualTo("CIPHER");
         assertThat(b.getPaxPurgedAt()).isNull();
@@ -90,7 +92,7 @@ class PlatformBookingPurgeTxServiceTest {
         b.setItinerary(flightOn(LocalDate.of(2026, 12, 1).minusDays(DAYS - 2))); // travelled 88 days ago
         stub(b);
 
-        assertThat(service().purge("b1", NOW, DAYS)).isFalse();
+        assertThat(service().purge("b1", NOW, DAYS)).isNotEqualTo(PurgeOutcome.PURGED);
         assertThat(b.getPaxEnc()).isEqualTo("CIPHER");
     }
 
@@ -100,7 +102,7 @@ class PlatformBookingPurgeTxServiceTest {
         b.setItinerary(flightOn(LocalDate.of(2026, 12, 1).minusDays(DAYS + 2)));
         stub(b);
 
-        assertThat(service().purge("b1", NOW, DAYS)).isTrue();
+        assertThat(service().purge("b1", NOW, DAYS)).isEqualTo(PurgeOutcome.PURGED);
         assertThat(b.getPaxEnc()).isNull();
         assertThat(b.getConfirmPayloadHash()).isNull();
         assertThat(b.getSupplierMessage()).isNull();
@@ -115,7 +117,7 @@ class PlatformBookingPurgeTxServiceTest {
         b.setItinerary(flightOn(LocalDate.of(2027, 3, 1)));
         stub(b);
 
-        assertThat(service().purge("b1", NOW, DAYS)).isFalse();
+        assertThat(service().purge("b1", NOW, DAYS)).isNotEqualTo(PurgeOutcome.PURGED);
     }
 
     @Test
@@ -125,13 +127,13 @@ class PlatformBookingPurgeTxServiceTest {
         b.setItinerary(Map.of("hotel", Map.of("name", "H"), "stay", Map.of("checkIn", "2026-08-01", "checkOut", "2026-08-03")));
         stub(b);
 
-        assertThat(service().purge("b1", NOW, DAYS)).isTrue(); // 2026-08-03 + 90 days = 2026-11-01, past
+        assertThat(service().purge("b1", NOW, DAYS)).isEqualTo(PurgeOutcome.PURGED); // 2026-08-03 + 90 days = 2026-11-01, past
 
         PlatformBooking recent = booking(PlatformBookingStatus.TICKETED, daysAgo(400));
         recent.setProduct(PricingProduct.HOTEL);
         recent.setItinerary(Map.of("stay", Map.of("checkIn", "2026-10-01", "checkOut", "2026-10-03")));
         stub(recent);
-        assertThat(service().purge("b1", NOW, DAYS)).isFalse();
+        assertThat(service().purge("b1", NOW, DAYS)).isNotEqualTo(PurgeOutcome.PURGED);
     }
 
     @ParameterizedTest
@@ -139,12 +141,12 @@ class PlatformBookingPurgeTxServiceTest {
     void aTerminalBookingIsPurgedAfterRetentionAndNotBefore(PlatformBookingStatus status) {
         PlatformBooking old = booking(status, daysAgo(200));
         stub(old, event("X", Map.of("by", "u"), daysAgo(95)));
-        assertThat(service().purge("b1", NOW, DAYS)).isTrue();
+        assertThat(service().purge("b1", NOW, DAYS)).isEqualTo(PurgeOutcome.PURGED);
         assertThat(old.getPaxEnc()).isNull();
 
         PlatformBooking fresh = booking(status, daysAgo(200));
         stub(fresh, event("X", Map.of("by", "u"), daysAgo(10)));
-        assertThat(service().purge("b1", NOW, DAYS)).isFalse();
+        assertThat(service().purge("b1", NOW, DAYS)).isNotEqualTo(PurgeOutcome.PURGED);
         assertThat(fresh.getPaxEnc()).isEqualTo("CIPHER");
     }
 
@@ -155,7 +157,7 @@ class PlatformBookingPurgeTxServiceTest {
         b.setPaxPurgedAt(daysAgo(1));
         given(bookings.findByIdForUpdate("b1")).willReturn(Optional.of(b));
 
-        assertThat(service().purge("b1", NOW, DAYS)).isFalse();
+        assertThat(service().purge("b1", NOW, DAYS)).isNotEqualTo(PurgeOutcome.PURGED);
         verify(bookings, never()).save(any());
     }
 
@@ -167,7 +169,7 @@ class PlatformBookingPurgeTxServiceTest {
         PlatformBookingEvent resolved = event("RESOLVED", Map.of("note", "call with Rahul", "by", "u1"), daysAgo(149));
         stub(b, held, failed, resolved);
 
-        assertThat(service().purge("b1", NOW, DAYS)).isTrue();
+        assertThat(service().purge("b1", NOW, DAYS)).isEqualTo(PurgeOutcome.PURGED);
 
         assertThat(failed.getPayload()).containsEntry("message", "[removed]");
         assertThat(resolved.getPayload()).containsEntry("note", "[removed]").containsEntry("by", "u1");
@@ -182,7 +184,38 @@ class PlatformBookingPurgeTxServiceTest {
         b.setItinerary(flightOn(LocalDate.of(2026, 1, 1)));
         given(bookings.findByIdForUpdate("b1")).willReturn(Optional.of(b));
 
-        assertThat(service().purge("b1", NOW, DAYS)).isFalse();
+        assertThat(service().purge("b1", NOW, DAYS)).isNotEqualTo(PurgeOutcome.PURGED);
         assertThat(b.getPaxEnc()).isEqualTo("CIPHER");
+    }
+
+    /**
+     * Carried minor: a booking whose CRM mirror is still PENDING or FAILED keeps its passengers - the repair job builds the
+     * agency's booking from them - and is counted as skipped. A booking with no client has no mirror and purges.
+     */
+    @ParameterizedTest
+    @EnumSource(value = MirrorStatus.class, names = {"PENDING", "FAILED"})
+    void aBookingWaitingForItsCrmMirrorIsNotPurged(MirrorStatus mirror) {
+        PlatformBooking b = booking(PlatformBookingStatus.FAILED, daysAgo(200));
+        b.setClientId("c1");
+        b.setMirrorStatus(mirror);
+        stub(b);
+
+        assertThat(service().purge("b1", NOW, DAYS)).isEqualTo(PurgeOutcome.SKIPPED_MIRROR);
+        assertThat(b.getPaxEnc()).isEqualTo("CIPHER");
+        verify(bookings, never()).save(any());
+
+        b.setClientId(null); // no client: nothing to mirror
+        assertThat(service().purge("b1", NOW, DAYS)).isEqualTo(PurgeOutcome.PURGED);
+    }
+
+    /** Carried minor: these exact keys (any case, underscores ignored) are personal; a key merely containing one is not. */
+    @Test
+    void passportNationalityAndContactKeysAreRedactedExactly() {
+        Map<String, Object> redacted = PlatformBookingPurgeTxService.redact(Map.of("passport", "N1234567", "PassportNo", "N1234567",
+                "nationality", "IN", "contactEmail", "a@b.test", "contact_phone", "98765", "passportExpiryWarning", "soon", "phoneCount", 2));
+
+        assertThat(redacted).containsEntry("passport", "[removed]").containsEntry("PassportNo", "[removed]")
+                .containsEntry("nationality", "[removed]").containsEntry("contactEmail", "[removed]").containsEntry("contact_phone", "[removed]")
+                .containsEntry("passportExpiryWarning", "soon").containsEntry("phoneCount", 2);
     }
 }

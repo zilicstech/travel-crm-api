@@ -24,6 +24,18 @@ public interface NotificationOutboxRepository extends JpaRepository<Notification
             + "OR (o.status = com.voyra.crm.enums.NotificationOutboxStatus.SENT AND o.sentAt < :before))")
     int clearOldBodies(@Param("before") Instant before);
 
+    /**
+     * DPDP: PENDING or SENDING rows created before {@code before} (SMTP off or failing all that time) are given up - FAILED,
+     * reason recorded, body dropped - so a switched-off mailer never keeps resume links and names forever.
+     */
+    @Transactional
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE NotificationOutbox o SET o.status = com.voyra.crm.enums.NotificationOutboxStatus.FAILED, "
+            + "o.lastError = 'Expired: not sent within the retention period', o.bodyHtml = NULL, o.bodyText = NULL "
+            + "WHERE o.status IN (com.voyra.crm.enums.NotificationOutboxStatus.PENDING, com.voyra.crm.enums.NotificationOutboxStatus.SENDING) "
+            + "AND o.createdAt < :before")
+    int expireUnsent(@Param("before") Instant before);
+
     /** PENDING rows due now, and SENDING rows whose lease ran out (the instance sending them died). */
     @Query("SELECT o.id FROM NotificationOutbox o WHERE o.status IN (com.voyra.crm.enums.NotificationOutboxStatus.PENDING, "
             + "com.voyra.crm.enums.NotificationOutboxStatus.SENDING) AND o.nextAttemptAt <= :now ORDER BY o.nextAttemptAt")
