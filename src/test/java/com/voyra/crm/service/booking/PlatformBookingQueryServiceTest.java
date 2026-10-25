@@ -129,6 +129,17 @@ class PlatformBookingQueryServiceTest {
     }
 
     @Test
+    void aPurgedBookingStillLoadsWithNoPassengers() {
+        login("O1", UserType.AGENCY_OWNER, "T1");
+        PlatformBooking purged = booking("B1", "T1", "O1");
+        purged.setPaxEnc(null);
+        purged.setPaxPurgedAt(Instant.now());
+        given(bookings.findByIdAndTenantId("B1", "T1")).willReturn(Optional.of(purged));
+
+        assertThat(service().get("B1").getPassengers()).isEmpty();
+    }
+
+    @Test
     void anotherAgencysBookingIs404() {
         login("O2", UserType.AGENCY_OWNER, "T2");
         given(bookings.findByIdAndTenantId("B1", "T2")).willReturn(Optional.empty());

@@ -17,8 +17,9 @@ import java.time.Instant;
 import java.util.List;
 
 /**
- * Nightly: KYC files of applications rejected or abandoned as drafts more than 30 days ago are deleted
- * (files and kyc_document rows); the application row stays as the history. Public schema only.
+ * Nightly: KYC files of applications rejected, abandoned as drafts or approved more than 30 days ago are deleted
+ * (files and kyc_document rows); the application row stays as the history. Approval copies no file anywhere
+ * (the tenant keeps only the typed fields), so nothing else references an approved application's files. Public schema only.
  * Not transactional - object storage work stays outside a transaction (blueprint §8.6).
  * {@code app.applications.purge.enabled} must be false on all but one instance when scaled out.
  */
@@ -39,7 +40,7 @@ public class AgencyApplicationPurgeJob {
     public void run() {
         Instant cutoff = Instant.now().minus(RETENTION);
         int purged = 0;
-        for (ApplicationStatus status : List.of(ApplicationStatus.REJECTED, ApplicationStatus.DRAFT)) {
+        for (ApplicationStatus status : List.of(ApplicationStatus.REJECTED, ApplicationStatus.DRAFT, ApplicationStatus.APPROVED)) {
             for (AgencyApplication app : applicationRepository.findByStatusAndUpdatedAtBefore(status, cutoff)) {
                 try {
                     purged += purge(app);

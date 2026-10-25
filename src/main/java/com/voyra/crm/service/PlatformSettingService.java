@@ -41,6 +41,7 @@ public class PlatformSettingService {
     static final String REFERENCE_FARE_BASKET_HOTEL = "reference_fare_basket_hotel";
     /** Off until a second platform admin approves it ({@link PlatformSettingRequestService}); guards the Tripjack live switch. */
     static final String TRIPJACK_LIVE_READY = "tripjack_live_ready";
+    static final String PAX_RETENTION_DAYS = "pax_retention_days";
     static final String SKU_PRICES = "sku_prices";
     static final String FOUNDING_AGENCIES = "founding_agencies";
     static final String VOYRA_LEGAL_NAME = "voyra_legal_name";
@@ -64,6 +65,7 @@ public class PlatformSettingService {
             Map.entry(REFERENCE_FARE_BASKET_HOTEL, "[{\"label\":\"Budget 3*\",\"gross\":3150,\"base\":3000},"
                     + "{\"label\":\"Mid 4*\",\"gross\":9440,\"base\":8000},"
                     + "{\"label\":\"Premium 5*\",\"gross\":23600,\"base\":20000}]"),
+            Map.entry(PAX_RETENTION_DAYS, "90"),
             Map.entry(TRIPJACK_LIVE_READY, "false"),
             Map.entry(VOYRA_LEGAL_NAME, ""),
             Map.entry(VOYRA_GSTIN, ""),
@@ -107,6 +109,12 @@ public class PlatformSettingService {
     @Transactional(readOnly = true)
     public List<ReferenceFare> referenceFareBasket(PricingProduct product) {
         return parseBasket(raw(product == PricingProduct.HOTEL ? REFERENCE_FARE_BASKET_HOTEL : REFERENCE_FARE_BASKET));
+    }
+
+    /** Days a finished booking keeps its passenger data before the DPDP purge removes it. */
+    @Transactional(readOnly = true)
+    public int paxRetentionDays() {
+        return Integer.parseInt(raw(PAX_RETENTION_DAYS));
     }
 
     /** Whether a second platform admin has cleared Tripjack for live (PROD credential, Tripjack booking providers). */
@@ -207,6 +215,11 @@ public class PlatformSettingService {
             case TDS_RATE -> requireRange(key, v, 30);
             case COMMISSION_ESTIMATE_PCT -> requireRange(key, v, 100);
             case VOYRA_CANCEL_FEE -> requireRange(key, v, 1_000_000);
+            case PAX_RETENTION_DAYS -> {
+                if (!v.matches("[0-9]{1,4}") || Integer.parseInt(v) < 1) {
+                    throw new IllegalArgumentException(key + " must be a whole number of days, 1 or more");
+                }
+            }
             case SKU_PRICES -> {
                 Map<String, BigDecimal> prices = readJson(key, v, new TypeReference<>() { });
                 if (prices == null || !prices.keySet().equals(SKU_PRICE_KEYS) || prices.values().stream()

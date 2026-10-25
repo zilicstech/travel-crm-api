@@ -7,12 +7,21 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
 
 @Repository
 public interface NotificationOutboxRepository extends JpaRepository<NotificationOutbox, String> {
+
+    /** DPDP: drops the bodies of dead (FAILED) rows created before {@code before} and of SENT rows sent before it; the rows stay. */
+    @Transactional
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE NotificationOutbox o SET o.bodyHtml = NULL, o.bodyText = NULL WHERE (o.bodyHtml IS NOT NULL OR o.bodyText IS NOT NULL) "
+            + "AND ((o.status = com.voyra.crm.enums.NotificationOutboxStatus.FAILED AND o.createdAt < :before) "
+            + "OR (o.status = com.voyra.crm.enums.NotificationOutboxStatus.SENT AND o.sentAt < :before))")
+    int clearOldBodies(@Param("before") Instant before);
 
     /** PENDING rows due now, and SENDING rows whose lease ran out (the instance sending them died). */
     @Query("SELECT o.id FROM NotificationOutbox o WHERE o.status IN (com.voyra.crm.enums.NotificationOutboxStatus.PENDING, "

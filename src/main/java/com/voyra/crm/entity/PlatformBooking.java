@@ -186,6 +186,10 @@ public class PlatformBooking {
     @Column(name = "confirm_payload_hash", length = 64)
     private String confirmPayloadHash;
 
+    /** When the DPDP purge removed this booking's passenger data (pax_enc, redacted events); null until then. */
+    @Column(name = "pax_purged_at")
+    private Instant paxPurgedAt;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 

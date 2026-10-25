@@ -82,4 +82,19 @@ class AgencyApplicationPurgeJobTest {
         verify(applicationRepository, never()).save(any());
         assertThat(app.getReviewNote()).isNull();
     }
+
+    @Test
+    void alsoPurgesTheStagingFilesOfApprovedApplications() {
+        AgencyApplication app = AgencyApplication.builder().id("app-1").status(ApplicationStatus.APPROVED).build();
+        List<KycDocument> docs = List.of(doc("d1"));
+        when(applicationRepository.findByStatusAndUpdatedAtBefore(any(), any())).thenReturn(List.of());
+        when(applicationRepository.findByStatusAndUpdatedAtBefore(eq(ApplicationStatus.APPROVED), any())).thenReturn(List.of(app));
+        when(kycDocumentRepository.findByApplicationIdOrderByCreatedAt("app-1")).thenReturn(docs);
+
+        job.run();
+
+        verify(fileStorageService).delete("tenant_platform/kyc/app-1/d1");
+        verify(kycDocumentRepository).deleteAll(docs);
+        assertThat(app.getStatus()).isEqualTo(ApplicationStatus.APPROVED);
+    }
 }

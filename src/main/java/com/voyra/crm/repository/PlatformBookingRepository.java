@@ -53,6 +53,10 @@ public interface PlatformBookingRepository extends JpaRepository<PlatformBooking
 
     List<PlatformBooking> findAllByOrderByCreatedAtDesc(Pageable pageable);
 
+    /** Ids of finished, not yet purged bookings created before {@code createdBefore} - the purge re-checks each one under its lock. */
+    @Query("SELECT b.id FROM PlatformBooking b WHERE b.paxPurgedAt IS NULL AND b.status IN :statuses AND b.createdAt < :createdBefore ORDER BY b.createdAt")
+    List<String> findPurgeCandidateIds(@Param("statuses") Collection<PlatformBookingStatus> statuses, @Param("createdBefore") Instant createdBefore);
+
     boolean existsByStatusIn(Collection<PlatformBookingStatus> statuses);
 
     long countByStatusIn(Collection<PlatformBookingStatus> statuses);
