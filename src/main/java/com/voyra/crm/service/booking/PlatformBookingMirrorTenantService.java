@@ -282,7 +282,7 @@ public class PlatformBookingMirrorTenantService {
      * Refuses, before any money moves, a review naming a CRM client, lead or service that is not in the caller's tenant
      * (the repositories read the caller's schema) or that the caller may not reach: a missing one is 400, an agent's
      * out-of-reach lead or service 403 (the CRM's own lead and service rules). The lead must be the client's and the
-     * service the lead's, so the mirror lands on the records the agency picked.
+     * service the lead's (or, with no lead, the client's), so the mirror lands on the records the agency picked.
      */
     @Transactional(readOnly = true)
     public void requireLinks(String clientId, String leadId, String serviceId) {
@@ -299,6 +299,9 @@ public class PlatformBookingMirrorTenantService {
                     .orElseThrow(() -> new IllegalArgumentException("Service not found in this agency: " + serviceId));
             if (lead != null && !lead.getId().equals(service.getLeadId())) {
                 throw new IllegalArgumentException("This service belongs to another lead");
+            }
+            if (lead == null && client != null && !client.equals(service.getClientId())) {
+                throw new IllegalArgumentException("This service belongs to another client");
             }
             serviceAccess.assertEditAccess(service);
         }

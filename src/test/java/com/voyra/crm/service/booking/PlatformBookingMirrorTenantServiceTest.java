@@ -436,4 +436,20 @@ class PlatformBookingMirrorTenantServiceTest {
         org.mockito.Mockito.doThrow(new org.springframework.security.access.AccessDeniedException("no")).when(serviceAccess).assertEditAccess(s1);
         assertThatThrownBy(() -> service.requireLinks("C1", "L1", "S1")).isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
     }
+
+    /** Final review minor 7: a service sent without a lead must still be the chosen client's. */
+    @Test
+    void aServiceWithoutALeadMustBelongToTheChosenClient() {
+        when(clientRepository.existsById("C2")).thenReturn(true);
+        com.voyra.crm.entity.LeadService s1 = com.voyra.crm.entity.LeadService.builder().id("S1").leadId("L1").clientId("C1").build();
+        when(leadServiceRepository.findById("S1")).thenReturn(Optional.of(s1));
+
+        assertThatThrownBy(() -> service.requireLinks("C2", null, "S1"))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("This service belongs to another client");
+        verify(serviceAccess, never()).assertEditAccess(any());
+
+        when(clientRepository.existsById("C1")).thenReturn(true);
+        service.requireLinks("C1", null, "S1");
+        verify(serviceAccess).assertEditAccess(s1);
+    }
 }
