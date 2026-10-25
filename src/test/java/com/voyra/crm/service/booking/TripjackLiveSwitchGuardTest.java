@@ -1,10 +1,16 @@
 package com.voyra.crm.service.booking;
 
+import com.voyra.crm.enums.PlatformBookingStatus;
+import com.voyra.crm.enums.SupplierEnvironment;
+import com.voyra.crm.repository.PlatformBookingRepository;
 import com.voyra.crm.service.PlatformSettingService;
 import org.junit.jupiter.api.Test;
 
+import java.util.EnumSet;
+
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -13,11 +19,12 @@ import static org.mockito.Mockito.when;
 class TripjackLiveSwitchGuardTest {
 
     private final PlatformSettingService settings = mock(PlatformSettingService.class);
+    private final PlatformBookingRepository bookings = mock(PlatformBookingRepository.class);
     private final FlightBookingProviderConfig flights = new FlightBookingProviderConfig();
     private final HotelBookingProviderConfig hotels = new HotelBookingProviderConfig();
 
     private void check() {
-        new TripjackLiveSwitchGuard(flights, hotels, settings).check();
+        new TripjackLiveSwitchGuard(flights, hotels, settings, bookings).check();
     }
 
     @Test
@@ -38,5 +45,20 @@ class TripjackLiveSwitchGuardTest {
 
         when(settings.tripjackLiveReady()).thenReturn(true);
         assertThatCode(this::check).doesNotThrowAnyException();
+    }
+
+    /**
+     * Final review Important 1: with the switch off, Tripjack bookings still in flight need the Tripjack provider to settle
+     * (the mock would answer for them). The instance starts, with a WARN; new live bookings stay blocked at review and confirm.
+     */
+    @Test
+    void aTripjackProviderStartsWithTheSwitchOffWhileTripjackBookingsAreInFlight() {
+        flights.setProvider("tripjack");
+        when(bookings.countByStatusInAndEnvironmentNot(EnumSet.of(PlatformBookingStatus.HELD, PlatformBookingStatus.BOOKING,
+                PlatformBookingStatus.UNKNOWN, PlatformBookingStatus.CANCELLING), SupplierEnvironment.MOCK)).thenReturn(2L);
+        assertThatCode(this::check).doesNotThrowAnyException();
+
+        when(bookings.countByStatusInAndEnvironmentNot(any(), any())).thenReturn(0L);
+        assertThatThrownBy(this::check).isInstanceOf(IllegalStateException.class).hasMessageContaining("unset FLIGHT_BOOKING_PROVIDER");
     }
 }

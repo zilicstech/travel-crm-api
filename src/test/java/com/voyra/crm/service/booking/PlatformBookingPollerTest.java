@@ -482,7 +482,7 @@ class PlatformBookingPollerTest {
     /** Readiness: an accepted Tripjack amendment posts the refund only once bookingDetails says the booking is cancelled. */
     @Test
     void anAcceptedTripjackCancelSettlesWhenTheSupplierShowsItCancelled() {
-        // the row's stamped environment decides, not the provider set now (still "mock" here)
+        config.setProvider("tripjack"); // booked with Tripjack and served by it
         lenient().when(settings.voyraCancelFee()).thenReturn(BigDecimal.ZERO);
         lenient().when(walletRepository.findByTenantId(T)).thenReturn(Optional.empty());
         acceptedCancel("C1", Instant.now().minus(1, ChronoUnit.HOURS));
@@ -533,6 +533,7 @@ class PlatformBookingPollerTest {
     /** Fix round 1: a cancel the supplier accepted but has not confirmed after 24 hours alerts Voyra once. */
     @Test
     void anAcceptedCancelStillUnconfirmedAfter24HoursAlertsOnce() {
+        config.setProvider("tripjack");
         acceptedCancel("C5", Instant.now().minus(25, ChronoUnit.HOURS));
         when(provider.bookingDetails("SB-C5"))
                 .thenReturn(new BookResult("SB-C5", SupplierBookingStatus.TICKETED, "PNR1", List.of(), "SUCCESS", null));
@@ -545,5 +546,37 @@ class PlatformBookingPollerTest {
         verify(notificationService, times(1)).platformAlert(contains("C5"), anyString());
         assertThat(savedEvents).filteredOn(e -> e.getType().equals("CANCEL_OVERDUE")).hasSize(1);
         assertThat(rows.get("C5").getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
+    }
+
+    /**
+     * Final review Important 1: with the mock configured, Tripjack rows (BOOKING, FAILED in the late-ticket window, an accepted
+     * CANCELLING) are never asked of the mock - which would answer TICKETED for an id it never saw - and nothing is posted.
+     * Voyra is alerted once per row, however many runs see it.
+     */
+    @Test
+    void rowsTheConfiguredSupplierDoesNotServeAreSkippedAndAlertedOnce() {
+        bookingRow("MU1", Instant.now()).setEnvironment(SupplierEnvironment.UAT);
+        PlatformBooking failed = bookingRow("MP1", Instant.now().minus(2, ChronoUnit.HOURS));
+        failed.setEnvironment(SupplierEnvironment.PROD);
+        failed.setStatus(PlatformBookingStatus.FAILED);
+        failed.setResolvedFailedAt(Instant.now().minus(1, ChronoUnit.HOURS));
+        acceptedCancel("MC1", Instant.now().minus(25, ChronoUnit.HOURS)).setEnvironment(SupplierEnvironment.PROD);
+        lenient().when(provider.bookingDetails(anyString()))
+                .thenReturn(new BookResult("x", SupplierBookingStatus.TICKETED, "PNR1", List.of("TKT-1"), "Ticketed", null));
+
+        poller.poll();
+        poller.poll();
+
+        verify(provider, never()).bookingDetails(anyString());
+        verifyNoInteractions(walletService);
+        for (String id : List.of("MU1", "MP1", "MC1")) {
+            verify(notificationService, times(1)).platformAlert(contains(id), anyString());
+            assertThat(rows.get(id).getPollCount()).isZero();
+        }
+        assertThat(rows.get("MU1").getStatus()).isEqualTo(PlatformBookingStatus.BOOKING);
+        assertThat(rows.get("MP1").getStatus()).isEqualTo(PlatformBookingStatus.FAILED);
+        assertThat(rows.get("MC1").getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
+        assertThat(savedEvents).filteredOn(e -> e.getType().equals("SUPPLIER_MISMATCH")).hasSize(3);
+        assertThat(savedEvents).filteredOn(e -> e.getType().equals("CANCEL_OVERDUE")).isEmpty();
     }
 }

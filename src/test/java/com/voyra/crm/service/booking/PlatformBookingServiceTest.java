@@ -1353,4 +1353,45 @@ class PlatformBookingServiceTest {
         verify(provider, never()).book(any());
         assertThat(rows.get(id).getStatus()).isEqualTo(PlatformBookingStatus.REVIEWING);
     }
+
+    /** Final review minor 3: replaying the same confirm key on a live row after the switch went off returns it, held or ticketed. */
+    @Test
+    void aSameKeyReplayOfAHeldOrTicketedLiveRowStillAnswersWithTheSwitchOff() {
+        config.setProvider("tripjack");
+        when(credentialRepository.findByProviderAndIsActiveTrue(SupplierProvider.TRIPJACK)).thenReturn(Optional.of(
+                PlatformSupplierCredential.builder().id("CRED1").environment(SupplierEnvironment.PROD).build()));
+        when(settings.tripjackLiveReady()).thenReturn(true, true, false); // on for review and confirm, then off
+        wallet.setIsTest(false);
+        String id = reviewed();
+        PlatformBookingConfirmRequest request = confirmRequest("key-00000001", "4500.00");
+        assertThat(service.confirm(id, request).getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
+
+        assertThat(service.confirm(id, request).getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
+        rows.get(id).setStatus(PlatformBookingStatus.HELD);
+        assertThat(service.confirm(id, request).getStatus()).isEqualTo(PlatformBookingStatus.HELD);
+
+        verify(provider, times(1)).book(any());
+        verify(walletService, times(1)).hold(any(), any(), any(), any(), any());
+    }
+
+    /** Final review Important 1: a Tripjack review confirmed after the provider went back to the mock is refused; the mock never books it. */
+    @Test
+    void aTripjackReviewIsNotBookedThroughTheMock() {
+        config.setProvider("tripjack");
+        when(credentialRepository.findByProviderAndIsActiveTrue(SupplierProvider.TRIPJACK)).thenReturn(Optional.of(
+                PlatformSupplierCredential.builder().id("CRED1").environment(SupplierEnvironment.UAT).build()));
+        String id = reviewed();
+        config.setProvider("mock"); // restarted on the mock
+
+        assertThatThrownBy(() -> service.confirm(id, confirmRequest("key-00000001", "4500.00")))
+                .isInstanceOfSatisfying(BookingConflictException.class, e -> {
+                    assertThat(e.getCode()).isEqualTo("BOOKING_UNAVAILABLE");
+                    assertThat(e.getMessage()).isEqualTo("This booking can't be changed right now. Voyra has been notified.");
+                });
+        verify(walletService, never()).hold(any(), any(), any(), any(), any());
+        verify(provider, never()).book(any());
+        assertThat(rows.get(id).getStatus()).isEqualTo(PlatformBookingStatus.REVIEWING);
+        verify(notificationService).platformAlert(org.mockito.ArgumentMatchers.contains(id), anyString());
+        assertThat(savedEvents).filteredOn(e -> e.getType().equals("SUPPLIER_MISMATCH")).hasSize(1);
+    }
 }

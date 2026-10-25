@@ -2,6 +2,7 @@ package com.voyra.crm.repository;
 
 import com.voyra.crm.entity.PlatformBooking;
 import com.voyra.crm.enums.PlatformBookingStatus;
+import com.voyra.crm.enums.SupplierEnvironment;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -42,6 +43,8 @@ public interface PlatformBookingRepository extends JpaRepository<PlatformBooking
     Optional<PlatformBooking> findByIdempotencyKey(String idempotencyKey);
 
     List<PlatformBooking> findByStatusIn(Collection<PlatformBookingStatus> statuses);
+
+    long countByStatusInAndEnvironmentNot(Collection<PlatformBookingStatus> statuses, SupplierEnvironment environment);
 
     List<PlatformBooking> findByMirrorStatusIn(Collection<com.voyra.crm.enums.MirrorStatus> statuses);
 

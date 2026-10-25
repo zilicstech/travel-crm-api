@@ -80,6 +80,9 @@ public class PlatformBookingService {
     private static final TypeReference<Map<String, Object>> MAP = new TypeReference<>() { };
     /** Pricing-snapshot key of a flight's reviewed {adults, children, infants}. */
     private static final String PAX_MIX = "paxMix";
+    /** Event marking that Voyra was alerted about a row the configured supplier does not serve (once per row). */
+    static final String SUPPLIER_MISMATCH = "SUPPLIER_MISMATCH";
+    static final String NOT_SERVED_MESSAGE = "This booking can't be changed right now. Voyra has been notified.";
 
     private final PlatformBookingRepository bookingRepository;
     private final BookingProviderRegistry providers;
@@ -385,6 +388,7 @@ public class PlatformBookingService {
             throw cancelInProgress();
         }
         requireCancellable(b);
+        requireServed(b);
         BigDecimal fee = settings.voyraCancelFee();
         BigDecimal refund = refundOf(providers.supplierFor(b).cancelQuote(supplierId(b)).refund(), b.getDisplayed(), fee);
         BigDecimal recall = recallOf(b);
@@ -413,6 +417,11 @@ public class PlatformBookingService {
             throw new IllegalArgumentException("An idempotency key is required to cancel a booking");
         }
         CustomUserPrincipal principal = requireBooker();
+        // checked before the claim so a refused row stays TICKETED; a row's environment and the provider never change while running
+        PlatformBooking current = actedOn(principal, bookingRepository.findByIdAndTenantId(bookingId, principal.tenantId()));
+        if (current.getStatus() == PlatformBookingStatus.TICKETED) {
+            requireServed(current);
+        }
         Claim claim = tx.execute(s -> claimCancel(bookingId, principal, idempotencyKey));
         if (!claim.submit()) {
             return claim.booking();
@@ -700,6 +709,10 @@ public class PlatformBookingService {
             throw new IllegalStateException("This booking was already confirmed");
         }
         requireLiveAllowed(b.getEnvironment()); // switched off since the review: stays REVIEWING, the sweep expires it
+        if (!providers.serves(b)) {
+            alertNotServed(b);
+            return new Held(b, notServed(), false); // returned, not thrown, so the alert's event commits
+        }
         if (bookingRepository.findByIdempotencyKey(request.getIdempotencyKey()).isPresent()) {
             throw new IllegalStateException("This confirmation key was already used for another booking");
         }
@@ -947,6 +960,36 @@ public class PlatformBookingService {
             throw new BookingConflictException("LIVE_BOOKINGS_PAUSED",
                     "Booking through Voyra is paused for now - please try again later or contact Voyra", Map.of());
         }
+    }
+
+    /** Refuses (409) a booking the configured provider did not book, after alerting Voyra once; no supplier call, no money. */
+    private void requireServed(PlatformBooking b) {
+        if (!providers.serves(b)) {
+            tx.executeWithoutResult(s -> bookingRepository.findByIdForUpdate(b.getId()).ifPresent(this::alertNotServed));
+            throw notServed();
+        }
+    }
+
+    private static BookingConflictException notServed() {
+        return new BookingConflictException("BOOKING_UNAVAILABLE", NOT_SERVED_MESSAGE, Map.of());
+    }
+
+    /**
+     * The provider configured now is not the one this row was booked with (mock vs Tripjack): alerts Voyra once per row,
+     * marked by a SUPPLIER_MISMATCH event, in the caller's transaction (the row locked). Also used by the poller.
+     */
+    void alertNotServed(PlatformBooking b) {
+        if (events.lastPayload(b.getId(), SUPPLIER_MISMATCH).isPresent()) {
+            return;
+        }
+        String configured = providers.isMock(b.getProduct()) ? "the mock" : "Tripjack";
+        events.record(b.getId(), SUPPLIER_MISMATCH, Map.of("environment", b.getEnvironment().name(), "status", b.getStatus().name(),
+                "configured", configured));
+        notificationService.platformAlert("Booking " + b.getId() + " is not served by the configured supplier",
+                "Booking " + b.getId() + " (agency " + b.getTenantId() + ", " + b.getStatus() + ") was booked in the " + b.getEnvironment()
+                        + " environment, but the " + b.getProduct() + " booking provider configured now is " + configured
+                        + ". Voyra will not ask the supplier about it or move money for it until the matching provider is configured "
+                        + "again - restore it, or check with the supplier and resolve the booking.");
     }
 
     private static String priceWord(PricingProduct product) {

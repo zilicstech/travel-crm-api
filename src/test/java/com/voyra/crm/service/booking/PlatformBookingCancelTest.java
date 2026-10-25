@@ -669,7 +669,8 @@ class PlatformBookingCancelTest {
      */
     @Test
     void anAcceptedTripjackCancelStaysCancellingAndPostsNothing() {
-        rows.get(ID).setEnvironment(SupplierEnvironment.UAT); // booked with Tripjack, whatever the provider is set to now
+        flightConfig.setProvider("tripjack");
+        rows.get(ID).setEnvironment(SupplierEnvironment.UAT); // booked with Tripjack
         supplierRefunds("4000.00");
 
         PlatformBooking b = service.cancel(ID, "ck-1");
@@ -686,12 +687,35 @@ class PlatformBookingCancelTest {
         verify(provider, times(1)).cancel("SB-1");
     }
 
-    /** Fix round 1: a row booked on the mock settles at once even after the provider was switched to Tripjack. */
+    /** Final review Important 1: a live ticket is never cancelled through the mock provider; nothing is asked or posted. */
     @Test
-    void aMockRowSettlesAtOnceAfterTheProviderSwitchedToTripjack() {
+    void aLiveRowIsNotCancelledThroughTheMockProvider() {
+        rows.get(ID).setEnvironment(SupplierEnvironment.PROD); // provider is the mock
+        supplierRefunds("4000.00");
+
+        assertThatThrownBy(() -> service.cancelQuote(ID)).isInstanceOfSatisfying(BookingConflictException.class, e -> {
+            assertThat(e.getCode()).isEqualTo("BOOKING_UNAVAILABLE");
+            assertThat(e.getMessage()).isEqualTo("This booking can't be changed right now. Voyra has been notified.");
+        });
+        assertThatThrownBy(() -> service.cancel(ID, "ck-1")).isInstanceOf(BookingConflictException.class)
+                .extracting("code").isEqualTo("BOOKING_UNAVAILABLE");
+
+        org.mockito.Mockito.verifyNoInteractions(provider);
+        verifyNothingPosted();
+        assertThat(rows.get(ID).getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
+        verify(notificationService, times(1)).platformAlert(contains(ID), anyString()); // once per row
+        assertThat(eventTypes()).containsExactly("SUPPLIER_MISMATCH");
+    }
+
+    /** A row booked on the mock is not sent to Tripjack once the provider is Tripjack: the same refusal. */
+    @Test
+    void aMockRowIsNotCancelledThroughTripjack() {
         flightConfig.setProvider("tripjack");
         supplierRefunds("4000.00");
 
-        assertThat(service.cancel(ID, "ck-1").getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
+        assertThatThrownBy(() -> service.cancel(ID, "ck-1")).isInstanceOf(BookingConflictException.class)
+                .extracting("code").isEqualTo("BOOKING_UNAVAILABLE");
+        org.mockito.Mockito.verifyNoInteractions(provider);
+        verifyNothingPosted();
     }
 }

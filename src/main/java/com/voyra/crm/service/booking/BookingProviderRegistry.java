@@ -2,6 +2,7 @@ package com.voyra.crm.service.booking;
 
 import com.voyra.crm.entity.PlatformBooking;
 import com.voyra.crm.enums.PricingProduct;
+import com.voyra.crm.enums.SupplierEnvironment;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -41,6 +42,14 @@ public class BookingProviderRegistry {
             case HOTEL -> hotelConfig.getProvider();
         };
         return "mock".equalsIgnoreCase(provider);
+    }
+
+    /**
+     * Whether the provider configured now is the one this row was booked with: the mock serves MOCK rows only, Tripjack
+     * every other row. A mismatched row (provider switched with bookings in flight) must not be asked or settled.
+     */
+    public boolean serves(PlatformBooking booking) {
+        return isMock(booking.getProduct()) == (booking.getEnvironment() == SupplierEnvironment.MOCK);
     }
 
     /** Minutes the poller waits for a booking's final answer before it goes UNKNOWN, per product. */

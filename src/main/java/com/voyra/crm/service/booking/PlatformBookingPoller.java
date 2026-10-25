@@ -37,6 +37,9 @@ import java.util.Optional;
  * minutes and settled by {@link PlatformBookingService#settleConfirmedCancel} once bookingDetails shows them cancelled.
  * Hotels give up after {@code app.hotel-booking.poll.max-minutes}.
  * <p>
+ * A row the configured provider did not book (mock vs Tripjack, after a provider switch) is skipped - no supplier call,
+ * no money - and Voyra is alerted once ({@link PlatformBookingService#alertNotServed}).
+ * <p>
  * The same run sweeps rows that can never go on: an expired REVIEWING row (releasing an orphan hold if it has one), and a
  * HELD row whose book was never sent (crash between hold and BOOKING), are ABORTED.
  */
@@ -85,6 +88,10 @@ public class PlatformBookingPoller {
                 continue;
             }
             try {
+                if (!providers.serves(b)) {
+                    alertNotServed(b.getId()); // never ask the wrong supplier: the mock would answer TICKETED for an id it never saw
+                    continue;
+                }
                 pollOne(b);
             } catch (Exception e) {
                 log.error("Polling platform booking {} failed: {}", b.getId(), e.getMessage(), e);
@@ -96,6 +103,10 @@ public class PlatformBookingPoller {
                 continue; // a mock row settles at once; an unanswered cancel is an admin's (resolveCancel)
             }
             try {
+                if (!providers.serves(b)) {
+                    alertNotServed(b.getId());
+                    continue;
+                }
                 if (b.getLastPolledAt() == null || !b.getLastPolledAt().isAfter(slowDue)) {
                     pollCancel(b);
                 }
@@ -107,6 +118,10 @@ public class PlatformBookingPoller {
             }
         }
         sweep(now);
+    }
+
+    private void alertNotServed(String bookingId) {
+        tx.executeWithoutResult(s -> bookingRepository.findByIdForUpdate(bookingId).ifPresent(bookingService::alertNotServed));
     }
 
     /** When the supplier accepted the latest cancel request; empty if it has not (an earlier, reverted attempt does not count). */
