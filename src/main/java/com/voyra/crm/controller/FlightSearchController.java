@@ -5,7 +5,6 @@ import com.voyra.crm.dto.FlightSearchPageRequest;
 import com.voyra.crm.dto.FlightSearchPageResponse;
 import com.voyra.crm.dto.FlightSearchQuery;
 import com.voyra.crm.service.FlightSearchService;
-import com.voyra.crm.service.FlightSearchProvider;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -33,14 +32,13 @@ import java.util.List;
 @PreAuthorize("hasAnyRole('AGENCY_OWNER', 'AGENT')")
 public class FlightSearchController {
 
-    private final FlightSearchProvider flightSearchProvider;
     private final FlightSearchService flightSearchService;
 
     @PostMapping("/search")
     @Operation(summary = "Search flight offers", description = "Results are not persisted - "
             + "add the chosen ones to a service's proposal via POST /api/leads/{id}/proposal-items/batch.")
     public ResponseEntity<List<FlightOfferResponse>> search(@Valid @RequestBody FlightSearchQuery query) {
-        return ResponseEntity.ok(flightSearchProvider.search(query));
+        return ResponseEntity.ok(flightSearchService.search(query));
     }
 
     @PostMapping("/search/paged")

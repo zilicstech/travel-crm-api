@@ -123,6 +123,9 @@ class TripjackFlightSearchProviderTest {
         assertThat(offers.get(0).getPrice()).isEqualByComparingTo("8400.00");
         assertThat(offers.get(0).getTotalPrice()).isEqualByComparingTo("24100.00");
         assertThat(offers.get(0).getPassengers()).isEqualTo(4);
+        // Base follows the same party maths on fC.BF: 2 x 7,200 + 5,400 + 800; Flexi only has an adult BF.
+        assertThat(offers.get(0).getBaseFare()).isEqualByComparingTo("20600.00");
+        assertThat(offers.get(1).getBaseFare()).isEqualByComparingTo("35200.00");
         // Flexi only quotes the adult fare, so every passenger is priced at it rather than under-quoted.
         assertThat(offers.get(1).getTotalPrice()).isEqualByComparingTo("40800.00");
     }

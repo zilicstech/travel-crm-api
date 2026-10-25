@@ -239,6 +239,8 @@ public class TripjackFlightSearchProvider implements FlightSearchProvider {
                         .price(adultPrice)
                         .totalPrice(FlightSearchProvider.partyTotal(query, adultPrice,
                                 paxFare(fare, "CHILD"), paxFare(fare, "INFANT")))
+                        .baseFare(FlightSearchProvider.partyTotal(query, baseFare(fare, "ADULT"),
+                                baseFare(fare, "CHILD"), baseFare(fare, "INFANT")))
                         .passengers(FlightSearchProvider.passengers(query))
                         .currency("INR")
                         .refundable("REFUNDABLE".equalsIgnoreCase(adultFare.path("rT").asText("")))
@@ -248,6 +250,12 @@ public class TripjackFlightSearchProvider implements FlightSearchProvider {
             }
         }
         return offers;
+    }
+
+    /** fd.<TYPE>.fC.BF: the commissionable base for ONE passenger; a missing adult BF counts as 0. */
+    private static BigDecimal baseFare(JsonNode fare, String paxType) {
+        JsonNode bf = fare.path("fd").path(paxType).path("fC").path("BF");
+        return bf.isMissingNode() || bf.asText().isBlank() ? ("ADULT".equals(paxType) ? BigDecimal.ZERO : null) : new BigDecimal(bf.asText());
     }
 
     private static BigDecimal paxFare(JsonNode fare, String paxType) {

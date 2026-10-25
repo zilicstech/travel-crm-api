@@ -44,7 +44,9 @@ class FlightSearchServiceTest {
         return offers;
     };
 
-    private final FlightSearchService service = new FlightSearchService(provider);
+    private final com.voyra.crm.service.booking.AgencyPriceQuoter quoter = org.mockito.Mockito.mock(com.voyra.crm.service.booking.AgencyPriceQuoter.class);
+
+    private final FlightSearchService service = new FlightSearchService(provider, quoter);
 
     @AfterEach
     void clearAuth() {
@@ -190,5 +192,50 @@ class FlightSearchServiceTest {
         assertThat(FlightResultPaging.durationMinutes("3h 05m")).isEqualTo(185);
         assertThat(FlightResultPaging.durationMinutes("140")).isEqualTo(140);
         assertThat(FlightResultPaging.durationMinutes("")).isEqualTo(Integer.MAX_VALUE);
+    }
+
+    private FlightOfferResponse firstFare(FlightSearchPageResponse p) {
+        return p.getFlights().get(0).getFares().get(0);
+    }
+
+    @Test
+    void noPricingRowMeansListedButNotBookable() {
+        org.mockito.Mockito.when(quoter.quoterFor("t1", com.voyra.crm.enums.PricingProduct.FLIGHT)).thenReturn(java.util.Optional.empty());
+        loginAsTenant("t1");
+        FlightOfferResponse o = firstFare(service.searchPage(request(1)));
+        assertThat(o.isBookable()).isFalse();
+        assertThat(o.getNotBookableReason()).isEqualTo("PRICING_NOT_CONFIGURED");
+        assertThat(o.getDisplayedFare()).isEqualByComparingTo(o.getPublishedFare());
+        assertThat(o.getAgencyEarns()).isEqualByComparingTo("0");
+    }
+
+    @Test
+    void pricedOffersCarryDisplayedFareAndEarnings() {
+        org.mockito.Mockito.when(quoter.quoterFor("t1", com.voyra.crm.enums.PricingProduct.FLIGHT)).thenReturn(java.util.Optional.of(
+                (gross, base) -> new com.voyra.crm.service.booking.PriceQuote(gross.subtract(BigDecimal.TEN), BigDecimal.ONE,
+                        BigDecimal.ZERO, BigDecimal.ONE, BigDecimal.ZERO, BigDecimal.ZERO, "P1", BigDecimal.ONE, BigDecimal.ONE)));
+        FlightSearchService withBase = new FlightSearchService(q -> {
+            FlightOfferResponse x = FlightOfferResponse.builder().offerId("a").airline("A").flightNumber("F1")
+                    .price(new BigDecimal("100")).totalPrice(new BigDecimal("200")).baseFare(new BigDecimal("170")).build();
+            return new ArrayList<>(List.of(x));
+        }, quoter);
+        loginAsTenant("t1");
+        FlightOfferResponse o = withBase.search(new FlightSearchQuery()).get(0);
+        assertThat(o.isBookable()).isTrue();
+        assertThat(o.getPublishedFare()).isEqualByComparingTo("200");
+        assertThat(o.getDisplayedFare()).isEqualByComparingTo("190");
+        assertThat(o.getAgencyEarns()).isEqualByComparingTo("1");
+    }
+
+    @Test
+    void platformAdminSearchIsUndecorated() {
+        CustomUserPrincipal admin = new CustomUserPrincipal("root", "root", UserType.SUPER_ADMIN, null);
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(admin, null, java.util.List.of()));
+        FlightOfferResponse o = firstFare(service.searchPage(request(1)));
+        assertThat(o.getPublishedFare()).isNull();
+        assertThat(o.isBookable()).isFalse();
+        assertThat(o.getNotBookableReason()).isNull();
+        org.mockito.Mockito.verifyNoInteractions(quoter);
     }
 }

@@ -47,6 +47,7 @@ class MockFlightSearchProviderTest {
         assertThat(group.getPrice()).isEqualByComparingTo(solo.getPrice());
         assertThat(solo.getTotalPrice()).isEqualByComparingTo(solo.getPrice());
         assertThat(group.getPassengers()).isEqualTo(3);
+        assertThat(group.getBaseFare()).isEqualByComparingTo(group.getTotalPrice().multiply(new java.math.BigDecimal("0.85")));
         // 2 adults + 1 child at 75% of the adult fare.
         assertThat(group.getTotalPrice()).isEqualByComparingTo(solo.getPrice().multiply(new java.math.BigDecimal("2.75")));
     }
