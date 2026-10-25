@@ -51,6 +51,8 @@ class AccountantRoleTest {
     private AesPasswordEncoder passwordEncoder;
     @Mock
     private LoginEmailService loginEmailService;
+    @Mock
+    private EntitlementService entitlementService;
 
     @InjectMocks
     private AgentService agentService;
@@ -76,6 +78,8 @@ class AccountantRoleTest {
         request.setUserRole(UserType.ACCOUNTANT);
 
         when(passwordEncoder.encode(request.getPassword())).thenReturn("encoded");
+        when(entitlementService.resolve("T1")).thenReturn(new com.voyra.crm.models.Entitlements(
+                com.voyra.crm.enums.SubscriptionPlan.SUITE, null, java.util.Set.of(), 5, false, null));
 
         agentService.createAgent(request);
 

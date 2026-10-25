@@ -109,8 +109,15 @@ class EntitlementServiceTest {
         Entitlements e = EntitlementService.compute(sub(SubscriptionPlan.CUSTOM, SubscriptionStatus.ACTIVE)
                 .skus(List.of("CRM_CORE", "VISA", "NOT_A_SKU")).seats(2).build(), NOW);
         assertThat(e.skus()).containsExactlyInAnyOrder(Sku.CRM_CORE, Sku.VISA);
-        assertThat(e.seats()).isEqualTo(2);
+        assertThat(e.seats()).isZero(); // seats only count with the STAFF_SEATS SKU
         assertThat(e.readOnly()).isFalse();
+    }
+
+    @Test
+    void customSeatsCountOnlyWithTheStaffSeatsSku() {
+        Entitlements e = EntitlementService.compute(sub(SubscriptionPlan.CUSTOM, SubscriptionStatus.ACTIVE)
+                .skus(List.of("CRM_CORE", "STAFF_SEATS")).seats(2).build(), NOW);
+        assertThat(e.seats()).isEqualTo(2);
     }
 
     @Test

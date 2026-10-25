@@ -1,5 +1,6 @@
 package com.voyra.crm.security;
 
+import com.voyra.crm.controller.AgencySubscriptionController;
 import com.voyra.crm.controller.InvoiceDocumentController;
 import com.voyra.crm.controller.OwnerAgentController;
 import com.voyra.crm.controller.OwnerDashboardController;
@@ -93,6 +94,7 @@ class ControllerSkuTableContractTest {
                 .collect(Collectors.toCollection(TreeSet::new));
         expected.add(OwnerDashboardController.class.getSimpleName());
         expected.add(OwnerAgentController.class.getSimpleName());
+        expected.add(AgencySubscriptionController.class.getSimpleName()); // a read-only owner must still see and pay
         Set<String> actual = ControllerSkuTable.TABLE.entrySet().stream()
                 .filter(e -> e.getValue() == SkuRule.NEVER_GATED)
                 .map(e -> e.getKey().getSimpleName())

@@ -3,6 +3,7 @@ package com.voyra.crm.security;
 import com.voyra.crm.controller.AccountingChangeAlertController;
 import com.voyra.crm.controller.AccountsDashboardController;
 import com.voyra.crm.controller.AgencyProfileController;
+import com.voyra.crm.controller.AgencySubscriptionController;
 import com.voyra.crm.controller.AgencySettingController;
 import com.voyra.crm.controller.AgentDashboardController;
 import com.voyra.crm.controller.AuditLogController;
@@ -49,6 +50,7 @@ import com.voyra.crm.controller.PlatformAgencyController;
 import com.voyra.crm.controller.PlatformAgencyPricingController;
 import com.voyra.crm.controller.PlatformBookingController;
 import com.voyra.crm.controller.PlatformInquiryController;
+import com.voyra.crm.controller.PlatformAgencySubscriptionController;
 import com.voyra.crm.controller.PlatformSettingController;
 import com.voyra.crm.controller.PlatformSupplierCredentialController;
 import com.voyra.crm.controller.PlatformTopupController;
@@ -95,7 +97,7 @@ public final class ControllerSkuTable {
     /** Spec §8's never-gated paths: free in every subscription state, so READ_ONLY leaves them alone too. */
     public static final List<String> NEVER_GATED_PATHS = List.of(
             "/api/auth", "/api/public", "/api/reference", "/api/platform-bookings", "/api/wallet",
-            "/api/flights", "/api/hotels", "/api/agency/profile", "/api/platform");
+            "/api/flights", "/api/hotels", "/api/agency/profile", "/api/agency/subscription", "/api/platform");
 
     public static final Map<Class<?>, SkuRule> TABLE = Map.ofEntries(
             // Starter and platform
@@ -112,6 +114,9 @@ public final class ControllerSkuTable {
             entry(WalletController.class, NEVER_GATED),
             entry(TopupController.class, NEVER_GATED),
             entry(AgencyProfileController.class, NEVER_GATED),
+            // a read-only owner must still see the plan and pay (Task 4 adds the payment routes here)
+            entry(AgencySubscriptionController.class, NEVER_GATED),
+            entry(PlatformAgencySubscriptionController.class, NEVER_GATED),
             entry(OwnerDashboardController.class, NEVER_GATED),
             entry(OwnerAgentController.class, NEVER_GATED),
             entry(PlatformAdminBookingController.class, NEVER_GATED),

@@ -73,6 +73,8 @@ public class AgentService {
             throw new IllegalArgumentException("At least one manageable service is required for an Agent");
         }
 
+        assertSeatFree(tenantId);
+
         Agent agent = Agent.builder()
                 .id(generateUniqueAgentId())
                 .tenantId(tenantId)
@@ -198,6 +200,7 @@ public class AgentService {
         if (isActive) {
             // the interceptors let this route through so an owner can always deactivate; reactivating is a write
             entitlementService.assertWritable(agent.getTenantId());
+            assertSeatFree(agent.getTenantId());
         }
         agent.setIsActive(isActive);
         agentRepository.save(agent);
@@ -326,6 +329,14 @@ public class AgentService {
             throw new AccessDeniedException("Agent does not belong to your agency");
         }
         return agent;
+    }
+
+    /** Spec §8: a login needs a free seat to be created or reactivated; existing logins are never cut off. */
+    private void assertSeatFree(String tenantId) {
+        int seats = entitlementService.resolve(tenantId).seats();
+        if (agentRepository.countByTenantIdAndIsActiveTrue(tenantId) >= seats) {
+            throw new IllegalStateException("All " + seats + " seats are in use — add seats in Subscription");
+        }
     }
 
     private String ownerTenantId() {

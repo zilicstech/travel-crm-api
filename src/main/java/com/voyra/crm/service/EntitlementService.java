@@ -146,7 +146,7 @@ public class EntitlementService {
         };
         int seats = switch (s.getPlan()) {
             case SUITE -> SUITE_INCLUDED_SEATS + extra;
-            case CUSTOM -> extra;
+            case CUSTOM -> skus.contains(Sku.STAFF_SEATS) ? extra : 0;
             case STARTER -> 0;
         };
         return new Entitlements(s.getPlan(), s.getStatus(), skus, seats, readOnly, accessEndsAt);
