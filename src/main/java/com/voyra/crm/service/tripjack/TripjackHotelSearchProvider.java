@@ -235,10 +235,39 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
                 .nights(nights)
                 .supplier("Tripjack")
                 .price(new BigDecimal(best.path("pricing").path("totalPrice").asText("0")).setScale(2, java.math.RoundingMode.HALF_UP))
+                .baseFare(baseRate(best.path("pricing")))
                 .currency(best.path("pricing").path("currency").asText("INR"))
                 .refundable(refundable)
                 .cancellationPolicy(cancellationPolicy(best.path("cancellation"), refundable))
                 .build();
+    }
+
+    /**
+     * The room rate excluding taxes of an option's {@code pricing} node, or null when the supplier does not give it
+     * (never 0: the option is then not bookable). UNVERIFIED: the field names are guesses until a real hotel pricing
+     * response is captured - a rate under one of the common names, else total minus a stated tax.
+     */
+    public static BigDecimal baseRate(JsonNode pricing) {
+        for (String key : List.of("baseRate", "roomRate", "baseFare", "netRate")) {
+            BigDecimal v = positive(pricing.path(key));
+            if (v != null) return v.setScale(2, java.math.RoundingMode.HALF_UP);
+        }
+        BigDecimal total = positive(pricing.path("totalPrice"));
+        for (String key : List.of("totalTax", "taxes", "tax")) {
+            JsonNode tax = pricing.path(key);
+            if (total != null && tax.isNumber() && tax.decimalValue().signum() >= 0 && tax.decimalValue().compareTo(total) < 0) {
+                return total.subtract(tax.decimalValue()).setScale(2, java.math.RoundingMode.HALF_UP);
+            }
+        }
+        return null;
+    }
+
+    private static BigDecimal positive(JsonNode n) {
+        if (n.isNumber() || (n.isTextual() && n.asText().matches("\\d+(\\.\\d+)?"))) {
+            BigDecimal v = new BigDecimal(n.asText());
+            return v.signum() > 0 ? v : null;
+        }
+        return null;
     }
 
     /** The listing's hero image, if it has one - an images array, or a plain url under one of the names it goes by. */
@@ -263,7 +292,7 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
         return 0;
     }
 
-    static String cancellationPolicy(JsonNode cancellation, boolean refundable) {
+    public static String cancellationPolicy(JsonNode cancellation, boolean refundable) {
         if (!refundable) return "Non-refundable";
         String deadline = cancellation.path("deadlineDateTime").asText("");
         // The last free slab ends where the penalty starts.
@@ -330,6 +359,7 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
                     .inclusions(strings(o.path("inclusions")))
                     .bookingNotes(text(o.path("bookingNotes").asText("")))
                     .price(new BigDecimal(o.path("pricing").path("totalPrice").asText("0")).setScale(2, java.math.RoundingMode.HALF_UP))
+                    .baseFare(baseRate(o.path("pricing")))
                     .currency(o.path("pricing").path("currency").asText("INR"))
                     .refundable(refundable)
                     .cancellationPolicy(cancellationPolicy(o.path("cancellation"), refundable))

@@ -44,7 +44,7 @@ public class HotelSearchController {
     @Operation(summary = "Open one hotel from a search", description = "Photos, description, amenities, policies and every "
             + "bookable room option for the searched dates and guests. Send the search again with its correlationId.")
     public ResponseEntity<com.voyra.crm.dto.HotelDetailResponse> detail(@PathVariable String hotelId, @Valid @RequestBody HotelSearchQuery query) {
-        return ResponseEntity.ok(hotelSearchProvider.detail(hotelId, query));
+        return ResponseEntity.ok(hotelSearchService.detail(hotelId, query));
     }
 
     @PostMapping("/thumbnails")
