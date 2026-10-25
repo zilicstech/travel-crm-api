@@ -1,0 +1,200 @@
+package com.voyra.crm.service.booking;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.voyra.crm.dto.PagedResponse;
+import com.voyra.crm.dto.PlatformAdminBookingResponse;
+import com.voyra.crm.dto.PlatformBookingResponse;
+import com.voyra.crm.entity.Agent;
+import com.voyra.crm.entity.PlatformBooking;
+import com.voyra.crm.entity.PlatformBookingEvent;
+import com.voyra.crm.entity.Tenant;
+import com.voyra.crm.enums.MirrorStatus;
+import com.voyra.crm.enums.PlatformBookingStatus;
+import com.voyra.crm.enums.PricingProduct;
+import com.voyra.crm.enums.SupplierEnvironment;
+import com.voyra.crm.enums.UserType;
+import com.voyra.crm.enums.VoyraEarnedSource;
+import com.voyra.crm.exception.NotFoundException;
+import com.voyra.crm.repository.AgentRepository;
+import com.voyra.crm.repository.ClientRepository;
+import com.voyra.crm.repository.PlatformBookingEventRepository;
+import com.voyra.crm.repository.PlatformBookingRepository;
+import com.voyra.crm.repository.TenantRepository;
+import com.voyra.crm.security.CustomUserPrincipal;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
+
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.verify;
+
+@ExtendWith(MockitoExtension.class)
+class PlatformBookingQueryServiceTest {
+
+    private static final String KEY = "dGVzdC1vbmx5LWFlcy1rZXktMzItYnl0ZXMtbG9uZyE=";
+
+    @Mock private PlatformBookingRepository bookings;
+    @Mock private PlatformBookingEventRepository events;
+    @Mock private TenantRepository tenants;
+    @Mock private AgentRepository agents;
+    @Mock private ClientRepository clients;
+
+    private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
+    private final PaxCodec paxCodec = new PaxCodec(objectMapper, KEY);
+
+    private PlatformBookingQueryService service() {
+        return new PlatformBookingQueryService(bookings, events, tenants, agents, clients, paxCodec, objectMapper);
+    }
+
+    @AfterEach
+    void clear() {
+        SecurityContextHolder.clearContext();
+    }
+
+    private static void login(String userId, UserType type, String tenantId) {
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+                new CustomUserPrincipal(userId, userId + "@x.test", type, tenantId), null));
+    }
+
+    private PlatformBooking booking(String id, String tenantId, String bookedBy) {
+        return PlatformBooking.builder().id(id).tenantId(tenantId).product(PricingProduct.FLIGHT)
+                .status(PlatformBookingStatus.TICKETED).environment(SupplierEnvironment.UAT)
+                .supplierReviewId("RV-SECRET").supplierBookingId("TJS-SECRET").pnr("ABC123").ticketNumbers(List.of("098-1"))
+                .gross(new BigDecimal("5000.00")).base(new BigDecimal("4250.00")).discountPct(new BigDecimal("10.00"))
+                .displayed(new BigDecimal("4500.00")).voyraEarned(new BigDecimal("250.00"))
+                .voyraEarnedSource(VoyraEarnedSource.ESTIMATE).agencyCommission(new BigDecimal("100.00"))
+                .tds(new BigDecimal("5.00")).voyraNet(new BigDecimal("145.00")).paxCount(1)
+                .paxEnc(paxCodec.encrypt(Map.of("passengers", List.of(Map.of("type", "ADULT", "title", "Mr", "firstName", "Rahul",
+                        "lastName", "Sharma", "passportNo", "N1234567")), "contactEmail", "c@x.test")))
+                .itinerary(Map.of("tripInfos", List.of(Map.of("sI", List.of(Map.of("fD", Map.of("aI", Map.of("code", "6E", "name", "IndiGo"),
+                        "fN", "201"), "da", Map.of("code", "DEL"), "aa", Map.of("code", "BOM"),
+                        "dt", "2026-12-01T06:00", "at", "2026-12-01T08:10", "id", "SEG-SECRET"))))))
+                .mirrorStatus(MirrorStatus.DONE).tenantBookingId("TB1").bookedBy(bookedBy).clientId("C1")
+                .createdAt(Instant.parse("2026-10-25T05:00:00Z")).build();
+    }
+
+    private static PlatformBookingEvent event(String type) {
+        return PlatformBookingEvent.builder().id("E-" + type).platformBookingId("B1").type(type)
+                .payload(Map.of("voyraNet", "145.00")).createdAt(Instant.parse("2026-10-25T05:00:00Z")).build();
+    }
+
+    @Test
+    void agencyViewCarriesNamesAndPlainEventsButNoVoyraMoneyOrSupplierIds() throws Exception {
+        login("O1", UserType.AGENCY_OWNER, "T1");
+        given(bookings.findByIdAndTenantId("B1", "T1")).willReturn(Optional.of(booking("B1", "T1", "O1")));
+        given(agents.findAllById(List.of("O1"))).willReturn(List.of(Agent.builder().id("O1").name("Olga Owner").build()));
+        given(clients.findAllById(List.of("C1"))).willReturn(List.of(com.voyra.crm.entity.Client.builder().id("C1").name("Acme Travel").build()));
+        given(events.findByPlatformBookingIdOrderByCreatedAtAsc("B1"))
+                .willReturn(List.of(event("HELD"), event("VARIANCE"), event("TICKETED")));
+
+        PlatformBookingResponse r = service().get("B1");
+        String json = objectMapper.writeValueAsString(r);
+
+        for (String forbidden : List.of("voyraEarned", "voyraNet", "gross", "supplierReviewId", "supplierBookingId",
+                "RV-SECRET", "TJS-SECRET", "SEG-SECRET", "N1234567", "145.00", "environment", "credential")) {
+            assertThat(json).as(forbidden).doesNotContain(forbidden);
+        }
+        assertThat(r.getBookedByName()).isEqualTo("Olga Owner");
+        assertThat(r.getClientName()).isEqualTo("Acme Travel");
+        assertThat(r.getAgencyEarns()).isEqualByComparingTo("95.00");
+        assertThat(r.getPassengers()).singleElement().satisfies(p -> {
+            assertThat(p.getName()).isEqualTo("Mr Rahul Sharma");
+            assertThat(p.getType()).isEqualTo("ADULT");
+        });
+        assertThat(r.getItinerary()).singleElement().satisfies(s -> {
+            assertThat(s.getFrom()).isEqualTo("DEL");
+            assertThat(s.getTo()).isEqualTo("BOM");
+            assertThat(s.getFlightNumber()).isEqualTo("6E-201");
+        });
+        assertThat(r.getTimeline()).extracting(l -> l.getText())
+                .containsExactly("Wallet amount reserved", "Ticket issued");
+    }
+
+    @Test
+    void anotherAgencysBookingIs404() {
+        login("O2", UserType.AGENCY_OWNER, "T2");
+        given(bookings.findByIdAndTenantId("B1", "T2")).willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service().get("B1")).isInstanceOf(NotFoundException.class);
+    }
+
+    @Test
+    void anAgentCannotOpenAColleaguesBooking() {
+        login("A1", UserType.AGENT, "T1");
+        given(bookings.findByIdAndTenantId("B1", "T1")).willReturn(Optional.of(booking("B1", "T1", "A2")));
+
+        assertThatThrownBy(() -> service().get("B1")).isInstanceOf(NotFoundException.class);
+    }
+
+    @Test
+    void agentListIsScopedToTheirOwnBookings() {
+        login("A1", UserType.AGENT, "T1");
+        given(bookings.findByTenantIdAndBookedBy(eq("T1"), eq("A1"), any(Pageable.class)))
+                .willReturn(new PageImpl<>(List.of(booking("B1", "T1", "A1"))));
+
+        PagedResponse<PlatformBookingResponse> page = service().list(0, 25);
+
+        assertThat(page.getContent()).hasSize(1);
+        verify(bookings).findByTenantIdAndBookedBy(eq("T1"), eq("A1"), any(Pageable.class));
+    }
+
+    @Test
+    void ownerAndAccountantListTheWholeTenant() {
+        for (UserType type : List.of(UserType.AGENCY_OWNER, UserType.ACCOUNTANT)) {
+            login("U1", type, "T1");
+            given(bookings.findByTenantId(eq("T1"), any(Pageable.class))).willReturn(new PageImpl<>(List.of(booking("B1", "T1", "A1"))));
+
+            assertThat(service().list(0, 25).getContent()).hasSize(1);
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void adminViewAddsMoneyAgencyNameAndRedactedEventsWithOneTenantLookup() {
+        login("SA1", UserType.SUPER_ADMIN, null);
+        given(bookings.findAll(any(org.springframework.data.jpa.domain.Specification.class), any(Pageable.class)))
+                .willReturn((Page<PlatformBooking>) new PageImpl<>(List.of(booking("B1", "T1", "A1"), booking("B2", "T1", "A1"))));
+        given(tenants.findAllById(List.of("T1"))).willReturn(List.of(Tenant.builder().id("T1").agencyName("Acme Travel").build()));
+
+        PagedResponse<PlatformAdminBookingResponse> page = service().adminList(0, 25, PlatformBookingStatus.TICKETED, "T1");
+
+        assertThat(page.getContent()).extracting(PlatformAdminBookingResponse::getAgencyName).containsOnly("Acme Travel");
+        PlatformAdminBookingResponse first = page.getContent().get(0);
+        assertThat(first.getVoyraNet()).isEqualByComparingTo("145.00");
+        assertThat(first.getGross()).isEqualByComparingTo("5000.00");
+        assertThat(first.getEnvironment()).isEqualTo(SupplierEnvironment.UAT);
+        verify(tenants).findAllById(List.of("T1"));
+    }
+
+    @Test
+    void adminDetailListsEveryEventWithItsPayload() {
+        login("SA1", UserType.SUPER_ADMIN, null);
+        given(bookings.findById("B1")).willReturn(Optional.of(booking("B1", "T1", "A1")));
+        given(tenants.findAllById(List.of("T1"))).willReturn(List.of(Tenant.builder().id("T1").agencyName("Acme Travel").build()));
+        given(events.findByPlatformBookingIdOrderByCreatedAtAsc("B1")).willReturn(List.of(event("VARIANCE")));
+
+        PlatformAdminBookingResponse r = service().adminGet("B1");
+
+        assertThat(r.getEvents()).singleElement().satisfies(e -> {
+            assertThat(e.getType()).isEqualTo("VARIANCE");
+            assertThat(e.getPayload()).containsEntry("voyraNet", "145.00");
+        });
+    }
+}

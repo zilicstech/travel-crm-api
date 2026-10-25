@@ -6,7 +6,11 @@ import com.voyra.crm.context.TenantContext;
 import com.voyra.crm.config.SecurityConfig;
 import com.voyra.crm.config.WebMvcConfig;
 import com.voyra.crm.controller.AuthController;
+import com.voyra.crm.controller.PlatformBookingController;
 import com.voyra.crm.controller.VendorController;
+import com.voyra.crm.dto.PagedResponse;
+import com.voyra.crm.service.booking.PlatformBookingQueryService;
+import com.voyra.crm.service.booking.PlatformBookingService;
 import com.voyra.crm.dto.LoginResponse;
 import com.voyra.crm.enums.TenantStatus;
 import com.voyra.crm.enums.UserType;
@@ -36,7 +40,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /** A SUSPENDED agency signs in and reads, but every tenant write is refused with 423. */
-@WebMvcTest({VendorController.class, AuthController.class})
+@WebMvcTest({VendorController.class, AuthController.class, PlatformBookingController.class})
 @ActiveProfiles("test")
 @Import({SecurityConfig.class, JwtAuthenticationFilter.class, JwtService.class, RestAuthenticationEntryPoint.class,
         WebMvcConfig.class, TenantStatusInterceptor.class})
@@ -48,6 +52,8 @@ class TenantStatusInterceptorTest {
     @Autowired private JwtService jwtService;
     @MockBean private VendorService vendorService;
     @MockBean private AuthService authService;
+    @MockBean private PlatformBookingService platformBookingService;
+    @MockBean private PlatformBookingQueryService platformBookingQueryService;
 
     private String bearer;
 
@@ -74,6 +80,18 @@ class TenantStatusInterceptorTest {
     void suspendedTenantCanStillRead() throws Exception {
         mockMvc.perform(get("/api/vendors").header("Authorization", bearer))
                 .andExpect(status().isOk());
+    }
+
+    @Test
+    void suspendedTenantCannotBookButCanReadPlatformBookings() throws Exception {
+        for (String path : List.of("/api/platform-bookings/flights/review", "/api/platform-bookings/B1/confirm",
+                "/api/platform-bookings/B1/abort", "/api/platform-bookings/B1/cancel")) {
+            mockMvc.perform(post(path).header("Authorization", bearer).contentType(MediaType.APPLICATION_JSON).content("{}"))
+                    .andExpect(status().is(423)).andExpect(jsonPath("$.code").value("TENANT_SUSPENDED"));
+        }
+        when(platformBookingQueryService.list(any(), any())).thenReturn(PagedResponse.<com.voyra.crm.dto.PlatformBookingResponse>builder()
+                .content(List.of()).build());
+        mockMvc.perform(get("/api/platform-bookings").header("Authorization", bearer)).andExpect(status().isOk());
     }
 
     @Test
