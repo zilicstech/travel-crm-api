@@ -22,6 +22,7 @@ import com.voyra.crm.enums.SupplierProvider;
 import com.voyra.crm.enums.TenantStatus;
 import com.voyra.crm.enums.VoyraEarnedSource;
 import com.voyra.crm.enums.WalletEntryType;
+import com.voyra.crm.enums.WalletStatus;
 import com.voyra.crm.exception.BookingConflictException;
 import com.voyra.crm.exception.NotFoundException;
 import com.voyra.crm.exception.ReceivableDueException;
@@ -323,6 +324,9 @@ public class PlatformBookingService {
         CustomUserPrincipal principal = requireBooker();
         PlatformBooking b = bookingRepository.findByIdAndTenantId(bookingId, principal.tenantId())
                 .orElseThrow(() -> new NotFoundException("Booking not found"));
+        if (b.getStatus() == PlatformBookingStatus.CANCELLING) {
+            throw cancelInProgress();
+        }
         requireCancellable(b);
         BigDecimal fee = settings.voyraCancelFee();
         BigDecimal refund = refundOf(provider.cancelQuote(supplierId(b)).refund(), b.getDisplayed(), fee);
@@ -331,10 +335,15 @@ public class PlatformBookingService {
     }
 
     /**
-     * Cancels a ticketed booking whole (spec 7.5). Like {@link #confirm}, the supplier calls hold no connection or row
-     * lock: tx1 locks and validates, the supplier quotes and cancels with no transaction open, tx2 re-locks and posts
-     * REFUND_CREDIT then COMMISSION_RECALL (receivable on shortfall). Both posts are keyed per booking, and a CANCELLED
-     * row is returned as is, so the same request twice posts once.
+     * Cancels a ticketed booking whole (spec 7.5). The supplier calls hold no connection or row lock:
+     * <ol>
+     *   <li>tx1 locks the row, requires TICKETED and moves it to CANCELLING, so a second request never reaches the supplier
+     *       (same key: the current state; another key: 409 CANCEL_IN_PROGRESS);</li>
+     *   <li>the supplier quotes (an unknown refund goes back to TICKETED, 409) and cancels with no transaction open. A refusal
+     *       goes back to TICKETED; no answer stays CANCELLING for {@link #resolveCancel}, since the supplier may have cancelled;</li>
+     *   <li>the acceptance is recorded in its own transaction, then tx2 posts REFUND_CREDIT and COMMISSION_RECALL under the
+     *       per-booking keys. If tx2 fails the row stays CANCELLING with the acceptance on record, for an admin to settle.</li>
+     * </ol>
      */
     public PlatformBooking cancel(String bookingId, String idempotencyKey) {
         Assert.state(!TransactionSynchronizationManager.isActualTransactionActive(),
@@ -343,91 +352,199 @@ public class PlatformBookingService {
             throw new IllegalArgumentException("An idempotency key is required to cancel a booking");
         }
         CustomUserPrincipal principal = requireBooker();
-        PlatformBooking b = tx.execute(s -> {
-            PlatformBooking x = bookingRepository.findByIdForUpdate(bookingId)
-                    .filter(r -> principal.tenantId().equals(r.getTenantId()))
-                    .orElseThrow(() -> new NotFoundException("Booking not found"));
-            if (x.getStatus() == PlatformBookingStatus.CANCELLED) {
-                return x;
-            }
-            requireCancellable(x);
-            events.record(bookingId, "CANCEL_REQUESTED", Map.of("by", principal.userId(), "key", idempotencyKey));
-            return x;
-        });
-        if (b.getStatus() == PlatformBookingStatus.CANCELLED) {
-            return b;
+        Claim claim = tx.execute(s -> claimCancel(bookingId, principal, idempotencyKey));
+        if (!claim.submit()) {
+            return claim.booking();
         }
-        String supplierId = supplierId(b);
+        String supplierId = supplierId(claim.booking());
         BigDecimal fee = settings.voyraCancelFee();
+        CancelQuote quote;
+        try {
+            quote = provider.cancelQuote(supplierId);
+        } catch (RuntimeException e) {
+            // nothing was submitted, so the booking is still live at the supplier
+            backToTicketed(bookingId, "CANCEL_NO_ANSWER", Map.of("stage", "quote", "error", e.getClass().getSimpleName()));
+            throw asSupplierException(e);
+        }
+        if (!known(quote.refund())) {
+            String message = "Voyra will process this cancellation - please contact support";
+            backToTicketed(bookingId, "CANCEL_REFUSED", Map.of("code", "REFUND_UNKNOWN", "message", message));
+            throw new BookingConflictException("REFUND_UNKNOWN", message, Map.of());
+        }
         CancelResult result;
         try {
-            CancelQuote quote = provider.cancelQuote(supplierId);
-            if (quote.refund() == null) {
-                refuseCancel(bookingId, "REFUND_UNKNOWN", "Voyra will process this cancellation - please contact support");
-            }
             result = provider.cancel(supplierId);
-        } catch (SupplierException e) {
-            tx.executeWithoutResult(s -> events.record(bookingId, "CANCEL_NO_ANSWER", Map.of("error", e.getClass().getSimpleName())));
-            throw e;
+        } catch (RuntimeException e) {
+            // outcome unknown: stays CANCELLING so a retry never submits again; an admin settles it with resolveCancel
+            tx.executeWithoutResult(s -> events.record(bookingId, "CANCEL_NO_ANSWER", Map.of("stage", "cancel", "error", e.getClass().getSimpleName())));
+            notificationService.platformAlert("Cancellation of booking " + bookingId + " has no supplier answer",
+                    "The supplier cancel call for booking " + bookingId + " failed (" + e.getClass().getSimpleName()
+                            + "). The booking stays CANCELLING; check with the supplier and resolve the cancellation.");
+            throw asSupplierException(e);
         }
         if (!result.accepted()) {
-            refuseCancel(bookingId, "CANCEL_REFUSED", result.message() != null ? result.message() : "The supplier refused the cancellation");
+            String message = result.message() != null ? result.message() : "The supplier refused the cancellation";
+            backToTicketed(bookingId, "CANCEL_REFUSED", Map.of("code", "CANCEL_REFUSED", "message", message));
+            throw new BookingConflictException("CANCEL_REFUSED", message, Map.of());
         }
-        PlatformBooking cancelled = tx.execute(s -> cancelLocked(bookingId, result, fee));
+        Map<String, Object> accepted = new LinkedHashMap<>();
+        accepted.put("refund", result.refund() == null ? "UNKNOWN" : result.refund());
+        accepted.put("message", String.valueOf(result.message()));
+        tx.executeWithoutResult(s -> events.record(bookingId, "CANCEL_ACCEPTED", accepted));
+        PlatformBooking cancelled;
+        try {
+            cancelled = tx.execute(s -> cancelLocked(bookingId, result.refund(), result.message(), fee));
+        } catch (RuntimeException e) {
+            notificationService.platformAlert("Cancelled booking " + bookingId + " was not settled",
+                    "The supplier accepted the cancellation of booking " + bookingId + " with refund " + result.refund()
+                            + ", but posting the refund and recall failed (" + e.getClass().getSimpleName()
+                            + "). The booking stays CANCELLING; resolve the cancellation with that refund.");
+            throw e;
+        }
         if (cancelled.getStatus() == PlatformBookingStatus.CANCELLED) {
             scheduleMirrorCancel(cancelled);
         }
         return cancelled;
     }
 
-    private void refuseCancel(String bookingId, String code, String message) {
-        tx.executeWithoutResult(s -> events.record(bookingId, "CANCEL_REFUSED", Map.of("code", code, "message", message)));
-        throw new BookingConflictException(code, message, Map.of());
+    /**
+     * Platform admin settles a CANCELLING booking whose supplier answer was lost: {@code cancelled} posts the refund
+     * ({@code refund} is the supplier's refund R; the Voyra fee and the cap apply) and the recall under the same keys as
+     * {@link #cancel}; otherwise the booking goes back to TICKETED.
+     */
+    public PlatformBooking resolveCancel(String bookingId, boolean cancelled, BigDecimal refund, String note) {
+        CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
+        if (!principal.isSuperAdmin()) {
+            throw new AccessDeniedException("Only a platform admin can resolve a cancellation");
+        }
+        if (cancelled && (refund == null || refund.signum() < 0)) {
+            throw new IllegalArgumentException("The supplier refund (0 or more) is required to resolve a booking as cancelled");
+        }
+        if (note == null || note.isBlank()) {
+            throw new IllegalArgumentException("A note is required to resolve a cancellation");
+        }
+        BigDecimal fee = settings.voyraCancelFee();
+        PlatformBooking booking = tx.execute(s -> {
+            PlatformBooking b = bookingRepository.findByIdForUpdate(bookingId).orElseThrow(() -> new NotFoundException("Booking not found"));
+            if (b.getStatus() != PlatformBookingStatus.CANCELLING) {
+                throw new IllegalStateException("Only a booking whose cancellation is in progress can be resolved (it is " + b.getStatus() + ")");
+            }
+            Map<String, Object> detail = new LinkedHashMap<>();
+            detail.put("cancelled", cancelled);
+            detail.put("refund", refund == null ? "NONE" : refund);
+            detail.put("by", principal.userId());
+            detail.put("note", note);
+            events.record(bookingId, "RESOLVED", detail);
+            platformAuditService.record(PlatformAuditAction.BOOKING_CANCEL_RESOLVE, REF_TYPE, bookingId, detail);
+            if (cancelled) {
+                return cancelLocked(bookingId, refund, "Resolved by Voyra", fee);
+            }
+            b.setStatus(PlatformBookingStatus.TICKETED);
+            return bookingRepository.save(b);
+        });
+        if (booking.getStatus() == PlatformBookingStatus.CANCELLED) {
+            scheduleMirrorCancel(booking);
+        }
+        return booking;
     }
 
-    private PlatformBooking cancelLocked(String bookingId, CancelResult result, BigDecimal fee) {
+    private record Claim(PlatformBooking booking, boolean submit) {
+    }
+
+    private Claim claimCancel(String bookingId, CustomUserPrincipal principal, String idempotencyKey) {
+        PlatformBooking b = bookingRepository.findByIdForUpdate(bookingId)
+                .filter(r -> principal.tenantId().equals(r.getTenantId()))
+                .orElseThrow(() -> new NotFoundException("Booking not found"));
+        if (b.getStatus() == PlatformBookingStatus.CANCELLED) {
+            return new Claim(b, false);
+        }
+        if (b.getStatus() == PlatformBookingStatus.CANCELLING) {
+            boolean sameKey = events.lastPayload(bookingId, "CANCEL_REQUESTED")
+                    .map(p -> idempotencyKey.equals(p.get("key"))).orElse(false);
+            if (sameKey) {
+                return new Claim(b, false);
+            }
+            throw cancelInProgress();
+        }
+        requireCancellable(b);
+        b.setStatus(PlatformBookingStatus.CANCELLING);
+        events.record(bookingId, "CANCEL_REQUESTED", Map.of("by", principal.userId(), "key", idempotencyKey));
+        return new Claim(bookingRepository.save(b), true);
+    }
+
+    /** The supplier was not asked to cancel, or refused: the booking is live again for a later attempt. */
+    private void backToTicketed(String bookingId, String eventType, Map<String, Object> detail) {
+        tx.executeWithoutResult(s -> bookingRepository.findByIdForUpdate(bookingId)
+                .filter(b -> b.getStatus() == PlatformBookingStatus.CANCELLING)
+                .ifPresent(b -> {
+                    b.setStatus(PlatformBookingStatus.TICKETED);
+                    bookingRepository.save(b);
+                    events.record(bookingId, eventType, detail);
+                }));
+    }
+
+    private PlatformBooking cancelLocked(String bookingId, BigDecimal supplierRefund, String message, BigDecimal fee) {
         PlatformBooking b = bookingRepository.findByIdForUpdate(bookingId).orElseThrow(() -> new NotFoundException("Booking not found"));
-        if (b.getStatus() != PlatformBookingStatus.TICKETED) {
-            return b; // a concurrent cancel already applied
+        if (b.getStatus() != PlatformBookingStatus.CANCELLING) {
+            return b; // already settled
         }
         String id = b.getId();
+        BigDecimal netBefore = b.getVoyraNet();
         BigDecimal earned = nz(b.getVoyraEarned());
         b.setVoyraEarnedReversal(earned); // the supplier claws back Voyra's commission on the fare
         Map<String, Object> detail = new LinkedHashMap<>();
-        if (result.refund() == null) {
-            // accepted without a figure: nothing is posted until Voyra confirms the refund with the supplier
+        if (!known(supplierRefund)) {
+            // accepted without a usable figure: nothing is posted until Voyra confirms the refund with the supplier
             b.setVoyraNet(b.getVoyraNet().subtract(earned));
             detail.put("refund", "UNKNOWN");
             notificationService.platformAlert("Cancelled booking " + id + " needs a manual refund",
-                    "The supplier cancelled booking " + id + " for agency " + b.getTenantId()
-                            + " without a refund figure - post refund manually and recall the commission.");
+                    "The supplier cancelled booking " + id + " for agency " + b.getTenantId() + " without a usable refund figure ("
+                            + supplierRefund + ") - post refund manually and recall the commission.");
         } else {
-            BigDecimal refund = refundOf(result.refund(), b.getDisplayed(), fee);
+            BigDecimal refund = refundOf(supplierRefund, b.getDisplayed(), fee);
             BigDecimal recall = recallOf(b);
-            if (refund.signum() > 0) {
-                walletService.credit(b.getTenantId(), WalletEntryType.REFUND_CREDIT, refund, "pb-refund:" + id, REF_TYPE, id,
-                        "Refund on cancelled flight booking " + b.getPnr());
-            }
-            if (recall.signum() > 0) {
-                walletService.debitOrReceivable(b.getTenantId(), WalletEntryType.COMMISSION_RECALL, recall, "pb-recall:" + id,
-                        REF_TYPE, id, ReceivableReason.CANCEL_NET_NEGATIVE);
+            boolean walletClosed = walletRepository.findByTenantId(b.getTenantId())
+                    .map(w -> w.getStatus() == WalletStatus.CLOSED).orElse(false);
+            if (walletClosed) {
+                // a closed wallet takes no postings: the agency is settled by bank transfer
+                detail.put("offline", true);
+                notificationService.platformAlert("Cancelled booking " + id + " - refund offline",
+                        "The wallet of agency " + b.getTenantId() + " is closed: refund ₹" + refund + " offline for booking " + id
+                                + " (less the commission recall ₹" + recall + "). Nothing was posted.");
+            } else {
+                if (refund.signum() > 0) {
+                    walletService.credit(b.getTenantId(), WalletEntryType.REFUND_CREDIT, refund, "pb-refund:" + id, REF_TYPE, id,
+                            "Refund on cancelled flight booking " + b.getPnr());
+                }
+                if (recall.signum() > 0) {
+                    walletService.debitOrReceivable(b.getTenantId(), WalletEntryType.COMMISSION_RECALL, recall, "pb-recall:" + id,
+                            REF_TYPE, id, ReceivableReason.CANCEL_NET_NEGATIVE);
+                }
             }
             b.setCancelRefund(refund);
             // earned reversed, the commission recovered in full (net recall + TDS reversed in the quarterly return),
             // and Voyra keeps whatever of the supplier refund it did not pass on (its fee, or above the cap)
-            b.setVoyraNet(b.getVoyraNet().subtract(earned).add(nz(b.getAgencyCommission())).add(result.refund().subtract(refund)));
+            b.setVoyraNet(b.getVoyraNet().subtract(earned).add(nz(b.getAgencyCommission())).add(supplierRefund.subtract(refund)));
             detail.put("refund", refund);
             detail.put("recall", recall);
         }
         b.setStatus(PlatformBookingStatus.CANCELLED);
         b.setCancelledAt(Instant.now());
-        b.setSupplierMessage(truncate(result.message()));
+        b.setSupplierMessage(truncate(message));
         events.record(id, "CANCELLED", detail);
-        if (b.getVoyraNet().signum() < 0) {
+        if (b.getVoyraNet().signum() < 0 && b.getVoyraNet().compareTo(netBefore) < 0) {
             notificationService.platformAlert("Loss-making booking " + id,
-                    "Voyra net on cancelled booking " + id + " for agency " + b.getTenantId() + " is " + b.getVoyraNet());
+                    "Voyra net on cancelled booking " + id + " for agency " + b.getTenantId() + " fell to " + b.getVoyraNet());
         }
         return bookingRepository.save(b);
+    }
+
+    private static BookingConflictException cancelInProgress() {
+        return new BookingConflictException("CANCEL_IN_PROGRESS", "This booking is already being cancelled", Map.of());
+    }
+
+    private static SupplierException asSupplierException(RuntimeException e) {
+        return e instanceof SupplierException se ? se : new SupplierException("Supplier cancel call failed", e);
     }
 
     private static void requireCancellable(PlatformBooking b) {
@@ -441,9 +558,14 @@ public class PlatformBookingService {
         return b.getSupplierBookingId() != null ? b.getSupplierBookingId() : b.getSupplierReviewId();
     }
 
-    /** {@code max(0, R - fee)} capped at what the agency paid; null when the supplier gave no figure. */
+    /** A missing or negative supplier refund is not a figure Voyra can post. */
+    private static boolean known(BigDecimal supplierRefund) {
+        return supplierRefund != null && supplierRefund.signum() >= 0;
+    }
+
+    /** {@code max(0, R - fee)} capped at what the agency paid; null when the supplier gave no usable figure. */
     private static BigDecimal refundOf(BigDecimal supplierRefund, BigDecimal displayed, BigDecimal fee) {
-        return supplierRefund == null ? null : supplierRefund.subtract(fee).max(BigDecimal.ZERO).min(displayed);
+        return known(supplierRefund) ? supplierRefund.subtract(fee).max(BigDecimal.ZERO).min(displayed) : null;
     }
 
     /** What the agency was credited for the ticket: commission net of TDS, or nothing when there was no commission. */
@@ -529,7 +651,9 @@ public class PlatformBookingService {
         }
         switch (result.status()) {
             case TICKETED -> {
-                if (b.getStatus() != PlatformBookingStatus.TICKETED && b.getStatus() != PlatformBookingStatus.CANCELLED) {
+                // a ticket already applied (or being cancelled) is never debited again
+                if (b.getStatus() != PlatformBookingStatus.TICKETED && b.getStatus() != PlatformBookingStatus.CANCELLING
+                        && b.getStatus() != PlatformBookingStatus.CANCELLED) {
                     ticket(b, result);
                 }
             }

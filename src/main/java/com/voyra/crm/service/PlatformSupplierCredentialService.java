@@ -54,10 +54,10 @@ public class PlatformSupplierCredentialService {
 
     @Transactional
     public PlatformSupplierCredentialResponse upsert(PlatformSupplierCredentialRequest request) {
-        // in-flight bookings are polled with the stamped credential; switching it mid-flight strands them
-        long inFlight = bookingRepository.countByStatusIn(PlatformBookingStatus.IN_FLIGHT);
+        // in-flight bookings and unanswered cancels are settled with the stamped credential; switching it strands them
+        long inFlight = bookingRepository.countByStatusIn(PlatformBookingStatus.SUPPLIER_PENDING);
         if (inFlight > 0) {
-            throw new IllegalStateException(inFlight + " booking(s) are still held, booking or unknown"
+            throw new IllegalStateException(inFlight + " booking(s) are still held, booking, unknown or cancelling"
                     + " - wait for them to finish before changing the supplier credential");
         }
         List<PlatformSupplierCredential> rows = repository.findByProviderOrderByUpdatedAtDesc(request.getProvider());

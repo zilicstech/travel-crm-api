@@ -1,25 +1,26 @@
 package com.voyra.crm.service.booking;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.voyra.crm.dto.FlightReviewRequest;
-import com.voyra.crm.entity.AgencyPricing;
 import com.voyra.crm.entity.PlatformBooking;
 import com.voyra.crm.entity.PlatformBookingEvent;
-import com.voyra.crm.entity.Tenant;
+import com.voyra.crm.entity.Wallet;
 import com.voyra.crm.entity.WalletEntry;
+import com.voyra.crm.enums.PlatformAuditAction;
 import com.voyra.crm.enums.PlatformBookingStatus;
 import com.voyra.crm.enums.PricingProduct;
 import com.voyra.crm.enums.ReceivableReason;
 import com.voyra.crm.enums.SupplierEnvironment;
-import com.voyra.crm.enums.TenantStatus;
 import com.voyra.crm.enums.UserType;
 import com.voyra.crm.enums.WalletEntryType;
+import com.voyra.crm.enums.WalletStatus;
 import com.voyra.crm.exception.BookingConflictException;
 import com.voyra.crm.exception.NotFoundException;
-import com.voyra.crm.exception.ReceivableDueException;
 import com.voyra.crm.exception.SupplierException;
+import com.voyra.crm.exception.SupplierTimeoutException;
+import com.voyra.crm.models.booking.BookResult;
 import com.voyra.crm.models.booking.CancelQuote;
 import com.voyra.crm.models.booking.CancelResult;
+import com.voyra.crm.models.booking.SupplierBookingStatus;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.PlatformBookingEventRepository;
 import com.voyra.crm.repository.PlatformBookingRepository;
@@ -40,6 +41,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -100,6 +102,8 @@ class PlatformBookingCancelTest {
     private final Map<String, PlatformBooking> rows = new HashMap<>();
     private final List<PlatformBookingEvent> savedEvents = new ArrayList<>();
     private PlatformBookingService service;
+    private Wallet wallet = Wallet.builder().id("W1").tenantId(T).status(WalletStatus.OPEN).balance(new BigDecimal("1000.00"))
+            .held(BigDecimal.ZERO).build();
 
     @BeforeEach
     void setUp() {
@@ -119,6 +123,11 @@ class PlatformBookingCancelTest {
             savedEvents.add(i.getArgument(0));
             return i.getArgument(0);
         });
+        lenient().when(eventRepository.findFirstByPlatformBookingIdAndTypeOrderByCreatedAtDesc(anyString(), anyString()))
+                .thenAnswer(i -> savedEvents.stream()
+                        .filter(e -> e.getPlatformBookingId().equals(i.getArgument(0)) && e.getType().equals(i.getArgument(1)))
+                        .reduce((first, second) -> second));
+        lenient().when(walletRepository.findByTenantId(T)).thenAnswer(i -> Optional.of(wallet));
         lenient().when(settings.voyraCancelFee()).thenReturn(BigDecimal.ZERO);
         lenient().when(walletService.credit(anyString(), any(), any(), anyString(), anyString(), anyString(), anyString()))
                 .thenReturn(WalletEntry.builder().id("C1").build());
@@ -136,6 +145,11 @@ class PlatformBookingCancelTest {
     private static void loginAs(String userId, String tenantId) {
         SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
                 new CustomUserPrincipal(userId, userId + "@agency.test", UserType.AGENCY_OWNER, tenantId), null));
+    }
+
+    private static void loginAsPlatformAdmin() {
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+                new CustomUserPrincipal("SA1", "root", UserType.SUPER_ADMIN, null), null));
     }
 
     private static PlatformBooking ticketedRow(PlatformBookingStatus status) {
@@ -194,27 +208,18 @@ class PlatformBookingCancelTest {
     }
 
     @Test
-    void recallShortfallOpensAReceivableAndBlocksBooking() {
+    void zeroRefundStillRecallsUnderTheCancelNetNegativeReason() {
         when(settings.voyraCancelFee()).thenReturn(new BigDecimal("250.00"));
         supplierRefunds("100.00"); // below the fee: refund 0, net = -95
 
         PlatformBooking b = service.cancel(ID, "ck-1");
 
+        // no zero credit; the recall goes to debitOrReceivable, which opens the receivable when available falls short
         verify(walletService, never()).credit(anyString(), any(), any(), anyString(), anyString(), anyString(), anyString());
         verify(walletService).debitOrReceivable(T, WalletEntryType.COMMISSION_RECALL, new BigDecimal("95.00"),
                 "pb-recall:" + ID, REF, ID, ReceivableReason.CANCEL_NET_NEGATIVE);
         assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
         assertThat(b.getCancelRefund()).isEqualByComparingTo("0");
-
-        // the wallet opened a DUE receivable for what available did not cover: the next booking is refused
-        when(walletService.hasDueReceivable(T)).thenReturn(true);
-        when(pricingService.requireInForce(T, PricingProduct.FLIGHT)).thenReturn(AgencyPricing.builder().id("P1").build());
-        when(tenantRepository.findById(T)).thenReturn(Optional.of(Tenant.builder().id(T).status(TenantStatus.ACTIVE).bookingBlocked(false).build()));
-        FlightReviewRequest next = new FlightReviewRequest();
-        next.setOfferId("offer-2");
-        next.setAdults(1);
-        assertThatThrownBy(() -> service.review(next)).isInstanceOf(ReceivableDueException.class);
-        verify(provider, never()).review(anyString(), any(Integer.class), any(Integer.class), any(Integer.class));
     }
 
     @Test
@@ -245,20 +250,149 @@ class PlatformBookingCancelTest {
         assertThat(rows.get(ID).getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
         assertThat(rows.get(ID).getCancelledAt()).isNull();
         assertThat(eventTypes()).contains("CANCEL_REFUSED");
+
+        assertThatThrownBy(() -> service.cancel(ID, "ck-2")).isInstanceOf(BookingConflictException.class);
+        verify(provider, times(2)).cancel("SB-1");
     }
 
     @Test
-    void supplierErrorLeavesTheBookingTicketedAndCanBeRetried() {
+    void supplierTimeoutKeepsTheBookingCancellingAndAlerts() {
         when(provider.cancelQuote("SB-1")).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
-        when(provider.cancel("SB-1")).thenThrow(new SupplierException("Tripjack cancel call failed (HTTP 500)", null))
-                .thenReturn(new CancelResult(true, new BigDecimal("4000.00"), "Cancelled"));
+        when(provider.cancel("SB-1")).thenThrow(new SupplierTimeoutException("Tripjack cancel timed out", null));
 
         assertThatThrownBy(() -> service.cancel(ID, "ck-1")).isInstanceOf(SupplierException.class);
+
+        // the supplier may have cancelled: no posting, no second submission, an admin settles it
+        assertThat(rows.get(ID).getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
+        assertThat(eventTypes()).contains("CANCEL_NO_ANSWER");
+        verify(notificationService).platformAlert(contains(ID), anyString());
         verifyNothingPosted();
+        assertThat(service.cancel(ID, "ck-1").getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
+        verify(provider, times(1)).cancel("SB-1");
+    }
+
+    @Test
+    void anyRuntimeErrorFromTheSupplierCancelIsTreatedAsNoAnswer() {
+        when(provider.cancelQuote("SB-1")).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
+        when(provider.cancel("SB-1")).thenThrow(new IllegalArgumentException("unexpected body"));
+
+        assertThatThrownBy(() -> service.cancel(ID, "ck-1")).isInstanceOf(SupplierException.class);
+        assertThat(rows.get(ID).getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
+        verifyNothingPosted();
+    }
+
+    @Test
+    void aQuoteErrorRevertsToTicketedBecauseNothingWasSubmitted() {
+        when(provider.cancelQuote("SB-1")).thenThrow(new SupplierException("Tripjack cancel quote call failed", null));
+
+        assertThatThrownBy(() -> service.cancel(ID, "ck-1")).isInstanceOf(SupplierException.class);
         assertThat(rows.get(ID).getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
+        verify(provider, never()).cancel(anyString());
+    }
+
+    @Test
+    void aSecondCancelWhileCancellingNeverReachesTheSupplier() {
+        when(provider.cancelQuote("SB-1")).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
+        when(provider.cancel("SB-1")).thenAnswer(i -> {
+            // a double click / second tab arrives while the first request waits on the supplier
+            assertThat(service.cancel(ID, "ck-1").getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
+            assertThatThrownBy(() -> service.cancel(ID, "ck-2"))
+                    .isInstanceOfSatisfying(BookingConflictException.class, e -> assertThat(e.getCode()).isEqualTo("CANCEL_IN_PROGRESS"));
+            assertThatThrownBy(() -> service.cancelQuote(ID))
+                    .isInstanceOfSatisfying(BookingConflictException.class, e -> assertThat(e.getCode()).isEqualTo("CANCEL_IN_PROGRESS"));
+            return new CancelResult(true, new BigDecimal("4000.00"), "Cancelled");
+        });
 
         assertThat(service.cancel(ID, "ck-1").getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
-        verify(walletService, times(1)).credit(anyString(), eq(WalletEntryType.REFUND_CREDIT), any(), anyString(), anyString(), anyString(), anyString());
+        verify(provider, times(1)).cancel("SB-1");
+        verify(provider, times(1)).cancelQuote("SB-1");
+        verify(walletService, times(1)).credit(anyString(), any(), any(), anyString(), anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void aFailedSettlementAfterAcceptanceStaysCancellingAndAlerts() {
+        supplierRefunds("4000.00");
+        when(walletService.credit(anyString(), any(), any(), anyString(), anyString(), anyString(), anyString()))
+                .thenThrow(new IllegalStateException("database unavailable"));
+
+        assertThatThrownBy(() -> service.cancel(ID, "ck-1")).isInstanceOf(IllegalStateException.class);
+
+        assertThat(rows.get(ID).getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
+        PlatformBookingEvent accepted = savedEvents.stream().filter(e -> e.getType().equals("CANCEL_ACCEPTED")).findFirst().orElseThrow();
+        assertThat(accepted.getPayload()).containsEntry("message", "Cancelled");
+        assertThat(new BigDecimal(String.valueOf(accepted.getPayload().get("refund")))).isEqualByComparingTo("4000.00");
+        verify(notificationService).platformAlert(contains(ID), contains("4000"));
+        // a retry must not submit the cancellation again
+        assertThat(service.cancel(ID, "ck-1").getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
+        verify(provider, times(1)).cancel("SB-1");
+    }
+
+    @Test
+    void aClosedWalletCancelsWithoutPostingAndAlertsAnOfflineRefund() {
+        wallet.setStatus(WalletStatus.CLOSED);
+        supplierRefunds("4000.00");
+
+        PlatformBooking b = service.cancel(ID, "ck-1");
+
+        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
+        verifyNothingPosted();
+        verify(notificationService).platformAlert(contains(ID), contains("offline"));
+    }
+
+    @Test
+    void lateTicketResultOnACancellingBookingDoesNotDebitAgain() {
+        rows.get(ID).setStatus(PlatformBookingStatus.CANCELLING);
+
+        service.applySupplierResult(ID, new BookResult("SB-1", SupplierBookingStatus.TICKETED, "PNR123", List.of(), "Ticketed", null));
+
+        assertThat(rows.get(ID).getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
+        verify(walletService, never()).debitHeld(anyString(), any(), anyString(), anyString(), anyString());
+    }
+
+    private void cancellingAfterATimeout() {
+        when(provider.cancelQuote("SB-1")).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
+        when(provider.cancel("SB-1")).thenThrow(new SupplierTimeoutException("Tripjack cancel timed out", null));
+        assertThatThrownBy(() -> service.cancel(ID, "ck-1")).isInstanceOf(SupplierException.class);
+        loginAsPlatformAdmin();
+    }
+
+    @Test
+    void adminResolvesACancellingBookingAsCancelled() {
+        cancellingAfterATimeout();
+
+        PlatformBooking b = service.resolveCancel(ID, true, new BigDecimal("4000.00"), "Tripjack confirmed by email");
+
+        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
+        verify(walletService).credit(eq(T), eq(WalletEntryType.REFUND_CREDIT), eq(new BigDecimal("4000.00")),
+                eq("pb-refund:" + ID), eq(REF), eq(ID), anyString());
+        verify(walletService).debitOrReceivable(T, WalletEntryType.COMMISSION_RECALL, new BigDecimal("95.00"),
+                "pb-recall:" + ID, REF, ID, ReceivableReason.CANCEL_NET_NEGATIVE);
+        verify(platformAuditService).record(eq(PlatformAuditAction.BOOKING_CANCEL_RESOLVE), eq(REF), eq(ID), any());
+        assertThat(eventTypes()).contains("RESOLVED");
+    }
+
+    @Test
+    void adminResolvesNotCancelledBackToTicketed() {
+        cancellingAfterATimeout();
+
+        PlatformBooking b = service.resolveCancel(ID, false, null, "Tripjack says the booking is live");
+
+        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
+        verifyNothingPosted();
+        verify(platformAuditService).record(eq(PlatformAuditAction.BOOKING_CANCEL_RESOLVE), eq(REF), eq(ID), any());
+    }
+
+    @Test
+    void resolveCancelIsAdminOnlyValidatedAndOnlyForCancellingRows() {
+        assertThatThrownBy(() -> service.resolveCancel(ID, false, null, "note")).isInstanceOf(AccessDeniedException.class);
+        loginAsPlatformAdmin();
+        assertThatThrownBy(() -> service.resolveCancel(ID, false, null, "note")).isInstanceOf(IllegalStateException.class); // TICKETED
+        rows.get(ID).setStatus(PlatformBookingStatus.CANCELLING);
+        assertThatThrownBy(() -> service.resolveCancel(ID, true, null, "note")).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.resolveCancel(ID, true, new BigDecimal("-1"), "note")).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.resolveCancel(ID, false, null, " ")).isInstanceOf(IllegalArgumentException.class);
+        verifyNothingPosted();
+        verify(platformAuditService, never()).record(any(), anyString(), anyString(), any());
     }
 
     @Test
@@ -298,6 +432,17 @@ class PlatformBookingCancelTest {
         // -472.50 - 127.50 + 100 + 250 = -250.00
         assertThat(b.getVoyraEarnedReversal()).isEqualByComparingTo("127.50");
         assertThat(b.getVoyraNet()).isEqualByComparingTo("-250.00");
+        verify(notificationService, never()).platformAlert(anyString(), anyString()); // better than -472.50: no loss alert
+    }
+
+    @Test
+    void lossAlertOnlyWhenTheCancelMakesVoyraNetWorse() {
+        supplierRefunds("4000.00");
+
+        PlatformBooking b = service.cancel(ID, "ck-1");
+
+        // -472.50 - 127.50 + 100 + 0 = -500.00, worse than at ticket
+        assertThat(b.getVoyraNet()).isEqualByComparingTo("-500.00");
         verify(notificationService).platformAlert(contains(ID), anyString());
     }
 
@@ -330,6 +475,31 @@ class PlatformBookingCancelTest {
         verify(provider, never()).cancel(anyString());
         verifyNothingPosted();
         assertThat(rows.get(ID).getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
+    }
+
+    @Test
+    void aNegativeQuotedRefundIsTreatedAsUnknown() {
+        supplierRefunds("-50.00");
+
+        CancelPreview q = service.cancelQuote(ID);
+        assertThat(q.refund()).isNull();
+        assertThat(q.refundToBeConfirmed()).isTrue();
+        assertThatThrownBy(() -> service.cancel(ID, "ck-1"))
+                .isInstanceOfSatisfying(BookingConflictException.class, e -> assertThat(e.getCode()).isEqualTo("REFUND_UNKNOWN"));
+        verify(provider, never()).cancel(anyString());
+    }
+
+    @Test
+    void aNegativeAcceptedRefundGoesToTheManualPath() {
+        when(provider.cancelQuote("SB-1")).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
+        when(provider.cancel("SB-1")).thenReturn(new CancelResult(true, new BigDecimal("-50.00"), "Cancelled"));
+
+        PlatformBooking b = service.cancel(ID, "ck-1");
+
+        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
+        assertThat(b.getCancelRefund()).isNull();
+        verifyNothingPosted();
+        verify(notificationService).platformAlert(contains(ID), contains("post refund manually"));
     }
 
     @Test

@@ -7,6 +7,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
+import java.util.Map;
+import java.util.Optional;
 
 /** Appends a platform_booking_event in the caller's transaction, so an event commits with the transition it records. */
 @Component
@@ -24,5 +26,10 @@ public class PlatformBookingEventRecorder {
                 .payload(payload == null ? null : paxCodec.redact(payload))
                 .createdAt(Instant.now())
                 .build());
+    }
+
+    /** Payload of the latest event of {@code type} on the booking (as stored, i.e. redacted). */
+    public Optional<Map<String, Object>> lastPayload(String bookingId, String type) {
+        return repository.findFirstByPlatformBookingIdAndTypeOrderByCreatedAtDesc(bookingId, type).map(PlatformBookingEvent::getPayload);
     }
 }

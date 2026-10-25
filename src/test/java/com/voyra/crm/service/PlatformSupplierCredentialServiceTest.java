@@ -282,7 +282,9 @@ class PlatformSupplierCredentialServiceTest {
 
     @Test
     void credentialSwitchBlockedWhileBookingsInFlight() {
-        when(bookingRepository.countByStatusIn(PlatformBookingStatus.IN_FLIGHT)).thenReturn(2L);
+        // a cancel in progress is still addressed to the supplier under the stamped credential
+        assertThat(PlatformBookingStatus.SUPPLIER_PENDING).contains(PlatformBookingStatus.CANCELLING);
+        when(bookingRepository.countByStatusIn(PlatformBookingStatus.SUPPLIER_PENDING)).thenReturn(2L);
 
         assertThatThrownBy(() -> service.upsert(request("tj_new_key_1234")))
                 .isInstanceOf(IllegalStateException.class)
