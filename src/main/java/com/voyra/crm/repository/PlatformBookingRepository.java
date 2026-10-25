@@ -28,9 +28,13 @@ public interface PlatformBookingRepository extends JpaRepository<PlatformBooking
 
     Optional<PlatformBooking> findBySupplierReviewId(String supplierReviewId);
 
-    List<PlatformBooking> findBySupplierBookingId(String supplierBookingId);
+    /** Ids only, so the statement import never holds an unlocked copy of a row it will lock and change. */
+    @Query("SELECT b.id FROM PlatformBooking b WHERE b.supplierBookingId = :supplierBookingId AND b.environment = :environment")
+    List<String> findIdsBySupplierBookingId(@Param("supplierBookingId") String supplierBookingId,
+                                            @Param("environment") com.voyra.crm.enums.SupplierEnvironment environment);
 
-    List<PlatformBooking> findByPnr(String pnr);
+    @Query("SELECT b.id FROM PlatformBooking b WHERE b.pnr = :pnr AND b.environment = :environment")
+    List<String> findIdsByPnr(@Param("pnr") String pnr, @Param("environment") com.voyra.crm.enums.SupplierEnvironment environment);
 
     /** The P&L window: bookings ticketed in [from, to). */
     List<PlatformBooking> findByTicketedAtGreaterThanEqualAndTicketedAtLessThan(Instant from, Instant to);

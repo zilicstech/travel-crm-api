@@ -1,6 +1,7 @@
 package com.voyra.crm.controller;
 
 import com.voyra.crm.dto.StatementImportResponse;
+import com.voyra.crm.enums.SupplierEnvironment;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.security.SecurityContextUtil;
 import com.voyra.crm.service.TripjackStatementService;
@@ -12,6 +13,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
@@ -28,9 +30,11 @@ public class PlatformStatementController {
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @Operation(summary = "Import a Tripjack statement CSV",
             description = "Columns booking_id, pnr, type (SALE|REFUND), amount, commission, date - mapped by header name. "
-                    + "CSV only, up to 5 MB. The same file again is 409 \"Already imported\"; a line already applied is listed as DUPLICATE. Audited.")
-    public ResponseEntity<StatementImportResponse> importStatement(@RequestPart("file") MultipartFile file) {
+                    + "CSV only, up to 5 MB. Only bookings of ?environment= (default PROD; UAT or MOCK to test) match. The same file again is 409 \"Already imported\"; a line already applied is listed as DUPLICATE. Audited.")
+    public ResponseEntity<StatementImportResponse> importStatement(
+            @RequestPart("file") MultipartFile file,
+            @RequestParam(value = "environment", defaultValue = "PROD") SupplierEnvironment environment) {
         CustomUserPrincipal actor = SecurityContextUtil.getCurrentUserOrThrow();
-        return ResponseEntity.ok(service.importStatement(file, actor.userId(), actor.username()));
+        return ResponseEntity.ok(service.importStatement(file, environment, actor.userId(), actor.username()));
     }
 }

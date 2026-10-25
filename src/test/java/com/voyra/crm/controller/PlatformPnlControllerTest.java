@@ -4,6 +4,7 @@ import com.voyra.crm.config.SecurityConfig;
 import com.voyra.crm.dto.PnlResponse;
 import com.voyra.crm.dto.PnlRow;
 import com.voyra.crm.enums.PricingProduct;
+import com.voyra.crm.enums.SupplierEnvironment;
 import com.voyra.crm.enums.UserType;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.security.JwtAuthenticationFilter;
@@ -50,7 +51,7 @@ class PlatformPnlControllerTest {
 
     @Test
     void superAdminGetsThePnl() throws Exception {
-        given(service.pnl(LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 31), PricingProduct.FLIGHT, null, null))
+        given(service.pnl(LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 31), PricingProduct.FLIGHT, null, SupplierEnvironment.PROD))
                 .willReturn(PnlResponse.builder().from(LocalDate.of(2026, 10, 1)).to(LocalDate.of(2026, 10, 31))
                         .totals(PnlRow.builder().key("ALL").bookings(2).voyraNet(new BigDecimal("-12.50")).build())
                         .byAgency(List.of()).byProduct(List.of()).build());

@@ -185,6 +185,19 @@ class PlatformBookingQueryServiceTest {
     }
 
     @Test
+    void adminViewShowsTheEstimateAndTheStatementFigureSideBySide() {
+        login("SA1", UserType.SUPER_ADMIN, null);
+        PlatformBooking b = booking("B1", "T1", "A1").toBuilder().voyraEarnedActual(new BigDecimal("270.00"))
+                .voyraEarnedSource(com.voyra.crm.enums.VoyraEarnedSource.STATEMENT).build();
+        given(tenants.findAllById(List.of("T1"))).willReturn(List.of(Tenant.builder().id("T1").agencyName("Acme Travel").build()));
+
+        PlatformAdminBookingResponse r = service().adminView(b);
+
+        assertThat(r.getVoyraEarned()).isEqualByComparingTo("250.00");
+        assertThat(r.getVoyraEarnedActual()).isEqualByComparingTo("270.00");
+    }
+
+    @Test
     void adminDetailListsEveryEventWithItsPayload() {
         login("SA1", UserType.SUPER_ADMIN, null);
         given(bookings.findById("B1")).willReturn(Optional.of(booking("B1", "T1", "A1")));

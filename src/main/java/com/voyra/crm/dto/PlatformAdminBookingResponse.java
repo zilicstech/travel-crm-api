@@ -41,6 +41,9 @@ public class PlatformAdminBookingResponse extends PlatformBookingResponse {
     @Schema(description = "ESTIMATE until the supplier reports the real figure", example = "ESTIMATE")
     private VoyraEarnedSource voyraEarnedSource;
 
+    @Schema(description = "What Voyra actually earned per the Tripjack statement; voyraEarned stays the estimate", example = "262.00")
+    private BigDecimal voyraEarnedActual;
+
     @Schema(description = "Commission credited to the agency before TDS", example = "100.00")
     private BigDecimal agencyCommission;
 

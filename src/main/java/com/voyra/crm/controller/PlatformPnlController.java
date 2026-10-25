@@ -28,13 +28,13 @@ public class PlatformPnlController {
 
     @GetMapping
     @Operation(summary = "P&L over bookings ticketed between two IST days (inclusive)",
-            description = "Totals plus one row per agency and per product. ?product=, ?tenantId= and ?environment= narrow it.")
+            description = "Totals plus one row per agency and per product. ?product= and ?tenantId= narrow it; ?environment= defaults to PROD (UAT or MOCK for test bookings).")
     public ResponseEntity<PnlResponse> pnl(
             @RequestParam("from") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam("to") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
             @RequestParam(value = "product", required = false) PricingProduct product,
             @RequestParam(value = "tenantId", required = false) String tenantId,
-            @RequestParam(value = "environment", required = false) SupplierEnvironment environment) {
+            @RequestParam(value = "environment", defaultValue = "PROD") SupplierEnvironment environment) {
         return ResponseEntity.ok(service.pnl(from, to, product, tenantId, environment));
     }
 }

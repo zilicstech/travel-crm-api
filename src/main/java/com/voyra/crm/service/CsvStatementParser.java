@@ -177,8 +177,67 @@ public class CsvStatementParser implements StatementParser {
         }
     }
 
+    /** One CSV record and the physical line it starts on (1-based). */
+    record CsvRecord(int line, List<String> fields) {
+    }
+
+    /**
+     * RFC 4180 records over a whole text: quoted fields may hold commas, doubled quotes and line breaks;
+     * a record ends at \n, \r\n or a bare \r (old Mac/Excel exports). An unterminated quote is refused.
+     */
+    static List<CsvRecord> records(String text) {
+        List<CsvRecord> out = new ArrayList<>();
+        List<String> fields = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        boolean inQuotes = false;
+        int line = 1;
+        int start = 1;
+        int n = text.length();
+        for (int i = 0; i < n; i++) {
+            char c = text.charAt(i);
+            boolean crlf = c == '\r' && i + 1 < n && text.charAt(i + 1) == '\n';
+            if (inQuotes) {
+                if (c == '"' && i + 1 < n && text.charAt(i + 1) == '"') {
+                    current.append('"');
+                    i++;
+                } else if (c == '"') {
+                    inQuotes = false;
+                } else {
+                    if (c == '\n' || (c == '\r' && !crlf)) {
+                        line++;
+                    }
+                    current.append(c);
+                }
+            } else if (c == '"') {
+                inQuotes = true;
+            } else if (c == ',') {
+                fields.add(current.toString());
+                current.setLength(0);
+            } else if (c == '\r' || c == '\n') {
+                if (crlf) {
+                    i++;
+                }
+                fields.add(current.toString());
+                current.setLength(0);
+                out.add(new CsvRecord(start, fields));
+                fields = new ArrayList<>();
+                start = ++line;
+            } else {
+                current.append(c);
+            }
+        }
+        if (inQuotes) {
+            throw new IllegalArgumentException("Line " + start + ": a quoted field is never closed");
+        }
+        if (!fields.isEmpty() || current.length() > 0) {
+            fields.add(current.toString());
+            out.add(new CsvRecord(start, fields));
+        }
+        return out;
+    }
+
     /** Minimal RFC4180 line splitter - handles quoted fields with embedded commas and doubled-quote escaping. */
-    static List<String> splitCsvLine(String line) {
+    private static List<String> splitCsvLine(String line) {
         List<String> fields = new ArrayList<>();
         StringBuilder current = new StringBuilder();
         boolean inQuotes = false;

@@ -537,7 +537,8 @@ public class PlatformBookingService {
         }
         String id = b.getId();
         BigDecimal netBefore = b.getVoyraNet();
-        BigDecimal earned = nz(b.getVoyraEarned());
+        // the earning in force: the statement figure once imported, else the estimate stamped at review
+        BigDecimal earned = nz(b.getVoyraEarnedActual() != null ? b.getVoyraEarnedActual() : b.getVoyraEarned());
         b.setVoyraEarnedReversal(earned); // the supplier claws back Voyra's commission on the fare
         Map<String, Object> detail = new LinkedHashMap<>();
         boolean offline = false;

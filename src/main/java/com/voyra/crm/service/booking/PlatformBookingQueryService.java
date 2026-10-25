@@ -169,7 +169,7 @@ public class PlatformBookingQueryService {
                 .supplierMessage(b.getSupplierMessage()).mirrorStatus(b.getMirrorStatus()).tenantBookingId(b.getTenantBookingId())
                 .tenantId(b.getTenantId()).agencyName(agencyNames.get(b.getTenantId())).environment(b.getEnvironment())
                 .gross(b.getGross()).base(b.getBase()).discountPct(b.getDiscountPct()).voyraEarned(b.getVoyraEarned())
-                .voyraEarnedSource(b.getVoyraEarnedSource()).agencyCommission(b.getAgencyCommission()).tds(b.getTds())
+                .voyraEarnedSource(b.getVoyraEarnedSource()).voyraEarnedActual(b.getVoyraEarnedActual()).agencyCommission(b.getAgencyCommission()).tds(b.getTds())
                 .voyraNet(b.getVoyraNet())
                 .events(detail ? eventRepository.findByPlatformBookingIdOrderByCreatedAtAsc(b.getId()).stream()
                         .map(e -> new PlatformBookingEventResponse(e.getType(), e.getPayload(), e.getCreatedAt())).toList() : null)

@@ -9,6 +9,7 @@ import com.voyra.crm.enums.PlatformAuditAction;
 import com.voyra.crm.enums.PlatformBookingStatus;
 import com.voyra.crm.enums.StatementLineStatus;
 import com.voyra.crm.enums.StatementLineType;
+import com.voyra.crm.enums.SupplierEnvironment;
 import com.voyra.crm.enums.VoyraEarnedSource;
 import com.voyra.crm.repository.PlatformBookingRepository;
 import com.voyra.crm.repository.PlatformStatementImportRepository;
@@ -42,10 +43,12 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Imports a Tripjack statement (spec 5.1): a SALE line overwrites Voyra's estimated earning with the
- * statement figure, a REFUND line records the actual clawback as the reversal, and voyra_net is re-derived.
+ * Imports a Tripjack statement (spec 5.1): a SALE line records what Voyra actually earned
+ * ({@code voyra_earned_actual}, source STATEMENT - the estimate in {@code voyra_earned} is kept), a REFUND line
+ * records the actual clawback as the reversal, and voyra_net is re-derived on the earning in force.
  * Idempotent twice over: a file (by SHA-256) imports once, and a (booking, type) line applies once.
- * A file with any unreadable line is refused whole, so nothing is half-imported.
+ * A file with any unreadable line is refused whole, so nothing is half-imported. Only bookings of the
+ * import's supplier environment match, so a live statement never touches test bookings.
  */
 @Service
 @RequiredArgsConstructor
@@ -60,13 +63,14 @@ public class TripjackStatementService {
     private final PlatformAuditService auditService;
     private final PlatformBookingEventRecorder events;
     private final TripjackStatementConfig config;
+    private final NotificationService notificationService;
 
     private record Parsed(int lineNo, String bookingId, String pnr, StatementLineType type, BigDecimal amount,
                           BigDecimal commission, LocalDate date) {
     }
 
     @Transactional
-    public StatementImportResponse importStatement(MultipartFile file, String userId, String userName) {
+    public StatementImportResponse importStatement(MultipartFile file, SupplierEnvironment environment, String userId, String userName) {
         String name = file.getOriginalFilename() == null ? "" : file.getOriginalFilename();
         if (!name.toLowerCase(Locale.ROOT).endsWith(".csv")) {
             throw new IllegalArgumentException("Upload the statement as a CSV file");
@@ -86,9 +90,10 @@ public class TripjackStatementService {
 
         String importId = UniqueIdResolver.resolve(importRepository::existsById);
         Set<String> appliedHere = new HashSet<>();
+        List<String> worse = new ArrayList<>();
         List<PlatformStatementLine> lines = new ArrayList<>();
         for (Parsed p : parsed) {
-            lines.add(apply(importId, p, appliedHere));
+            lines.add(apply(importId, environment, p, appliedHere, worse));
         }
         int applied = count(lines, StatementLineStatus.APPLIED);
         int duplicate = count(lines, StatementLineStatus.DUPLICATE);
@@ -101,44 +106,48 @@ public class TripjackStatementService {
         Map<String, Object> detail = new LinkedHashMap<>();
         detail.put("fileName", imp.getFileName());
         detail.put("sha256", sha);
+        detail.put("environment", environment);
         detail.put("applied", applied);
         detail.put("duplicate", duplicate);
         detail.put("unmatched", unmatched);
         auditService.record(PlatformAuditAction.STATEMENT_IMPORT, "STATEMENT_IMPORT", importId, detail);
+        if (!worse.isEmpty()) {
+            notificationService.platformAlert("Statement import pushed " + worse.size() + " booking(s) further into loss",
+                    "Tripjack statement " + imp.getFileName() + " (import " + importId + ") lowered Voyra net below zero on:\n"
+                            + String.join("\n", worse));
+        }
         return StatementImportResponse.builder().id(importId).fileName(imp.getFileName()).importedAt(imp.getImportedAt())
                 .importedByName(userName).totalLines(lines.size()).appliedLines(applied).duplicateLines(duplicate)
                 .unmatchedLines(unmatched).lines(lines.stream().map(TripjackStatementService::view).toList()).build();
     }
 
-    private PlatformStatementLine apply(String importId, Parsed p, Set<String> appliedHere) {
+    private PlatformStatementLine apply(String importId, SupplierEnvironment environment, Parsed p, Set<String> appliedHere,
+                                        List<String> worse) {
         PlatformStatementLine line = PlatformStatementLine.builder()
                 .id(UniqueIdResolver.resolve(lineRepository::existsById)).importId(importId).lineNo(p.lineNo())
                 .supplierBookingId(truncate(p.bookingId(), 120)).pnr(truncate(p.pnr(), 40)).type(p.type())
                 .amount(p.amount()).commission(p.commission()).lineDate(p.date()).build();
-        String miss = null;
-        PlatformBooking match = null;
-        if (p.bookingId() == null && p.pnr() == null) {
-            miss = "No booking id or PNR";
+        // the PNR is only a fallback for a line without a booking id: airlines recycle PNRs
+        List<String> ids;
+        String by;
+        if (p.bookingId() != null) {
+            ids = bookingRepository.findIdsBySupplierBookingId(p.bookingId(), environment);
+            by = "booking id";
+        } else if (p.pnr() != null) {
+            ids = bookingRepository.findIdsByPnr(p.pnr(), environment);
+            by = "PNR";
         } else {
-            List<PlatformBooking> found = p.bookingId() == null ? List.of() : bookingRepository.findBySupplierBookingId(p.bookingId());
-            String by = "booking id";
-            if (found.isEmpty() && p.pnr() != null) {
-                found = bookingRepository.findByPnr(p.pnr());
-                by = "PNR";
-            }
-            if (found.isEmpty()) {
-                miss = "No booking with this booking id or PNR";
-            } else if (found.size() > 1) {
-                miss = by.equals("PNR") ? "PNR matches " + found.size() + " bookings" : "Booking id matches " + found.size() + " bookings";
-            } else {
-                match = found.get(0);
-            }
+            return unmatched(line, "No booking id or PNR");
         }
-        if (match == null) {
-            return unmatched(line, miss);
+        if (ids.isEmpty()) {
+            return unmatched(line, "No booking with this " + by);
         }
-        // the row lock serialises with a concurrent cancellation re-deriving the same voyra_net
-        PlatformBooking b = bookingRepository.findByIdForUpdate(match.getId()).orElse(match);
+        if (ids.size() > 1) {
+            return unmatched(line, (by.equals("PNR") ? "PNR" : "Booking id") + " matches " + ids.size() + " bookings");
+        }
+        // locked and read fresh: a cancellation committed meanwhile is what this line sees and re-derives from
+        PlatformBooking b = bookingRepository.findByIdForUpdate(ids.get(0))
+                .orElseThrow(() -> new IllegalStateException("Booking " + ids.get(0) + " disappeared during the import"));
         line.setPlatformBookingId(b.getId());
         if (b.getTicketedAt() == null) {
             return unmatched(line, "Booking was never ticketed (" + b.getStatus() + ")");
@@ -155,7 +164,7 @@ public class TripjackStatementService {
         }
         appliedHere.add(key);
 
-        BigDecimal netBefore = b.getVoyraNet();
+        BigDecimal netBefore = nz(b.getVoyraNet());
         if (p.type() == StatementLineType.SALE) {
             BigDecimal actual = p.commission();
             boolean statementRefund = appliedHere.contains(b.getId() + ":" + StatementLineType.REFUND)
@@ -169,24 +178,32 @@ public class TripjackStatementService {
                 line.setReason("Statement amount " + p.amount() + " differs from the booked gross " + b.getGross());
             }
         } else {
-            rederive(b, b.getVoyraEarned(), p.commission().abs());
+            rederive(b, earnedInForce(b), p.commission().abs());
         }
         bookingRepository.save(b);
         events.record(b.getId(), "STATEMENT_" + p.type(), Map.of("importId", importId, "line", p.lineNo(),
                 "commission", p.commission(), "voyraNetBefore", String.valueOf(netBefore), "voyraNet", b.getVoyraNet()));
+        if (b.getVoyraNet().signum() < 0 && b.getVoyraNet().compareTo(netBefore) < 0) {
+            worse.add("Booking " + b.getId() + " (agency " + b.getTenantId() + ", PNR " + b.getPnr() + "): "
+                    + netBefore + " -> " + b.getVoyraNet());
+        }
         line.setStatus(StatementLineStatus.APPLIED);
         return line;
     }
 
+    /** The earning voyra_net is built on: the statement figure once imported, else the estimate stamped at review. */
+    private static BigDecimal earnedInForce(PlatformBooking b) {
+        return b.getVoyraEarnedActual() != null ? b.getVoyraEarnedActual() : b.getVoyraEarned();
+    }
+
     /**
-     * voyra_net re-derived with the spec 5.1 formula ({@link PricingMath#voyraNetOf}) on the new earned figure,
+     * voyra_net re-derived with the spec 5.1 formula ({@link PricingMath#voyraNetOf}) on the new earning in force,
      * less the reversal. Adjustments made after the review stamp - a supplier fare variance, the commission
      * recovered and any refund Voyra kept on a cancellation - are not columns, so they carry over unchanged
      * as the difference between the current net and the formula on the old figures.
      */
     private static void rederive(PlatformBooking b, BigDecimal earned, BigDecimal reversal) {
-        BigDecimal adjustments = nz(b.getVoyraNet()).subtract(netOf(b, b.getVoyraEarned(), b.getVoyraEarnedReversal()));
-        b.setVoyraEarned(earned);
+        BigDecimal adjustments = nz(b.getVoyraNet()).subtract(netOf(b, earnedInForce(b), b.getVoyraEarnedReversal()));
         b.setVoyraEarnedReversal(reversal);
         b.setVoyraNet(netOf(b, earned, reversal).add(adjustments));
     }
@@ -197,12 +214,13 @@ public class TripjackStatementService {
     }
 
     private List<Parsed> parse(byte[] bytes) {
-        String[] rows = CsvStatementParser.stripBom(new String(bytes, StandardCharsets.UTF_8)).split("\r?\n");
-        if (rows.length == 0 || rows[0].isBlank()) {
+        List<CsvStatementParser.CsvRecord> rows = CsvStatementParser.records(
+                CsvStatementParser.stripBom(new String(bytes, StandardCharsets.UTF_8)));
+        if (rows.isEmpty() || blank(rows.get(0))) {
             throw new IllegalArgumentException("The statement has no header row");
         }
         Map<String, Integer> header = new HashMap<>();
-        List<String> names = CsvStatementParser.splitCsvLine(rows[0]);
+        List<String> names = rows.get(0).fields();
         for (int i = 0; i < names.size(); i++) {
             header.put(names.get(i).trim().toLowerCase(Locale.ROOT), i);
         }
@@ -217,12 +235,12 @@ public class TripjackStatementService {
             throw new IllegalArgumentException("The header row is missing column(s): " + String.join(", ", missing));
         }
         List<Parsed> out = new ArrayList<>();
-        for (int r = 1; r < rows.length; r++) {
-            if (rows[r].isBlank()) {
+        for (CsvStatementParser.CsvRecord row : rows.subList(1, rows.size())) {
+            if (blank(row)) {
                 continue;
             }
-            int lineNo = r + 1;
-            List<String> v = CsvStatementParser.splitCsvLine(rows[r]);
+            int lineNo = row.line();
+            List<String> v = row.fields();
             String typeRaw = cell(v, header, c.getType());
             StatementLineType type;
             try {
@@ -242,6 +260,10 @@ public class TripjackStatementService {
             throw new IllegalArgumentException("The statement has no lines below the header");
         }
         return out;
+    }
+
+    private static boolean blank(CsvStatementParser.CsvRecord row) {
+        return row.fields().stream().allMatch(String::isBlank);
     }
 
     /** The trimmed cell under a header, or null when blank. */

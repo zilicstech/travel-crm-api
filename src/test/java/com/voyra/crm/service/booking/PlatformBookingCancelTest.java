@@ -461,6 +461,22 @@ class PlatformBookingCancelTest {
     }
 
     @Test
+    void cancellationReversesTheStatementEarningWhenOneIsInForce() {
+        when(settings.voyraCancelFee()).thenReturn(new BigDecimal("250.00"));
+        supplierRefunds("4000.00");
+        // a statement said Voyra earned 140 (not the 127.50 estimate): net was re-derived to -460.00
+        rows.put(ID, ticketedRow(PlatformBookingStatus.TICKETED).toBuilder().voyraEarnedActual(new BigDecimal("140.00"))
+                .voyraEarnedSource(com.voyra.crm.enums.VoyraEarnedSource.STATEMENT).voyraNet(new BigDecimal("-460.00")).build());
+
+        PlatformBooking b = service.cancel(ID, "ck-1");
+
+        // -460 - 140 + 100 + 250 = -250.00: the actual is reversed, the estimate stays as stamped
+        assertThat(b.getVoyraEarnedReversal()).isEqualByComparingTo("140.00");
+        assertThat(b.getVoyraEarned()).isEqualByComparingTo("127.50");
+        assertThat(b.getVoyraNet()).isEqualByComparingTo("-250.00");
+    }
+
+    @Test
     void lossAlertOnlyWhenTheCancelMakesVoyraNetWorse() {
         supplierRefunds("4000.00");
 

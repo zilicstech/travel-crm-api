@@ -42,15 +42,21 @@ public class PnlRow {
     @Schema(description = "TDS withheld on that commission", example = "84.00")
     private BigDecimal tdsWithheld;
 
-    @Schema(description = "Voyra earned still on the estimate (or API figure)", example = "3000.00")
+    @Schema(description = "Voyra earned on bookings no statement has confirmed yet (estimate or API figure)", example = "3000.00")
     private BigDecimal earnedEstimate;
 
     @Schema(description = "Voyra earned confirmed by a Tripjack statement", example = "9000.00")
     private BigDecimal earnedStatement;
 
+    @Schema(description = "Bookings whose earning a Tripjack statement confirmed", example = "30")
+    private int matchedBookings;
+
+    @Schema(description = "What the estimate said for those same statement-matched bookings (compare with earnedStatement)", example = "8700.00")
+    private BigDecimal matchedEstimate;
+
     @Schema(description = "Earned commission reversed on cancellations", example = "600.00")
     private BigDecimal reversals;
 
-    @Schema(description = "Voyra net (earned - discounts - commission, after cancellations)", example = "-6400.00")
+    @Schema(description = "Voyra net: earned in force - discounts - commission - reversals, plus refunds Voyra kept and fare variances", example = "-6400.00")
     private BigDecimal voyraNet;
 }

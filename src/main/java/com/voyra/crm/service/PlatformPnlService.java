@@ -41,6 +41,8 @@ public class PlatformPnlService {
 
     @Transactional(readOnly = true)
     public PnlResponse pnl(LocalDate from, LocalDate to, PricingProduct product, String tenantId, SupplierEnvironment environment) {
+        // live bookings unless asked otherwise: test (UAT/mock) money never mixes into the platform P&L
+        SupplierEnvironment env = environment == null ? SupplierEnvironment.PROD : environment;
         if (from.isAfter(to)) {
             throw new IllegalArgumentException("'from' must not be after 'to'");
         }
@@ -53,7 +55,7 @@ public class PlatformPnlService {
                 .filter(b -> COUNTED.contains(b.getStatus()))
                 .filter(b -> product == null || b.getProduct() == product)
                 .filter(b -> tenantId == null || tenantId.equals(b.getTenantId()))
-                .filter(b -> environment == null || b.getEnvironment() == environment)
+                .filter(b -> b.getEnvironment() == env)
                 .toList();
 
         Map<String, String> names = new HashMap<>();
@@ -79,6 +81,7 @@ public class PlatformPnlService {
     private static PnlRow row(String key, String label, List<PlatformBooking> rows) {
         BigDecimal gross = sum(rows, PlatformBooking::getGross);
         BigDecimal gmv = sum(rows, PlatformBooking::getDisplayed);
+        List<PlatformBooking> matched = rows.stream().filter(b -> b.getVoyraEarnedSource() == VoyraEarnedSource.STATEMENT).toList();
         return PnlRow.builder().key(key).label(label)
                 .bookings(rows.size())
                 .cancellations((int) rows.stream().filter(b -> b.getStatus() == PlatformBookingStatus.CANCELLED).count())
@@ -87,8 +90,9 @@ public class PlatformPnlService {
                 .tdsWithheld(sum(rows, PlatformBooking::getTds))
                 .earnedEstimate(sum(rows.stream().filter(b -> b.getVoyraEarnedSource() != VoyraEarnedSource.STATEMENT).toList(),
                         PlatformBooking::getVoyraEarned))
-                .earnedStatement(sum(rows.stream().filter(b -> b.getVoyraEarnedSource() == VoyraEarnedSource.STATEMENT).toList(),
-                        PlatformBooking::getVoyraEarned))
+                .earnedStatement(sum(matched, PlatformBooking::getVoyraEarnedActual))
+                .matchedBookings(matched.size())
+                .matchedEstimate(sum(matched, PlatformBooking::getVoyraEarned))
                 .reversals(sum(rows, PlatformBooking::getVoyraEarnedReversal))
                 .voyraNet(sum(rows, PlatformBooking::getVoyraNet))
                 .build();

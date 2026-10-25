@@ -40,7 +40,7 @@ class PlatformPnlServiceTest {
     private static PlatformBooking booking(String id, String tenant, PricingProduct product, String gross, String displayed,
                                            String earned, VoyraEarnedSource source, String commission, String tds, String net) {
         return PlatformBooking.builder().id(id).tenantId(tenant).product(product).status(PlatformBookingStatus.TICKETED)
-                .environment(SupplierEnvironment.UAT).gross(new BigDecimal(gross)).displayed(new BigDecimal(displayed))
+                .environment(SupplierEnvironment.PROD).gross(new BigDecimal(gross)).displayed(new BigDecimal(displayed))
                 .voyraEarned(new BigDecimal(earned)).voyraEarnedSource(source).agencyCommission(new BigDecimal(commission))
                 .tds(new BigDecimal(tds)).voyraNet(new BigDecimal(net)).ticketedAt(Instant.parse("2026-10-05T06:00:00Z")).build();
     }
@@ -55,8 +55,8 @@ class PlatformPnlServiceTest {
     private List<PlatformBooking> sample() {
         PlatformBooking f1 = booking("B1", "T1", PricingProduct.FLIGHT, "10000.00", "9500.00", "150.00",
                 VoyraEarnedSource.ESTIMATE, "100.00", "2.00", "-450.00");
-        PlatformBooking f2 = booking("B2", "T1", PricingProduct.FLIGHT, "5000.00", "4900.00", "180.00",
-                VoyraEarnedSource.STATEMENT, "50.00", "1.00", "30.00");
+        PlatformBooking f2 = booking("B2", "T1", PricingProduct.FLIGHT, "5000.00", "4900.00", "160.00",
+                VoyraEarnedSource.STATEMENT, "50.00", "1.00", "30.00").toBuilder().voyraEarnedActual(new BigDecimal("180.00")).build();
         PlatformBooking h1 = booking("B3", "T2", PricingProduct.HOTEL, "8000.00", "7600.00", "400.00",
                 VoyraEarnedSource.ESTIMATE, "200.00", "4.00", "-200.00").toBuilder()
                 .status(PlatformBookingStatus.CANCELLED).voyraEarnedReversal(new BigDecimal("400.00")).voyraNet(new BigDecimal("-400.00")).build();
@@ -79,6 +79,8 @@ class PlatformPnlServiceTest {
         assertThat(t.getTdsWithheld()).isEqualByComparingTo("7.00");
         assertThat(t.getEarnedEstimate()).isEqualByComparingTo("550.00");
         assertThat(t.getEarnedStatement()).isEqualByComparingTo("180.00");
+        assertThat(t.getMatchedBookings()).isEqualTo(1);
+        assertThat(t.getMatchedEstimate()).isEqualByComparingTo("160.00"); // what the estimate said for the same bookings
         assertThat(t.getReversals()).isEqualByComparingTo("400.00");
         assertThat(t.getVoyraNet()).isEqualByComparingTo("-820.00");
     }
@@ -105,14 +107,17 @@ class PlatformPnlServiceTest {
     void filtersNarrowByProductAgencyAndEnvironment() {
         List<PlatformBooking> rows = new java.util.ArrayList<>(sample());
         rows.add(booking("B4", "T1", PricingProduct.FLIGHT, "1000.00", "1000.00", "10.00",
-                VoyraEarnedSource.ESTIMATE, "0.00", "0.00", "10.00").toBuilder().environment(SupplierEnvironment.PROD).build());
+                VoyraEarnedSource.ESTIMATE, "0.00", "0.00", "10.00").toBuilder().environment(SupplierEnvironment.UAT).build());
         given(bookingRepository.findByTicketedAtGreaterThanEqualAndTicketedAtLessThan(any(), any())).willReturn(rows);
         given(tenantRepository.findAllById(any())).willReturn(List.of(tenant("T1", "Alpha Travels")));
 
         assertThat(service.pnl(LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 31), PricingProduct.FLIGHT, "T1", null)
-                .getTotals().getBookings()).isEqualTo(3);
-        assertThat(service.pnl(LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 31), null, null, SupplierEnvironment.PROD)
+                .getTotals().getBookings()).isEqualTo(2); // the UAT flight is not live
+        assertThat(service.pnl(LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 31), null, null, SupplierEnvironment.UAT)
                 .getTotals().getVoyraNet()).isEqualByComparingTo("10.00");
+        // no environment means live bookings only: test money never mixes into the platform P&L
+        assertThat(service.pnl(LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 31), null, null, null)
+                .getTotals().getBookings()).isEqualTo(3);
     }
 
     @Test

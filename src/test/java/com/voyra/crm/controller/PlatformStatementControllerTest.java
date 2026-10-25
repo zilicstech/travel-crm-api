@@ -2,6 +2,7 @@ package com.voyra.crm.controller;
 
 import com.voyra.crm.config.SecurityConfig;
 import com.voyra.crm.dto.StatementImportResponse;
+import com.voyra.crm.enums.SupplierEnvironment;
 import com.voyra.crm.enums.UserType;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.security.JwtAuthenticationFilter;
@@ -52,7 +53,7 @@ class PlatformStatementControllerTest {
 
     @Test
     void superAdminImports() throws Exception {
-        given(service.importStatement(any(), eq("A1"), eq("admin")))
+        given(service.importStatement(any(), eq(SupplierEnvironment.PROD), eq("A1"), eq("admin")))
                 .willReturn(StatementImportResponse.builder().id("I1").appliedLines(1).lines(List.of()).build());
         mockMvc.perform(multipart("/api/platform/statements").file(FILE).with(as(UserType.SUPER_ADMIN)))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.appliedLines").value(1));
@@ -60,9 +61,17 @@ class PlatformStatementControllerTest {
 
     @Test
     void theSameFileAgainIs409() throws Exception {
-        given(service.importStatement(any(), any(), any())).willThrow(new IllegalStateException("Already imported"));
+        given(service.importStatement(any(), any(), any(), any())).willThrow(new IllegalStateException("Already imported"));
         mockMvc.perform(multipart("/api/platform/statements").file(FILE).with(as(UserType.SUPER_ADMIN)))
                 .andExpect(status().isConflict()).andExpect(jsonPath("$.message").value("Already imported"));
+    }
+
+    @Test
+    void theAdminMayImportAgainstATestEnvironment() throws Exception {
+        given(service.importStatement(any(), eq(SupplierEnvironment.MOCK), eq("A1"), eq("admin")))
+                .willReturn(StatementImportResponse.builder().id("I2").appliedLines(2).lines(List.of()).build());
+        mockMvc.perform(multipart("/api/platform/statements").file(FILE).param("environment", "MOCK").with(as(UserType.SUPER_ADMIN)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.appliedLines").value(2));
     }
 
     @Test
