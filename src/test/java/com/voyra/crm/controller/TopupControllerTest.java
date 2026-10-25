@@ -1,6 +1,7 @@
 package com.voyra.crm.controller;
 
 import com.voyra.crm.config.SecurityConfig;
+import com.voyra.crm.dto.GatewayTopupResponse;
 import com.voyra.crm.dto.TopupResponse;
 import com.voyra.crm.enums.TopupStatus;
 import com.voyra.crm.enums.UserType;
@@ -14,6 +15,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -24,11 +26,13 @@ import org.springframework.test.web.servlet.request.RequestPostProcessor;
 import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -82,5 +86,33 @@ class TopupControllerTest {
         given(service.listForAgency("T1")).willReturn(List.of());
         mockMvc.perform(get("/api/wallet/topups").with(as(UserType.ACCOUNTANT))).andExpect(status().isOk());
         mockMvc.perform(get("/api/wallet/topups").with(as(UserType.AGENT))).andExpect(status().isForbidden());
+    }
+
+    @Test
+    void ownerStartsAGatewayTopupAccountantCannot() throws Exception {
+        given(service.createGateway(eq("T1"), eq("U1"), any(), any())).willReturn(GatewayTopupResponse.builder()
+                .topupId("R1").gatewayOrderId("order_1").amountPaise(5000000L).provider("stub").build());
+        mockMvc.perform(post("/api/wallet/topups/gateway").contentType(MediaType.APPLICATION_JSON).content("{\"amount\":50000}")
+                        .with(as(UserType.AGENCY_OWNER)))
+                .andExpect(status().isCreated()).andExpect(jsonPath("$.gatewayOrderId").value("order_1"))
+                .andExpect(jsonPath("$.amountPaise").value(5000000));
+        mockMvc.perform(post("/api/wallet/topups/gateway").contentType(MediaType.APPLICATION_JSON).content("{\"amount\":50000}")
+                .with(as(UserType.ACCOUNTANT))).andExpect(status().isForbidden());
+    }
+
+    @Test
+    void gatewayAmountIsValidated() throws Exception {
+        mockMvc.perform(post("/api/wallet/topups/gateway").contentType(MediaType.APPLICATION_JSON).content("{\"amount\":0.5}")
+                        .with(as(UserType.AGENCY_OWNER)))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.details.errors.amount").exists());
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void ownerSimulatesOnlyTheirOwnTenant() throws Exception {
+        given(service.simulate("T1", "R1")).willReturn(TopupResponse.builder().id("R1").status(TopupStatus.APPROVED).build());
+        mockMvc.perform(post("/api/wallet/topups/R1/simulate").with(as(UserType.AGENCY_OWNER)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("APPROVED"));
+        mockMvc.perform(post("/api/wallet/topups/R1/simulate").with(as(UserType.ACCOUNTANT))).andExpect(status().isForbidden());
     }
 }

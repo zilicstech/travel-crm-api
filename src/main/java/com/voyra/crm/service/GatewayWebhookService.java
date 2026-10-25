@@ -1,0 +1,202 @@
+package com.voyra.crm.service;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.voyra.crm.entity.GatewayOrder;
+import com.voyra.crm.entity.GatewayWebhookOrphan;
+import com.voyra.crm.entity.TopupRequest;
+import com.voyra.crm.entity.WalletEntry;
+import com.voyra.crm.enums.GatewayOrderPurpose;
+import com.voyra.crm.enums.GatewayOrderStatus;
+import com.voyra.crm.enums.ReceivableReason;
+import com.voyra.crm.enums.TopupStatus;
+import com.voyra.crm.enums.WalletEntryType;
+import com.voyra.crm.repository.GatewayOrderRepository;
+import com.voyra.crm.repository.GatewayWebhookOrphanRepository;
+import com.voyra.crm.repository.TopupRequestRepository;
+import com.voyra.crm.service.payments.PaymentGateway;
+import com.voyra.crm.util.UniqueIdResolver;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * The one gateway webhook handler, routed by gateway_order.purpose. Order row locked FOR UPDATE so redeliveries
+ * serialise; money moves only through WalletService with the payment / refund id as the idempotency key.
+ */
+@Service
+public class GatewayWebhookService {
+
+    public enum WebhookOutcome { PROCESSED, IGNORED, RETRY }
+
+    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final String REF_TYPE = "TOPUP_REQUEST";
+
+    private final GatewayOrderRepository orderRepository;
+    private final GatewayWebhookOrphanRepository orphanRepository;
+    private final TopupRequestRepository topupRepository;
+    private final WalletService walletService;
+    private final NotificationService notificationService;
+    private final PaymentGateway gateway;
+    private final int orphanMaxAttempts;
+
+    public GatewayWebhookService(GatewayOrderRepository orderRepository, GatewayWebhookOrphanRepository orphanRepository,
+                                 TopupRequestRepository topupRepository, WalletService walletService,
+                                 NotificationService notificationService, PaymentGateway gateway,
+                                 @Value("${app.payments.orphan-max-attempts:5}") int orphanMaxAttempts) {
+        this.orderRepository = orderRepository;
+        this.orphanRepository = orphanRepository;
+        this.topupRepository = topupRepository;
+        this.walletService = walletService;
+        this.notificationService = notificationService;
+        this.gateway = gateway;
+        this.orphanMaxAttempts = orphanMaxAttempts;
+    }
+
+    /** Bad signature or unreadable body: IllegalArgumentException (400), nothing stored. */
+    @Transactional
+    public WebhookOutcome handle(String rawBody, String signature) {
+        if (!gateway.verifyWebhook(rawBody, signature)) {
+            throw new IllegalArgumentException("Invalid webhook signature");
+        }
+        JsonNode root;
+        try {
+            root = JSON.readTree(rawBody);
+        } catch (JsonProcessingException e) {
+            throw new IllegalArgumentException("Unreadable webhook body");
+        }
+        String event = root.path("event").asText();
+        JsonNode payload = root.path("payload");
+        JsonNode payment = payload.path("payment").path("entity");
+        String orderId = payment.path("order_id").asText(payload.path("order").path("entity").path("id").asText());
+        if (event.isEmpty() || orderId.isEmpty()) {
+            return WebhookOutcome.IGNORED;
+        }
+        // refund / dispute events name their own id and amount; payment events use the payment's.
+        JsonNode subject = payload.has("refund") ? payload.path("refund").path("entity")
+                : payload.has("dispute") ? payload.path("dispute").path("entity") : payment;
+        String subjectId = subject.path("id").asText();
+
+        GatewayOrder order = orderRepository.findByGatewayOrderIdForUpdate(orderId).orElse(null);
+        if (order == null) {
+            return orphan(orderId, event, subjectId, subject);
+        }
+        List<Map<String, Object>> events = new ArrayList<>(order.getEvents());
+        events.add(Map.of("id", subjectId, "event", event, "at", Instant.now().toString()));
+        order.setEvents(events);
+        order.setUpdatedAt(Instant.now());
+
+        return switch (event) {
+            case "payment.captured", "order.paid" -> captured(order, payment);
+            case "payment.failed" -> failed(order);
+            case "refund.processed", "payment.dispute.created" -> reversed(order, subjectId, paise(subject));
+            default -> WebhookOutcome.IGNORED;
+        };
+    }
+
+    private WebhookOutcome captured(GatewayOrder order, JsonNode payment) {
+        if (order.getStatus() == GatewayOrderStatus.FLAGGED) {
+            return WebhookOutcome.IGNORED;
+        }
+        String paymentId = payment.path("id").asText();
+        BigDecimal amount = paise(payment);
+        String currency = payment.path("currency").asText();
+        if (amount.compareTo(order.getAmount()) != 0 || !"INR".equals(currency) || !"INR".equals(order.getCurrency())) {
+            order.setStatus(GatewayOrderStatus.FLAGGED);
+            notificationService.platformAlert("Gateway payment does not match its order",
+                    "Order " + order.getGatewayOrderId() + " expected INR " + order.getAmount().toPlainString()
+                            + ", payment " + paymentId + " was " + currency + " " + amount.toPlainString() + ". Not credited.");
+            return WebhookOutcome.PROCESSED;
+        }
+        if (order.getPurpose() == GatewayOrderPurpose.SUBSCRIPTION) {
+            order.setStatus(GatewayOrderStatus.PAID);  // slice 5 consumes it
+            return WebhookOutcome.PROCESSED;
+        }
+        TopupRequest topup = topup(order);
+        if (topup.getStatus() == TopupStatus.APPROVED) {
+            if (!paymentId.equals(topup.getGatewayPaymentId())) {
+                notificationService.platformAlert("Second captured payment on a credited top-up",
+                        "Order " + order.getGatewayOrderId() + " already credited by " + topup.getGatewayPaymentId()
+                                + "; payment " + paymentId + " was not credited - refund it.");
+            }
+            return WebhookOutcome.IGNORED;
+        }
+        // A FAILED top-up can still be paid: the customer may retry with another payment on the same order.
+        WalletEntry entry = walletService.credit(topup.getTenantId(), WalletEntryType.TOPUP, amount, "gw:" + paymentId,
+                REF_TYPE, topup.getId(), "Online top-up, payment " + paymentId);
+        topup.setStatus(TopupStatus.APPROVED);
+        topup.setApprovedAmount(amount);
+        topup.setGatewayPaymentId(paymentId);
+        topup.setCreditEntryId(entry.getId());
+        order.setStatus(GatewayOrderStatus.PAID);
+        return WebhookOutcome.PROCESSED;
+    }
+
+    private WebhookOutcome failed(GatewayOrder order) {
+        if (order.getStatus() != GatewayOrderStatus.CREATED) {
+            return WebhookOutcome.IGNORED;
+        }
+        order.setStatus(GatewayOrderStatus.FAILED);
+        if (order.getPurpose() == GatewayOrderPurpose.TOPUP) {
+            TopupRequest topup = topup(order);
+            if (topup.getStatus() == TopupStatus.PENDING) {
+                topup.setStatus(TopupStatus.FAILED);
+            }
+        }
+        return WebhookOutcome.PROCESSED;
+    }
+
+    private WebhookOutcome reversed(GatewayOrder order, String reversalId, BigDecimal amount) {
+        if (order.getPurpose() != GatewayOrderPurpose.TOPUP || amount.signum() <= 0) {
+            return WebhookOutcome.IGNORED;
+        }
+        TopupRequest topup = topup(order);
+        if (topup.getStatus() != TopupStatus.APPROVED || topup.getCreditEntryId() == null) {
+            return WebhookOutcome.IGNORED;
+        }
+        walletService.debitOrReceivable(topup.getTenantId(), WalletEntryType.ADJUSTMENT, amount, "gw-refund:" + reversalId,
+                REF_TYPE, topup.getId(), ReceivableReason.CHARGEBACK);
+        return WebhookOutcome.PROCESSED;
+    }
+
+    private WebhookOutcome orphan(String orderId, String event, String subjectId, JsonNode subject) {
+        Instant now = Instant.now();
+        GatewayWebhookOrphan orphan = orphanRepository.findByGatewayOrderIdAndEvent(orderId, event)
+                .orElseGet(() -> GatewayWebhookOrphan.builder().id(UniqueIdResolver.resolve(orphanRepository::existsById))
+                        .gatewayOrderId(orderId).event(event).firstSeenAt(now).build());
+        Map<String, Object> summary = new LinkedHashMap<>();  // ids and amount only - no card or contact data
+        summary.put("id", subjectId);
+        summary.put("amountPaise", subject.path("amount").asLong());
+        summary.put("currency", subject.path("currency").asText(null));
+        orphan.setPayload(summary);
+        orphan.setAttempts(orphan.getAttempts() + 1);
+        orphan.setLastSeenAt(now);
+        orphanRepository.save(orphan);
+        if (orphan.getAttempts() < orphanMaxAttempts) {
+            return WebhookOutcome.RETRY;
+        }
+        if (orphan.getAttempts() == orphanMaxAttempts) {
+            notificationService.platformAlert("Gateway webhook for an unknown order",
+                    event + " for order " + orderId + " (" + subjectId + ") arrived " + orphanMaxAttempts
+                            + " times with no matching gateway_order. Nothing was credited.");
+        }
+        return WebhookOutcome.IGNORED;
+    }
+
+    private TopupRequest topup(GatewayOrder order) {
+        return topupRepository.findById(order.getRefId())
+                .orElseThrow(() -> new IllegalStateException("Gateway order " + order.getGatewayOrderId() + " has no top-up"));
+    }
+
+    private static BigDecimal paise(JsonNode entity) {
+        return BigDecimal.valueOf(entity.path("amount").asLong(), 2);
+    }
+}

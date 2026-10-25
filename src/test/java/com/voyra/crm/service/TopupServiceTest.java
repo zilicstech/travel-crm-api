@@ -1,21 +1,32 @@
 package com.voyra.crm.service;
 
 import com.voyra.crm.dto.BankTopupCreateRequest;
+import com.voyra.crm.dto.GatewayTopupCreateRequest;
+import com.voyra.crm.dto.GatewayTopupResponse;
+import com.voyra.crm.entity.GatewayOrder;
+import com.voyra.crm.entity.Tenant;
 import com.voyra.crm.dto.TopupApproveRequest;
 import com.voyra.crm.dto.TopupRejectRequest;
 import com.voyra.crm.dto.TopupResponse;
 import com.voyra.crm.entity.TopupRequest;
 import com.voyra.crm.entity.Wallet;
 import com.voyra.crm.entity.WalletEntry;
+import com.voyra.crm.enums.GatewayOrderPurpose;
+import com.voyra.crm.enums.GatewayOrderStatus;
 import com.voyra.crm.enums.TopupMode;
 import com.voyra.crm.enums.TopupStatus;
 import com.voyra.crm.enums.WalletEntryType;
 import com.voyra.crm.enums.WalletStatus;
 import com.voyra.crm.exception.FieldValidationException;
+import com.voyra.crm.exception.NotFoundException;
+import com.voyra.crm.models.GatewayOrderCreated;
+import com.voyra.crm.repository.GatewayOrderRepository;
+import com.voyra.crm.service.payments.PaymentGateway;
 import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.repository.TopupRequestRepository;
 import com.voyra.crm.repository.WalletRepository;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
@@ -23,6 +34,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mock.web.MockMultipartFile;
 
 import java.math.BigDecimal;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -52,6 +64,12 @@ class TopupServiceTest {
     private FileStorageService fileStorageService;
     @Mock
     private PlatformAuditService platformAuditService;
+    @Mock
+    private GatewayOrderRepository gatewayOrderRepository;
+    @Mock
+    private PaymentGateway paymentGateway;
+    @Mock
+    private GatewayWebhookService webhookService;
     @InjectMocks
     private TopupService service;
 
@@ -154,5 +172,66 @@ class TopupServiceTest {
         verifyNoInteractions(walletService);
         t.setStatus(TopupStatus.REJECTED);
         assertThatThrownBy(() -> service.reject("R1", "A1", req)).hasMessage("This top-up was already rejected");
+    }
+
+    @Test
+    void gatewayTopupCreatesAnOrderAndAPendingRequest() {
+        given(walletRepository.findByTenantId("T1")).willReturn(Optional.of(wallet(WalletStatus.OPEN)));
+        given(tenantRepository.findById("T1")).willReturn(Optional.of(Tenant.builder().id("T1").agencyName("Sky Trips").build()));
+        given(paymentGateway.createOrder(eq(new BigDecimal("500.50")), anyString(), any(Map.class)))
+                .willReturn(new GatewayOrderCreated("order_1", 50050L, "INR"));
+        given(paymentGateway.publicKeyId()).willReturn("rzp_test_key");
+        given(paymentGateway.name()).willReturn("razorpay");
+        GatewayTopupCreateRequest req = new GatewayTopupCreateRequest();
+        req.setAmount(new BigDecimal("500.50"));
+
+        GatewayTopupResponse r = service.createGateway("T1", "U1", "Owner", req);
+
+        ArgumentCaptor<GatewayOrder> order = ArgumentCaptor.forClass(GatewayOrder.class);
+        verify(gatewayOrderRepository).save(order.capture());
+        ArgumentCaptor<TopupRequest> topup = ArgumentCaptor.forClass(TopupRequest.class);
+        verify(topupRepository).save(topup.capture());
+        assertThat(order.getValue().getPurpose()).isEqualTo(GatewayOrderPurpose.TOPUP);
+        assertThat(order.getValue().getStatus()).isEqualTo(GatewayOrderStatus.CREATED);
+        assertThat(order.getValue().getRefId()).isEqualTo(topup.getValue().getId());
+        assertThat(topup.getValue().getMode()).isEqualTo(TopupMode.GATEWAY);
+        assertThat(topup.getValue().getStatus()).isEqualTo(TopupStatus.PENDING);
+        assertThat(topup.getValue().getGatewayOrderId()).isEqualTo("order_1");
+        assertThat(r.getTopupId()).isEqualTo(topup.getValue().getId());
+        assertThat(r.getGatewayOrderId()).isEqualTo("order_1");
+        assertThat(r.getAmountPaise()).isEqualTo(50050L);
+        assertThat(r.getKeyId()).isEqualTo("rzp_test_key");
+        assertThat(r.getProvider()).isEqualTo("razorpay");
+        assertThat(r.getAgencyName()).isEqualTo("Sky Trips");
+    }
+
+    @Test
+    void simulateIs404WhenProviderIsRazorpay() {
+        given(paymentGateway.name()).willReturn("razorpay");
+        assertThatThrownBy(() -> service.simulate("T1", "R1")).isInstanceOf(NotFoundException.class);
+        verifyNoInteractions(webhookService, walletService);
+    }
+
+    @Test
+    void simulateIs404ForAnotherAgencysTopup() {
+        given(paymentGateway.name()).willReturn("stub");
+        TopupRequest t = pending().toBuilder().tenantId("T2").mode(TopupMode.GATEWAY).gatewayOrderId("order_1").build();
+        given(topupRepository.findById("R1")).willReturn(Optional.of(t));
+        assertThatThrownBy(() -> service.simulate("T1", "R1")).isInstanceOf(NotFoundException.class);
+        verifyNoInteractions(webhookService);
+    }
+
+    @Test
+    void simulateRunsACapturedEventThroughTheWebhookHandler() {
+        given(paymentGateway.name()).willReturn("stub");
+        TopupRequest t = pending().toBuilder().mode(TopupMode.GATEWAY).gatewayOrderId("order_1").build();
+        given(topupRepository.findById("R1")).willReturn(Optional.of(t));
+
+        service.simulate("T1", "R1");
+
+        ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
+        verify(webhookService).handle(body.capture(), any());
+        assertThat(body.getValue()).contains("\"event\":\"payment.captured\"", "\"order_id\":\"order_1\"",
+                "\"amount\":5000000", "\"currency\":\"INR\"");
     }
 }

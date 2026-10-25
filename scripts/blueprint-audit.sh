@@ -16,7 +16,7 @@ echo "=== BACKEND_BLUEPRINT.md compliance audit ==="
 # §5.3 - every controller class or method carries @PreAuthorize (auth + public are exempt)
 UNGUARDED=0
 for f in $SRC/controller/*.java; do
-  case "$(basename "$f")" in AuthController.java|PublicProposalController.java|PublicFeedbackController.java|PublicInquiryController.java|PublicAgencyApplicationController.java) continue ;; esac
+  case "$(basename "$f")" in AuthController.java|PublicProposalController.java|PublicFeedbackController.java|PublicInquiryController.java|PublicAgencyApplicationController.java|PublicPaymentWebhookController.java) continue ;; esac
   grep -q '@PreAuthorize' "$f" || { echo "    unguarded controller: $f"; UNGUARDED=$((UNGUARDED+1)); }
 done
 check "§5.3 all controllers guarded by @PreAuthorize" 0 "$UNGUARDED"

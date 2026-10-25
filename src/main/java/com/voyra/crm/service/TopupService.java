@@ -1,13 +1,18 @@
 package com.voyra.crm.service;
 
 import com.voyra.crm.dto.BankTopupCreateRequest;
+import com.voyra.crm.dto.GatewayTopupCreateRequest;
+import com.voyra.crm.dto.GatewayTopupResponse;
 import com.voyra.crm.dto.TopupApproveRequest;
 import com.voyra.crm.dto.TopupRejectRequest;
 import com.voyra.crm.dto.TopupResponse;
+import com.voyra.crm.entity.GatewayOrder;
 import com.voyra.crm.entity.TopupRequest;
 import com.voyra.crm.entity.Wallet;
 import com.voyra.crm.entity.WalletEntry;
 import com.voyra.crm.entity.Tenant;
+import com.voyra.crm.enums.GatewayOrderPurpose;
+import com.voyra.crm.enums.GatewayOrderStatus;
 import com.voyra.crm.enums.PlatformAuditAction;
 import com.voyra.crm.enums.TopupMode;
 import com.voyra.crm.enums.TopupStatus;
@@ -15,9 +20,13 @@ import com.voyra.crm.enums.WalletEntryType;
 import com.voyra.crm.enums.WalletStatus;
 import com.voyra.crm.exception.FieldValidationException;
 import com.voyra.crm.exception.NotFoundException;
+import com.voyra.crm.models.GatewayOrderCreated;
+import com.voyra.crm.repository.GatewayOrderRepository;
 import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.repository.TopupRequestRepository;
 import com.voyra.crm.repository.WalletRepository;
+import com.voyra.crm.service.payments.PaymentGateway;
+import com.voyra.crm.service.payments.RazorpayPaymentGateway;
 import com.voyra.crm.util.UniqueIdResolver;
 import com.voyra.crm.util.UploadValidator;
 import lombok.RequiredArgsConstructor;
@@ -37,7 +46,10 @@ import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-/** Bank-transfer top-ups: the owner submits a UTR and proof; the platform desk approves (credit) or rejects. */
+/**
+ * Bank-transfer top-ups (owner submits UTR and proof; the platform desk approves or rejects) and gateway top-ups
+ * (an order at the gateway; the signed webhook credits it).
+ */
 @Service
 @RequiredArgsConstructor
 public class TopupService {
@@ -53,6 +65,9 @@ public class TopupService {
     private final WalletService walletService;
     private final FileStorageService fileStorageService;
     private final PlatformAuditService platformAuditService;
+    private final GatewayOrderRepository gatewayOrderRepository;
+    private final PaymentGateway paymentGateway;
+    private final GatewayWebhookService webhookService;
 
     /** Upper-case with every whitespace character removed, so "sbin 123" and "SBIN123" are the same UTR. */
     public static String normalize(String bankRef) {
@@ -61,11 +76,7 @@ public class TopupService {
 
     @Transactional
     public TopupResponse createBank(String tenantId, String userId, String userName, BankTopupCreateRequest request) {
-        Wallet wallet = walletRepository.findByTenantId(tenantId)
-                .orElseThrow(() -> new NotFoundException("Wallet not found for this agency"));
-        if (wallet.getStatus() != WalletStatus.OPEN) {
-            throw new IllegalStateException("This wallet is closed");
-        }
+        Wallet wallet = openWallet(tenantId);
         String normalized = normalize(request.getBankRef());
         if (normalized.length() < 4) {
             throw new FieldValidationException("bankRef", "Bank reference must be at least 4 letters or digits");
@@ -96,6 +107,45 @@ public class TopupService {
                 .requestedBy(userId).requestedByName(userName)
                 .createdAt(Instant.now()).build());
         return toResponse(saved, null);
+    }
+
+    /** Creates the gateway order first, so a gateway failure leaves no PENDING row behind. */
+    @Transactional
+    public GatewayTopupResponse createGateway(String tenantId, String userId, String userName, GatewayTopupCreateRequest request) {
+        Wallet wallet = openWallet(tenantId);
+        String id = UniqueIdResolver.resolve(topupRepository::existsById);
+        GatewayOrderCreated created = paymentGateway.createOrder(request.getAmount(), id, Map.of("tenantId", tenantId, "topupId", id));
+        Instant now = Instant.now();
+        gatewayOrderRepository.save(GatewayOrder.builder().id(UniqueIdResolver.resolve(gatewayOrderRepository::existsById))
+                .gatewayOrderId(created.orderId()).purpose(GatewayOrderPurpose.TOPUP).refId(id)
+                .amount(request.getAmount()).status(GatewayOrderStatus.CREATED).createdAt(now).updatedAt(now).build());
+        topupRepository.save(TopupRequest.builder()
+                .id(id).walletId(wallet.getId()).tenantId(tenantId)
+                .mode(TopupMode.GATEWAY).amount(request.getAmount()).status(TopupStatus.PENDING)
+                .gatewayOrderId(created.orderId()).requestedBy(userId).requestedByName(userName)
+                .createdAt(now).build());
+        return GatewayTopupResponse.builder().topupId(id).gatewayOrderId(created.orderId())
+                .keyId(paymentGateway.publicKeyId()).amountPaise(created.amountPaise()).provider(paymentGateway.name())
+                .agencyName(tenantRepository.findById(tenantId).map(Tenant::getAgencyName).orElse("")).build();
+    }
+
+    /**
+     * Stub provider only (404 otherwise): pays the caller's own gateway top-up by running a payment.captured event
+     * through the real webhook handler. Not transactional, so the handler commits before the re-read.
+     */
+    public TopupResponse simulate(String tenantId, String id) {
+        if (!"stub".equals(paymentGateway.name())) {
+            throw new NotFoundException("Top-up not found");
+        }
+        TopupRequest t = topupRepository.findById(id)
+                .filter(r -> r.getTenantId().equals(tenantId) && r.getMode() == TopupMode.GATEWAY)
+                .orElseThrow(() -> new NotFoundException("Top-up not found"));
+        // Fixed payment id per top-up, so a second simulate is a duplicate delivery, not a second payment.
+        String body = String.format("{\"event\":\"payment.captured\",\"payload\":{\"payment\":{\"entity\":{\"id\":\"pay_stub_%s\","
+                + "\"order_id\":\"%s\",\"amount\":%d,\"currency\":\"INR\",\"status\":\"captured\"}}}}",
+                t.getId(), t.getGatewayOrderId(), RazorpayPaymentGateway.toPaise(t.getAmount()));
+        webhookService.handle(body, null);
+        return toResponse(topupRepository.findById(id).orElseThrow(), null);
     }
 
     @Transactional(readOnly = true)
@@ -152,6 +202,15 @@ public class TopupService {
 
     /** Not a DTO - unpacked into a binary response by the controller. */
     public record ProofContent(Resource resource, String fileName, String contentType) {
+    }
+
+    private Wallet openWallet(String tenantId) {
+        Wallet wallet = walletRepository.findByTenantId(tenantId)
+                .orElseThrow(() -> new NotFoundException("Wallet not found for this agency"));
+        if (wallet.getStatus() != WalletStatus.OPEN) {
+            throw new IllegalStateException("This wallet is closed");
+        }
+        return wallet;
     }
 
     private TopupRequest lockPending(String id) {
