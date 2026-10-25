@@ -2,6 +2,7 @@ package com.voyra.crm.repository;
 
 import com.voyra.crm.entity.WalletEntry;
 import com.voyra.crm.enums.WalletEntryType;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -15,6 +16,8 @@ public interface WalletEntryRepository extends JpaRepository<WalletEntry, String
     Optional<WalletEntry> findByIdempotencyKey(String idempotencyKey);
 
     List<WalletEntry> findByWalletIdOrderByCreatedAtDescIdDesc(String walletId, Pageable pageable);
+
+    Page<WalletEntry> findPagedByWalletIdOrderByCreatedAtDescIdDesc(String walletId, Pageable pageable);
 
     boolean existsByRelatedEntryIdAndType(String relatedEntryId, WalletEntryType type);
 
