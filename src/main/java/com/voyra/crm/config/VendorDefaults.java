@@ -25,7 +25,8 @@ public class VendorDefaults {
 
     /** Seeds the current tenant only if it has no vendors yet. Returns whether anything was seeded. */
     public boolean seedCurrentTenant() {
-        if (vendorRepository.count() != 0) {
+        // V78 seeds "Voyra Platform" into every tenant first, so it must not count as "already has vendors"
+        if (vendorRepository.countByNameNotIgnoreCase("Voyra Platform") != 0) {
             return false;
         }
         seedDefaults();

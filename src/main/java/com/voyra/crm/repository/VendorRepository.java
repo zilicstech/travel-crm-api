@@ -20,6 +20,8 @@ public interface VendorRepository extends JpaRepository<Vendor, String> {
 
     boolean existsByNameIgnoreCase(String name);
 
+    long countByNameNotIgnoreCase(String name);
+
     boolean existsByNameIgnoreCaseAndIdNot(String name, String id);
 
     /**

@@ -1,6 +1,6 @@
 -- Every tenant gets the "Voyra Platform" vendor and the "Voyra Wallet (advance to supplier)" ledger
--- account that the mirror of a platform booking posts to. VendorDefaults skips tenants that already
--- have vendors, so this cannot rely on it. Idempotent: safe on a tenant that has either already.
+-- account that the mirror of a platform booking posts to. VendorDefaults only seeds a tenant with no
+-- vendors other than this one, so it cannot be relied on to create it. Idempotent: safe on a tenant that has either already.
 INSERT INTO vendor (id, name, service_types, is_active, sort_order, created_at)
 SELECT 'voyra-platform-' || substr(md5(random()::text), 1, 20), 'Voyra Platform', ARRAY['FLIGHT','HOTEL'], TRUE, 0, now()
 WHERE NOT EXISTS (SELECT 1 FROM vendor WHERE LOWER(name) = 'voyra platform' AND is_active);
