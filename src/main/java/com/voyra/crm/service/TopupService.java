@@ -113,6 +113,10 @@ public class TopupService {
     @Transactional
     public GatewayTopupResponse createGateway(String tenantId, String userId, String userName, GatewayTopupCreateRequest request) {
         Wallet wallet = openWallet(tenantId);
+        // Prod runs the stub until Razorpay keys exist; only test wallets (which can simulate payment) may use it.
+        if ("stub".equals(paymentGateway.name()) && !Boolean.TRUE.equals(wallet.getIsTest())) {
+            throw new IllegalStateException("Online top-up is not available yet");
+        }
         String id = UniqueIdResolver.resolve(topupRepository::existsById);
         GatewayOrderCreated created = paymentGateway.createOrder(request.getAmount(), id, Map.of("tenantId", tenantId, "topupId", id));
         Instant now = Instant.now();
@@ -157,9 +161,10 @@ public class TopupService {
     }
 
     @Transactional(readOnly = true)
-    public List<TopupResponse> listForPlatform(TopupStatus status) {
-        List<TopupRequest> rows = status == null
-                ? topupRepository.findAllByOrderByCreatedAtDesc() : topupRepository.findByStatusOrderByCreatedAtDesc(status);
+    public List<TopupResponse> listForPlatform(TopupStatus status, TopupMode mode) {
+        List<TopupRequest> rows = (status == null
+                ? topupRepository.findAllByOrderByCreatedAtDesc() : topupRepository.findByStatusOrderByCreatedAtDesc(status))
+                .stream().filter(t -> mode == null || t.getMode() == mode).toList();
         Map<String, String> names = tenantRepository.findAllById(rows.stream().map(TopupRequest::getTenantId).distinct().toList())
                 .stream().collect(Collectors.toMap(Tenant::getId, Tenant::getAgencyName));
         return rows.stream().map(t -> toResponse(t, names.getOrDefault(t.getTenantId(), ""))).toList();
@@ -171,12 +176,12 @@ public class TopupService {
         WalletEntry entry = walletService.credit(t.getTenantId(), WalletEntryType.TOPUP, request.getApprovedAmount(),
                 "topup:" + t.getId(), REF_TYPE, t.getId(), "Bank transfer top-up, UTR " + t.getBankRef());
         t.setStatus(TopupStatus.APPROVED);
-        t.setApprovedAmount(request.getApprovedAmount());
+        t.setApprovedAmount(entry.getAmount());  // what was credited: a replay of the key returns the original entry
         t.setCreditEntryId(entry.getId());
         decided(t, reviewerId, request.getNote());
         platformAuditService.record(PlatformAuditAction.TOPUP_DECISION, REF_TYPE, id,
                 Map.of("decision", "APPROVED", "tenantId", t.getTenantId(), "requested", t.getAmount().toPlainString(),
-                        "approved", request.getApprovedAmount().toPlainString()));
+                        "approved", entry.getAmount().toPlainString()));
         return toResponse(t, null);
     }
 

@@ -34,6 +34,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mock.web.MockMultipartFile;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -136,7 +137,7 @@ class TopupServiceTest {
     void approveCreditsTheApprovedAmountNotTheRequested() {
         TopupRequest t = pending();
         given(topupRepository.findByIdForUpdate("R1")).willReturn(Optional.of(t));
-        WalletEntry entry = WalletEntry.builder().id("E1").build();
+        WalletEntry entry = WalletEntry.builder().id("E1").amount(new BigDecimal("49500.00")).build();
         given(walletService.credit(eq("T1"), eq(WalletEntryType.TOPUP), eq(new BigDecimal("49500.00")),
                 eq("topup:R1"), eq("TOPUP_REQUEST"), eq("R1"), anyString())).willReturn(entry);
         TopupApproveRequest req = new TopupApproveRequest();
@@ -146,6 +147,24 @@ class TopupServiceTest {
         assertThat(r.getApprovedAmount()).isEqualByComparingTo("49500.00");
         assertThat(t.getCreditEntryId()).isEqualTo("E1");
         verify(platformAuditService).record(eq(com.voyra.crm.enums.PlatformAuditAction.TOPUP_DECISION), anyString(), eq("R1"), any());
+    }
+
+    @Test
+    void approveRecordsTheCreditedAmountNotTheRequestOnAReplay() {
+        TopupRequest t = pending();
+        given(topupRepository.findByIdForUpdate("R1")).willReturn(Optional.of(t));
+        // The idempotency key already holds a 49,500 credit; a replay asking for 40,000 returns that entry.
+        given(walletService.credit(any(), any(), any(), eq("topup:R1"), any(), any(), any()))
+                .willReturn(WalletEntry.builder().id("E1").amount(new BigDecimal("49500.00")).build());
+        TopupApproveRequest req = new TopupApproveRequest();
+        req.setApprovedAmount(new BigDecimal("40000.00"));
+
+        TopupResponse r = service.approve("R1", "A1", req);
+
+        assertThat(t.getApprovedAmount()).isEqualByComparingTo("49500.00");
+        assertThat(r.getApprovedAmount()).isEqualByComparingTo("49500.00");
+        verify(platformAuditService).record(any(), anyString(), eq("R1"), org.mockito.ArgumentMatchers.argThat(
+                (Map<String, Object> m) -> "49500.00".equals(m.get("approved"))));
     }
 
     @Test
@@ -172,6 +191,43 @@ class TopupServiceTest {
         verifyNoInteractions(walletService);
         t.setStatus(TopupStatus.REJECTED);
         assertThatThrownBy(() -> service.reject("R1", "A1", req)).hasMessage("This top-up was already rejected");
+    }
+
+    @Test
+    void gatewayTopupRefusedOnStubForANonTestWallet() {
+        given(walletRepository.findByTenantId("T1")).willReturn(Optional.of(wallet(WalletStatus.OPEN)));
+        given(paymentGateway.name()).willReturn("stub");
+        GatewayTopupCreateRequest req = new GatewayTopupCreateRequest();
+        req.setAmount(new BigDecimal("500.00"));
+
+        assertThatThrownBy(() -> service.createGateway("T1", "U1", "Owner", req))
+                .isInstanceOf(IllegalStateException.class).hasMessage("Online top-up is not available yet");
+        verify(paymentGateway, never()).createOrder(any(), any(), any());
+        verifyNoInteractions(topupRepository, gatewayOrderRepository);
+    }
+
+    @Test
+    void gatewayTopupOnStubWorksForATestWallet() {
+        given(walletRepository.findByTenantId("T1"))
+                .willReturn(Optional.of(wallet(WalletStatus.OPEN).toBuilder().isTest(true).build()));
+        given(paymentGateway.name()).willReturn("stub");
+        given(paymentGateway.createOrder(any(), anyString(), any(Map.class))).willReturn(new GatewayOrderCreated("order_stub_1", 50000L, "INR"));
+        GatewayTopupCreateRequest req = new GatewayTopupCreateRequest();
+        req.setAmount(new BigDecimal("500.00"));
+
+        assertThat(service.createGateway("T1", "U1", "Owner", req).getGatewayOrderId()).isEqualTo("order_stub_1");
+    }
+
+    @Test
+    void platformListFiltersByMode() {
+        TopupRequest bank = pending();
+        TopupRequest online = pending().toBuilder().id("R2").mode(TopupMode.GATEWAY).build();
+        given(topupRepository.findByStatusOrderByCreatedAtDesc(TopupStatus.PENDING)).willReturn(List.of(bank, online));
+        given(topupRepository.findAllByOrderByCreatedAtDesc()).willReturn(List.of(bank, online));
+
+        assertThat(service.listForPlatform(TopupStatus.PENDING, TopupMode.BANK_TRANSFER)).extracting(TopupResponse::getId)
+                .containsExactly("R1");
+        assertThat(service.listForPlatform(null, null)).extracting(TopupResponse::getId).containsExactly("R1", "R2");
     }
 
     @Test

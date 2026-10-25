@@ -3,6 +3,7 @@ package com.voyra.crm.controller;
 import com.voyra.crm.dto.TopupApproveRequest;
 import com.voyra.crm.dto.TopupRejectRequest;
 import com.voyra.crm.dto.TopupResponse;
+import com.voyra.crm.enums.TopupMode;
 import com.voyra.crm.enums.TopupStatus;
 import com.voyra.crm.security.SecurityContextUtil;
 import com.voyra.crm.service.TopupService;
@@ -37,9 +38,11 @@ public class PlatformTopupController {
     private final TopupService service;
 
     @GetMapping
-    @Operation(summary = "Top-ups across all agencies, newest first", description = "?status= filters, e.g. PENDING")
-    public ResponseEntity<List<TopupResponse>> list(@RequestParam(value = "status", required = false) TopupStatus status) {
-        return ResponseEntity.ok(service.listForPlatform(status));
+    @Operation(summary = "Top-ups across all agencies, newest first",
+            description = "?status= and ?mode= filter, e.g. status=PENDING&mode=BANK_TRANSFER for the approval queue")
+    public ResponseEntity<List<TopupResponse>> list(@RequestParam(value = "status", required = false) TopupStatus status,
+                                                    @RequestParam(value = "mode", required = false) TopupMode mode) {
+        return ResponseEntity.ok(service.listForPlatform(status, mode));
     }
 
     @GetMapping("/{id}/proof")

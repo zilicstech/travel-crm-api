@@ -101,8 +101,9 @@ public class GatewayWebhookService {
 
         return switch (event) {
             case "payment.captured", "order.paid" -> captured(order, payment);
-            case "payment.failed" -> failed(order);
-            case "refund.processed", "payment.dispute.created" -> reversed(order, subjectId, paise(subject));
+            case "refund.processed", "payment.dispute.created" ->
+                    reversed(order, subjectId, paise(subject), subject.path("payment_id").asText(payment.path("id").asText()));
+            // payment.failed is not final: the customer can retry on the same order, and the 24 h expiry handles abandonment.
             default -> WebhookOutcome.IGNORED;
         };
     }
@@ -114,15 +115,22 @@ public class GatewayWebhookService {
 
     /** The one capture path, shared with the reconciliation job. Caller holds the order row lock inside a transaction. */
     public WebhookOutcome applyCapture(GatewayOrder order, GatewayPayment payment) {
-        if (order.getStatus() == GatewayOrderStatus.FLAGGED) {
-            return WebhookOutcome.IGNORED;
-        }
         String paymentId = payment.paymentId();
         BigDecimal amount = payment.amountInr();
         String currency = payment.currency();
         String status = payment.status();
-        if (amount.compareTo(order.getAmount()) != 0 || !"INR".equals(currency) || !"INR".equals(order.getCurrency())
-                || !"captured".equals(status)) {
+        boolean matches = amount.compareTo(order.getAmount()) == 0 && "INR".equals(currency) && "INR".equals(order.getCurrency())
+                && "captured".equals(status);
+        if (order.getStatus() == GatewayOrderStatus.FLAGGED) {
+            // Customer paid and nothing is credited. Alert once per payment: order.paid repeats payment.captured.
+            if (matches && order.getEvents().stream().filter(e -> paymentId.equals(e.get("id"))).count() <= 1) {
+                notificationService.platformAlert("Captured payment on a flagged order",
+                        "Order " + order.getGatewayOrderId() + " is flagged; payment " + paymentId + " (INR " + amount.toPlainString()
+                                + ") was captured and not credited - refund it or credit it by hand.");
+            }
+            return WebhookOutcome.IGNORED;
+        }
+        if (!matches) {
             order.setStatus(GatewayOrderStatus.FLAGGED);
             notificationService.platformAlert("Gateway payment does not match its order",
                     "Order " + order.getGatewayOrderId() + " expected a captured INR " + order.getAmount().toPlainString()
@@ -153,7 +161,6 @@ public class GatewayWebhookService {
                             + "'s wallet is not open. Not credited - refund it offline.");
             return WebhookOutcome.PROCESSED;
         }
-        // A FAILED top-up can still be paid: the customer may retry with another payment on the same order.
         WalletEntry entry = walletService.credit(topup.getTenantId(), WalletEntryType.TOPUP, amount, "gw:" + paymentId,
                 REF_TYPE, topup.getId(), "Online top-up, payment " + paymentId);
         topup.setStatus(TopupStatus.APPROVED);
@@ -164,21 +171,7 @@ public class GatewayWebhookService {
         return WebhookOutcome.PROCESSED;
     }
 
-    private WebhookOutcome failed(GatewayOrder order) {
-        if (order.getStatus() != GatewayOrderStatus.CREATED) {
-            return WebhookOutcome.IGNORED;
-        }
-        order.setStatus(GatewayOrderStatus.FAILED);
-        if (order.getPurpose() == GatewayOrderPurpose.TOPUP) {
-            TopupRequest topup = topup(order);
-            if (topup.getStatus() == TopupStatus.PENDING) {
-                topup.setStatus(TopupStatus.FAILED);
-            }
-        }
-        return WebhookOutcome.PROCESSED;
-    }
-
-    private WebhookOutcome reversed(GatewayOrder order, String reversalId, BigDecimal amount) {
+    private WebhookOutcome reversed(GatewayOrder order, String reversalId, BigDecimal amount, String paymentId) {
         if (order.getPurpose() != GatewayOrderPurpose.TOPUP || amount.signum() <= 0) {
             return WebhookOutcome.IGNORED;
         }
@@ -189,6 +182,12 @@ public class GatewayWebhookService {
         TopupRequest topup = topup(order);
         if (topup.getCreditEntryId() == null) {
             return WebhookOutcome.RETRY;  // arrived before its capture; the redelivery finds it credited
+        }
+        if (!paymentId.equals(topup.getGatewayPaymentId())) {
+            notificationService.platformAlert("Gateway reversal for an uncredited payment",
+                    "Order " + order.getGatewayOrderId() + " was credited by " + topup.getGatewayPaymentId() + "; " + reversalId
+                            + " is a refund/dispute for a payment that was never credited (" + paymentId + ") - handle offline.");
+            return WebhookOutcome.IGNORED;
         }
         // A refund and a dispute on one payment take back at most what was credited.
         BigDecimal remaining = topup.getApprovedAmount().subtract(walletService.chargebacksPosted(REF_TYPE, topup.getId()));

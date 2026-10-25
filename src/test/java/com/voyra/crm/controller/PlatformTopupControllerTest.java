@@ -2,6 +2,7 @@ package com.voyra.crm.controller;
 
 import com.voyra.crm.config.SecurityConfig;
 import com.voyra.crm.dto.TopupResponse;
+import com.voyra.crm.enums.TopupMode;
 import com.voyra.crm.enums.TopupStatus;
 import com.voyra.crm.enums.UserType;
 import com.voyra.crm.security.CustomUserPrincipal;
@@ -28,6 +29,7 @@ import java.util.List;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -96,8 +98,12 @@ class PlatformTopupControllerTest {
     }
 
     @Test
-    void listFiltersByStatus() throws Exception {
-        given(service.listForPlatform(TopupStatus.PENDING)).willReturn(List.of());
-        mockMvc.perform(get("/api/platform/topups?status=PENDING").with(as(UserType.SUPER_ADMIN))).andExpect(status().isOk());
+    void listFiltersByStatusAndMode() throws Exception {
+        given(service.listForPlatform(TopupStatus.PENDING, TopupMode.BANK_TRANSFER))
+                .willReturn(List.of(TopupResponse.builder().id("R1").mode(TopupMode.BANK_TRANSFER).build()));
+        mockMvc.perform(get("/api/platform/topups?status=PENDING&mode=BANK_TRANSFER").with(as(UserType.SUPER_ADMIN)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$[0].id").value("R1"));
+        mockMvc.perform(get("/api/platform/topups").with(as(UserType.SUPER_ADMIN))).andExpect(status().isOk());
+        verify(service).listForPlatform(null, null);
     }
 }
