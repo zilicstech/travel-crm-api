@@ -3,6 +3,7 @@ package com.voyra.crm.service.booking;
 import com.voyra.crm.entity.PlatformBooking;
 import com.voyra.crm.entity.PlatformBookingEvent;
 import com.voyra.crm.enums.PlatformBookingStatus;
+import com.voyra.crm.enums.SupplierEnvironment;
 import com.voyra.crm.models.booking.BookResult;
 import com.voyra.crm.models.booking.SupplierBookingStatus;
 import com.voyra.crm.repository.PlatformBookingEventRepository;
@@ -47,6 +48,8 @@ public class PlatformBookingPoller {
     static final Duration LATE_TICKET_WINDOW = Duration.ofHours(72);
     static final Duration HELD_STALE = Duration.ofMinutes(10);
     static final Duration REVIEW_STALE = Duration.ofHours(2);
+    /** An accepted Tripjack cancel not confirmed by then alerts Voyra (once). */
+    static final Duration CANCEL_CONFIRM_WAIT = Duration.ofHours(24);
 
     private final PlatformBookingRepository bookingRepository;
     private final PlatformBookingEventRepository eventRepository;
@@ -88,12 +91,17 @@ public class PlatformBookingPoller {
             }
         }
         for (PlatformBooking b : bookingRepository.findByStatusIn(EnumSet.of(PlatformBookingStatus.CANCELLING))) {
-            if (providers.isMock(b.getProduct()) || (b.getLastPolledAt() != null && b.getLastPolledAt().isAfter(slowDue))
-                    || !acceptedSinceRequested(b.getId())) {
-                continue; // the mock settles at once; an unanswered cancel is an admin's (resolveCancel)
+            Optional<Instant> acceptedAt = b.getEnvironment() == SupplierEnvironment.MOCK ? Optional.empty() : acceptedSinceRequested(b.getId());
+            if (acceptedAt.isEmpty()) {
+                continue; // a mock row settles at once; an unanswered cancel is an admin's (resolveCancel)
             }
             try {
-                pollCancel(b);
+                if (b.getLastPolledAt() == null || !b.getLastPolledAt().isAfter(slowDue)) {
+                    pollCancel(b);
+                }
+                if (acceptedAt.get().isBefore(now.minus(CANCEL_CONFIRM_WAIT))) {
+                    tx.executeWithoutResult(s -> alertOverdueCancel(b.getId(), acceptedAt.get()));
+                }
             } catch (Exception e) {
                 log.error("Polling the cancellation of platform booking {} failed: {}", b.getId(), e.getMessage(), e);
             }
@@ -101,11 +109,24 @@ public class PlatformBookingPoller {
         sweep(now);
     }
 
-    /** The supplier accepted the latest cancel request (an acceptance of an earlier, reverted attempt does not count). */
-    private boolean acceptedSinceRequested(String bookingId) {
+    /** When the supplier accepted the latest cancel request; empty if it has not (an earlier, reverted attempt does not count). */
+    private Optional<Instant> acceptedSinceRequested(String bookingId) {
         Optional<Instant> accepted = latest(bookingId, "CANCEL_ACCEPTED");
         Optional<Instant> requested = latest(bookingId, "CANCEL_REQUESTED");
-        return accepted.isPresent() && (requested.isEmpty() || !accepted.get().isBefore(requested.get()));
+        return accepted.filter(a -> requested.isEmpty() || !a.isBefore(requested.get()));
+    }
+
+    /** Still CANCELLING a day after the supplier accepted: alert once per acceptance, marked by a CANCEL_OVERDUE event. */
+    private void alertOverdueCancel(String bookingId, Instant acceptedAt) {
+        PlatformBooking b = bookingRepository.findByIdForUpdate(bookingId).orElse(null);
+        if (b == null || b.getStatus() != PlatformBookingStatus.CANCELLING
+                || latest(bookingId, "CANCEL_OVERDUE").filter(t -> !t.isBefore(acceptedAt)).isPresent()) {
+            return;
+        }
+        events.record(bookingId, "CANCEL_OVERDUE", Map.of("acceptedAt", acceptedAt.toString()));
+        notificationService.platformAlert("Cancellation of booking " + bookingId + " not confirmed",
+                "The supplier accepted the cancellation of booking " + bookingId + " (agency " + b.getTenantId() + ") at " + acceptedAt
+                        + " but still shows it live. Nothing has been refunded; check with the supplier and resolve the cancellation.");
     }
 
     private Optional<Instant> latest(String bookingId, String type) {

@@ -44,6 +44,11 @@ class PlatformSettingRequestServiceTest {
 
     @BeforeEach
     void setUp() {
+        lenient().when(repository.saveAndFlush(any())).thenAnswer(i -> {
+            PlatformSettingRequest r = i.getArgument(0);
+            rows.put(r.getId(), r);
+            return r;
+        });
         lenient().when(repository.save(any())).thenAnswer(i -> {
             PlatformSettingRequest r = i.getArgument(0);
             rows.put(r.getId(), r);
@@ -114,5 +119,26 @@ class PlatformSettingRequestServiceTest {
         verify(settings, never()).applyApproved(anyString(), anyString());
         // a fresh request can follow a withdrawn one
         assertThat(service.request("tripjack_live_ready", "true").getRequestedAt()).isBeforeOrEqualTo(Instant.now());
+    }
+
+    @Test
+    void noRequestWhenTheSwitchIsAlreadyOn() {
+        org.mockito.Mockito.when(settings.tripjackLiveReady()).thenReturn(true);
+
+        assertThatThrownBy(() -> service.request("tripjack_live_ready", "true"))
+                .isInstanceOf(IllegalStateException.class).hasMessage("tripjack_live_ready is already on");
+        verify(auditService, never()).record(any(), any(), any(), any());
+    }
+
+    /** Two admins requesting at the same moment: the open-request index refuses the second, as a clean 409. */
+    @Test
+    void aConcurrentDuplicateRequestIsAClean409() {
+        org.mockito.Mockito.doThrow(new org.springframework.dao.DataIntegrityViolationException(
+                "duplicate key value violates unique constraint \"uq_platform_setting_request_open\"")).when(repository).saveAndFlush(any());
+
+        assertThatThrownBy(() -> service.request("tripjack_live_ready", "true"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("A change to tripjack_live_ready is already waiting for a second platform admin");
+        verify(auditService, never()).record(any(), any(), any(), any());
     }
 }

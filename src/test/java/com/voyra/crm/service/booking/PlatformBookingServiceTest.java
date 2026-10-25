@@ -483,6 +483,7 @@ class PlatformBookingServiceTest {
     @Test
     void prodBookingOnATestWalletIsRefused() {
         config.setProvider("tripjack");
+        when(settings.tripjackLiveReady()).thenReturn(true);
         when(credentialRepository.findByProviderAndIsActiveTrue(SupplierProvider.TRIPJACK)).thenReturn(Optional.of(
                 PlatformSupplierCredential.builder().id("CRED1").environment(SupplierEnvironment.PROD).build()));
         String id = reviewed();
@@ -1261,8 +1262,8 @@ class PlatformBookingServiceTest {
         assertThatThrownBy(() -> service.confirm(id, withPax(pax("ADULT", LocalDate.of(2015, 1, 1)), pax("ADULT", null),
                 pax("CHILD", LocalDate.of(2019, 5, 1)))))
                 .extracting("code").isEqualTo("PAX_TYPE_MISMATCH");
-        // an infant who has turned 2
-        assertThatThrownBy(() -> service.confirm(id, withPax(pax("ADULT", null), pax("ADULT", null), pax("INFANT", LocalDate.of(2024, 11, 1)))))
+        // a child who is still an infant on the travel date
+        assertThatThrownBy(() -> service.confirm(id, withPax(pax("ADULT", null), pax("ADULT", null), pax("CHILD", LocalDate.of(2025, 1, 1)))))
                 .extracting("code").isEqualTo("PAX_TYPE_MISMATCH");
         verify(walletService, never()).hold(any(), any(), any(), any(), any());
         verify(provider, never()).book(any());
@@ -1293,6 +1294,42 @@ class PlatformBookingServiceTest {
                 .when(mirrorService).requireLinks("C-OTHER", "L1", "S1");
 
         assertThatThrownBy(() -> service.review(request)).isInstanceOf(IllegalArgumentException.class).hasMessage("Client not found: C-OTHER");
+        verify(provider, never()).review(any(FlightReviewRequest.class));
+        assertThat(rows).isEmpty();
+    }
+
+    /** Fix round 1: the reviewed adult/child/infant mix is what the supplier priced - another mix of the same size is refused. */
+    @Test
+    void confirmingAnotherMixThanTheReviewedOneIsRefusedBeforeTheHold() {
+        FlightReviewRequest request = reviewRequest();
+        request.setAdults(1);
+        request.setChildren(1);
+        String id = service.review(request).getBookingId();
+        assertThat(rows.get(id).getPricingSnapshot()).containsEntry("paxMix", Map.of("adults", 1, "children", 1, "infants", 0));
+
+        assertThatThrownBy(() -> service.confirm(id, withPax(pax("ADULT", LocalDate.of(1990, 1, 1)), pax("ADULT", LocalDate.of(1985, 6, 1)))))
+                .isInstanceOf(com.voyra.crm.exception.BookingRequestException.class)
+                .extracting("code").isEqualTo("PAX_MIX_CHANGED");
+        verify(walletService, never()).hold(any(), any(), any(), any(), any());
+        verify(provider, never()).book(any());
+
+        assertThat(service.confirm(id, withPax(pax("ADULT", null), pax("CHILD", LocalDate.of(2019, 5, 1)))).getStatus())
+                .isEqualTo(PlatformBookingStatus.TICKETED);
+    }
+
+    /** Fix round 1: with a PROD credential active and tripjack_live_ready off, new bookings stop at review; nothing is asked. */
+    @Test
+    void aProdCredentialWithoutTheLiveSwitchRefusesNewBookings() {
+        config.setProvider("tripjack");
+        when(credentialRepository.findByProviderAndIsActiveTrue(SupplierProvider.TRIPJACK)).thenReturn(Optional.of(
+                PlatformSupplierCredential.builder().id("CRED1").environment(SupplierEnvironment.PROD).build()));
+        when(settings.tripjackLiveReady()).thenReturn(false);
+
+        assertThatThrownBy(() -> service.review(reviewRequest()))
+                .isInstanceOfSatisfying(BookingConflictException.class, e -> {
+                    assertThat(e.getCode()).isEqualTo("LIVE_BOOKINGS_PAUSED");
+                    assertThat(e.getMessage()).doesNotContain("tripjack_live_ready").doesNotContain("PROD");
+                });
         verify(provider, never()).review(any(FlightReviewRequest.class));
         assertThat(rows).isEmpty();
     }

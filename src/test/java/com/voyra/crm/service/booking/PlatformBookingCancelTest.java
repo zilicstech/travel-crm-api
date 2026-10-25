@@ -669,7 +669,7 @@ class PlatformBookingCancelTest {
      */
     @Test
     void anAcceptedTripjackCancelStaysCancellingAndPostsNothing() {
-        flightConfig.setProvider("tripjack");
+        rows.get(ID).setEnvironment(SupplierEnvironment.UAT); // booked with Tripjack, whatever the provider is set to now
         supplierRefunds("4000.00");
 
         PlatformBooking b = service.cancel(ID, "ck-1");
@@ -684,5 +684,14 @@ class PlatformBookingCancelTest {
         // a retry with the same key never submits again
         assertThat(service.cancel(ID, "ck-1").getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
         verify(provider, times(1)).cancel("SB-1");
+    }
+
+    /** Fix round 1: a row booked on the mock settles at once even after the provider was switched to Tripjack. */
+    @Test
+    void aMockRowSettlesAtOnceAfterTheProviderSwitchedToTripjack() {
+        flightConfig.setProvider("tripjack");
+        supplierRefunds("4000.00");
+
+        assertThat(service.cancel(ID, "ck-1").getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
     }
 }

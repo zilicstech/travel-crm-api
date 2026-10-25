@@ -78,6 +78,8 @@ public class PlatformBookingService {
     /** The abort reason the poller's sweep gives an expired review. */
     static final String REVIEW_EXPIRED_REASON = "Review expired";
     private static final TypeReference<Map<String, Object>> MAP = new TypeReference<>() { };
+    /** Pricing-snapshot key of a flight's reviewed {adults, children, infants}. */
+    private static final String PAX_MIX = "paxMix";
 
     private final PlatformBookingRepository bookingRepository;
     private final BookingProviderRegistry providers;
@@ -213,9 +215,11 @@ public class PlatformBookingService {
         ReviewEnv env = admit(principal, PricingProduct.FLIGHT, request.getClientId(), request.getIssuedByAgentId(),
                 request.getServiceId(), request.getLeadId());
         FareReview fare = providers.flights().review(request);
-        return stampReview(principal, PricingProduct.FLIGHT, env, fare, request.getClientId(), request.getLeadId(),
-                request.getServiceId(), request.getAdults() + request.getChildren() + request.getInfants(),
-                itineraryMap(fare.itinerary()), request.getSearchDisplayedFare());
+        PlatformBookingReviewResponse response = stampReview(principal, PricingProduct.FLIGHT, env, fare, request.getClientId(),
+                request.getLeadId(), request.getServiceId(), request.getAdults() + request.getChildren() + request.getInfants(),
+                itineraryMap(fare.itinerary()), request.getSearchDisplayedFare(),
+                Map.of("adults", request.getAdults(), "children", request.getChildren(), "infants", request.getInfants()));
+        return response;
     }
 
     /**
@@ -237,7 +241,7 @@ public class PlatformBookingService {
         int guests = request.getRooms().stream()
                 .mapToInt(r -> r.getAdults() + (r.getChildAges() == null ? 0 : r.getChildAges().size())).sum();
         return stampReview(principal, PricingProduct.HOTEL, env, fare, request.getClientId(), request.getLeadId(),
-                request.getServiceId(), guests, hotelItinerary(request, fare), request.getSearchDisplayedFare());
+                request.getServiceId(), guests, hotelItinerary(request, fare), request.getSearchDisplayedFare(), null);
     }
 
     private record ReviewEnv(SupplierEnvironment environment, String credentialId) {
@@ -265,12 +269,18 @@ public class PlatformBookingService {
         }
         PlatformSupplierCredential credential = credentialRepository.findByProviderAndIsActiveTrue(SupplierProvider.TRIPJACK)
                 .orElseThrow(() -> new IllegalStateException("Tripjack is not configured on the platform"));
+        if (credential.getEnvironment() == SupplierEnvironment.PROD && !settings.tripjackLiveReady()) {
+            // kill switch: tripjack_live_ready off stops new live bookings; rows already in flight keep settling
+            throw new BookingConflictException("LIVE_BOOKINGS_PAUSED",
+                    "Booking through Voyra is paused for now - please try again later or contact Voyra", Map.of());
+        }
         return new ReviewEnv(credential.getEnvironment(), credential.getId());
     }
 
     private PlatformBookingReviewResponse stampReview(CustomUserPrincipal principal, PricingProduct product, ReviewEnv env,
                                                       FareReview fare, String clientId, String leadId, String serviceId,
-                                                      int paxCount, Map<String, Object> itinerary, BigDecimal searched) {
+                                                      int paxCount, Map<String, Object> itinerary, BigDecimal searched,
+                                                      Map<String, Integer> paxMix) {
         String tenantId = principal.tenantId();
         if (fare.baseFare() == null) {
             // discount and commission are worked off the base fare, so there is no price to show without it
@@ -300,6 +310,9 @@ public class PlatformBookingService {
                 .createdAt(Instant.now())
                 .build();
         stamp(booking, quote);
+        if (paxMix != null) {
+            booking.getPricingSnapshot().put(PAX_MIX, paxMix); // what the supplier priced; confirm must match it
+        }
         tx.executeWithoutResult(s -> {
             bookingRepository.save(booking);
             events.record(booking.getId(), "REVIEWED", Map.of("displayed", booking.getDisplayed(), "pricingId", quote.pricingId()));
@@ -443,10 +456,11 @@ public class PlatformBookingService {
             throw new BookingConflictException("CANCEL_REFUSED", AgencySupplierMessage.CANCEL_REFUSED, Map.of());
         }
         Map<String, Object> accepted = new LinkedHashMap<>();
-        accepted.put("refund", result.refund() == null ? "UNKNOWN" : result.refund());
+        // a plain string: a JSON number would come back as a double
+        accepted.put("refund", result.refund() == null ? "UNKNOWN" : result.refund().toPlainString());
         accepted.put("message", String.valueOf(result.message()));
         tx.executeWithoutResult(s -> events.record(bookingId, "CANCEL_ACCEPTED", accepted));
-        if (!providers.isMock(claim.booking().getProduct())) {
+        if (claim.booking().getEnvironment() != SupplierEnvironment.MOCK) { // booked with Tripjack, whatever the provider is now
             // Tripjack only accepts the amendment here; the booking stays CANCELLING and nothing is posted until
             // the poller sees bookingDetails say cancelled (settleConfirmedCancel). The mock settles at once.
             return claim.booking();
@@ -530,7 +544,7 @@ public class PlatformBookingService {
     /** The refund stored on the CANCEL_ACCEPTED event: a number, or null for "UNKNOWN" / missing / unreadable. */
     private static BigDecimal refundOnRecord(Object v) {
         try {
-            return v == null ? null : new BigDecimal(v.toString());
+            return v == null ? null : new BigDecimal(v.toString()).setScale(2, java.math.RoundingMode.HALF_UP);
         } catch (NumberFormatException e) {
             return null;
         }
@@ -699,6 +713,7 @@ public class PlatformBookingService {
         } else if (request.getPassengers().size() != b.getPaxCount()) {
             throw new IllegalArgumentException("Enter " + b.getPaxCount() + " travellers, as reviewed");
         } else {
+            requireReviewedMix(b, request.getPassengers());
             requirePaxTypesFit(request.getPassengers(), firstDeparture(b));
         }
         if (request.getAcceptedDisplayedFare().compareTo(b.getDisplayed()) != 0) {
@@ -833,6 +848,7 @@ public class PlatformBookingService {
     }
 
     private void stamp(PlatformBooking b, PriceQuote q) {
+        Object paxMix = b.getPricingSnapshot() == null ? null : b.getPricingSnapshot().get(PAX_MIX); // survives a re-price
         b.setDiscountPct(q.discountPct());
         b.setDisplayed(q.displayed());
         b.setVoyraEarned(q.voyraEarned());
@@ -852,6 +868,9 @@ public class PlatformBookingService {
         snapshot.put("tds", q.tds());
         snapshot.put("agencyEarns", q.agencyEarns());
         snapshot.put("voyraNet", q.voyraNet());
+        if (paxMix != null) {
+            snapshot.put(PAX_MIX, paxMix);
+        }
         b.setPricingSnapshot(snapshot);
     }
 
@@ -961,6 +980,21 @@ public class PlatformBookingService {
             if (actual != PaxType.UNKNOWN && !actual.name().equals(p.getType())) {
                 throw new BookingRequestException("PAX_TYPE_MISMATCH", who + " is " + slot(actual.name()) + " on the travel date ("
                         + travelDate + ") but was entered as " + slot(p.getType()) + " - review the fare with the right travellers");
+            }
+        }
+    }
+
+    /** The travellers' declared types add up to the reviewed adults, children and infants (rows reviewed before the mix was stamped skip this). */
+    private static void requireReviewedMix(PlatformBooking b, List<PaxInput> passengers) {
+        if (b.getPricingSnapshot() == null || !(b.getPricingSnapshot().get(PAX_MIX) instanceof Map<?, ?> mix)) {
+            return;
+        }
+        for (String[] t : new String[][]{{"ADULT", "adults"}, {"CHILD", "children"}, {"INFANT", "infants"}}) {
+            long declared = passengers.stream().filter(p -> t[0].equals(p.getType())).count();
+            Object reviewed = mix.get(t[1]);
+            if (reviewed instanceof Number n && n.longValue() != declared) {
+                throw new BookingRequestException("PAX_MIX_CHANGED", "The fare was reviewed for " + mix.get("adults") + " adult(s), "
+                        + mix.get("children") + " child(ren) and " + mix.get("infants") + " infant(s) - enter those travellers or review the fare again");
             }
         }
     }

@@ -468,6 +468,7 @@ class PlatformBookingPollerTest {
     private PlatformBooking acceptedCancel(String id, Instant acceptedAt) {
         PlatformBooking b = bookingRow(id, acceptedAt.minus(1, ChronoUnit.DAYS));
         b.setStatus(PlatformBookingStatus.CANCELLING);
+        b.setEnvironment(SupplierEnvironment.UAT); // booked with Tripjack
         b.setSupplierBookingId("SB-" + id);
         b.setPnr("PNR1");
         b.setVoyraEarned(new BigDecimal("127.50"));
@@ -481,7 +482,7 @@ class PlatformBookingPollerTest {
     /** Readiness: an accepted Tripjack amendment posts the refund only once bookingDetails says the booking is cancelled. */
     @Test
     void anAcceptedTripjackCancelSettlesWhenTheSupplierShowsItCancelled() {
-        config.setProvider("tripjack");
+        // the row's stamped environment decides, not the provider set now (still "mock" here)
         lenient().when(settings.voyraCancelFee()).thenReturn(BigDecimal.ZERO);
         lenient().when(walletRepository.findByTenantId(T)).thenReturn(Optional.empty());
         acceptedCancel("C1", Instant.now().minus(1, ChronoUnit.HOURS));
@@ -500,7 +501,8 @@ class PlatformBookingPollerTest {
         poller.poll();
         assertThat(rows.get("C1").getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
         assertThat(rows.get("C1").getCancelRefund()).isEqualByComparingTo("4000");
-        verify(walletService, times(1)).credit(eq(T), eq(WalletEntryType.REFUND_CREDIT), eq(new BigDecimal("4000.0")),
+        assertThat(rows.get("C1").getCancelRefund().scale()).isEqualTo(2); // never read back through a double
+        verify(walletService, times(1)).credit(eq(T), eq(WalletEntryType.REFUND_CREDIT), eq(new BigDecimal("4000.00")),
                 eq("pb-refund:C1"), anyString(), eq("C1"), anyString());
         verify(notificationService).bookingCancelled(any(), eq(false));
         verify(mirrorService).sync("C1");
@@ -512,6 +514,7 @@ class PlatformBookingPollerTest {
         config.setProvider("tripjack");
         PlatformBooking unanswered = bookingRow("C2", Instant.now().minus(1, ChronoUnit.DAYS));
         unanswered.setStatus(PlatformBookingStatus.CANCELLING);
+        unanswered.setEnvironment(SupplierEnvironment.UAT);
         event("C2", "CANCEL_REQUESTED", Instant.now().minus(2, ChronoUnit.HOURS));
         // accepted on an earlier attempt, then put back to TICKETED and requested again: the new request has no answer yet
         acceptedCancel("C3", Instant.now().minus(3, ChronoUnit.HOURS));
@@ -521,9 +524,26 @@ class PlatformBookingPollerTest {
 
         verify(provider, never()).bookingDetails(anyString());
 
-        config.setProvider("mock");
-        acceptedCancel("C4", Instant.now().minus(1, ChronoUnit.HOURS));
+        config.setProvider("tripjack"); // a row booked on the mock is never polled, whatever the provider is now
+        acceptedCancel("C4", Instant.now().minus(1, ChronoUnit.HOURS)).setEnvironment(SupplierEnvironment.MOCK);
         poller.poll();
         verify(provider, never()).bookingDetails(anyString());
+    }
+
+    /** Fix round 1: a cancel the supplier accepted but has not confirmed after 24 hours alerts Voyra once. */
+    @Test
+    void anAcceptedCancelStillUnconfirmedAfter24HoursAlertsOnce() {
+        acceptedCancel("C5", Instant.now().minus(25, ChronoUnit.HOURS));
+        when(provider.bookingDetails("SB-C5"))
+                .thenReturn(new BookResult("SB-C5", SupplierBookingStatus.TICKETED, "PNR1", List.of(), "SUCCESS", null));
+
+        poller.poll();
+        rows.get("C5").setLastPolledAt(Instant.now().minus(11, ChronoUnit.MINUTES));
+        poller.poll();
+
+        verify(provider, times(2)).bookingDetails("SB-C5");
+        verify(notificationService, times(1)).platformAlert(contains("C5"), anyString());
+        assertThat(savedEvents).filteredOn(e -> e.getType().equals("CANCEL_OVERDUE")).hasSize(1);
+        assertThat(rows.get("C5").getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
     }
 }

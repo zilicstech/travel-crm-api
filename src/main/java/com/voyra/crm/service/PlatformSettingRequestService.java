@@ -8,6 +8,7 @@ import com.voyra.crm.repository.PlatformSettingRequestRepository;
 import com.voyra.crm.security.SecurityContextUtil;
 import com.voyra.crm.util.UniqueIdResolver;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -44,16 +45,26 @@ public class PlatformSettingRequestService {
             throw new IllegalArgumentException("Only " + PlatformSettingService.TRIPJACK_LIVE_READY
                     + " = true needs a second platform admin; change other settings directly");
         }
-        if (repository.findFirstBySettingKeyAndDecidedAtIsNull(key).isPresent()) {
-            throw new IllegalStateException("A change to " + key + " is already waiting for a second platform admin");
+        if (settings.tripjackLiveReady()) {
+            throw new IllegalStateException(key + " is already on");
         }
-        PlatformSettingRequest saved = repository.save(PlatformSettingRequest.builder()
-                .id(UniqueIdResolver.resolve(repository::existsById))
-                .settingKey(key)
-                .value(v)
-                .requestedBy(SecurityContextUtil.getCurrentUserOrThrow().userId())
-                .requestedAt(Instant.now())
-                .build());
+        String waiting = "A change to " + key + " is already waiting for a second platform admin";
+        if (repository.findFirstBySettingKeyAndDecidedAtIsNull(key).isPresent()) {
+            throw new IllegalStateException(waiting);
+        }
+        PlatformSettingRequest saved;
+        try {
+            // flushed here so a concurrent request losing on the open-request index gets this 409, not a commit-time error
+            saved = repository.saveAndFlush(PlatformSettingRequest.builder()
+                    .id(UniqueIdResolver.resolve(repository::existsById))
+                    .settingKey(key)
+                    .value(v)
+                    .requestedBy(SecurityContextUtil.getCurrentUserOrThrow().userId())
+                    .requestedAt(Instant.now())
+                    .build());
+        } catch (DataIntegrityViolationException e) {
+            throw new IllegalStateException(waiting);
+        }
         audit(PlatformAuditAction.SETTING_CHANGE_REQUEST, saved);
         return toResponse(saved);
     }
