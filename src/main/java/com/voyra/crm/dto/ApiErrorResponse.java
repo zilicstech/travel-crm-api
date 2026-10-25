@@ -27,6 +27,9 @@ public class ApiErrorResponse {
     @Schema(description = "Short reason/category for the failure")
     private String reason;
 
+    @Schema(description = "Machine-readable error code for the UI to branch on, e.g. INSUFFICIENT_BALANCE", example = "INSUFFICIENT_BALANCE")
+    private String code;
+
     @Schema(description = "Root cause (debugging aid)")
     private String cause;
 

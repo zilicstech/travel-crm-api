@@ -66,6 +66,21 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    void insufficientBalanceMapsTo409WithCodeAndAvailable() throws Exception {
+        mockMvc.perform(get("/test/insufficient-balance"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("INSUFFICIENT_BALANCE"))
+                .andExpect(jsonPath("$.details.available").value(600.00));
+    }
+
+    @Test
+    void receivableDueMapsTo409WithCode() throws Exception {
+        mockMvc.perform(get("/test/receivable-due"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("RECEIVABLE_DUE"));
+    }
+
+    @Test
     void accessDeniedMapsTo403() throws Exception {
         mockMvc.perform(get("/test/access-denied"))
                 .andExpect(status().isForbidden());

@@ -194,6 +194,28 @@ public class GlobalExceptionHandler {
                         HttpStatus.CONFLICT.value(), path));
     }
 
+    @ExceptionHandler(InsufficientBalanceException.class)
+    public ResponseEntity<ApiErrorResponse> handleInsufficientBalance(InsufficientBalanceException ex,
+                                                                      HttpServletRequest request) {
+        String path = getPath(request);
+        log.warn("Insufficient wallet balance - available: {}, path: {}", ex.getAvailable(), path);
+        ApiErrorResponse response = ApiErrorResponse.of(ex.getMessage(), "Insufficient balance", null,
+                HttpStatus.CONFLICT.value(), path);
+        response.setCode("INSUFFICIENT_BALANCE");
+        response.setDetails(Map.of("available", ex.getAvailable()));
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
+    }
+
+    @ExceptionHandler(ReceivableDueException.class)
+    public ResponseEntity<ApiErrorResponse> handleReceivableDue(ReceivableDueException ex, HttpServletRequest request) {
+        String path = getPath(request);
+        log.warn("Receivable due - path: {}", path);
+        ApiErrorResponse response = ApiErrorResponse.of(ex.getMessage(), "Receivable due", null,
+                HttpStatus.CONFLICT.value(), path);
+        response.setCode("RECEIVABLE_DUE");
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
+    }
+
     @ExceptionHandler(ObjectOptimisticLockingFailureException.class)
     public ResponseEntity<ApiErrorResponse> handleOptimisticLocking(ObjectOptimisticLockingFailureException ex,
                                                                      HttpServletRequest request) {

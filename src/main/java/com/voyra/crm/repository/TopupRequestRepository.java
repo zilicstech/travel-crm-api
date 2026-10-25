@@ -22,5 +22,7 @@ public interface TopupRequestRepository extends JpaRepository<TopupRequest, Stri
 
     boolean existsByBankRefNormalized(String bankRefNormalized);
 
+    boolean existsByWalletIdAndStatus(String walletId, TopupStatus status);
+
     List<TopupRequest> findByStatusAndModeAndCreatedAtBefore(TopupStatus status, TopupMode mode, Instant before);
 }

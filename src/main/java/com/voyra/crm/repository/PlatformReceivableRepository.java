@@ -9,4 +9,6 @@ import java.util.List;
 public interface PlatformReceivableRepository extends JpaRepository<PlatformReceivable, String> {
 
     List<PlatformReceivable> findByTenantIdAndStatusOrderByCreatedAt(String tenantId, ReceivableStatus status);
+
+    boolean existsByTenantIdAndStatus(String tenantId, ReceivableStatus status);
 }

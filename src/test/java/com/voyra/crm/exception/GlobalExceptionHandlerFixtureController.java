@@ -29,6 +29,16 @@ public class GlobalExceptionHandlerFixtureController {
         throw new IllegalStateException("bad state");
     }
 
+    @GetMapping("/test/insufficient-balance")
+    public String insufficientBalance() {
+        throw new InsufficientBalanceException(new java.math.BigDecimal("600.00"));
+    }
+
+    @GetMapping("/test/receivable-due")
+    public String receivableDue() {
+        throw new ReceivableDueException();
+    }
+
     @GetMapping("/test/access-denied")
     public String accessDenied() {
         throw new AccessDeniedException("denied");
