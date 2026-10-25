@@ -68,6 +68,7 @@ public class TopupService {
     private final GatewayOrderRepository gatewayOrderRepository;
     private final PaymentGateway paymentGateway;
     private final GatewayWebhookService webhookService;
+    private final NotificationService notificationService;
 
     /** Upper-case with every whitespace character removed, so "sbin 123" and "SBIN123" are the same UTR. */
     public static String normalize(String bankRef) {
@@ -182,6 +183,7 @@ public class TopupService {
         platformAuditService.record(PlatformAuditAction.TOPUP_DECISION, REF_TYPE, id,
                 Map.of("decision", "APPROVED", "tenantId", t.getTenantId(), "requested", t.getAmount().toPlainString(),
                         "approved", entry.getAmount().toPlainString()));
+        notificationService.topupApproved(t);
         return toResponse(t, null);
     }
 
@@ -192,6 +194,7 @@ public class TopupService {
         decided(t, reviewerId, request.getNote());
         platformAuditService.record(PlatformAuditAction.TOPUP_DECISION, REF_TYPE, id,
                 Map.of("decision", "REJECTED", "tenantId", t.getTenantId(), "requested", t.getAmount().toPlainString()));
+        notificationService.topupRejected(t);
         return toResponse(t, null);
     }
 

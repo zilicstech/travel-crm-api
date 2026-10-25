@@ -199,6 +199,7 @@ class PlatformBookingCancelTest {
         assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
         assertThat(b.getCancelRefund()).isEqualByComparingTo("4000.00");
         assertThat(b.getCancelledAt()).isNotNull();
+        verify(notificationService).bookingCancelled(b);
         assertThat(eventTypes()).containsSubsequence("CANCEL_REQUESTED", "CANCELLED");
     }
 

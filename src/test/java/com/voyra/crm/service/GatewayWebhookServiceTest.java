@@ -138,6 +138,7 @@ class GatewayWebhookServiceTest {
         assertThat(t.getCreditEntryId()).isEqualTo("E1");
         assertThat(o.getStatus()).isEqualTo(GatewayOrderStatus.PAID);
         assertThat(o.getEvents()).hasSize(3);
+        verify(notificationService, times(1)).topupApproved(t);
         assertThat(o.getEvents().get(0)).containsOnlyKeys("id", "event", "at").containsEntry("id", "pay_1")
                 .containsEntry("event", "payment.captured");
     }

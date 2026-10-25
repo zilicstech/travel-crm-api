@@ -177,6 +177,7 @@ class SubscriptionBillingServiceTest {
         SubscriptionInvoiceResponse r = service.raiseNow("T1");
 
         assertThat(r.getPeriodStart()).isEqualTo(trialEnd);
+        verify(notificationService).subscriptionInvoiceIssued(org.mockito.ArgumentMatchers.argThat(i -> "T1".equals(i.getTenantId())));
         verify(auditService).record(eq(PlatformAuditAction.SUBSCRIPTION_INVOICE_RAISE), eq("SUBSCRIPTION_INVOICE"), anyString(), any());
     }
 

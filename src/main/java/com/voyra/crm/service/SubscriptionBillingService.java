@@ -177,13 +177,15 @@ public class SubscriptionBillingService {
         BigDecimal sgst = intraState ? half : BigDecimal.ZERO;
         BigDecimal igst = intraState ? BigDecimal.ZERO : gst(amount);
         BigDecimal gst = cgst.add(sgst).add(igst);
-        return invoiceRepository.save(SubscriptionInvoice.builder()
+        SubscriptionInvoice issued = invoiceRepository.save(SubscriptionInvoice.builder()
                 .id(UniqueIdResolver.resolve(invoiceRepository::existsById)).tenantId(s.getTenantId())
                 .number(nextNumber(now)).periodStart(start).periodEnd(periodEnd(start, s.getBillingCycle()))
                 .lines(lines).amount(amount).cgst(cgst).sgst(sgst).igst(igst).gst(gst).total(amount.add(gst))
                 .sacCode(settingService.subscriptionSac()).billingDetails(new HashMap<>(Map.of("seller", seller, "buyer", buyer)))
                 .status(ISSUED)
                 .dueAt((start.isAfter(now) ? start : now).plus(DUE_AFTER)).createdAt(now).build());
+        notificationService.subscriptionInvoiceIssued(issued);
+        return issued;
     }
 
     /** The agency as billed: legal name (else agency name), GSTIN, address, and state code (else its GSTIN's first two digits). */

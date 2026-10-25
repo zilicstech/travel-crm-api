@@ -582,6 +582,7 @@ public class PlatformBookingService {
         b.setCancelledAt(Instant.now());
         b.setSupplierMessage(truncate(message));
         events.record(id, "CANCELLED", detail);
+        notificationService.bookingCancelled(b);
         if (b.getVoyraNet().signum() < 0 && b.getVoyraNet().compareTo(netBefore) < 0) {
             notificationService.platformAlert("Loss-making booking " + id,
                     "Voyra net on cancelled booking " + id + " for agency " + b.getTenantId() + " fell to " + b.getVoyraNet());
@@ -718,6 +719,7 @@ public class PlatformBookingService {
                     b.setStatus(PlatformBookingStatus.FAILED);
                     b.setSupplierMessage(truncate(result.message()));
                     events.record(bookingId, "FAILED", Map.of("message", String.valueOf(result.message())));
+                    notificationService.bookingFailed(b);
                 }
             }
             case PENDING -> { /* stays BOOKING; the poller asks again */ }
@@ -773,6 +775,7 @@ public class PlatformBookingService {
                     "Voyra net on booking " + id + " for agency " + b.getTenantId() + " is " + b.getVoyraNet());
         }
         events.record(id, "TICKETED", Map.of("pnr", String.valueOf(result.pnr()), "debitEntryId", debit.getId()));
+        notificationService.bookingTicketed(b);
     }
 
     /** Writes the CRM mirror after the debit committed, outside any transaction; a failure is the repair job's, never the ticket's. */

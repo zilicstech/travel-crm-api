@@ -87,6 +87,7 @@ public class AgencyApplicationService {
     private final LoginEmailService loginEmailService;
     private final AgencyService agencyService;
     private final PlatformAuditService platformAuditService;
+    private final NotificationService notificationService;
 
     @Transactional
     public AgencyApplicationCreatedResponse create(AgencyApplicationCreateRequest request) {
@@ -285,6 +286,11 @@ public class AgencyApplicationService {
         if (token != null) {
             response.setResumeUrl("/apply?application=" + app.getId() + "&token=" + token);
         }
+        if (status == ApplicationStatus.MORE_INFO) {
+            notificationService.applicationMoreInfo(app, response.getResumeUrl());
+        } else if (status == ApplicationStatus.REJECTED) {
+            notificationService.applicationRejected(app);
+        }
         return response;
     }
 
@@ -299,6 +305,7 @@ public class AgencyApplicationService {
         markReviewed(app);
         platformAuditService.record(PlatformAuditAction.APPLICATION_APPROVE, ENTITY_APPLICATION, app.getId(),
                 Map.of("tenantId", tenant.getId()));
+        notificationService.applicationApproved(app);
         return agencyService.toResponse(tenant, false);
     }
 

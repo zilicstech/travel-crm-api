@@ -71,6 +71,8 @@ class TopupServiceTest {
     private PaymentGateway paymentGateway;
     @Mock
     private GatewayWebhookService webhookService;
+    @Mock
+    private NotificationService notificationService;
     @InjectMocks
     private TopupService service;
 
@@ -147,6 +149,7 @@ class TopupServiceTest {
         assertThat(r.getApprovedAmount()).isEqualByComparingTo("49500.00");
         assertThat(t.getCreditEntryId()).isEqualTo("E1");
         verify(platformAuditService).record(eq(com.voyra.crm.enums.PlatformAuditAction.TOPUP_DECISION), anyString(), eq("R1"), any());
+        verify(notificationService).topupApproved(t);
     }
 
     @Test
@@ -189,6 +192,7 @@ class TopupServiceTest {
         assertThat(r.getStatus()).isEqualTo(TopupStatus.REJECTED);
         assertThat(r.getReviewNote()).isEqualTo("Not in statement");
         verifyNoInteractions(walletService);
+        verify(notificationService).topupRejected(t);
         t.setStatus(TopupStatus.REJECTED);
         assertThatThrownBy(() -> service.reject("R1", "A1", req)).hasMessage("This top-up was already rejected");
     }

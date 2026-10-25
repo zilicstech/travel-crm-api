@@ -72,6 +72,8 @@ class AgencyApplicationServiceTest {
     @Mock
     private AgencyService agencyService;
     @Mock
+    private NotificationService notificationService;
+    @Mock
     private PlatformAuditService platformAuditService;
     @InjectMocks
     private AgencyApplicationService service;
@@ -465,6 +467,7 @@ class AgencyApplicationServiceTest {
         assertThat(response.getResumeUrl()).startsWith("/apply?application=app-1&token=");
         String token = response.getResumeUrl().substring("/apply?application=app-1&token=".length());
         assertThat(sha256Hex(token)).isEqualTo(app.getUploadTokenHash());
+        verify(notificationService).applicationMoreInfo(app, response.getResumeUrl());
     }
 
     @Test
@@ -540,6 +543,7 @@ class AgencyApplicationServiceTest {
         assertThat(app.getStatus()).isEqualTo(ApplicationStatus.APPROVED);
         assertThat(app.getUploadTokenExpiresAt()).isBeforeOrEqualTo(Instant.now());
         verify(platformAuditService).record(eq(PlatformAuditAction.APPLICATION_APPROVE), eq("AGENCY_APPLICATION"), eq("app-1"), any());
+        verify(notificationService).applicationApproved(app);
     }
 
     @Test
@@ -556,6 +560,7 @@ class AgencyApplicationServiceTest {
         assertThatThrownBy(() -> service.assertUploadToken(app, TOKEN)).isInstanceOf(AccessDeniedException.class);
         verify(platformAuditService).record(PlatformAuditAction.APPLICATION_DECISION, "AGENCY_APPLICATION", "app-1",
                 java.util.Map.of("from", "SUBMITTED", "to", "REJECTED"));
+        verify(notificationService).applicationRejected(app);
     }
 
     @Test

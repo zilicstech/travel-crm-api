@@ -180,6 +180,7 @@ public class GatewayWebhookService {
         topup.setGatewayPaymentId(paymentId);
         topup.setCreditEntryId(entry.getId());
         order.setStatus(GatewayOrderStatus.PAID);
+        notificationService.topupApproved(topup);
         return WebhookOutcome.PROCESSED;
     }
 

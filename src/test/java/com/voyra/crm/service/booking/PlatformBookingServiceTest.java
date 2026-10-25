@@ -509,6 +509,7 @@ class PlatformBookingServiceTest {
         assertThat(b.getSupplierBookingId()).isEqualTo("SB-1");
         assertThat(b.getDebitEntryId()).isEqualTo("D1");
         assertThat(b.getTicketedAt()).isNotNull();
+        verify(notificationService).bookingTicketed(b);
     }
 
     /** The mirror is written after the debit committed, and only marked PENDING when the booking names a CRM client. */
@@ -608,6 +609,7 @@ class PlatformBookingServiceTest {
         verify(walletService, never()).debitHeld(any(), any(), any(), any(), any());
         assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.FAILED);
         assertThat(b.getSupplierMessage()).isEqualTo("Fare sold out");
+        verify(notificationService).bookingFailed(b);
     }
 
     @Test
