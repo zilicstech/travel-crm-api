@@ -72,6 +72,7 @@ class PlatformBookingPollerTest {
     @Mock private AgentRepository agentRepository;
     @Mock private PlatformSupplierCredentialRepository credentialRepository;
     @Mock private NotificationService notificationService;
+    @Mock private PlatformBookingMirrorService mirrorService;
     @Mock private PlatformAuditService platformAuditService;
     @Mock private PlatformSettingService settings;
     @Mock private PlatformTransactionManager transactionManager;
@@ -90,7 +91,7 @@ class PlatformBookingPollerTest {
         PlatformBookingEventRecorder events = new PlatformBookingEventRecorder(eventRepository, paxCodec);
         PlatformBookingService service = new PlatformBookingService(bookingRepository, provider, config, quoter, pricingService,
                 walletService, walletRepository, tenantRepository, agentRepository, credentialRepository, notificationService,
-                events, paxCodec, objectMapper, transactionManager, walletEntryRepository, platformAuditService, settings);
+                events, paxCodec, objectMapper, transactionManager, walletEntryRepository, platformAuditService, settings, mirrorService);
         poller = new PlatformBookingPoller(bookingRepository, eventRepository, provider, config, service, events,
                 notificationService, transactionManager);
 

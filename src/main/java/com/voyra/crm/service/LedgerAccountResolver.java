@@ -28,6 +28,20 @@ public class LedgerAccountResolver {
         return findOrThrow(account.code());
     }
 
+    /**
+     * Account 1310, checked by name as well as code: a tenant whose 1310 is some other account must never take Voyra
+     * Wallet postings (and never Bank 1110 instead) - the posting, and with it the CRM mirror, fails.
+     */
+    @Transactional(readOnly = true)
+    public String voyraWalletCode() {
+        LedgerAccount account = resolve(SystemAccount.VOYRA_WALLET_ADVANCE);
+        if (!SystemAccount.VOYRA_WALLET_ADVANCE.accountName().equals(account.getName())) {
+            throw new IllegalStateException("Ledger account " + account.getCode() + " is \"" + account.getName() + "\", not \""
+                    + SystemAccount.VOYRA_WALLET_ADVANCE.accountName() + "\" - fix the chart of accounts before posting Voyra Wallet payments");
+        }
+        return account.getCode();
+    }
+
     @Transactional(readOnly = true)
     public LedgerAccount resolveSales(InvoiceServiceCategory category) {
         return findOrThrow(SystemAccount.salesCode(category));

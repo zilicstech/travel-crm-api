@@ -75,6 +75,10 @@ class SupplierPaymentServiceTest {
     private JournalEntryRepository journalEntryRepository;
     @Mock
     private ExchangeRateProvider exchangeRateProvider;
+    @Mock
+    private com.voyra.crm.repository.BookingRepository bookingRepository;
+    @Mock
+    private LedgerAccountResolver ledgerAccountResolver;
 
     @org.mockito.Spy
 
@@ -471,5 +475,37 @@ class SupplierPaymentServiceTest {
         SupplierPaymentResponse response = supplierPaymentService.pay(request("SI1", new BigDecimal("100.00")));
 
         assertThat(response.getFxVarianceInr()).isEqualByComparingTo("0.00"); // fell back to the bill's own rate - no variance
+    }
+
+    /** The mirror's bill is paid from the Voyra wallet: Dr payable, Cr 1310 "Voyra Wallet (advance to supplier)" - never Bank 1110. */
+    @Test
+    void mirrorSupplierBillPostsToVoyraWalletNot1110() {
+        when(vendorRepository.findById("V1")).thenReturn(Optional.of(vendor()));
+        SupplierInvoice invoice = approvedBill(new BigDecimal("5400.00"));
+        when(supplierInvoiceRepository.findByIdForUpdate("SI1")).thenReturn(Optional.of(invoice));
+        when(ledgerAccountResolver.voyraWalletCode()).thenReturn("1310");
+        SupplierPaymentRequest request = request("SI1", new BigDecimal("5400.00"));
+        request.setPaymentMode(PaymentMode.VOYRA_WALLET);
+
+        supplierPaymentService.pay(request);
+
+        ArgumentCaptor<JournalPosting> captor = ArgumentCaptor.forClass(JournalPosting.class);
+        verify(journalService).post(captor.capture());
+        assertThat(captor.getValue().lines()).extracting(l -> l.accountCode()).containsExactly("2200", "1310");
+        assertThat(captor.getValue().lines().get(1).creditAmount()).isEqualByComparingTo("5400.00");
+    }
+
+    @Test
+    void crmEditOfAMirrorIs409() {
+        when(vendorRepository.findById("V1")).thenReturn(Optional.of(vendor()));
+        SupplierInvoice invoice = approvedBill(new BigDecimal("5400.00"));
+        invoice.setBookingId("B1");
+        when(supplierInvoiceRepository.findByIdForUpdate("SI1")).thenReturn(Optional.of(invoice));
+        when(bookingRepository.existsByIdAndPlatformBookingIdIsNotNull("B1")).thenReturn(true);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> supplierPaymentService.pay(request("SI1", new BigDecimal("100.00"))))
+                .isInstanceOf(com.voyra.crm.exception.BookingConflictException.class)
+                .hasMessage("Managed from Platform Bookings");
+        verify(supplierPaymentRepository, org.mockito.Mockito.never()).save(any());
     }
 }

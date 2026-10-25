@@ -355,4 +355,16 @@ class BookingDocumentServiceTest {
         assertThatThrownBy(() -> service.addDocument("F1", domestic))
                 .isInstanceOf(IllegalStateException.class).hasMessage("This booking is already on an invoice as International - its trip type can't change");
     }
+
+    /** The ticket on a platform mirror is the platform's: no file swapped in from the CRM. */
+    @org.junit.jupiter.api.Test
+    void crmEditOfAMirrorIs409() {
+        booking.setPlatformBookingId("PB1");
+        when(bookingService.findAccessibleBooking("B1")).thenReturn(booking);
+
+        assertThatThrownBy(() -> service.attachFile("B1", "D1", org.mockito.Mockito.mock(org.springframework.web.multipart.MultipartFile.class)))
+                .isInstanceOf(com.voyra.crm.exception.BookingConflictException.class)
+                .hasMessage("Managed from Platform Bookings");
+        verify(fileStorageService, never()).store(any(), any(), any(), any());
+    }
 }

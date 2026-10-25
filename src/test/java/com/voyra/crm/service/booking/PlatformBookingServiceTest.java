@@ -106,6 +106,7 @@ class PlatformBookingServiceTest {
     @Mock private AgentRepository agentRepository;
     @Mock private PlatformSupplierCredentialRepository credentialRepository;
     @Mock private NotificationService notificationService;
+    @Mock private PlatformBookingMirrorService mirrorService;
     @Mock private PlatformTransactionManager transactionManager;
     @Mock private WalletEntryRepository walletEntryRepository;
     @Mock private PlatformAuditService platformAuditService;
@@ -137,7 +138,7 @@ class PlatformBookingServiceTest {
         service = new PlatformBookingService(bookingRepository, provider, config, quoter, pricingService, walletService,
                 walletRepository, tenantRepository, agentRepository, credentialRepository, notificationService,
                 new PlatformBookingEventRecorder(eventRepository, paxCodec), paxCodec, objectMapper, transactionManager,
-                walletEntryRepository, platformAuditService, settings);
+                walletEntryRepository, platformAuditService, settings, mirrorService);
         wallet = Wallet.builder().id("W1").tenantId(T).balance(new BigDecimal("10000.00")).held(BigDecimal.ZERO)
                 .isTest(true).build();
         tenant = Tenant.builder().id(T).status(TenantStatus.ACTIVE).bookingBlocked(false).build();
@@ -463,6 +464,30 @@ class PlatformBookingServiceTest {
         assertThat(b.getTicketedAt()).isNotNull();
     }
 
+    /** The mirror is written after the debit committed, and only marked PENDING when the booking names a CRM client. */
+    @Test
+    void ticketedWithAClientMarksTheMirrorPendingAndMirrorsAfterTheDebit() {
+        FlightReviewRequest request = reviewRequest();
+        request.setClientId("C1");
+        String id = service.review(request).getBookingId();
+
+        PlatformBooking b = service.confirm(id, confirmRequest("key-00000001", "4500.00"));
+
+        assertThat(b.getMirrorStatus()).isEqualTo(com.voyra.crm.enums.MirrorStatus.PENDING);
+        org.mockito.InOrder order = inOrder(walletService, mirrorService);
+        order.verify(walletService).debitHeld(anyString(), any(), anyString(), anyString(), anyString());
+        order.verify(mirrorService).sync(id);
+    }
+
+    @Test
+    void aStarterBookingWithNoClientHasNoMirror() {
+        String id = reviewed();
+
+        PlatformBooking b = service.confirm(id, confirmRequest("key-00000001", "4500.00"));
+
+        assertThat(b.getMirrorStatus()).isEqualTo(com.voyra.crm.enums.MirrorStatus.NONE);
+    }
+
     @Test
     void ticketedWithoutCommissionPostsOnlyTheDebit() {
         when(quoter.quote(eq(T), eq(PricingProduct.FLIGHT), any(), any())).thenReturn(quote("P1", "4500.00", "0.00", "0.00"));
@@ -607,7 +632,7 @@ class PlatformBookingServiceTest {
         PlatformBookingService broken = new PlatformBookingService(bookingRepository, provider, config, quoter, pricingService,
                 walletService, walletRepository, tenantRepository, agentRepository, credentialRepository, notificationService,
                 new PlatformBookingEventRecorder(eventRepository, paxCodec), new PaxCodec(objectMapper, "bad"), objectMapper,
-                transactionManager, walletEntryRepository, platformAuditService, settings);
+                transactionManager, walletEntryRepository, platformAuditService, settings, mirrorService);
         String id = broken.review(reviewRequest()).getBookingId();
 
         assertThatThrownBy(() -> broken.confirm(id, confirmRequest("key-00000001", "4500.00"))).isInstanceOf(RuntimeException.class);

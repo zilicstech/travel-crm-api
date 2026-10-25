@@ -142,7 +142,8 @@ public class BookingService {
         if (request.getNetCost() == null) request.setNetCost(BigDecimal.ZERO);
         if (request.getSellingPrice() == null) request.setSellingPrice(BigDecimal.ZERO);
         AuthorResolver.AuthorInfo owner = resolveOwningAgent(request.getAgentId());
-        if (request.getServiceId() == null || request.getServiceId().isBlank()) {
+        // The platform's mirror names the agent who issued the ticket; Voyra already checked they may book it.
+        if ((request.getServiceId() == null || request.getServiceId().isBlank()) && !com.voyra.crm.security.SystemActor.isActive()) {
             assertAgentHandlesStandaloneType(request.getType(), owner.id());
         }
         clientCreditService.assertWithinLimit(request.getClientId(), request.getSellingPrice(),
@@ -471,7 +472,7 @@ public class BookingService {
     public BookingResponse updateBooking(String id, BookingUpdateRequest request) {
         // Locked first: a supplier picked on a confirmed booking drafts its bill, once.
         bookingRepository.findByIdForUpdate(id);
-        Booking booking = findAccessibleBooking(id);
+        Booking booking = findWritableBooking(id);
         boolean alreadyConfirmed = booking.getBookingStatus() == BookingStatus.CONFIRMED;
         LocalDate oldDepartureDate = booking.getDepartureDate();
         Map<String, String> before = AuditSnapshot.of(booking, AUDITED);
@@ -668,7 +669,7 @@ public class BookingService {
         }
         // Locked first: two confirms at once must not both draft the supplier bill.
         bookingRepository.findByIdForUpdate(id);
-        Booking booking = findAccessibleBooking(id);
+        Booking booking = findWritableBooking(id);
         if (booking.getBookingStatus() == BookingStatus.CANCELLED) {
             throw new IllegalStateException("A cancelled booking can't be reopened - create a new booking instead");
         }
@@ -718,7 +719,7 @@ public class BookingService {
 
     @Transactional
     public BookingResponse updateDeadlines(String id, BookingDeadlineUpdateRequest request) {
-        Booking booking = findAccessibleBooking(id);
+        Booking booking = findWritableBooking(id);
         Map<String, String> before = AuditSnapshot.of(booking, AUDITED);
         if (request.getTicketingDeadline() != null) booking.setTicketingDeadline(request.getTicketingDeadline());
         if (request.getCancellationDeadline() != null) booking.setCancellationDeadline(request.getCancellationDeadline());
@@ -732,7 +733,7 @@ public class BookingService {
 
     @Transactional
     public BookingResponse updatePaymentStatus(String id, BookingPaymentStatusUpdateRequest request) {
-        Booking booking = findAccessibleBooking(id);
+        Booking booking = findWritableBooking(id);
         if (booking.getPaymentStatusSource() == PaymentStatusSource.DERIVED) {
             throw new IllegalStateException("Payment status is derived from invoices - record a receipt instead");
         }
@@ -762,7 +763,7 @@ public class BookingService {
     }
 
     private void deleteBookingRows(String id) {
-        Booking booking = findAccessibleBooking(id);
+        Booking booking = findWritableBooking(id);
         if (booking.getBookingStatus() != BookingStatus.PENDING) {
             throw new IllegalStateException("Only a pending booking can be deleted - cancel it instead");
         }
@@ -967,7 +968,14 @@ public class BookingService {
     /** Row lock first, then the usual access check - two vouchers saved at once must not lose either's amounts. */
     Booking lockAccessibleBooking(String id) {
         bookingRepository.findByIdForUpdate(id);
-        return findAccessibleBooking(id);
+        return findWritableBooking(id);
+    }
+
+    /** {@link #findAccessibleBooking} for a change: a platform booking's CRM mirror is changed only by the platform (409). */
+    Booking findWritableBooking(String id) {
+        Booking booking = findAccessibleBooking(id);
+        com.voyra.crm.util.PlatformManaged.check(booking.getPlatformBookingId() != null);
+        return booking;
     }
 
     /** Removes a voucher and its amounts in one transaction. @return its stored file key, deleted by the caller after commit */
@@ -1263,7 +1271,7 @@ public class BookingService {
                 .leadId(b.getLeadId()).serviceId(b.getServiceId()).serviceType(b.getServiceType())
                 .serviceLabel(b.getServiceLabel()).serviceAgentId(b.getServiceAgentId()).serviceAgentName(b.getServiceAgentName())
                 .type(b.getType())
-                .destination(b.getDestination()).pnr(b.getPnr()).ticketNo(b.getTicketNo())
+                .destination(b.getDestination()).pnr(b.getPnr()).platformBookingId(b.getPlatformBookingId()).ticketNo(b.getTicketNo())
                 .airline(b.getAirline()).supplier(b.getSupplier()).vendorId(b.getVendorId()).journeyDate(b.getJourneyDate())
                 .returnDate(b.getReturnDate()).tripType(b.getTripType()).notes(b.getNotes())
                 .flightNumber(b.getFlightNumber()).flightFrom(b.getFlightFrom()).flightTo(b.getFlightTo())
@@ -1456,7 +1464,7 @@ public class BookingService {
      */
     @Transactional
     public List<BookingCostComponentResponse> replaceCostComponents(String bookingId, List<BookingCostComponentRequest> requests) {
-        Booking booking = findAccessibleBooking(bookingId);
+        Booking booking = findWritableBooking(bookingId);
         bookingCostComponentRepository.deleteByBookingId(bookingId);
 
         LocalDateTime now = LocalDateTime.now();

@@ -6,6 +6,7 @@ import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.security.SecurityContextUtil;
+import com.voyra.crm.security.SystemActor;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -27,6 +28,9 @@ public class AuthorResolver {
     }
 
     public AuthorInfo resolveCurrentAuthor() {
+        if (SystemActor.isActive()) {
+            return new AuthorInfo(SystemActor.USER_ID, SystemActor.NAME);
+        }
         CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
         if (principal.isStaffUser()) {
             Agent agent = agentRepository.findById(principal.userId())

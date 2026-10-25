@@ -92,6 +92,7 @@ class PlatformBookingCancelTest {
     @Mock private AgentRepository agentRepository;
     @Mock private PlatformSupplierCredentialRepository credentialRepository;
     @Mock private NotificationService notificationService;
+    @Mock private PlatformBookingMirrorService mirrorService;
     @Mock private PlatformTransactionManager transactionManager;
     @Mock private WalletEntryRepository walletEntryRepository;
     @Mock private PlatformAuditService platformAuditService;
@@ -110,7 +111,7 @@ class PlatformBookingCancelTest {
         service = new PlatformBookingService(bookingRepository, provider, new FlightBookingProviderConfig(), quoter, pricingService,
                 walletService, walletRepository, tenantRepository, agentRepository, credentialRepository, notificationService,
                 new PlatformBookingEventRecorder(eventRepository, paxCodec), paxCodec, objectMapper, transactionManager,
-                walletEntryRepository, platformAuditService, settings);
+                walletEntryRepository, platformAuditService, settings, mirrorService);
         lenient().when(bookingRepository.save(any())).thenAnswer(i -> {
             PlatformBooking b = i.getArgument(0);
             rows.put(b.getId(), b);
@@ -192,6 +193,20 @@ class PlatformBookingCancelTest {
         assertThat(b.getCancelRefund()).isEqualByComparingTo("4000.00");
         assertThat(b.getCancelledAt()).isNotNull();
         assertThat(eventTypes()).containsSubsequence("CANCEL_REQUESTED", "CANCELLED");
+    }
+
+    /** A cancelled booking whose CRM mirror was written goes back to PENDING; the mirror cancel runs after the refund committed. */
+    @Test
+    void cancelSchedulesTheMirrorCancelAfterTheRefund() {
+        supplierRefunds("4000.00");
+        rows.get(ID).setMirrorStatus(com.voyra.crm.enums.MirrorStatus.DONE);
+
+        PlatformBooking b = service.cancel(ID, "ck-1");
+
+        assertThat(b.getMirrorStatus()).isEqualTo(com.voyra.crm.enums.MirrorStatus.PENDING);
+        InOrder order = inOrder(walletService, mirrorService);
+        order.verify(walletService).credit(eq(T), eq(WalletEntryType.REFUND_CREDIT), any(), anyString(), anyString(), anyString(), anyString());
+        order.verify(mirrorService).sync(ID);
     }
 
     @Test

@@ -193,7 +193,7 @@ public class BookingDocumentService {
 
     /** Not {@code @Transactional} - see class javadoc. */
     public BookingDocumentResponse attachFile(String bookingId, String documentId, MultipartFile file) {
-        bookingService.findAccessibleBooking(bookingId);
+        com.voyra.crm.util.PlatformManaged.check(bookingService.findAccessibleBooking(bookingId).getPlatformBookingId() != null);
         BookingDocument document = bookingDocumentRepository.findByIdAndBookingId(documentId, bookingId)
                 .orElseThrow(() -> new IllegalArgumentException("Document not found: " + documentId));
 

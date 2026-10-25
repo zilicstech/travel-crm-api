@@ -195,6 +195,42 @@ class BookingServiceTest {
                 .hasMessageContaining("Priya doesn't handle FLIGHT");
     }
 
+    /** A CRM booking mirrored from a platform booking is changed only by the platform (spec 6). */
+    @Test
+    void crmEditOfAMirrorIs409() {
+        Booking mirror = Booking.builder().id("B1").agentId("A1").platformBookingId("PB1")
+                .bookingStatus(BookingStatus.CONFIRMED).paymentStatusSource(PaymentStatusSource.MANUAL).build();
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(mirror));
+        BookingStatusUpdateRequest confirm = new BookingStatusUpdateRequest();
+        confirm.setBookingStatus(BookingStatus.CONFIRMED);
+        BookingPaymentStatusUpdateRequest paid = new BookingPaymentStatusUpdateRequest();
+        paid.setPaymentStatus(PaymentStatus.PAID);
+
+        java.util.List<org.assertj.core.api.ThrowableAssert.ThrowingCallable> edits = java.util.List.of(
+                () -> bookingService.updateBooking("B1", new com.voyra.crm.dto.BookingUpdateRequest()),
+                () -> bookingService.updateStatus("B1", confirm),
+                () -> bookingService.updateDeadlines("B1", new com.voyra.crm.dto.BookingDeadlineUpdateRequest()),
+                () -> bookingService.updatePaymentStatus("B1", paid),
+                () -> bookingService.deleteBooking("B1"),
+                () -> bookingService.removeVoucher("B1", "D1"),
+                () -> bookingService.lockAccessibleBooking("B1"),
+                () -> bookingService.replaceCostComponents("B1", java.util.List.of()));
+        for (org.assertj.core.api.ThrowableAssert.ThrowingCallable edit : edits) {
+            assertThatThrownBy(edit).isInstanceOf(com.voyra.crm.exception.BookingConflictException.class)
+                    .hasMessage("Managed from Platform Bookings")
+                    .extracting("code").isEqualTo("MANAGED_FROM_PLATFORM");
+        }
+        org.mockito.Mockito.verify(bookingRepository, org.mockito.Mockito.never()).save(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void theSystemActorMayWriteAMirror() {
+        Booking mirror = Booking.builder().id("B1").agentId("A1").platformBookingId("PB1").build();
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(mirror));
+
+        assertThat(com.voyra.crm.security.SystemActor.call("T1", () -> bookingService.lockAccessibleBooking("B1"))).isSameAs(mirror);
+    }
+
     @Test
     void manualPaymentStatusPatchSucceedsWhileStillManual() {
         Booking booking = Booking.builder().id("B1").agentId("A1").paymentStatusSource(PaymentStatusSource.MANUAL).build();

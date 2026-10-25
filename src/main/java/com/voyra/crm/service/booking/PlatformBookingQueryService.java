@@ -200,7 +200,7 @@ public class PlatformBookingQueryService {
     }
 
     /** Pulls the legs out of the supplier itinerary by Tripjack's {@code sI} segments; anything unrecognised yields no legs. */
-    private List<ItinerarySegment> itinerary(PlatformBooking b) {
+    public List<ItinerarySegment> itinerary(PlatformBooking b) {
         if (b.getItinerary() == null) {
             return List.of();
         }

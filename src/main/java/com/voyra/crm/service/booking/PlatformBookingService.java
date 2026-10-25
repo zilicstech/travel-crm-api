@@ -13,6 +13,7 @@ import com.voyra.crm.entity.PlatformSupplierCredential;
 import com.voyra.crm.entity.Tenant;
 import com.voyra.crm.entity.Wallet;
 import com.voyra.crm.entity.WalletEntry;
+import com.voyra.crm.enums.MirrorStatus;
 import com.voyra.crm.enums.PlatformAuditAction;
 import com.voyra.crm.enums.PlatformBookingStatus;
 import com.voyra.crm.enums.PricingProduct;
@@ -90,6 +91,7 @@ public class PlatformBookingService {
     private final WalletEntryRepository walletEntryRepository;
     private final PlatformAuditService platformAuditService;
     private final PlatformSettingService settings;
+    private final PlatformBookingMirrorService mirrorService;
 
     public PlatformBookingService(PlatformBookingRepository bookingRepository, FlightBookingProvider provider,
                                   FlightBookingProviderConfig providerConfig, AgencyPriceQuoter quoter,
@@ -99,7 +101,7 @@ public class PlatformBookingService {
                                   NotificationService notificationService, PlatformBookingEventRecorder events,
                                   PaxCodec paxCodec, ObjectMapper objectMapper, PlatformTransactionManager transactionManager,
                                   WalletEntryRepository walletEntryRepository, PlatformAuditService platformAuditService,
-                                  PlatformSettingService settings) {
+                                  PlatformSettingService settings, PlatformBookingMirrorService mirrorService) {
         this.bookingRepository = bookingRepository;
         this.provider = provider;
         this.providerConfig = providerConfig;
@@ -118,6 +120,7 @@ public class PlatformBookingService {
         this.walletEntryRepository = walletEntryRepository;
         this.platformAuditService = platformAuditService;
         this.settings = settings;
+        this.mirrorService = mirrorService;
     }
 
     /**
@@ -531,6 +534,9 @@ public class PlatformBookingService {
             detail.put("recall", recall);
         }
         b.setStatus(PlatformBookingStatus.CANCELLED);
+        if (b.getMirrorStatus() == MirrorStatus.DONE) {
+            b.setMirrorStatus(MirrorStatus.PENDING); // the CRM mirror still has to be cancelled
+        }
         b.setCancelledAt(Instant.now());
         b.setSupplierMessage(truncate(message));
         events.record(id, "CANCELLED", detail);
@@ -701,6 +707,9 @@ public class PlatformBookingService {
             }
         }
         b.setStatus(PlatformBookingStatus.TICKETED);
+        if (b.getClientId() != null) {
+            b.setMirrorStatus(MirrorStatus.PENDING); // committed with the debit, so the repair job finds it even after a crash
+        }
         b.setPnr(result.pnr());
         b.setTicketNumbers(result.ticketNumbers());
         b.setTicketedAt(Instant.now());
@@ -720,12 +729,14 @@ public class PlatformBookingService {
         events.record(id, "TICKETED", Map.of("pnr", String.valueOf(result.pnr()), "debitEntryId", debit.getId()));
     }
 
-    /** Task 8 hook: writes the CRM mirror after the debit has committed. No-op until then. */
+    /** Writes the CRM mirror after the debit committed, outside any transaction; a failure is the repair job's, never the ticket's. */
     private void scheduleMirror(PlatformBooking booking) {
+        mirrorService.sync(booking.getId());
     }
 
-    /** Task 8 hook: cancels the CRM mirror after the refund and recall have committed. No-op until then. */
+    /** Cancels the CRM mirror after the refund and recall committed, outside any transaction. */
     private void scheduleMirrorCancel(PlatformBooking booking) {
+        mirrorService.sync(booking.getId());
     }
 
     private void stamp(PlatformBooking b, PriceQuote q) {

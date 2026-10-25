@@ -32,6 +32,8 @@ public interface PlatformBookingRepository extends JpaRepository<PlatformBooking
 
     List<PlatformBooking> findByStatusIn(Collection<PlatformBookingStatus> statuses);
 
+    List<PlatformBooking> findByMirrorStatusIn(Collection<com.voyra.crm.enums.MirrorStatus> statuses);
+
     List<PlatformBooking> findByTenantIdOrderByCreatedAtDesc(String tenantId, Pageable pageable);
 
     Page<PlatformBooking> findByTenantId(String tenantId, Pageable pageable);
