@@ -168,6 +168,10 @@ public class PlatformBooking {
     @Column(name = "cancelled_at")
     private Instant cancelledAt;
 
+    /** When an admin resolved this booking as FAILED; the poller re-checks it for 72 hours for a late ticket. */
+    @Column(name = "resolved_failed_at")
+    private Instant resolvedFailedAt;
+
     @Column(name = "last_polled_at")
     private Instant lastPolledAt;
 

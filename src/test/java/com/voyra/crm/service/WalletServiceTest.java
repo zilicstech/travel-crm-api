@@ -318,13 +318,14 @@ class WalletServiceTest {
         fund("300"); // the released 400 was partly spent before the late ticket arrived
 
         WalletEntry debit = service.debitOrReceivable(T, WalletEntryType.BOOKING_DEBIT, d("400"), "pb-debit:B1",
-                "PLATFORM_BOOKING", "B1", ReceivableReason.LATE_TICKET);
+                "PLATFORM_BOOKING", "B1", ReceivableReason.LATE_TICKET, hold.getId());
         WalletEntry again = service.debitOrReceivable(T, WalletEntryType.BOOKING_DEBIT, d("400"), "pb-debit:B1",
-                "PLATFORM_BOOKING", "B1", ReceivableReason.LATE_TICKET);
+                "PLATFORM_BOOKING", "B1", ReceivableReason.LATE_TICKET, hold.getId());
 
         assertThat(again).isSameAs(debit);
         assertThat(debit.getType()).isEqualTo(WalletEntryType.BOOKING_DEBIT);
         assertThat(debit.getAmount()).isEqualByComparingTo("-300");
+        assertThat(debit.getRelatedEntryId()).isEqualTo(hold.getId());
         assertThat(wallet.getBalance()).isEqualByComparingTo("0");
         assertThat(receivables).singleElement().satisfies(r -> {
             assertThat(r.getAmount()).isEqualByComparingTo("100");

@@ -13,6 +13,7 @@ import com.voyra.crm.entity.PlatformSupplierCredential;
 import com.voyra.crm.entity.Tenant;
 import com.voyra.crm.entity.Wallet;
 import com.voyra.crm.entity.WalletEntry;
+import com.voyra.crm.enums.PlatformAuditAction;
 import com.voyra.crm.enums.PlatformBookingStatus;
 import com.voyra.crm.enums.PricingProduct;
 import com.voyra.crm.enums.ReceivableReason;
@@ -25,6 +26,7 @@ import com.voyra.crm.enums.VoyraEarnedSource;
 import com.voyra.crm.enums.WalletEntryType;
 import com.voyra.crm.exception.BookingConflictException;
 import com.voyra.crm.exception.InsufficientBalanceException;
+import com.voyra.crm.exception.NotFoundException;
 import com.voyra.crm.exception.PricingNotConfiguredException;
 import com.voyra.crm.exception.ReceivableDueException;
 import com.voyra.crm.exception.SupplierException;
@@ -44,7 +46,6 @@ import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.service.AgencyPricingService;
 import com.voyra.crm.service.NotificationService;
 import com.voyra.crm.service.PlatformAuditService;
-import com.voyra.crm.enums.PlatformAuditAction;
 import com.voyra.crm.service.WalletService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -74,6 +75,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.calls;
 import static org.mockito.Mockito.inOrder;
@@ -171,7 +173,7 @@ class PlatformBookingServiceTest {
         lenient().when(walletEntryRepository.existsByRelatedEntryIdAndType(anyString(), eq(WalletEntryType.HOLD_RELEASE)))
                 .thenAnswer(i -> walletEntries.values().stream().anyMatch(e -> e.getType() == WalletEntryType.HOLD_RELEASE
                         && i.<String>getArgument(0).equals(e.getRelatedEntryId())));
-        lenient().when(walletService.debitOrReceivable(eq(T), eq(WalletEntryType.BOOKING_DEBIT), any(), anyString(), anyString(), anyString(), any()))
+        lenient().when(walletService.debitOrReceivable(eq(T), eq(WalletEntryType.BOOKING_DEBIT), any(), anyString(), anyString(), anyString(), any(), any()))
                 .thenReturn(WalletEntry.builder().id("D2").tenantId(T).build());
         lenient().when(walletService.debitHeld(anyString(), any(), anyString(), anyString(), anyString()))
                 .thenReturn(WalletEntry.builder().id("D1").tenantId(T).build());
@@ -678,7 +680,7 @@ class PlatformBookingServiceTest {
         rows.get(id).setTenantId("T2");
 
         assertThatThrownBy(() -> service.confirm(id, confirmRequest("key-00000001", "4500.00")))
-                .isInstanceOf(com.voyra.crm.exception.NotFoundException.class);
+                .isInstanceOf(NotFoundException.class);
     }
 
     // ---- Task 5: admin resolve, late ticket, abort ----
@@ -722,6 +724,7 @@ class PlatformBookingServiceTest {
         PlatformBooking b = service.resolve(id, PlatformBookingStatus.FAILED, null, null, "Tripjack has no such booking");
 
         assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.FAILED);
+        assertThat(b.getResolvedFailedAt()).isNotNull();
         verify(walletService).releaseHold("H1", "pb-release:" + id);
         verify(walletService, never()).debitHeld(any(), any(), any(), any(), any());
         verify(platformAuditService).record(eq(PlatformAuditAction.BOOKING_RESOLVE), eq(REF), eq(id), any());
@@ -761,10 +764,10 @@ class PlatformBookingServiceTest {
         assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
         assertThat(b.getDebitEntryId()).isEqualTo("D2");
         verify(walletService).debitOrReceivable(T, WalletEntryType.BOOKING_DEBIT, new BigDecimal("4500.00"), "pb-debit:" + id,
-                REF, id, ReceivableReason.LATE_TICKET);
+                REF, id, ReceivableReason.LATE_TICKET, "H1");
         verify(walletService, never()).debitHeld(any(), any(), any(), any(), any());
         verify(walletService).credit(eq(T), eq(WalletEntryType.COMMISSION_CREDIT), any(), eq("pb-comm:" + id), eq(REF), eq(id), anyString());
-        verify(notificationService).platformAlert(org.mockito.ArgumentMatchers.contains("Late ticket"), anyString());
+        verify(notificationService).platformAlert(contains("Late ticket"), anyString());
     }
 
     private void committedHold(String id) {
@@ -821,6 +824,6 @@ class PlatformBookingServiceTest {
         String id = reviewed();
         rows.get(id).setTenantId("T2");
 
-        assertThatThrownBy(() -> service.abort(id)).isInstanceOf(com.voyra.crm.exception.NotFoundException.class);
+        assertThatThrownBy(() -> service.abort(id)).isInstanceOf(NotFoundException.class);
     }
 }

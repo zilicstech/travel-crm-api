@@ -4,10 +4,12 @@ import com.voyra.crm.dto.PlatformSupplierCredentialRequest;
 import com.voyra.crm.dto.PlatformSupplierCredentialResponse;
 import com.voyra.crm.entity.PlatformSupplierCredential;
 import com.voyra.crm.enums.PlatformAuditAction;
+import com.voyra.crm.enums.PlatformBookingStatus;
 import com.voyra.crm.enums.SupplierEnvironment;
 import com.voyra.crm.enums.SupplierProvider;
 import com.voyra.crm.enums.UserType;
 import com.voyra.crm.models.ResolvedCredential;
+import com.voyra.crm.repository.PlatformBookingRepository;
 import com.voyra.crm.repository.PlatformSupplierCredentialRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.util.PasswordEncryptionUtil;
@@ -52,7 +54,7 @@ class PlatformSupplierCredentialServiceTest {
 
     @Mock private PlatformSupplierCredentialRepository repository;
     @Mock private PlatformAuditService platformAuditService;
-    @Mock private com.voyra.crm.repository.PlatformBookingRepository bookingRepository;
+    @Mock private PlatformBookingRepository bookingRepository;
 
     @InjectMocks private PlatformSupplierCredentialService service;
 
@@ -280,7 +282,7 @@ class PlatformSupplierCredentialServiceTest {
 
     @Test
     void credentialSwitchBlockedWhileBookingsInFlight() {
-        when(bookingRepository.countByStatusIn(com.voyra.crm.enums.PlatformBookingStatus.IN_FLIGHT)).thenReturn(2L);
+        when(bookingRepository.countByStatusIn(PlatformBookingStatus.IN_FLIGHT)).thenReturn(2L);
 
         assertThatThrownBy(() -> service.upsert(request("tj_new_key_1234")))
                 .isInstanceOf(IllegalStateException.class)

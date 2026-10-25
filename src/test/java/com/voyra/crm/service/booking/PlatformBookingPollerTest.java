@@ -6,6 +6,7 @@ import com.voyra.crm.entity.PlatformBookingEvent;
 import com.voyra.crm.entity.WalletEntry;
 import com.voyra.crm.enums.PlatformBookingStatus;
 import com.voyra.crm.enums.PricingProduct;
+import com.voyra.crm.enums.ReceivableReason;
 import com.voyra.crm.enums.SupplierEnvironment;
 import com.voyra.crm.enums.WalletEntryType;
 import com.voyra.crm.exception.SupplierTimeoutException;
@@ -28,6 +29,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -40,9 +42,11 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -73,6 +77,8 @@ class PlatformBookingPollerTest {
     private final FlightBookingProviderConfig config = new FlightBookingProviderConfig();
     private final Map<String, PlatformBooking> rows = new HashMap<>();
     private final List<PlatformBookingEvent> savedEvents = new ArrayList<>();
+    /** Wallet entries the mocked WalletService "posted", by idempotency key. */
+    private final Map<String, WalletEntry> walletEntries = new HashMap<>();
     private PlatformBookingPoller poller;
 
     @BeforeEach
@@ -105,6 +111,33 @@ class PlatformBookingPollerTest {
                 .filter(e -> e.getPlatformBookingId().equals(i.getArgument(0))).toList());
         lenient().when(walletService.debitHeld(anyString(), any(), anyString(), anyString(), anyString()))
                 .thenReturn(WalletEntry.builder().id("D1").tenantId(T).build());
+        lenient().when(walletService.debitOrReceivable(any(), any(), any(), anyString(), anyString(), anyString(), any(), any()))
+                .thenReturn(WalletEntry.builder().id("D2").tenantId(T).build());
+        lenient().when(walletService.releaseHold(anyString(), anyString())).thenAnswer(i -> {
+            WalletEntry r = WalletEntry.builder().id("R-" + i.getArgument(0)).tenantId(T).type(WalletEntryType.HOLD_RELEASE)
+                    .relatedEntryId(i.getArgument(0)).idempotencyKey(i.getArgument(1)).build();
+            walletEntries.put(r.getIdempotencyKey(), r);
+            return r;
+        });
+        lenient().when(walletEntryRepository.findByIdempotencyKey(anyString()))
+                .thenAnswer(i -> Optional.ofNullable(walletEntries.get(i.<String>getArgument(0))));
+        lenient().when(walletEntryRepository.existsByRelatedEntryIdAndType(anyString(), eq(WalletEntryType.HOLD_RELEASE)))
+                .thenAnswer(i -> walletEntries.values().stream().anyMatch(e -> e.getType() == WalletEntryType.HOLD_RELEASE
+                        && i.<String>getArgument(0).equals(e.getRelatedEntryId())));
+        lenient().when(bookingRepository.findByStatusAndResolvedFailedAtAfter(eq(PlatformBookingStatus.FAILED), any())).thenAnswer(i -> {
+            Instant after = i.getArgument(1);
+            return rows.values().stream().filter(b -> b.getStatus() == PlatformBookingStatus.FAILED
+                    && b.getResolvedFailedAt() != null && b.getResolvedFailedAt().isAfter(after)).map(b -> b.toBuilder().build()).toList();
+        });
+    }
+
+    private void committedHold(String id) {
+        walletEntries.put("pb-hold:" + id, WalletEntry.builder().id("H1").tenantId(T).type(WalletEntryType.HOLD)
+                .idempotencyKey("pb-hold:" + id).build());
+    }
+
+    private void event(String id, String type, Instant at) {
+        savedEvents.add(PlatformBookingEvent.builder().id("E-" + type + id).platformBookingId(id).type(type).createdAt(at).build());
     }
 
     /** A row whose book call timed out: BOOKING, hold H1 open, no supplier booking id yet. */
@@ -164,6 +197,7 @@ class PlatformBookingPollerTest {
         poller.poll();
 
         assertThat(rows.get("B1").getStatus()).isEqualTo(PlatformBookingStatus.FAILED);
+        assertThat(rows.get("B1").getResolvedFailedAt()).isNull(); // a supplier FAILED is final; only an admin's is re-checked
         verify(walletService).releaseHold("H1", "pb-release:B1");
     }
 
@@ -229,5 +263,122 @@ class PlatformBookingPollerTest {
         poller.poll();
 
         assertThat(rows.get("B2").getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
+    }
+
+    // ---- review fixes ----
+
+    private static BookResult ticketed() {
+        return new BookResult("SB-1", SupplierBookingStatus.TICKETED, "PNR1", List.of("TKT-1"), "Ticketed", null);
+    }
+
+    @Test
+    void ticketAfterAnAdminResolvedFailedIsDebitedOnceViaReceivable() {
+        PlatformBooking b = bookingRow("B1", Instant.now().minus(3, ChronoUnit.HOURS));
+        b.setStatus(PlatformBookingStatus.FAILED);
+        b.setResolvedFailedAt(Instant.now().minus(1, ChronoUnit.HOURS));
+        walletEntries.put("pb-release:B1", WalletEntry.builder().id("R1").type(WalletEntryType.HOLD_RELEASE)
+                .relatedEntryId("H1").idempotencyKey("pb-release:B1").build());
+        when(provider.bookingDetails("rv-B1"))
+                .thenReturn(new BookResult(null, SupplierBookingStatus.FAILED, null, List.of(), "No booking", null))
+                .thenReturn(ticketed());
+
+        poller.poll();
+        assertThat(rows.get("B1").getStatus()).isEqualTo(PlatformBookingStatus.FAILED);
+        poller.poll(); // within 10 minutes of the last poll: not asked again
+        verify(provider, times(1)).bookingDetails("rv-B1");
+
+        rows.get("B1").setLastPolledAt(Instant.now().minus(11, ChronoUnit.MINUTES));
+        poller.poll();
+        poller.poll(); // TICKETED is not polled again
+
+        assertThat(rows.get("B1").getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
+        verify(walletService, times(1)).debitOrReceivable(T, WalletEntryType.BOOKING_DEBIT, new BigDecimal("4500.00"),
+                "pb-debit:B1", "PLATFORM_BOOKING", "B1", ReceivableReason.LATE_TICKET, "H1");
+        verify(walletService, never()).debitHeld(any(), any(), any(), any(), any());
+        verify(walletService, never()).releaseHold(any(), any());
+    }
+
+    @Test
+    void aBookingResolvedFailedMoreThan72HoursAgoIsNotPolled() {
+        PlatformBooking b = bookingRow("B1", Instant.now().minus(80, ChronoUnit.HOURS));
+        b.setStatus(PlatformBookingStatus.FAILED);
+        b.setResolvedFailedAt(Instant.now().minus(73, ChronoUnit.HOURS));
+
+        poller.poll();
+
+        verify(provider, never()).bookingDetails(anyString());
+    }
+
+    @Test
+    void aFailingApplyStillRecordsThePollAndEscalates() {
+        bookingRow("B1", Instant.now().minus(31, ChronoUnit.MINUTES));
+        when(provider.bookingDetails("rv-B1")).thenReturn(ticketed());
+        when(walletService.debitHeld(anyString(), any(), anyString(), anyString(), anyString()))
+                .thenThrow(new IllegalStateException("wallet row locked"));
+
+        poller.poll();
+
+        PlatformBooking b = rows.get("B1");
+        assertThat(b.getPollCount()).isEqualTo(1);
+        assertThat(b.getLastPolledAt()).isNotNull();
+        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.UNKNOWN);
+    }
+
+    @Test
+    void sweepReleasesTheOrphanHoldOfAnExpiredReview() {
+        PlatformBooking b = bookingRow("B1", Instant.now().minus(1, ChronoUnit.HOURS));
+        b.setStatus(PlatformBookingStatus.REVIEWING);
+        b.setHoldEntryId(null);
+        b.setReviewExpiresAt(Instant.now().minus(1, ChronoUnit.MINUTES));
+        committedHold("B1");
+        when(bookingRepository.findExpiredReviewsWithOpenHold(any(), any())).thenReturn(List.of(b.toBuilder().build()));
+
+        poller.poll();
+
+        assertThat(rows.get("B1").getStatus()).isEqualTo(PlatformBookingStatus.ABORTED);
+        assertThat(rows.get("B1").getAbortReason()).isEqualTo("Review expired");
+        verify(walletService).releaseHold("H1", "pb-release:B1");
+        verify(provider, never()).bookingDetails(anyString());
+    }
+
+    @Test
+    void sweepReleasesAHeldBookingThatWasNeverSent() {
+        PlatformBooking b = bookingRow("B1", Instant.now());
+        savedEvents.clear();
+        b.setStatus(PlatformBookingStatus.HELD);
+        event("B1", "HELD", Instant.now().minus(11, ChronoUnit.MINUTES));
+        committedHold("B1");
+
+        poller.poll();
+
+        assertThat(rows.get("B1").getStatus()).isEqualTo(PlatformBookingStatus.ABORTED);
+        assertThat(rows.get("B1").getAbortReason()).isEqualTo("Not sent to supplier");
+        verify(walletService).releaseHold("H1", "pb-release:B1");
+    }
+
+    @Test
+    void sweepLeavesAFreshHeldBookingAlone() {
+        PlatformBooking b = bookingRow("B1", Instant.now());
+        savedEvents.clear();
+        b.setStatus(PlatformBookingStatus.HELD);
+        event("B1", "HELD", Instant.now().minus(2, ChronoUnit.MINUTES));
+        committedHold("B1");
+
+        poller.poll();
+
+        assertThat(rows.get("B1").getStatus()).isEqualTo(PlatformBookingStatus.HELD);
+        verify(walletService, never()).releaseHold(any(), any());
+    }
+
+    @Test
+    void pollRefusesToRunInsideATransaction() {
+        bookingRow("B1", Instant.now());
+        TransactionSynchronizationManager.setActualTransactionActive(true);
+        try {
+            assertThatThrownBy(() -> poller.poll()).isInstanceOf(IllegalStateException.class);
+        } finally {
+            TransactionSynchronizationManager.setActualTransactionActive(false);
+        }
+        verify(provider, never()).bookingDetails(anyString());
     }
 }

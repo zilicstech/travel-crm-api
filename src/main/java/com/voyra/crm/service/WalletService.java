@@ -152,6 +152,13 @@ public class WalletService {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public WalletEntry debitOrReceivable(String tenantId, WalletEntryType type, BigDecimal amount, String idempotencyKey,
                                          String refType, String refId, ReceivableReason reason) {
+        return debitOrReceivable(tenantId, type, amount, idempotencyKey, refType, refId, reason, null);
+    }
+
+    /** As above, linking the entry to {@code relatedEntryId} (a late BOOKING_DEBIT points at its released hold). */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public WalletEntry debitOrReceivable(String tenantId, WalletEntryType type, BigDecimal amount, String idempotencyKey,
+                                         String refType, String refId, ReceivableReason reason, String relatedEntryId) {
         requireType(type, DEBIT_OR_RECEIVABLE_TYPES);
         requirePositive(amount);
         Wallet wallet = lock(tenantId);
@@ -159,7 +166,7 @@ public class WalletService {
         if (existing.isPresent()) {
             return existing.get();
         }
-        WalletEntry entry = debitCovered(wallet, type, amount, idempotencyKey, refType, refId, reason, null);
+        WalletEntry entry = debitCovered(wallet, type, amount, idempotencyKey, refType, refId, reason, relatedEntryId);
         checkLowBalance(wallet);
         return entry;
     }

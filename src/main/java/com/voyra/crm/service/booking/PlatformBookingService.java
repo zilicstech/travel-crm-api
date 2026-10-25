@@ -128,14 +128,26 @@ public class PlatformBookingService {
             if (b.getStatus() != PlatformBookingStatus.REVIEWING && b.getStatus() != PlatformBookingStatus.HELD) {
                 throw new IllegalStateException("This booking was already sent to the supplier and cannot be aborted");
             }
-            walletEntryRepository.findByIdempotencyKey("pb-hold:" + bookingId)
-                    .filter(h -> !walletEntryRepository.existsByRelatedEntryIdAndType(h.getId(), WalletEntryType.HOLD_RELEASE))
-                    .ifPresent(h -> walletService.releaseHold(h.getId(), "pb-release:" + bookingId));
-            b.setStatus(PlatformBookingStatus.ABORTED);
-            b.setAbortReason("Aborted by the agency");
-            events.record(bookingId, "ABORTED", Map.of("by", principal.userId()));
-            return bookingRepository.save(b);
+            return abortLocked(b, "Aborted by the agency", principal.userId());
         });
+    }
+
+    /** Poller sweep: aborts the row only if it is still {@code expected} under the lock (a confirm may have won). */
+    void sweepAbort(String bookingId, PlatformBookingStatus expected, String reason) {
+        tx.executeWithoutResult(s -> bookingRepository.findByIdForUpdate(bookingId)
+                .filter(b -> b.getStatus() == expected)
+                .ifPresent(b -> abortLocked(b, reason, "system")));
+    }
+
+    private PlatformBooking abortLocked(PlatformBooking b, String reason, String by) {
+        String id = b.getId();
+        walletEntryRepository.findByIdempotencyKey("pb-hold:" + id)
+                .filter(h -> !walletEntryRepository.existsByRelatedEntryIdAndType(h.getId(), WalletEntryType.HOLD_RELEASE))
+                .ifPresent(h -> walletService.releaseHold(h.getId(), "pb-release:" + id));
+        b.setStatus(PlatformBookingStatus.ABORTED);
+        b.setAbortReason(reason);
+        events.record(id, "ABORTED", Map.of("by", by, "reason", reason));
+        return bookingRepository.save(b);
     }
 
     /**
@@ -169,6 +181,9 @@ public class PlatformBookingService {
             events.record(bookingId, "RESOLVED", detail);
             platformAuditService.record(PlatformAuditAction.BOOKING_RESOLVE, REF_TYPE, bookingId, detail);
             SupplierBookingStatus status = outcome == PlatformBookingStatus.TICKETED ? SupplierBookingStatus.TICKETED : SupplierBookingStatus.FAILED;
+            if (status == SupplierBookingStatus.FAILED) {
+                b.setResolvedFailedAt(Instant.now()); // the poller re-checks for a late ticket for 72 hours
+            }
             return applyLocked(bookingId, new BookResult(null, status, pnr, ticketNumbers == null ? List.of() : ticketNumbers,
                     "Resolved by Voyra", null));
         });
@@ -391,7 +406,7 @@ public class PlatformBookingService {
         if (walletEntryRepository.findByIdempotencyKey("pb-release:" + id).isPresent()) {
             // late ticket: the hold went back to the agency (resolved FAILED) - still debited, receivable if short
             debit = walletService.debitOrReceivable(b.getTenantId(), WalletEntryType.BOOKING_DEBIT, b.getDisplayed(),
-                    "pb-debit:" + id, REF_TYPE, id, ReceivableReason.LATE_TICKET);
+                    "pb-debit:" + id, REF_TYPE, id, ReceivableReason.LATE_TICKET, b.getHoldEntryId());
             events.record(id, "LATE_TICKET", Map.of("previousStatus", b.getStatus().name()));
             notificationService.platformAlert("Late ticket on booking " + id,
                     "Booking " + id + " for agency " + b.getTenantId() + " ticketed after its hold was released ("
