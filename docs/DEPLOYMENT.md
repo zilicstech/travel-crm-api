@@ -58,6 +58,12 @@ Flyway catch-up migration and the in-memory cache loaders (`TenantCache`, `Agent
 zero, revisit `RUN_TENANT_MIGRATIONS` (move the catch-up to a one-off Cloud Run Job instead)
 and the cache-consistency note below.
 
+## Scheduled jobs need CPU always allocated
+
+The subscription lifecycle, gateway reconciliation, booking poll and repair, and purge jobs are
+`@Scheduled` tasks inside the app process. Deploy with `--no-cpu-throttling` and `--min-instances 1`
+(or more); with request-only CPU they pause between requests and do not run reliably.
+
 ## Pre-deploy checklist
 
 - [ ] All three Secret Manager values are the real production secrets, not copies of local `.env`.
