@@ -66,7 +66,23 @@ class MockFlightBookingProviderTest {
         config.getMock().setBookTimeout(true);
         FareReview review = provider.review("o", 1, 0, 0);
         assertThatThrownBy(() -> book(review)).isInstanceOf(SupplierTimeoutException.class);
-        assertThat(provider.bookingDetails("mock-bk-" + review.reviewId()).status()).isEqualTo(SupplierBookingStatus.TICKETED);
+        assertThat(provider.bookingDetails("mock-bk-" + review.reviewId() + "-" + review.totalFare().toPlainString()).status()).isEqualTo(SupplierBookingStatus.TICKETED);
+    }
+
+    @Test
+    void bookFail_returnsCleanFailed() {
+        config.getMock().setBookFail(true);
+        BookResult r = book(provider.review("o", 1, 0, 0));
+        assertThat(r.status()).isEqualTo(SupplierBookingStatus.FAILED);
+        assertThat(r.message()).isEqualTo("Mock: fare sold out");
+    }
+
+    @Test
+    void refund_survivesARestart() {
+        FareReview review = provider.review("o", 2, 0, 0);
+        String id = book(review).supplierBookingId();
+        var fresh = new MockFlightBookingProvider(new FlightBookingProviderConfig());
+        assertThat(fresh.cancelQuote(id).refund()).isEqualByComparingTo(review.totalFare().multiply(new BigDecimal("0.80")));
     }
 
     @Test

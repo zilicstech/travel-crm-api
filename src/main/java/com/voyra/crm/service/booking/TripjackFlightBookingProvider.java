@@ -57,7 +57,11 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
         }
         JsonNode fare = res.path("totalPriceInfo").path("totalFareDetail").path("fC");
         String reviewId = text(res.path("bookingId"));
-        return new FareReview(reviewId, decimal(fare.path("TF")), decimal(fare.path("BF")), "INR",
+        BigDecimal total = decimal(fare.path("TF"));
+        if (reviewId == null || reviewId.isBlank() || total == null) {
+            throw new SupplierException("Tripjack review response is missing the review id or total fare", null);
+        }
+        return new FareReview(reviewId, total, decimal(fare.path("BF")), "INR",
                 fareRules(reviewId), null, res.path("tripInfos").isMissingNode() ? null : res.path("tripInfos"));
     }
 
@@ -72,9 +76,13 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
         delivery.put("contacts", r.phone() == null ? List.of() : List.of(r.phone()));
         body.put("deliveryInfo", delivery);
 
-        JsonNode res = post("/oms/v1/air/book", body, "book");
-        if (!succeeded(res)) {
+        JsonNode res = post("/oms/v1/air/book", body, "book", false);
+        if (explicitlyFailed(res)) {
             return new BookResult(r.reviewId(), SupplierBookingStatus.FAILED, null, List.of(), message(res, "Booking failed"));
+        }
+        if (!succeeded(res)) {
+            // Empty or unexpected answer: the supplier may have booked, so this is unknown, not failed.
+            throw new SupplierException("Tripjack book returned an ambiguous response", null);
         }
         // Accepted is not ticketed: the ticket arrives asynchronously, so the caller polls bookingDetails.
         return new BookResult(r.reviewId(), SupplierBookingStatus.PENDING, null, List.of(), null);
@@ -88,8 +96,8 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
         }
         String orderStatus = res.path("order").path("status").asText("").toUpperCase();
         SupplierBookingStatus status = switch (orderStatus) {
-            case "SUCCESS" -> SupplierBookingStatus.TICKETED;
-            case "FAILED", "ABORTED", "CANCELLED", "UNCONFIRMED" -> SupplierBookingStatus.FAILED;
+            case "SUCCESS", "TICKETED" -> SupplierBookingStatus.TICKETED;
+            case "FAILED", "CANCELLED" -> SupplierBookingStatus.FAILED;
             default -> SupplierBookingStatus.PENDING;
         };
         String pnr = null;
@@ -153,6 +161,12 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
         }
     }
 
+    /** True only for an explicit boolean {@code status.success=false}. */
+    private static boolean explicitlyFailed(JsonNode res) {
+        JsonNode flag = res == null ? null : res.path("status").path("success");
+        return flag != null && flag.isBoolean() && !flag.booleanValue();
+    }
+
     private static boolean succeeded(JsonNode res) {
         return res != null && res.path("status").path("success").asBoolean(false);
     }
@@ -178,8 +192,7 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
     }
 
     private static BigDecimal refundOf(JsonNode res) {
-        BigDecimal refund = res == null ? null : decimal(res.path("totalRefundAmount"));
-        return refund == null ? BigDecimal.ZERO : refund;
+        return res == null ? null : decimal(res.path("totalRefundAmount"));
     }
 
     private static String firstValue(JsonNode map) {
@@ -188,6 +201,11 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
     }
 
     private JsonNode post(String path, Object body, String what) {
+        return post(path, body, what, true);
+    }
+
+    /** {@code logBody=false} for calls whose error body may echo passenger data. */
+    private JsonNode post(String path, Object body, String what, boolean logBody) {
         ResolvedCredential credential = platformSupplierCredentialService.resolveActive(SupplierProvider.TRIPJACK);
         RestClient client = restClientBuilder.clone()
                 .baseUrl(credential.baseUrl())
@@ -197,7 +215,8 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
         try {
             raw = client.post().uri(path).body(body).retrieve().body(String.class);
         } catch (RestClientResponseException e) {
-            log.error("Tripjack {} HTTP {}: {}", what, e.getStatusCode().value(), e.getResponseBodyAsString());
+            String text = logBody ? e.getResponseBodyAsString() : "";
+            log.error("Tripjack {} HTTP {}: {}", what, e.getStatusCode().value(), text.length() > 200 ? text.substring(0, 200) : text);
             throw new SupplierException("Tripjack " + what + " call failed (HTTP " + e.getStatusCode().value() + ")", e);
         } catch (ResourceAccessException e) {
             if (e.getCause() instanceof SocketTimeoutException) {

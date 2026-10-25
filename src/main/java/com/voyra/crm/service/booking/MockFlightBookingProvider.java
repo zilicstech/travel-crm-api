@@ -30,9 +30,8 @@ public class MockFlightBookingProvider implements FlightBookingProvider {
 
     private final FlightBookingProviderConfig config;
 
-    /** Remaining PENDING answers and the booked fare, per supplier booking id (in-memory: mock only). */
+    /** Remaining PENDING answers per supplier booking id (in-memory: mock only). The fare lives in the id itself. */
     private final Map<String, Integer> pendingLeft = new ConcurrentHashMap<>();
-    private final Map<String, BigDecimal> fares = new ConcurrentHashMap<>();
 
     @Override
     public FareReview review(String offerId, int adults, int children, int infants) {
@@ -52,14 +51,16 @@ public class MockFlightBookingProvider implements FlightBookingProvider {
 
     @Override
     public BookResult book(BookRequest r) {
-        String id = "mock-bk-" + r.reviewId();
-        fares.put(id, r.totalFare());
+        String id = "mock-bk-" + r.reviewId() + "-" + r.totalFare().toPlainString();
+        if (config.getMock().isBookFail()) {
+            return new BookResult(id, SupplierBookingStatus.FAILED, null, List.of(), "Mock: fare sold out");
+        }
         if (config.getMock().isBookTimeout()) {
             throw new SupplierTimeoutException("Mock supplier timed out on book", null);
         }
         int pending = config.getMock().getPendingPolls();
         if (pending > 0) {
-            pendingLeft.put(id, pending);
+            pendingLeft.merge(id, pending, (a, c) -> a);
             return new BookResult(id, SupplierBookingStatus.PENDING, null, List.of(), "Ticketing in progress");
         }
         return ticketed(id);
@@ -67,9 +68,12 @@ public class MockFlightBookingProvider implements FlightBookingProvider {
 
     @Override
     public BookResult bookingDetails(String supplierBookingId) {
-        Integer left = pendingLeft.get(supplierBookingId);
-        if (left != null && left > 0) {
-            pendingLeft.put(supplierBookingId, left - 1);
+        int[] left = {0};
+        pendingLeft.computeIfPresent(supplierBookingId, (k, v) -> {
+            left[0] = v;
+            return v > 0 ? v - 1 : v;
+        });
+        if (left[0] > 0) {
             return new BookResult(supplierBookingId, SupplierBookingStatus.PENDING, null, List.of(), "Ticketing in progress");
         }
         return ticketed(supplierBookingId);
@@ -86,7 +90,13 @@ public class MockFlightBookingProvider implements FlightBookingProvider {
     }
 
     private BigDecimal refund(String id) {
-        return fares.getOrDefault(id, BigDecimal.ZERO).multiply(REFUND_SHARE).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal fare;
+        try {
+            fare = new BigDecimal(id.substring(id.lastIndexOf('-') + 1));
+        } catch (NumberFormatException e) {
+            fare = BigDecimal.ZERO;
+        }
+        return fare.multiply(REFUND_SHARE).setScale(2, RoundingMode.HALF_UP);
     }
 
     private BookResult ticketed(String id) {

@@ -25,6 +25,8 @@ public class FlightBookingProviderConfig {
         private int pendingPolls;
         /** book() times out, but the supplier did ticket it: bookingDetails() says TICKETED. */
         private boolean bookTimeout;
+        /** book() answers a clean FAILED ("Mock: fare sold out"). */
+        private boolean bookFail;
     }
 
     @Data

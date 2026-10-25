@@ -84,10 +84,7 @@ class TripjackFlightBookingProviderTest {
     @Test
     void review_missingFieldsDoNotBlowUp() {
         server.expect(requestTo(BASE + "/fms/v1/review")).andRespond(withSuccess(OK + "}", MediaType.APPLICATION_JSON));
-        server.expect(requestTo(BASE + "/fms/v2/farerule")).andRespond(withStatus(org.springframework.http.HttpStatus.BAD_GATEWAY));
-        FareReview r = provider.review("off-1", 1, 0, 0);
-        assertThat(r.totalFare()).isNull();
-        assertThat(r.fareRules()).isNull();
+        assertThatThrownBy(() -> provider.review("off-1", 1, 0, 0)).isInstanceOf(SupplierException.class);
     }
 
     private BookRequest request() {
@@ -118,6 +115,33 @@ class TripjackFlightBookingProviderTest {
         BookResult r = provider.book(request());
         assertThat(r.status()).isEqualTo(SupplierBookingStatus.FAILED);
         assertThat(r.message()).isEqualTo("Insufficient supplier deposit");
+    }
+
+    @Test
+    void emptyOkBodyOnBookIsUnknownNotFailed() {
+        server.expect(requestTo(BASE + "/oms/v1/air/book")).andRespond(withSuccess("", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(BASE + "/oms/v1/air/book")).andRespond(withSuccess("{\"status\":{\"success\":\"no\"}}", MediaType.APPLICATION_JSON));
+        assertThatThrownBy(() -> provider.book(request())).isInstanceOf(SupplierException.class);
+        assertThatThrownBy(() -> provider.book(request())).isInstanceOf(SupplierException.class);
+    }
+
+    @Test
+    void unknownOrderStatusIsPendingAndMissingRefundIsNull() {
+        server.expect(requestTo(BASE + "/oms/v1/booking-details")).andRespond(withSuccess(OK + ",\"order\":{\"status\":\"ABORTED\"}}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(BASE + "/oms/v1/air/amendment/amendment-charges")).andRespond(withSuccess(OK + "}", MediaType.APPLICATION_JSON));
+        assertThat(provider.bookingDetails("TJS1").status()).isEqualTo(SupplierBookingStatus.PENDING);
+        assertThat(provider.cancelQuote("TJS1").refund()).isNull();
+    }
+
+    @Test
+    void restClientBuilderQualifierReachesTheConstructors() {
+        for (Class<?> c : List.of(TripjackFlightBookingProvider.class, com.voyra.crm.service.tripjack.TripjackFlightSearchProvider.class)) {
+            var ctor = c.getDeclaredConstructors()[0];
+            var q = java.util.Arrays.stream(ctor.getParameters()).filter(p -> p.getType() == RestClient.Builder.class)
+                    .findFirst().orElseThrow().getAnnotation(org.springframework.beans.factory.annotation.Qualifier.class);
+            assertThat(q).as(c.getSimpleName()).isNotNull();
+            assertThat(q.value()).isEqualTo("tripjackRestClientBuilder");
+        }
     }
 
     @Test
