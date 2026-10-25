@@ -64,7 +64,8 @@ public class FlightSearchService {
         for (FlightOfferResponse o : offers) {
             BigDecimal gross = o.getTotalPrice() != null ? o.getTotalPrice() : o.getPrice();
             o.setPublishedFare(gross);
-            if (quote.isPresent() && o.getBaseFare() != null) {
+            boolean hasBase = o.getBaseFare() != null && o.getBaseFare().signum() > 0;
+            if (quote.isPresent() && hasBase) {
                 PriceQuote q = quote.get().apply(gross, o.getBaseFare());
                 o.setDisplayedFare(q.displayed());
                 o.setAgencyEarns(q.agencyEarns());
@@ -73,7 +74,7 @@ public class FlightSearchService {
                 o.setDisplayedFare(gross);
                 o.setAgencyEarns(BigDecimal.ZERO);
                 o.setBookable(false);
-                o.setNotBookableReason("PRICING_NOT_CONFIGURED");
+                o.setNotBookableReason(quote.isPresent() ? "BASE_FARE_UNAVAILABLE" : "PRICING_NOT_CONFIGURED");
             }
         }
         return offers;

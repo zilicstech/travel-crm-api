@@ -204,4 +204,19 @@ class TripjackFlightSearchProviderTest {
                 .isInstanceOf(SupplierException.class)
                 .hasMessageContaining("The provided API key is invalid");
     }
+
+    @Test
+    void search_missingAdultBaseFareLeavesBaseNull() throws Exception {
+        when(platformSupplierCredentialService.resolveActive(SupplierProvider.TRIPJACK)).thenReturn(credential());
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo("https://apitest.tripjack.com/fms/v1/air-search-all"))
+                .andRespond(withSuccess(fixture("tripjack/flight-search-response.json").replace("\"BF\": \"8800.00\",", ""),
+                        MediaType.APPLICATION_JSON));
+
+        List<FlightOfferResponse> offers = new TripjackFlightSearchProvider(platformSupplierCredentialService, builder).search(query());
+
+        assertThat(offers.get(0).getBaseFare()).isNotNull();
+        assertThat(offers.get(1).getBaseFare()).isNull();
+    }
 }

@@ -238,4 +238,39 @@ class FlightSearchServiceTest {
         assertThat(o.getNotBookableReason()).isNull();
         org.mockito.Mockito.verifyNoInteractions(quoter);
     }
+
+    private static com.voyra.crm.service.booking.PriceQuote quoteOf(BigDecimal displayed) {
+        return new com.voyra.crm.service.booking.PriceQuote(displayed, BigDecimal.ONE, BigDecimal.ZERO, BigDecimal.ONE,
+                BigDecimal.ZERO, BigDecimal.ZERO, "P1", BigDecimal.ONE, BigDecimal.ONE);
+    }
+
+    private FlightSearchService withBase(BigDecimal base) {
+        return new FlightSearchService(q -> new ArrayList<>(List.of(FlightOfferResponse.builder().offerId("a").airline("A")
+                .flightNumber("F1").price(new BigDecimal("100")).totalPrice(new BigDecimal("200")).baseFare(base).build())), quoter);
+    }
+
+    @Test
+    void zeroOrMissingBaseFareIsNotBookable() {
+        org.mockito.Mockito.when(quoter.quoterFor("t1", com.voyra.crm.enums.PricingProduct.FLIGHT)).thenReturn(java.util.Optional.of(
+                (gross, base) -> quoteOf(gross)));
+        loginAsTenant("t1");
+        for (BigDecimal base : new BigDecimal[]{BigDecimal.ZERO, null}) {
+            FlightOfferResponse o = withBase(base).search(new FlightSearchQuery()).get(0);
+            assertThat(o.isBookable()).isFalse();
+            assertThat(o.getNotBookableReason()).isEqualTo("BASE_FARE_UNAVAILABLE");
+        }
+    }
+
+    @Test
+    void twoTenantsGetTheirOwnPricesFromTheSameSearch() {
+        org.mockito.Mockito.when(quoter.quoterFor("t1", com.voyra.crm.enums.PricingProduct.FLIGHT)).thenReturn(java.util.Optional.of(
+                (gross, base) -> quoteOf(new BigDecimal("190"))));
+        org.mockito.Mockito.when(quoter.quoterFor("t2", com.voyra.crm.enums.PricingProduct.FLIGHT)).thenReturn(java.util.Optional.of(
+                (gross, base) -> quoteOf(new BigDecimal("170"))));
+        FlightSearchService svc = withBase(new BigDecimal("170"));
+        loginAsTenant("t1");
+        assertThat(firstFare(svc.searchPage(request(1))).getDisplayedFare()).isEqualByComparingTo("190");
+        loginAsTenant("t2");
+        assertThat(firstFare(svc.searchPage(request(1))).getDisplayedFare()).isEqualByComparingTo("170");
+    }
 }
