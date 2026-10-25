@@ -130,7 +130,7 @@ public class TopupService {
     }
 
     /**
-     * Stub provider only (404 otherwise): pays the caller's own gateway top-up by running a payment.captured event
+     * Stub provider and test wallets only (404 / 409 otherwise): pays the caller's own gateway top-up by running a payment.captured event
      * through the real webhook handler. Not transactional, so the handler commits before the re-read.
      */
     public TopupResponse simulate(String tenantId, String id) {
@@ -140,6 +140,9 @@ public class TopupService {
         TopupRequest t = topupRepository.findById(id)
                 .filter(r -> r.getTenantId().equals(tenantId) && r.getMode() == TopupMode.GATEWAY)
                 .orElseThrow(() -> new NotFoundException("Top-up not found"));
+        if (!walletRepository.findByTenantId(tenantId).map(w -> Boolean.TRUE.equals(w.getIsTest())).orElse(false)) {
+            throw new IllegalStateException("Simulated payments only work on a test wallet");
+        }
         // Fixed payment id per top-up, so a second simulate is a duplicate delivery, not a second payment.
         String body = String.format("{\"event\":\"payment.captured\",\"payload\":{\"payment\":{\"entity\":{\"id\":\"pay_stub_%s\","
                 + "\"order_id\":\"%s\",\"amount\":%d,\"currency\":\"INR\",\"status\":\"captured\"}}}}",

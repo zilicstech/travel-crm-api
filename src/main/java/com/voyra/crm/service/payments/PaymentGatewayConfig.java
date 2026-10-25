@@ -1,5 +1,6 @@
 package com.voyra.crm.service.payments;
 
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
@@ -8,6 +9,7 @@ import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
 /** Exactly one PaymentGateway bean: stub unless app.payments.provider=razorpay. */
+@Slf4j
 @Configuration
 public class PaymentGatewayConfig {
 
@@ -26,6 +28,7 @@ public class PaymentGatewayConfig {
     @Bean
     @ConditionalOnProperty(name = "app.payments.provider", havingValue = "stub", matchIfMissing = true)
     public PaymentGateway stubPaymentGateway() {
+        log.warn("Payment provider is STUB - no real payments; simulated top-ups allowed on test wallets only");
         return new StubPaymentGateway();
     }
 }

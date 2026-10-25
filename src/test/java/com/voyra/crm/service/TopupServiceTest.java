@@ -222,10 +222,23 @@ class TopupServiceTest {
     }
 
     @Test
+    void simulateRefusedOnANonTestWallet() {
+        given(paymentGateway.name()).willReturn("stub");
+        TopupRequest t = pending().toBuilder().mode(TopupMode.GATEWAY).gatewayOrderId("order_1").build();
+        given(topupRepository.findById("R1")).willReturn(Optional.of(t));
+        given(walletRepository.findByTenantId("T1")).willReturn(Optional.of(wallet(WalletStatus.OPEN)));
+
+        assertThatThrownBy(() -> service.simulate("T1", "R1"))
+                .isInstanceOf(IllegalStateException.class).hasMessage("Simulated payments only work on a test wallet");
+        verifyNoInteractions(webhookService);
+    }
+
+    @Test
     void simulateRunsACapturedEventThroughTheWebhookHandler() {
         given(paymentGateway.name()).willReturn("stub");
         TopupRequest t = pending().toBuilder().mode(TopupMode.GATEWAY).gatewayOrderId("order_1").build();
         given(topupRepository.findById("R1")).willReturn(Optional.of(t));
+        given(walletRepository.findByTenantId("T1")).willReturn(Optional.of(wallet(WalletStatus.OPEN).toBuilder().isTest(true).build()));
 
         service.simulate("T1", "R1");
 

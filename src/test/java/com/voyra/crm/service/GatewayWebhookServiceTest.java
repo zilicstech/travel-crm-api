@@ -3,6 +3,7 @@ package com.voyra.crm.service;
 import com.voyra.crm.entity.GatewayOrder;
 import com.voyra.crm.entity.GatewayWebhookOrphan;
 import com.voyra.crm.entity.TopupRequest;
+import com.voyra.crm.entity.Wallet;
 import com.voyra.crm.entity.WalletEntry;
 import com.voyra.crm.enums.GatewayOrderPurpose;
 import com.voyra.crm.enums.GatewayOrderStatus;
@@ -10,9 +11,11 @@ import com.voyra.crm.enums.ReceivableReason;
 import com.voyra.crm.enums.TopupMode;
 import com.voyra.crm.enums.TopupStatus;
 import com.voyra.crm.enums.WalletEntryType;
+import com.voyra.crm.enums.WalletStatus;
 import com.voyra.crm.repository.GatewayOrderRepository;
 import com.voyra.crm.repository.GatewayWebhookOrphanRepository;
 import com.voyra.crm.repository.TopupRequestRepository;
+import com.voyra.crm.repository.WalletRepository;
 import com.voyra.crm.service.GatewayWebhookService.WebhookOutcome;
 import com.voyra.crm.service.payments.PaymentGateway;
 import org.junit.jupiter.api.BeforeEach;
@@ -31,6 +34,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
@@ -49,6 +53,8 @@ class GatewayWebhookServiceTest {
     @Mock
     private TopupRequestRepository topupRepository;
     @Mock
+    private WalletRepository walletRepository;
+    @Mock
     private WalletService walletService;
     @Mock
     private NotificationService notificationService;
@@ -59,15 +65,25 @@ class GatewayWebhookServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new GatewayWebhookService(orderRepository, orphanRepository, topupRepository, walletService,
-                notificationService, gateway, 5);
+        service = new GatewayWebhookService(orderRepository, orphanRepository, topupRepository, walletRepository,
+                walletService, notificationService, gateway, 5);
         given(gateway.verifyWebhook(anyString(), any())).willReturn(true);
+        given(walletRepository.findById("W1")).willReturn(Optional.of(wallet(WalletStatus.OPEN)));
+        given(walletService.chargebacksPosted("TOPUP_REQUEST", "R1")).willReturn(BigDecimal.ZERO);
+    }
+
+    private static Wallet wallet(WalletStatus status) {
+        return Wallet.builder().id("W1").tenantId("T1").status(status).build();
     }
 
     private static String payment(String event, String paymentId, long paise, String currency) {
+        return payment(event, paymentId, paise, currency, "captured");
+    }
+
+    private static String payment(String event, String paymentId, long paise, String currency, String status) {
         return "{\"event\":\"" + event + "\",\"payload\":{\"payment\":{\"entity\":{\"id\":\"" + paymentId
                 + "\",\"order_id\":\"order_1\",\"amount\":" + paise + ",\"currency\":\"" + currency
-                + "\",\"status\":\"captured\",\"card\":{\"last4\":\"1111\"}}}}}";
+                + "\",\"status\":\"" + status + "\",\"card\":{\"last4\":\"1111\"}}}}}";
     }
 
     private static String orderPaid(String paymentId) {
@@ -91,7 +107,8 @@ class GatewayWebhookServiceTest {
 
     private TopupRequest topup(TopupStatus status) {
         TopupRequest t = TopupRequest.builder().id("R1").tenantId("T1").walletId("W1").mode(TopupMode.GATEWAY)
-                .amount(new BigDecimal("500.00")).status(status).gatewayOrderId("order_1").build();
+                .amount(new BigDecimal("500.00")).status(status).gatewayOrderId("order_1")
+                .approvedAmount(status == TopupStatus.APPROVED ? new BigDecimal("500.00") : null).build();
         given(topupRepository.findById("R1")).willReturn(Optional.of(t));
         return t;
     }
@@ -145,28 +162,36 @@ class GatewayWebhookServiceTest {
 
     @Test
     void amountMismatchNeverCredits() {
-        GatewayOrder o = order(GatewayOrderPurpose.TOPUP);
-        TopupRequest t = topup(TopupStatus.PENDING);
+        String[] mismatches = {
+                payment("payment.captured", "pay_1", 49900, "INR"),
+                payment("payment.captured", "pay_1", 50000, "USD"),
+                payment("payment.captured", "pay_1", 50000, "INR", "authorized")};
+        for (String body : mismatches) {
+            GatewayOrder o = order(GatewayOrderPurpose.TOPUP);
+            TopupRequest t = topup(TopupStatus.PENDING);
 
-        assertThat(service.handle(payment("payment.captured", "pay_1", 49900, "INR"), "sig")).isNotEqualTo(WebhookOutcome.RETRY);
-        assertThat(o.getStatus()).isEqualTo(GatewayOrderStatus.FLAGGED);
-        service.handle(payment("payment.captured", "pay_2", 50000, "USD"), "sig");
-        service.handle(orderPaid("pay_3"), "sig");
-
+            assertThat(service.handle(body, "sig")).isEqualTo(WebhookOutcome.PROCESSED);
+            assertThat(o.getStatus()).isEqualTo(GatewayOrderStatus.FLAGGED);
+            service.handle(orderPaid("pay_3"), "sig");  // a later valid capture on a FLAGGED order is ignored too
+            assertThat(t.getStatus()).isEqualTo(TopupStatus.PENDING);
+        }
         verifyNoInteractions(walletService);
-        verify(notificationService).platformAlert(anyString(), anyString());
-        assertThat(t.getStatus()).isEqualTo(TopupStatus.PENDING);
+        verify(notificationService, times(3)).platformAlert(anyString(), anyString());
     }
 
     @Test
-    void currencyMismatchFlagsTheOrder() {
+    void captureOntoAClosedWalletFlagsAndAlertsWithoutRetry() {
         GatewayOrder o = order(GatewayOrderPurpose.TOPUP);
-        topup(TopupStatus.PENDING);
+        TopupRequest t = topup(TopupStatus.PENDING);
+        given(walletRepository.findById("W1")).willReturn(Optional.of(wallet(WalletStatus.CLOSED)));
 
-        service.handle(payment("payment.captured", "pay_1", 50000, "USD"), "sig");
+        assertThat(service.handle(payment("payment.captured", "pay_1", 50000, "INR"), "sig")).isEqualTo(WebhookOutcome.PROCESSED);
 
         assertThat(o.getStatus()).isEqualTo(GatewayOrderStatus.FLAGGED);
-        verifyNoInteractions(walletService);
+        assertThat(o.getEvents()).hasSize(1);
+        assertThat(t.getStatus()).isEqualTo(TopupStatus.PENDING);
+        verify(notificationService).platformAlert(anyString(), contains("refund"));
+        verify(walletService, never()).credit(any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -211,11 +236,41 @@ class GatewayWebhookServiceTest {
     }
 
     @Test
-    void refundOfAnUncreditedTopupMovesNoMoney() {
+    void disputeThenRefundOnOnePaymentReversesAtMostTheCredit() {
+        order(GatewayOrderPurpose.TOPUP);
+        TopupRequest t = topup(TopupStatus.APPROVED);
+        t.setCreditEntryId("E1");
+        given(walletService.chargebacksPosted("TOPUP_REQUEST", "R1"))
+                .willReturn(BigDecimal.ZERO, new BigDecimal("300.00"), new BigDecimal("500.00"));
+
+        service.handle(reversal("payment.dispute.created", "dispute", "disp_1", 30000), "sig");
+        service.handle(reversal("refund.processed", "refund", "rfnd_1", 50000), "sig");
+        service.handle(reversal("refund.processed", "refund", "rfnd_2", 10000), "sig");
+
+        verify(walletService).debitOrReceivable("T1", WalletEntryType.ADJUSTMENT, new BigDecimal("300.00"), "gw-refund:disp_1",
+                "TOPUP_REQUEST", "R1", ReceivableReason.CHARGEBACK);
+        verify(walletService).debitOrReceivable("T1", WalletEntryType.ADJUSTMENT, new BigDecimal("200.00"), "gw-refund:rfnd_1",
+                "TOPUP_REQUEST", "R1", ReceivableReason.CHARGEBACK);
+        verify(walletService, times(2)).debitOrReceivable(any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void refundBeforeCaptureIsRetried() {
         order(GatewayOrderPurpose.TOPUP);
         topup(TopupStatus.PENDING);
 
-        service.handle(reversal("refund.processed", "refund", "rfnd_1", 20000), "sig");
+        assertThat(service.handle(reversal("refund.processed", "refund", "rfnd_1", 20000), "sig")).isEqualTo(WebhookOutcome.RETRY);
+
+        verify(walletService, never()).debitOrReceivable(any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void refundOnAFlaggedOrderIsIgnoredNotRetried() {
+        GatewayOrder o = order(GatewayOrderPurpose.TOPUP);
+        o.setStatus(GatewayOrderStatus.FLAGGED);
+        topup(TopupStatus.PENDING);
+
+        assertThat(service.handle(reversal("refund.processed", "refund", "rfnd_1", 50000), "sig")).isEqualTo(WebhookOutcome.IGNORED);
 
         verifyNoInteractions(walletService);
     }

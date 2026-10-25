@@ -232,6 +232,16 @@ public class WalletService {
         return receivableRepository.existsByTenantIdAndStatus(tenantId, ReceivableStatus.DUE);
     }
 
+    /**
+     * Total already taken back against a reference through debitOrReceivable(ADJUSTMENT, CHARGEBACK): the part the
+     * wallet covered plus the receivable opened for the rest.
+     */
+    @Transactional(readOnly = true)
+    public BigDecimal chargebacksPosted(String refType, String refId) {
+        return entryRepository.sumAmountByTypeAndRef(WalletEntryType.ADJUSTMENT, refType, refId).negate()
+                .add(receivableRepository.sumOriginalAmountByReasonAndRef(ReceivableReason.CHARGEBACK, refType, refId));
+    }
+
     private WalletEntry creditLocked(Wallet wallet, WalletPosting credit) {
         WalletEntry entry = post(wallet, credit);
         BigDecimal budget = credit.amount();

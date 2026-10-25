@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 
@@ -32,4 +33,8 @@ public interface WalletEntryRepository extends JpaRepository<WalletEntry, String
                                 AND r.relatedEntryId = h.id)
             """)
     List<WalletEntry> findOpenHolds(@Param("walletId") String walletId);
+
+    /** Signed sum of one entry type posted against a reference (e.g. ADJUSTMENTs against a top-up: zero or negative). */
+    @Query("SELECT COALESCE(SUM(e.amount), 0) FROM WalletEntry e WHERE e.type = :type AND e.refType = :refType AND e.refId = :refId")
+    BigDecimal sumAmountByTypeAndRef(@Param("type") WalletEntryType type, @Param("refType") String refType, @Param("refId") String refId);
 }

@@ -11,10 +11,12 @@ import com.voyra.crm.enums.GatewayOrderPurpose;
 import com.voyra.crm.enums.GatewayOrderStatus;
 import com.voyra.crm.enums.ReceivableReason;
 import com.voyra.crm.enums.TopupStatus;
+import com.voyra.crm.enums.WalletStatus;
 import com.voyra.crm.enums.WalletEntryType;
 import com.voyra.crm.repository.GatewayOrderRepository;
 import com.voyra.crm.repository.GatewayWebhookOrphanRepository;
 import com.voyra.crm.repository.TopupRequestRepository;
+import com.voyra.crm.repository.WalletRepository;
 import com.voyra.crm.service.payments.PaymentGateway;
 import com.voyra.crm.util.UniqueIdResolver;
 import org.springframework.beans.factory.annotation.Value;
@@ -43,18 +45,20 @@ public class GatewayWebhookService {
     private final GatewayOrderRepository orderRepository;
     private final GatewayWebhookOrphanRepository orphanRepository;
     private final TopupRequestRepository topupRepository;
+    private final WalletRepository walletRepository;
     private final WalletService walletService;
     private final NotificationService notificationService;
     private final PaymentGateway gateway;
     private final int orphanMaxAttempts;
 
     public GatewayWebhookService(GatewayOrderRepository orderRepository, GatewayWebhookOrphanRepository orphanRepository,
-                                 TopupRequestRepository topupRepository, WalletService walletService,
+                                 TopupRequestRepository topupRepository, WalletRepository walletRepository, WalletService walletService,
                                  NotificationService notificationService, PaymentGateway gateway,
                                  @Value("${app.payments.orphan-max-attempts:5}") int orphanMaxAttempts) {
         this.orderRepository = orderRepository;
         this.orphanRepository = orphanRepository;
         this.topupRepository = topupRepository;
+        this.walletRepository = walletRepository;
         this.walletService = walletService;
         this.notificationService = notificationService;
         this.gateway = gateway;
@@ -109,11 +113,14 @@ public class GatewayWebhookService {
         String paymentId = payment.path("id").asText();
         BigDecimal amount = paise(payment);
         String currency = payment.path("currency").asText();
-        if (amount.compareTo(order.getAmount()) != 0 || !"INR".equals(currency) || !"INR".equals(order.getCurrency())) {
+        String status = payment.path("status").asText();
+        if (amount.compareTo(order.getAmount()) != 0 || !"INR".equals(currency) || !"INR".equals(order.getCurrency())
+                || !"captured".equals(status)) {
             order.setStatus(GatewayOrderStatus.FLAGGED);
             notificationService.platformAlert("Gateway payment does not match its order",
-                    "Order " + order.getGatewayOrderId() + " expected INR " + order.getAmount().toPlainString()
-                            + ", payment " + paymentId + " was " + currency + " " + amount.toPlainString() + ". Not credited.");
+                    "Order " + order.getGatewayOrderId() + " expected a captured INR " + order.getAmount().toPlainString()
+                            + ", payment " + paymentId + " was " + status + " " + currency + " " + amount.toPlainString()
+                            + ". Not credited.");
             return WebhookOutcome.PROCESSED;
         }
         if (order.getPurpose() == GatewayOrderPurpose.SUBSCRIPTION) {
@@ -128,6 +135,16 @@ public class GatewayWebhookService {
                                 + "; payment " + paymentId + " was not credited - refund it.");
             }
             return WebhookOutcome.IGNORED;
+        }
+        // Checked here, not left to credit()'s throw: a rollback would make the gateway retry a dead wallet forever.
+        boolean open = walletRepository.findById(topup.getWalletId()).map(w -> w.getStatus() == WalletStatus.OPEN).orElse(false);
+        if (!open) {
+            order.setStatus(GatewayOrderStatus.FLAGGED);
+            notificationService.platformAlert("Gateway payment for a closed wallet",
+                    "Order " + order.getGatewayOrderId() + ", payment " + paymentId + " (INR " + amount.toPlainString()
+                            + ") was captured but agency " + topup.getTenantId()
+                            + "'s wallet is not open. Not credited - refund it offline.");
+            return WebhookOutcome.PROCESSED;
         }
         // A FAILED top-up can still be paid: the customer may retry with another payment on the same order.
         WalletEntry entry = walletService.credit(topup.getTenantId(), WalletEntryType.TOPUP, amount, "gw:" + paymentId,
@@ -158,11 +175,21 @@ public class GatewayWebhookService {
         if (order.getPurpose() != GatewayOrderPurpose.TOPUP || amount.signum() <= 0) {
             return WebhookOutcome.IGNORED;
         }
-        TopupRequest topup = topup(order);
-        if (topup.getStatus() != TopupStatus.APPROVED || topup.getCreditEntryId() == null) {
+        // A FLAGGED order was never credited and is refunded offline; its reversal must not retry forever.
+        if (order.getStatus() == GatewayOrderStatus.FLAGGED) {
             return WebhookOutcome.IGNORED;
         }
-        walletService.debitOrReceivable(topup.getTenantId(), WalletEntryType.ADJUSTMENT, amount, "gw-refund:" + reversalId,
+        TopupRequest topup = topup(order);
+        if (topup.getCreditEntryId() == null) {
+            return WebhookOutcome.RETRY;  // arrived before its capture; the redelivery finds it credited
+        }
+        // A refund and a dispute on one payment take back at most what was credited.
+        BigDecimal remaining = topup.getApprovedAmount().subtract(walletService.chargebacksPosted(REF_TYPE, topup.getId()));
+        BigDecimal take = amount.min(remaining);
+        if (take.signum() <= 0) {
+            return WebhookOutcome.IGNORED;
+        }
+        walletService.debitOrReceivable(topup.getTenantId(), WalletEntryType.ADJUSTMENT, take, "gw-refund:" + reversalId,
                 REF_TYPE, topup.getId(), ReceivableReason.CHARGEBACK);
         return WebhookOutcome.PROCESSED;
     }

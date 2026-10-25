@@ -437,4 +437,12 @@ class WalletServiceTest {
         service.debitOrReceivable(T, WalletEntryType.TDS_DEDUCTED, d("400"), "x4", null, null, ReceivableReason.CHARGEBACK);
         verify(notificationService, times(2)).lowBalance(eq(T), eqAmount("900"));
     }
+
+    @Test
+    void chargebacksPostedIsTheCoveredPartPlusTheReceivable() {
+        when(entryRepository.sumAmountByTypeAndRef(WalletEntryType.ADJUSTMENT, "TOPUP_REQUEST", "R1")).thenReturn(new BigDecimal("-120.00"));
+        when(receivableRepository.sumOriginalAmountByReasonAndRef(ReceivableReason.CHARGEBACK, "TOPUP_REQUEST", "R1"))
+                .thenReturn(new BigDecimal("80.00"));
+        assertThat(service.chargebacksPosted("TOPUP_REQUEST", "R1")).isEqualByComparingTo("200.00");
+    }
 }
