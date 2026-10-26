@@ -64,7 +64,7 @@ public class WalletService {
         requireType(type, CREDIT_TYPES);
         requirePositive(amount);
         Wallet wallet = lock(tenantId);
-        Optional<WalletEntry> existing = entryRepository.findByIdempotencyKey(idempotencyKey);
+        Optional<WalletEntry> existing = replay(wallet, idempotencyKey);
         if (existing.isPresent()) {
             return existing.get();
         }
@@ -78,7 +78,7 @@ public class WalletService {
     public WalletEntry hold(String tenantId, BigDecimal amount, String idempotencyKey, String refType, String refId) {
         requirePositive(amount);
         Wallet wallet = lock(tenantId);
-        Optional<WalletEntry> existing = entryRepository.findByIdempotencyKey(idempotencyKey);
+        Optional<WalletEntry> existing = replay(wallet, idempotencyKey);
         if (existing.isPresent()) {
             return existing.get();
         }
@@ -107,7 +107,7 @@ public class WalletService {
     public WalletEntry releaseHold(String holdEntryId, String idempotencyKey) {
         WalletEntry hold = loadHold(holdEntryId);
         Wallet wallet = lock(hold.getTenantId());
-        Optional<WalletEntry> existing = entryRepository.findByIdempotencyKey(idempotencyKey);
+        Optional<WalletEntry> existing = replay(wallet, idempotencyKey);
         if (existing.isPresent()) {
             return existing.get();
         }
@@ -130,7 +130,7 @@ public class WalletService {
         requirePositive(amount);
         WalletEntry hold = loadHold(holdEntryId);
         Wallet wallet = lock(hold.getTenantId());
-        Optional<WalletEntry> existing = entryRepository.findByIdempotencyKey(idempotencyKey);
+        Optional<WalletEntry> existing = replay(wallet, idempotencyKey);
         if (existing.isPresent()) {
             return existing.get();
         }
@@ -162,7 +162,7 @@ public class WalletService {
         requireType(type, DEBIT_OR_RECEIVABLE_TYPES);
         requirePositive(amount);
         Wallet wallet = lock(tenantId);
-        Optional<WalletEntry> existing = entryRepository.findByIdempotencyKey(idempotencyKey);
+        Optional<WalletEntry> existing = replay(wallet, idempotencyKey);
         if (existing.isPresent()) {
             return existing.get();
         }
@@ -182,7 +182,7 @@ public class WalletService {
             throw new IllegalArgumentException("A reason is required for an adjustment");
         }
         Wallet wallet = lock(tenantId);
-        Optional<WalletEntry> existing = entryRepository.findByIdempotencyKey(idempotencyKey);
+        Optional<WalletEntry> existing = replay(wallet, idempotencyKey);
         if (existing.isPresent()) {
             return existing.get();
         }
@@ -207,7 +207,7 @@ public class WalletService {
     public WalletEntry close(String tenantId, String utr) {
         Wallet wallet = lock(tenantId);
         String key = "close:" + wallet.getId();
-        Optional<WalletEntry> existing = entryRepository.findByIdempotencyKey(key);
+        Optional<WalletEntry> existing = replay(wallet, key);
         if (existing.isPresent()) {
             return existing.get();
         }
@@ -329,6 +329,15 @@ public class WalletService {
             notificationService.lowBalance(wallet.getTenantId(), available);
         }
         walletRepository.save(wallet);
+    }
+
+    /** The entry already posted under this key, if any; a key used on another wallet is refused, never replayed. */
+    private Optional<WalletEntry> replay(Wallet wallet, String idempotencyKey) {
+        Optional<WalletEntry> existing = entryRepository.findByIdempotencyKey(idempotencyKey);
+        if (existing.isPresent() && !wallet.getId().equals(existing.get().getWalletId())) {
+            throw new IllegalStateException("This request id was already used on another wallet");
+        }
+        return existing;
     }
 
     private Wallet lock(String tenantId) {

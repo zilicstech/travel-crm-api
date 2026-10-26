@@ -376,6 +376,25 @@ class WalletServiceTest {
     }
 
     @Test
+    void aKeyAlreadyUsedOnAnotherWalletIsRefusedNotReplayed() {
+        fund("100");
+        entries.add(WalletEntry.builder().id("E-OTHER").walletId("W2").tenantId("T2")
+                .type(WalletEntryType.ADJUSTMENT).amount(d("50")).idempotencyKey("shared").build());
+
+        assertThatThrownBy(() -> service.adjust(T, d("50"), "Goodwill", "shared"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("This request id was already used on another wallet");
+        assertThatThrownBy(() -> service.credit(T, WalletEntryType.TOPUP, d("50"), "shared", null, null, null))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> service.hold(T, d("50"), "shared", null, null))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> service.debitOrReceivable(T, WalletEntryType.ADJUSTMENT, d("50"), "shared", null, null,
+                ReceivableReason.CHARGEBACK)).isInstanceOf(IllegalStateException.class);
+        assertThat(entries).hasSize(1);
+        assertThat(wallet.getBalance()).isEqualByComparingTo("100");
+    }
+
+    @Test
     void debitHeldTwiceWithDifferentKeysDebitsOnce() {
         fund("1000");
         WalletEntry hold = service.hold(T, d("400"), "h1", "PLATFORM_BOOKING", "B1");
