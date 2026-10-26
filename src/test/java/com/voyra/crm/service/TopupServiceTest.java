@@ -24,6 +24,7 @@ import com.voyra.crm.repository.GatewayOrderRepository;
 import com.voyra.crm.service.payments.PaymentGateway;
 import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.repository.TopupRequestRepository;
+import com.voyra.crm.repository.WalletEntryRepository;
 import com.voyra.crm.repository.WalletRepository;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -73,6 +74,8 @@ class TopupServiceTest {
     private GatewayWebhookService webhookService;
     @Mock
     private NotificationService notificationService;
+    @Mock
+    private WalletEntryRepository entryRepository;
     @InjectMocks
     private TopupService service;
 
@@ -195,6 +198,22 @@ class TopupServiceTest {
         verify(notificationService).topupRejected(t);
         t.setStatus(TopupStatus.REJECTED);
         assertThatThrownBy(() -> service.reject("R1", "A1", req)).hasMessage("This top-up was already rejected");
+    }
+
+    @Test
+    void rejectIsRefusedOnceTheTopupWasCredited() {
+        TopupRequest t = pending();
+        given(topupRepository.findByIdForUpdate("R1")).willReturn(Optional.of(t));
+        given(entryRepository.findByIdempotencyKey("topup:R1"))
+                .willReturn(Optional.of(WalletEntry.builder().id("E1").idempotencyKey("topup:R1").build()));
+        TopupRejectRequest req = new TopupRejectRequest();
+        req.setNote("Not in statement");
+
+        assertThatThrownBy(() -> service.reject("R1", "A1", req))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("This top-up was already credited - approve it to record the decision");
+        assertThat(t.getStatus()).isEqualTo(TopupStatus.PENDING);
+        verify(notificationService, never()).topupRejected(any());
     }
 
     @Test

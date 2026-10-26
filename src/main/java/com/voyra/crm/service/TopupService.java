@@ -24,6 +24,7 @@ import com.voyra.crm.models.GatewayOrderCreated;
 import com.voyra.crm.repository.GatewayOrderRepository;
 import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.repository.TopupRequestRepository;
+import com.voyra.crm.repository.WalletEntryRepository;
 import com.voyra.crm.repository.WalletRepository;
 import com.voyra.crm.service.payments.PaymentGateway;
 import com.voyra.crm.service.payments.RazorpayPaymentGateway;
@@ -69,6 +70,7 @@ public class TopupService {
     private final PaymentGateway paymentGateway;
     private final GatewayWebhookService webhookService;
     private final NotificationService notificationService;
+    private final WalletEntryRepository entryRepository;
 
     /** Upper-case with every whitespace character removed, so "sbin 123" and "SBIN123" are the same UTR. */
     public static String normalize(String bankRef) {
@@ -190,6 +192,10 @@ public class TopupService {
     @Transactional
     public TopupResponse reject(String id, String reviewerId, TopupRejectRequest request) {
         TopupRequest t = lockPending(id);
+        // approve's credit commits on its own; if approve then failed, the request is still PENDING with the money in
+        if (entryRepository.findByIdempotencyKey("topup:" + t.getId()).isPresent()) {
+            throw new IllegalStateException("This top-up was already credited - approve it to record the decision");
+        }
         t.setStatus(TopupStatus.REJECTED);
         decided(t, reviewerId, request.getNote());
         platformAuditService.record(PlatformAuditAction.TOPUP_DECISION, REF_TYPE, id,
