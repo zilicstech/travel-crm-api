@@ -33,7 +33,7 @@ public class AgencyPricingCreateRequest {
     @Schema(description = "Commission % paid back to the agency", example = "4")
     private BigDecimal commissionPct;
 
-    @Schema(description = "Let the commission exceed what Voyra earned; always needs a second approver", example = "false")
+    @Schema(description = "Let the commission exceed what Voyra earned; recorded in the audit log", example = "false")
     private boolean allowCommissionAboveEarned;
 
     @NotNull

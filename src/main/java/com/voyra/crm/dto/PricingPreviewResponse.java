@@ -15,9 +15,6 @@ public class PricingPreviewResponse {
     @Schema(description = "Lowest Voyra net per 10,000 of gross across the basket", example = "-251.11")
     private BigDecimal worstCaseNetPer10k;
 
-    @Schema(description = "True when the rate loses money on some fare or lets commission exceed earnings", example = "true")
-    private boolean requiresSecondApproval;
-
     @Schema(description = "One line per reference fare")
     private List<BasketLine> basketLines;
 
