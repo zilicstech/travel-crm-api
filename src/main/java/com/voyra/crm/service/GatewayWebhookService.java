@@ -42,6 +42,12 @@ public class GatewayWebhookService {
 
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final String REF_TYPE = "TOPUP_REQUEST";
+    private static final String DISPUTE_CREATED = "payment.dispute.created";
+    private static final String DISPUTE_WON = "payment.dispute.won";
+    private static final String DISPUTE_LOST = "payment.dispute.lost";
+    private static final String DISPUTE_CLOSED = "payment.dispute.closed";
+    // On a dispute.created event in gateway_order.events: what that dispute took back (debit plus receivable)
+    private static final String TAKEN = "taken";
 
     private final GatewayOrderRepository orderRepository;
     private final GatewayWebhookOrphanRepository orphanRepository;
@@ -98,14 +104,21 @@ public class GatewayWebhookService {
             return orphan(orderId, event, subjectId, subject);
         }
         List<Map<String, Object>> events = new ArrayList<>(order.getEvents());
-        events.add(Map.of("id", subjectId, "event", event, "at", Instant.now().toString()));
+        Map<String, Object> logged = new LinkedHashMap<>();
+        logged.put("id", subjectId);
+        logged.put("event", event);
+        logged.put("at", Instant.now().toString());
+        events.add(logged);
         order.setEvents(events);
         order.setUpdatedAt(Instant.now());
 
         return switch (event) {
             case "payment.captured", "order.paid" -> captured(order, payment);
-            case "refund.processed", "payment.dispute.created" ->
-                    reversed(order, subjectId, paise(subject), subject.path("payment_id").asText(payment.path("id").asText()));
+            case "refund.processed", DISPUTE_CREATED -> reversed(order, logged, subjectId, paise(subject),
+                    subject.path("payment_id").asText(payment.path("id").asText()));
+            case DISPUTE_WON -> disputeWon(order, subjectId);
+            case DISPUTE_CLOSED -> disputeClosed(order, subjectId);
+            // payment.dispute.lost: the money stays taken; the event is on the order's log for disputeClosed.
             // payment.failed is not final: the customer can retry on the same order, and the 24 h expiry handles abandonment.
             default -> WebhookOutcome.IGNORED;
         };
@@ -184,7 +197,9 @@ public class GatewayWebhookService {
         return WebhookOutcome.PROCESSED;
     }
 
-    private WebhookOutcome reversed(GatewayOrder order, String reversalId, BigDecimal amount, String paymentId) {
+    private WebhookOutcome reversed(GatewayOrder order, Map<String, Object> logged, String reversalId, BigDecimal amount,
+                                    String paymentId) {
+        boolean dispute = DISPUTE_CREATED.equals(logged.get("event"));
         if (order.getPurpose() == GatewayOrderPurpose.SUBSCRIPTION) {
             // Subscription invoices are not reversed automatically: a human decides (void, credit note, refund).
             notificationService.platformAlert("Refund or dispute on a subscription payment",
@@ -209,6 +224,9 @@ public class GatewayWebhookService {
                             + " is a refund/dispute for a payment that was never credited (" + paymentId + ") - handle offline.");
             return WebhookOutcome.IGNORED;
         }
+        if (dispute && taken(order, reversalId) != null) {
+            return WebhookOutcome.IGNORED;  // redelivery: already taken and alerted
+        }
         // A refund and a dispute on one payment take back at most what was credited.
         BigDecimal remaining = topup.getApprovedAmount().subtract(walletService.chargebacksPosted(REF_TYPE, topup.getId()));
         BigDecimal take = amount.min(remaining);
@@ -216,8 +234,56 @@ public class GatewayWebhookService {
             return WebhookOutcome.IGNORED;
         }
         walletService.debitOrReceivable(topup.getTenantId(), WalletEntryType.ADJUSTMENT, take, "gw-refund:" + reversalId,
-                REF_TYPE, topup.getId(), ReceivableReason.CHARGEBACK);
+                REF_TYPE, topup.getId(), ReceivableReason.CHARGEBACK, null,
+                (dispute ? "Card dispute " : "Gateway refund ") + reversalId + " on top-up " + topup.getId());
+        if (dispute) {
+            logged.put(TAKEN, take.toPlainString());
+            notificationService.platformAlert("Card dispute on a top-up",
+                    "Agency " + topup.getTenantId() + ": dispute " + reversalId + " on payment " + paymentId + " took back INR "
+                            + take.toPlainString() + " (from the wallet, any shortfall as a receivable).");
+        }
         return WebhookOutcome.PROCESSED;
+    }
+
+    /** Gives back exactly what the dispute took; the credit settles any DUE receivable first, as every credit does. */
+    private WebhookOutcome disputeWon(GatewayOrder order, String disputeId) {
+        BigDecimal taken = taken(order, disputeId);
+        if (taken == null) {
+            return WebhookOutcome.IGNORED;  // nothing was taken for this dispute
+        }
+        TopupRequest topup = topup(order);
+        // Checked here, not left to credit()'s throw: a rollback would make the gateway retry a dead wallet forever.
+        boolean open = walletRepository.findById(topup.getWalletId()).map(w -> w.getStatus() == WalletStatus.OPEN).orElse(false);
+        if (!open) {
+            notificationService.platformAlert("Card dispute won on a closed wallet",
+                    "Agency " + topup.getTenantId() + " won dispute " + disputeId + " (INR " + taken.toPlainString()
+                            + ") but its wallet is not open. Not credited - pay it back offline.");
+            return WebhookOutcome.PROCESSED;
+        }
+        walletService.credit(topup.getTenantId(), WalletEntryType.ADJUSTMENT, taken, "gw-dispute-won:" + disputeId,
+                REF_TYPE, topup.getId(), "Card dispute " + disputeId + " won - reversed");
+        return WebhookOutcome.PROCESSED;
+    }
+
+    /** Closed with neither a won nor a lost event: an admin decides whether the agency gets the money back. */
+    private WebhookOutcome disputeClosed(GatewayOrder order, String disputeId) {
+        boolean decided = order.getEvents().stream().anyMatch(e -> disputeId.equals(e.get("id"))
+                && (DISPUTE_WON.equals(e.get("event")) || DISPUTE_LOST.equals(e.get("event"))));
+        long closings = order.getEvents().stream()
+                .filter(e -> disputeId.equals(e.get("id")) && DISPUTE_CLOSED.equals(e.get("event"))).count();
+        if (!decided && closings == 1) {
+            notificationService.platformAlert("Card dispute closed without a result",
+                    "Order " + order.getGatewayOrderId() + ": dispute " + disputeId + " was closed with no won or lost event."
+                            + " Check the gateway and adjust the agency's wallet by hand if the money is due back.");
+        }
+        return WebhookOutcome.IGNORED;
+    }
+
+    private static BigDecimal taken(GatewayOrder order, String disputeId) {
+        return order.getEvents().stream()
+                .filter(e -> DISPUTE_CREATED.equals(e.get("event")) && disputeId.equals(e.get("id")) && e.get(TAKEN) != null)
+                .map(e -> new BigDecimal(e.get(TAKEN).toString()))
+                .findFirst().orElse(null);
     }
 
     private WebhookOutcome orphan(String orderId, String event, String subjectId, JsonNode subject) {

@@ -143,7 +143,7 @@ public class WalletService {
             release(wallet, hold, idempotencyKey + ":release");
         }
         WalletEntry entry = debitCovered(wallet, WalletEntryType.BOOKING_DEBIT, amount, idempotencyKey, refType, refId,
-                ReceivableReason.LATE_TICKET, hold.getId());
+                ReceivableReason.LATE_TICKET, hold.getId(), null);
         checkLowBalance(wallet);
         return entry;
     }
@@ -159,6 +159,14 @@ public class WalletService {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public WalletEntry debitOrReceivable(String tenantId, WalletEntryType type, BigDecimal amount, String idempotencyKey,
                                          String refType, String refId, ReceivableReason reason, String relatedEntryId) {
+        return debitOrReceivable(tenantId, type, amount, idempotencyKey, refType, refId, reason, relatedEntryId, null);
+    }
+
+    /** As above with a statement narration; a shortfall note is appended to it. */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public WalletEntry debitOrReceivable(String tenantId, WalletEntryType type, BigDecimal amount, String idempotencyKey,
+                                         String refType, String refId, ReceivableReason reason, String relatedEntryId,
+                                         String narration) {
         requireType(type, DEBIT_OR_RECEIVABLE_TYPES);
         requirePositive(amount);
         Wallet wallet = lock(tenantId);
@@ -166,7 +174,7 @@ public class WalletService {
         if (existing.isPresent()) {
             return existing.get();
         }
-        WalletEntry entry = debitCovered(wallet, type, amount, idempotencyKey, refType, refId, reason, relatedEntryId);
+        WalletEntry entry = debitCovered(wallet, type, amount, idempotencyKey, refType, refId, reason, relatedEntryId, narration);
         checkLowBalance(wallet);
         return entry;
     }
@@ -274,11 +282,15 @@ public class WalletService {
     }
 
     private WalletEntry debitCovered(Wallet wallet, WalletEntryType type, BigDecimal amount, String idempotencyKey,
-                                     String refType, String refId, ReceivableReason reason, String relatedEntryId) {
+                                     String refType, String refId, ReceivableReason reason, String relatedEntryId,
+                                     String narration) {
         BigDecimal covered = amount.min(available(wallet));
         BigDecimal shortfall = amount.subtract(covered);
+        String text = shortfall.signum() <= 0 ? narration
+                : narration == null ? "Short by " + shortfall + " - receivable opened"
+                : narration + " - short by " + shortfall + ", receivable opened";
         WalletEntry entry = post(wallet, new WalletPosting(type, covered.negate(), idempotencyKey, refType, refId,
-                shortfall.signum() > 0 ? "Short by " + shortfall + " - receivable opened" : null, relatedEntryId));
+                text, relatedEntryId));
         if (shortfall.signum() > 0) {
             receivableRepository.save(PlatformReceivable.builder()
                     .id(UniqueIdResolver.resolve(receivableRepository::existsById))
