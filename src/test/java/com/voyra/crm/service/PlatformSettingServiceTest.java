@@ -61,7 +61,7 @@ class PlatformSettingServiceTest {
     @Test
     void basketParsesAndRejectsBaseAboveGross() {
         assertThatThrownBy(() -> service().set("reference_fare_basket", "[{\"label\":\"x\",\"gross\":100,\"base\":200}]"))
-                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("reference_fare_basket");
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("flight reference fare basket");
         assertThatThrownBy(() -> service().set("reference_fare_basket", "[]"))
                 .isInstanceOf(IllegalArgumentException.class);
     }
@@ -72,20 +72,29 @@ class PlatformSettingServiceTest {
     }
 
     private void bad(String key, String value) {
-        assertThatThrownBy(() -> service().set(key, value))
-                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining(key);
+        assertThatThrownBy(() -> service().set(key, value)).isInstanceOf(IllegalArgumentException.class)
+                .satisfies(e -> assertThat(e.getMessage()).containsAnyOf(key, "reference fare basket")); // baskets are named in words
     }
 
     @Test
     void basketRejectsAZeroGrossFare() {
         assertThatThrownBy(() -> service().set("reference_fare_basket", "[{\"label\":\"Z\",\"gross\":0,\"base\":0}]"))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("reference_fare_basket needs at least one fare, each with a label and 0 <= base <= gross, gross above 0");
+                .hasMessage("The flight reference fare basket needs at least one fare, each with a label and 0 <= base <= gross, gross above 0");
+    }
+
+    /** R17: the refusal names the basket in words, never the raw setting key. */
+    @Test
+    void anUnreadableBasketIsNamedInWords() {
+        assertThatThrownBy(() -> service().set("reference_fare_basket_hotel", "{not json"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("The hotel reference fare basket must be a JSON list of fares, each with a label, gross and base");
     }
 
     @Test
     void basketRejectsNullJson() {
-        bad("reference_fare_basket", "null");
+        assertThatThrownBy(() -> service().set("reference_fare_basket", "null")).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("flight reference fare basket");
     }
 
     @Test
@@ -184,6 +193,19 @@ class PlatformSettingServiceTest {
         bad("voyra_address", "x".repeat(501));
         assertThat(service().voyraLegal()).isEqualTo(new com.voyra.crm.models.VoyraLegal(null, null, null, null));
         assertThat(service().subscriptionSac()).isEqualTo("998314");
+    }
+
+    /** R14: voyra_state_code can be cleared (blank means unset); every other key still refuses a blank value. */
+    @Test
+    void onlyTheVoyraStateCodeMayBeCleared() {
+        signIn();
+        when(repository.save(any(PlatformSetting.class))).thenAnswer(i -> i.getArgument(0));
+        assertThat(service().set("voyra_state_code", "  ").getValue()).isEmpty();
+        assertThat(service().set("voyra_state_code", "27").getValue()).isEqualTo("27");
+        for (String key : java.util.List.of("tds_rate", "voyra_legal_name", "voyra_address", "voyra_gstin", "discount_base")) {
+            assertThatThrownBy(() -> service().set(key, " ")).as(key)
+                    .isInstanceOf(IllegalArgumentException.class).hasMessage(key + " must not be blank");
+        }
     }
 
     @Test

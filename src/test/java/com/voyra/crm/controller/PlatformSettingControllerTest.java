@@ -41,8 +41,11 @@ class PlatformSettingControllerTest {
         mockMvc.perform(get("/api/platform/settings").with(user("a").roles("SUPER_ADMIN"))).andExpect(status().isOk());
         mockMvc.perform(put("/api/platform/settings/tds_rate").with(user("a").roles("SUPER_ADMIN"))
                 .contentType(MediaType.APPLICATION_JSON).content("{\"value\":\"2\"}")).andExpect(status().isOk());
+        // a blank value reaches the service, which decides per key (voyra_state_code may be cleared); a missing one is 400
+        mockMvc.perform(put("/api/platform/settings/voyra_state_code").with(user("a").roles("SUPER_ADMIN"))
+                .contentType(MediaType.APPLICATION_JSON).content("{\"value\":\"\"}")).andExpect(status().isOk());
         mockMvc.perform(put("/api/platform/settings/tds_rate").with(user("a").roles("SUPER_ADMIN"))
-                .contentType(MediaType.APPLICATION_JSON).content("{\"value\":\"\"}")).andExpect(status().isBadRequest());
+                .contentType(MediaType.APPLICATION_JSON).content("{}")).andExpect(status().isBadRequest());
     }
 
     @Test

@@ -182,6 +182,9 @@ public class PlatformSettingService {
         if (v.length() > 4000) {
             throw new IllegalArgumentException(key + " must be at most 4000 characters");
         }
+        if (v.isEmpty() && !key.equals(VOYRA_STATE_CODE)) { // blank state code = unset; other keys have no "unset"
+            throw new IllegalArgumentException(key + " must not be blank");
+        }
         validate(key, v);
         return write(key, v);
     }
@@ -261,16 +264,17 @@ public class PlatformSettingService {
                     throw new IllegalArgumentException(key + " must be a JSON list of agency names (1-150 characters each)");
                 }
             }
-            default -> {
+            default -> { // the two reference fare baskets
+                String name = key.equals(REFERENCE_FARE_BASKET_HOTEL) ? "The hotel reference fare basket" : "The flight reference fare basket";
                 List<ReferenceFare> basket;
                 try {
                     basket = parseBasket(v);
                 } catch (RuntimeException e) {
-                    throw new IllegalArgumentException(key + " must be a JSON list of {label, gross, base}");
+                    throw new IllegalArgumentException(name + " must be a JSON list of fares, each with a label, gross and base");
                 }
                 if (basket == null || basket.isEmpty() || basket.stream().anyMatch(f -> f == null
                         || f.label() == null || f.label().isBlank() || f.gross() == null || f.gross().signum() <= 0 || f.base() == null || f.base().signum() < 0 || f.base().compareTo(f.gross()) > 0)) {
-                    throw new IllegalArgumentException(key + " needs at least one fare, each with a label and 0 <= base <= gross, gross above 0");
+                    throw new IllegalArgumentException(name + " needs at least one fare, each with a label and 0 <= base <= gross, gross above 0");
                 }
             }
         }
