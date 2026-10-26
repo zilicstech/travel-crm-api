@@ -25,6 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -103,6 +104,14 @@ public class SubscriptionService {
                     : request.getSkus().stream().distinct().map(Enum::name).toList();
             case STARTER -> List.of();
         };
+        int newSeats = plan == SubscriptionPlan.STARTER ? 0 : request.getSeats();
+        boolean changes = plan != s.getPlan() || !skus.equals(s.getSkus()) || newSeats != s.getSeats()
+                || request.getBillingCycle() != s.getBillingCycle();
+        if (changes) {  // an open invoice was priced on the old plan
+            invoiceRepository.findFirstByTenantIdAndStatusOrderByDueAtAsc(tenantId, "ISSUED").ifPresent(open -> {
+                throw new IllegalStateException("Void or settle invoice " + open.getNumber() + " before changing the plan");
+            });
+        }
         Map<String, Object> before = Map.of("plan", s.getPlan().name(), "skus", s.getSkus(), "seats", s.getSeats(),
                 "billingCycle", s.getBillingCycle().name());
         s.setPlan(plan);
@@ -143,6 +152,10 @@ public class SubscriptionService {
             throw new IllegalArgumentException("Set a plan before waiving");
         }
         Instant now = Instant.now();
+        if (isPaidPeriod(s, now) && request.getUntil() != null && request.getUntil().isBefore(s.getPeriodEnd())) {
+            throw new IllegalArgumentException("Already paid through " + s.getPeriodEnd().atZone(ZoneOffset.UTC).toLocalDate()
+                    + " - a waiver must run at least that long");
+        }
         s.setWaivedReason(request.getReason());
         s.setPeriodEnd(request.getUntil());
         s.setPeriodStart(s.getPeriodStart() == null ? now : s.getPeriodStart());
@@ -163,6 +176,10 @@ public class SubscriptionService {
             throw new IllegalArgumentException("Founding agencies don't need a trial");
         }
         Instant now = Instant.now();
+        if (isPaidPeriod(s, now)) {
+            throw new IllegalStateException("This agency is on a paid period until " + s.getPeriodEnd().atZone(ZoneOffset.UTC).toLocalDate()
+                    + " - use a waiver instead of a trial");
+        }
         Instant base = s.getStatus() == SubscriptionStatus.TRIAL && s.getTrialEndsAt() != null && s.getTrialEndsAt().isAfter(now)
                 ? s.getTrialEndsAt() : now;
         Instant end = base.plus(Duration.ofDays(request.getDays()));
@@ -179,6 +196,11 @@ public class SubscriptionService {
                 Map.of("days", request.getDays(), "trialEndsAt", end.toString()));
         Entitlements fresh = entitlementService.refresh(tenantId);
         return adminView(s, fresh);
+    }
+
+    private static boolean isPaidPeriod(Subscription s, Instant now) {
+        return s.getWaivedReason() == null && (s.getStatus() == SubscriptionStatus.ACTIVE || s.getStatus() == SubscriptionStatus.PAST_DUE)
+                && s.getPeriodEnd() != null && s.getPeriodEnd().isAfter(now);
     }
 
     /** Reads run in read-only transactions, where FOR UPDATE is illegal. */

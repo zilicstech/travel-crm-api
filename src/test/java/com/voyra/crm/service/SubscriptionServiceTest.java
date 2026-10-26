@@ -43,6 +43,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
@@ -186,6 +187,64 @@ class SubscriptionServiceTest {
         r.setDays(7);
         service.extendTrial("T1", r);
         assertThat(sub.getTrialEndsAt()).isEqualTo(end.plus(Duration.ofDays(7)));
+    }
+
+    @Test
+    void updateIsRefusedWhileAnInvoiceIsOpenButANoOpIsNot() {
+        given(invoiceRepository.findFirstByTenantIdAndStatusOrderByDueAtAsc("T1", "ISSUED")).willReturn(Optional.of(
+                SubscriptionInvoice.builder().id("I1").tenantId("T1").number("VOY-SUB-2026-7").build()));
+
+        assertThatThrownBy(() -> service.update("T1", update(SubscriptionPlan.SUITE, List.of(), 2, BillingCycle.MONTHLY)))
+                .isInstanceOf(IllegalStateException.class).hasMessage("Void or settle invoice VOY-SUB-2026-7 before changing the plan");
+        verify(subscriptionRepository, never()).save(any());
+
+        service.update("T1", update(SubscriptionPlan.SUITE, List.of(), 0, BillingCycle.MONTHLY));  // nothing changes
+        verify(subscriptionRepository).save(sub);
+    }
+
+    @Test
+    void waiveCannotEndBeforeAPaidPeriodDoes() {
+        sub.setWaivedReason(null);
+        Instant periodEnd = Instant.now().plus(Duration.ofDays(20));
+        sub.setPeriodEnd(periodEnd);
+        SubscriptionWaiveRequest r = new SubscriptionWaiveRequest();
+        r.setReason(WaivedReason.COMPLIMENTARY);
+        r.setUntil(Instant.now().plus(Duration.ofDays(5)));
+
+        assertThatThrownBy(() -> service.waive("T1", r)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageStartingWith("Already paid through ");
+        verify(subscriptionRepository, never()).save(any());
+
+        r.setUntil(periodEnd.plus(Duration.ofDays(1)));
+        service.waive("T1", r);
+        assertThat(sub.getWaivedReason()).isEqualTo(WaivedReason.COMPLIMENTARY);
+
+        sub.setWaivedReason(null);  // no expiry is fine too
+        r.setUntil(null);
+        service.waive("T1", r);
+    }
+
+    @Test
+    void waiveBeforeAnExpiredOrTrialPeriodEndIsStillAllowed() {
+        sub.setWaivedReason(null);
+        sub.setPeriodEnd(Instant.now().minus(Duration.ofDays(2)));
+        SubscriptionWaiveRequest r = new SubscriptionWaiveRequest();
+        r.setReason(WaivedReason.COMPLIMENTARY);
+        r.setUntil(Instant.now().plus(Duration.ofDays(5)));
+        service.waive("T1", r);
+        assertThat(sub.getPeriodEnd()).isEqualTo(r.getUntil());
+    }
+
+    @Test
+    void extendTrialIsRefusedOnAPaidPeriod() {
+        sub.setWaivedReason(null);
+        TrialExtendRequest r = new TrialExtendRequest();
+        r.setDays(7);
+
+        assertThatThrownBy(() -> service.extendTrial("T1", r)).isInstanceOf(IllegalStateException.class)
+                .hasMessageStartingWith("This agency is on a paid period until ");
+        assertThat(sub.getStatus()).isEqualTo(SubscriptionStatus.ACTIVE);
+        verify(subscriptionRepository, never()).save(any());
     }
 
     @Test
