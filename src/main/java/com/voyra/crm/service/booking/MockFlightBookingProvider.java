@@ -125,6 +125,12 @@ public class MockFlightBookingProvider implements FlightBookingProvider {
 
     @Override
     public CancelResult cancel(String supplierBookingId) {
+        if (config.getMock().isCancelTimeout()) {
+            throw new SupplierTimeoutException("Mock supplier timed out on cancel", null);
+        }
+        if (config.getMock().isCancelFail()) {
+            return new CancelResult(false, null, "Mock: cancellation not allowed");
+        }
         return new CancelResult(true, refund(supplierBookingId), "Mock cancellation accepted");
     }
 

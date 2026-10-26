@@ -27,5 +27,9 @@ public class HotelBookingProviderConfig {
         private boolean bookTimeout;
         /** book() answers a clean FAILED ("Mock: room sold out"). */
         private boolean bookFail;
+        /** cancel() times out, like a supplier that never answers: the booking stays CANCELLING until an admin resolves it. */
+        private boolean cancelTimeout;
+        /** cancel() is refused ("Mock: cancellation not allowed"). */
+        private boolean cancelFail;
     }
 }

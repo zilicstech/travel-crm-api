@@ -134,4 +134,19 @@ class MockHotelBookingProviderTest {
     void anIdThatCarriesNoFareHasAnUnknownRefund() {
         assertThat(provider.cancelQuote("some-review-id").refund()).isNull();
     }
+
+    @Test
+    void cancelSwitches_timeoutAndRefuse_offIsUnchanged() {
+        String id = "mock-hbk-abc-20990101-1000.00";
+        assertThat(provider.cancel(id).accepted()).isTrue();
+        config.getMock().setCancelTimeout(true);
+        assertThatThrownBy(() -> provider.cancel(id)).isInstanceOf(SupplierTimeoutException.class);
+        config.getMock().setCancelTimeout(false);
+        config.getMock().setCancelFail(true);
+        CancelResult refused = provider.cancel(id);
+        assertThat(refused.accepted()).isFalse();
+        assertThat(refused.message()).isEqualTo("Mock: cancellation not allowed");
+        config.getMock().setCancelFail(false);
+        assertThat(provider.cancel(id).accepted()).isTrue();
+    }
 }
