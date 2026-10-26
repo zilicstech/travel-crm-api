@@ -76,7 +76,7 @@ class AgencyServiceProvisionTest {
                 .baseCurrencyCode("INR").build();
         when(passwordEncoder.encode("Secret123")).thenReturn("enc");
 
-        Tenant tenant = agencyService.provisionFromApplication(app, "Secret123");
+        Tenant tenant = agencyService.provisionFromApplication(app, "Secret123", "tenant_platform/kyc/app-1/x-logo.png");
         provisioned.add(tenant.getId());
 
         InOrder order = inOrder(loginEmailService, tenantRepository, tenantFlywayMigrator, chartOfAccountsSeedService);
@@ -98,6 +98,7 @@ class AgencyServiceProvisionTest {
         assertThat(tenant.getOwnerName()).isEqualTo("Asha Rao");
         assertThat(tenant.getOwnerEmail()).isEqualTo("asha@skytrips.in");
         assertThat(tenant.getPassword()).isEqualTo("enc");
+        assertThat(tenant.getLogoKey()).isEqualTo("tenant_platform/kyc/app-1/x-logo.png");
         assertThat(tenant.getContactPhone()).isEqualTo("+91 98765 43210");
         assertThat(tenant.getContactEmail()).isEqualTo("asha@skytrips.in");
         assertThat(tenant.getBaseCurrencyCode()).isEqualTo("INR");

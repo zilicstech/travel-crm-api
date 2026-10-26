@@ -160,14 +160,17 @@ public class AgencyApplicationService {
         if (kycDocumentRepository.countByApplicationId(app.getId()) >= MAX_DOCUMENTS) {
             throw new IllegalStateException("This application already has the maximum of " + MAX_DOCUMENTS + " documents");
         }
-        if (!KYC_EXTENSIONS.contains(extensionOf(file.getOriginalFilename()))) {
+        if (type == KycDocumentType.AGENCY_LOGO) {
+            UploadValidator.assertLogo(file);
+        } else if (!KYC_EXTENSIONS.contains(extensionOf(file.getOriginalFilename()))) {
             throw new IllegalArgumentException(KYC_TYPE_MESSAGE);
-        }
-        try {
-            UploadValidator.assertAllowed(file, MAX_KYC_BYTES);
-        } catch (IllegalArgumentException e) {
-            // The shared validator's wording lists Word/Excel/CSV, which KYC never accepts; only the size message is kept.
-            throw file.getSize() > MAX_KYC_BYTES ? e : new IllegalArgumentException(KYC_TYPE_MESSAGE);
+        } else {
+            try {
+                UploadValidator.assertAllowed(file, MAX_KYC_BYTES);
+            } catch (IllegalArgumentException e) {
+                // The shared validator's wording lists Word/Excel/CSV, which KYC never accepts; only the size message is kept.
+                throw file.getSize() > MAX_KYC_BYTES ? e : new IllegalArgumentException(KYC_TYPE_MESSAGE);
+            }
         }
         String fileKey = fileStorageService.store(FILE_SCOPE, FILE_CATEGORY, app.getId(), file);
         KycDocument doc = KycDocument.builder()
@@ -302,7 +305,10 @@ public class AgencyApplicationService {
     @Transactional
     public AgencyResponse approve(String id, String ownerPassword) {
         AgencyApplication app = reviewable(id);
-        Tenant tenant = agencyService.provisionFromApplication(app, ownerPassword);
+        // the logo's KYC file becomes the agency's logo as is: approved applications' files are kept, so no copy is needed
+        String logoKey = kycDocumentRepository.findFirstByApplicationIdAndTypeAndStatusNotOrderByCreatedAtDesc(app.getId(),
+                KycDocumentType.AGENCY_LOGO, KycDocumentStatus.REJECTED).map(KycDocument::getFileKey).orElse(null);
+        Tenant tenant = agencyService.provisionFromApplication(app, ownerPassword, logoKey);
         app.setTenantId(tenant.getId());
         app.setStatus(ApplicationStatus.APPROVED);
         expireUploadToken(app);

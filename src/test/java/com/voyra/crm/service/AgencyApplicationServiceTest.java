@@ -204,6 +204,36 @@ class AgencyApplicationServiceTest {
         verify(fileStorageService, never()).store(anyString(), anyString(), anyString(), any());
     }
 
+    /** The optional logo takes the logo rules (PNG/JPEG/WebP by content, 1 MB), not the KYC ones. */
+    @Test
+    void anAgencyLogoMustBeASmallImageNotAPdf() throws Exception {
+        when(applicationRepository.findByIdForUpdate("app-1")).thenReturn(Optional.of(draft(Instant.now().plusSeconds(60))));
+        assertThatThrownBy(() -> service.attachDocument("app-1", TOKEN, KycDocumentType.AGENCY_LOGO, pdf()))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("PNG, JPG or WEBP");
+        byte[] bigPng = java.util.Arrays.copyOf(new byte[]{(byte) 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A}, 1024 * 1024 + 1);
+        assertThatThrownBy(() -> service.attachDocument("app-1", TOKEN, KycDocumentType.AGENCY_LOGO,
+                new MockMultipartFile("file", "logo.png", "image/png", bigPng))).isInstanceOf(IllegalArgumentException.class);
+
+        MockMultipartFile webp = new MockMultipartFile("file", "logo.webp", "image/webp",
+                new byte[]{'R', 'I', 'F', 'F', 0, 0, 0, 0, 'W', 'E', 'B', 'P'});
+        when(fileStorageService.store("platform", "kyc", "app-1", webp)).thenReturn("tenant_platform/kyc/app-1/x-logo.webp");
+        assertThat(service.attachDocument("app-1", TOKEN, KycDocumentType.AGENCY_LOGO, webp).getType()).isEqualTo(KycDocumentType.AGENCY_LOGO);
+    }
+
+    @Test
+    void approvalMakesTheOnboardingLogoTheAgencysLogo() throws Exception {
+        AgencyApplication app = submitted();
+        when(applicationRepository.findByIdForUpdate("app-1")).thenReturn(Optional.of(app));
+        when(kycDocumentRepository.findFirstByApplicationIdAndTypeAndStatusNotOrderByCreatedAtDesc("app-1", KycDocumentType.AGENCY_LOGO,
+                KycDocumentStatus.REJECTED)).thenReturn(Optional.of(KycDocument.builder().fileKey("tenant_platform/kyc/app-1/x-logo.png").build()));
+        when(agencyService.provisionFromApplication(app, "Secret123", "tenant_platform/kyc/app-1/x-logo.png"))
+                .thenReturn(Tenant.builder().id("T-1").build());
+
+        service.approve("app-1", "Secret123");
+
+        verify(agencyService).provisionFromApplication(app, "Secret123", "tenant_platform/kyc/app-1/x-logo.png");
+    }
+
     @Test
     void attachStoresUnderThePlatformScope() throws Exception {
         when(applicationRepository.findByIdForUpdate("app-1")).thenReturn(Optional.of(draft(Instant.now().plusSeconds(60))));
@@ -553,31 +583,31 @@ class AgencyApplicationServiceTest {
                 .status(ApplicationStatus.REJECTED).build()));
 
         assertThatThrownBy(() -> service.approve("app-1", "Secret123")).isInstanceOf(IllegalStateException.class);
-        verify(agencyService, never()).provisionFromApplication(any(), anyString());
+        verify(agencyService, never()).provisionFromApplication(any(), anyString(), any());
     }
 
     @Test
     void approveIsOncePerApplication() throws Exception {
         AgencyApplication app = submitted();
         when(applicationRepository.findByIdForUpdate("app-1")).thenReturn(Optional.of(app));
-        when(agencyService.provisionFromApplication(app, "Secret123")).thenReturn(Tenant.builder().id("T-1").build());
+        when(agencyService.provisionFromApplication(app, "Secret123", null)).thenReturn(Tenant.builder().id("T-1").build());
 
         service.approve("app-1", "Secret123");
 
         assertThatThrownBy(() -> service.approve("app-1", "Secret123")).isInstanceOf(IllegalStateException.class);
-        verify(agencyService, times(1)).provisionFromApplication(any(), anyString());
+        verify(agencyService, times(1)).provisionFromApplication(any(), anyString(), any());
     }
 
     @Test
     void approveCopiesTheApplicationOntoTheTenant() throws Exception {
         AgencyApplication app = submitted();
         when(applicationRepository.findByIdForUpdate("app-1")).thenReturn(Optional.of(app));
-        when(agencyService.provisionFromApplication(any(), eq("Secret123"))).thenReturn(Tenant.builder().id("T-1").build());
+        when(agencyService.provisionFromApplication(any(), eq("Secret123"), any())).thenReturn(Tenant.builder().id("T-1").build());
 
         service.approve("app-1", "Secret123");
 
         ArgumentCaptor<AgencyApplication> provisioned = ArgumentCaptor.forClass(AgencyApplication.class);
-        verify(agencyService).provisionFromApplication(provisioned.capture(), eq("Secret123"));
+        verify(agencyService).provisionFromApplication(provisioned.capture(), eq("Secret123"), any());
         assertThat(provisioned.getValue()).isSameAs(app);
         assertThat(app.getTenantId()).isEqualTo("T-1");
         assertThat(app.getStatus()).isEqualTo(ApplicationStatus.APPROVED);
@@ -606,7 +636,7 @@ class AgencyApplicationServiceTest {
     @Test
     void reviewableLoadsTheRowForUpdate() throws Exception {
         when(applicationRepository.findByIdForUpdate("app-1")).thenReturn(Optional.of(submitted()));
-        when(agencyService.provisionFromApplication(any(), anyString())).thenReturn(Tenant.builder().id("T-1").build());
+        when(agencyService.provisionFromApplication(any(), anyString(), any())).thenReturn(Tenant.builder().id("T-1").build());
 
         service.decide("app-1", decision(ApplicationStatus.UNDER_REVIEW, null));
         service.approve("app-1", "Secret123");
