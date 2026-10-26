@@ -192,12 +192,33 @@ class SubscriptionBillingServiceTest {
     }
 
     @Test
-    void renewalIsRaisedOncePerPeriodEvenAfterAVoid() {
+    void anIssuedOrPaidRenewalForThePeriodBlocksAnotherOne() {
         Subscription s = suite(0, BillingCycle.MONTHLY).toBuilder().periodEnd(Instant.parse("2026-11-01T00:00:00Z")).build();
-        given(invoiceRepository.existsByTenantIdAndPeriodStart("T1", s.getPeriodEnd())).willReturn(true);
+        given(invoiceRepository.existsByTenantIdAndPeriodStartAndStatusIn(eq("T1"), eq(s.getPeriodEnd()), any())).willReturn(true);
 
         assertThat(service.raiseRenewal(s, Instant.parse("2026-11-01T01:00:00Z"))).isEmpty();
         verify(invoiceRepository, never()).save(any());
+    }
+
+    @Test
+    void aVoidedRenewalIsRaisedAgainOnTheNextRun() {
+        Subscription s = suite(0, BillingCycle.MONTHLY).toBuilder().periodEnd(Instant.parse("2026-11-01T00:00:00Z")).build();
+        given(invoiceRepository.existsByTenantIdAndPeriodStartAndStatusIn(eq("T1"), eq(s.getPeriodEnd()), any())).willReturn(false);
+
+        assertThat(service.raiseRenewal(s, Instant.parse("2026-11-01T01:00:00Z"))).isPresent();
+        verify(invoiceRepository).existsByTenantIdAndPeriodStartAndStatusIn("T1", s.getPeriodEnd(), List.of("ISSUED", "PAID"));
+    }
+
+    @Test
+    void raiseNowOnAReadOnlyAgencyWithoutAWaiverMakesItActiveAndRefreshes() {
+        Subscription s = suite(0, BillingCycle.MONTHLY).toBuilder().status(SubscriptionStatus.READ_ONLY)
+                .periodEnd(Instant.now().minus(Duration.ofDays(20))).build();
+        given(subscriptionRepository.findByTenantIdForUpdate("T1")).willReturn(Optional.of(s));
+
+        service.raiseNow("T1");
+
+        assertThat(s.getStatus()).isEqualTo(SubscriptionStatus.ACTIVE);
+        verify(entitlementService, org.mockito.Mockito.atLeastOnce()).refresh("T1");
     }
 
     // ---- paying (Review Focus 4)
