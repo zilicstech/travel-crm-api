@@ -137,7 +137,7 @@ class PlatformSettingServiceTest {
     @Test
     void skuPricesAndFoundingAgenciesDefaultToTheSpec() {
         Map<String, java.math.BigDecimal> prices = service().skuPrices();
-        assertThat(prices).containsOnlyKeys("CRM_CORE", "STAFF_SEATS", "ACCOUNTS_GST", "REPORTS", "VISA", "SUITE");
+        assertThat(prices).containsOnlyKeys("CRM_CORE", "STAFF_SEATS", "ACCOUNTS_GST", "REPORTS", "VISA", "SUITE", "LITE");
         assertThat(prices.get("SUITE")).isEqualByComparingTo("4999");
         assertThat(prices.get("STAFF_SEATS")).isEqualByComparingTo("399");
         assertThat(service().foundingAgencies()).containsExactly("Voyra Global");
@@ -150,7 +150,7 @@ class PlatformSettingServiceTest {
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("sku_prices");
         assertThatThrownBy(() -> service().set("sku_prices", "not json"))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("sku_prices");
-        String negative = "{\"CRM_CORE\":-1,\"STAFF_SEATS\":399,\"ACCOUNTS_GST\":1999,\"REPORTS\":699,\"VISA\":499,\"SUITE\":4999}";
+        String negative = "{\"CRM_CORE\":-1,\"STAFF_SEATS\":399,\"ACCOUNTS_GST\":1999,\"REPORTS\":699,\"VISA\":499,\"SUITE\":4999,\"LITE\":2999}";
         assertThatThrownBy(() -> service().set("sku_prices", negative))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("sku_prices");
         String extra = "{\"CRM_CORE\":1,\"STAFF_SEATS\":399,\"ACCOUNTS_GST\":1999,\"REPORTS\":699,\"VISA\":499,\"SUITE\":4999,\"X\":1}";
@@ -158,7 +158,7 @@ class PlatformSettingServiceTest {
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("sku_prices");
 
         when(repository.save(any(PlatformSetting.class))).thenAnswer(i -> i.getArgument(0));
-        String ok = "{\"CRM_CORE\":2999,\"STAFF_SEATS\":399,\"ACCOUNTS_GST\":1999,\"REPORTS\":699,\"VISA\":499,\"SUITE\":5499}";
+        String ok = "{\"CRM_CORE\":2999,\"STAFF_SEATS\":399,\"ACCOUNTS_GST\":1999,\"REPORTS\":699,\"VISA\":499,\"SUITE\":5499,\"LITE\":2999}";
         assertThat(service().set("sku_prices", ok).getValue()).isEqualTo(ok);
     }
 

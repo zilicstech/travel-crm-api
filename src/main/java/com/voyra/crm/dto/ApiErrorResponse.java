@@ -45,6 +45,9 @@ public class ApiErrorResponse {
     @Schema(description = "Additional details, e.g. validation field errors")
     private Map<String, Object> details;
 
+    @Schema(description = "With code SKU_REQUIRED: the SKU the plan lacks", example = "ACCOUNTS_GST")
+    private String sku;
+
     public static ApiErrorResponse of(String message, String reason, String cause,
                                        int status, String path) {
         return ApiErrorResponse.builder()

@@ -83,10 +83,10 @@ public class AgencyService {
 
     /**
      * An approved application becomes an agency: its KYC identity is copied onto the tenant and the
-     * caller (a SUPER_ADMIN) is recorded as the approver. The caller marks the application APPROVED.
+     * caller (a SUPER_ADMIN) is recorded as the approver; {@code logoKey} (null = none) is its onboarding logo file. The caller marks the application APPROVED.
      */
     @Transactional
-    public Tenant provisionFromApplication(AgencyApplication app, String ownerPassword) {
+    public Tenant provisionFromApplication(AgencyApplication app, String ownerPassword, String logoKey) {
         loginEmailService.assertFree(app.getOwnerEmail());
         Tenant tenant = Tenant.builder()
                 .id(generateUniqueTenantId())
@@ -102,6 +102,7 @@ public class AgencyService {
                 .ownerEmail(app.getOwnerEmail())
                 .contactPhone(app.getOwnerPhone())
                 .contactEmail(app.getOwnerEmail())
+                .logoKey(logoKey)
                 .password(passwordEncoder.encode(ownerPassword))
                 .baseCurrencyCode(com.voyra.crm.util.FxMath.code(app.getBaseCurrencyCode(), BaseCurrency.DEFAULT))
                 .approvedAt(Instant.now())

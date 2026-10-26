@@ -10,6 +10,7 @@ import com.voyra.crm.dto.PaxSummary;
 import com.voyra.crm.dto.PlatformAdminBookingResponse;
 import com.voyra.crm.dto.PlatformBookingEventResponse;
 import com.voyra.crm.dto.PlatformBookingResponse;
+import com.voyra.crm.dto.PlatformBookingSummaryResponse;
 import com.voyra.crm.entity.Agent;
 import com.voyra.crm.entity.Client;
 import com.voyra.crm.entity.PlatformBooking;
@@ -25,6 +26,7 @@ import com.voyra.crm.repository.PlatformBookingRepository;
 import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.security.SecurityContextUtil;
+import com.voyra.crm.util.FinancialYear;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -35,9 +37,14 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.EnumMap;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -75,6 +82,9 @@ public class PlatformBookingQueryService {
             "TICKETED", "Booking confirmed",
             "LATE_TICKET", "The hotel confirmed the booking late");
 
+    static final int MAX_SUMMARY_DAYS = 366;
+    private static final ZoneId INDIA = ZoneId.of("Asia/Kolkata");
+
     private final PlatformBookingRepository bookingRepository;
     private final PlatformBookingEventRepository eventRepository;
     private final TenantRepository tenantRepository;
@@ -92,6 +102,68 @@ public class PlatformBookingQueryService {
                 : bookingRepository.findByTenantId(p.tenantId(), pageable);
         List<PlatformBookingResponse> views = agencyViews(rows.getContent(), false);
         return paged(rows, views);
+    }
+
+    /**
+     * Basic reports: bookings created in [from, to] (IST days; default this month to today), plus up to 5 upcoming trips and
+     * 5 bookings needing attention whatever the range. Scoped like {@link #list}: an agent sees only their own bookings.
+     */
+    public PlatformBookingSummaryResponse summary(LocalDate from, LocalDate to) {
+        LocalDate today = FinancialYear.today();
+        LocalDate start = from != null ? from : today.withDayOfMonth(1);
+        LocalDate end = to != null ? to : today;
+        if (start.isAfter(end)) {
+            throw new IllegalArgumentException("from must be on or before to");
+        }
+        if (ChronoUnit.DAYS.between(start, end) + 1 > MAX_SUMMARY_DAYS) {
+            throw new IllegalArgumentException("Choose a range of at most " + MAX_SUMMARY_DAYS + " days");
+        }
+        CustomUserPrincipal p = SecurityContextUtil.getCurrentUserOrThrow();
+        String bookedBy = p.isAgent() ? p.userId() : null;
+        List<Object[]> rows = bookingRepository.summarize(p.tenantId(), bookedBy, start.atStartOfDay(INDIA).toInstant(),
+                end.plusDays(1).atStartOfDay(INDIA).toInstant(), EnumSet.of(PlatformBookingStatus.REVIEWING, PlatformBookingStatus.ABORTED));
+
+        int bookings = 0;
+        int ticketed = 0;
+        int cancelled = 0;
+        Map<PricingProduct, int[]> counts = new EnumMap<>(PricingProduct.class);
+        Map<PricingProduct, BigDecimal[]> money = new EnumMap<>(PricingProduct.class);
+        for (PricingProduct product : PricingProduct.values()) {
+            counts.put(product, new int[1]);
+            money.put(product, new BigDecimal[]{BigDecimal.ZERO, BigDecimal.ZERO});
+        }
+        for (Object[] r : rows) {
+            PricingProduct product = (PricingProduct) r[0];
+            PlatformBookingStatus status = (PlatformBookingStatus) r[1];
+            int n = ((Number) r[2]).intValue();
+            bookings += n;
+            counts.get(product)[0] += n;
+            if (status == PlatformBookingStatus.CANCELLED) {
+                cancelled += n;
+            } else if (status == PlatformBookingStatus.TICKETED) {
+                ticketed += n;
+                BigDecimal[] m = money.get(product);
+                m[0] = m[0].add(new BigDecimal(r[3].toString()));
+                m[1] = m[1].add(new BigDecimal(r[4].toString()));
+            }
+        }
+        List<PlatformBookingSummaryResponse.ProductSummary> byProduct = java.util.Arrays.stream(PricingProduct.values())
+                .map(product -> new PlatformBookingSummaryResponse.ProductSummary(product, counts.get(product)[0],
+                        money2(money.get(product)[0]), money2(money.get(product)[1]))).toList();
+        return PlatformBookingSummaryResponse.builder().from(start).to(end)
+                .bookings(bookings).ticketed(ticketed).cancelled(cancelled)
+                .sales(money2(byProduct.stream().map(PlatformBookingSummaryResponse.ProductSummary::sales).reduce(BigDecimal.ZERO, BigDecimal::add)))
+                .earned(money2(byProduct.stream().map(PlatformBookingSummaryResponse.ProductSummary::earned).reduce(BigDecimal.ZERO, BigDecimal::add)))
+                .byProduct(byProduct)
+                .upcoming(agencyViews(bookingRepository.findUpcoming(p.tenantId(), bookedBy, today.toString()), false))
+                .attention(agencyViews(bookingRepository.findNewestInStatuses(p.tenantId(), bookedBy,
+                        EnumSet.of(PlatformBookingStatus.BOOKING, PlatformBookingStatus.UNKNOWN, PlatformBookingStatus.CANCELLING),
+                        PageRequest.of(0, 5)), false))
+                .build();
+    }
+
+    private static BigDecimal money2(BigDecimal v) {
+        return v.setScale(2, RoundingMode.HALF_UP);
     }
 
     /** Another agency's id, or an agent's colleague's, is simply absent (404). */

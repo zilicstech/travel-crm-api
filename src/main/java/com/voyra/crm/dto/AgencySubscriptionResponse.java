@@ -17,7 +17,7 @@ import java.util.Set;
 @Schema(description = "The agency's own subscription: plan, seats, period and invoices")
 public class AgencySubscriptionResponse {
 
-    @Schema(description = "STARTER, CUSTOM or SUITE")
+    @Schema(description = "STARTER, LITE, CUSTOM or SUITE")
     private SubscriptionPlan plan;
 
     @Schema(description = "SKUs usable now")

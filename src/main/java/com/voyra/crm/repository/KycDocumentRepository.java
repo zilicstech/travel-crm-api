@@ -19,4 +19,7 @@ public interface KycDocumentRepository extends JpaRepository<KycDocument, String
     long countByApplicationIdAndTypeAndStatusNot(String applicationId, KycDocumentType type, KycDocumentStatus status);
 
     long countByApplicationId(String applicationId);
+
+    Optional<KycDocument> findFirstByApplicationIdAndTypeAndStatusNotOrderByCreatedAtDesc(String applicationId, KycDocumentType type,
+                                                                                         KycDocumentStatus status);
 }

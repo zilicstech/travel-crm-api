@@ -15,15 +15,15 @@ import java.util.List;
 public class SubscriptionUpdateRequest {
 
     @NotNull(message = "plan is required")
-    @Schema(description = "STARTER (portal only), CUSTOM (the listed SKUs) or SUITE (every SKU, 5 seats included)", example = "CUSTOM")
+    @Schema(description = "STARTER (portal only), LITE (CRM Core, seats, reports, visa; 3 seats included), CUSTOM (the listed SKUs) or SUITE (every SKU, 5 seats included)", example = "CUSTOM")
     private SubscriptionPlan plan;
 
-    @Schema(description = "SKUs for a CUSTOM plan; ignored for SUITE and STARTER", example = "[\"CRM_CORE\",\"STAFF_SEATS\"]")
+    @Schema(description = "SKUs for a CUSTOM plan; ignored for SUITE, LITE and STARTER", example = "[\"CRM_CORE\",\"STAFF_SEATS\"]")
     private List<Sku> skus;
 
     @NotNull(message = "seats is required")
     @Min(value = 0, message = "seats cannot be negative")
-    @Schema(description = "SUITE: extra seats on top of the 5 included; CUSTOM: all seats (needs STAFF_SEATS)", example = "3")
+    @Schema(description = "SUITE: extra seats on top of the 5 included; LITE: on top of the 3 included; CUSTOM: all seats (needs STAFF_SEATS)", example = "3")
     private Integer seats;
 
     @NotNull(message = "billingCycle is required")

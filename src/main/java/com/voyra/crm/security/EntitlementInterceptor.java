@@ -67,7 +67,7 @@ public class EntitlementInterceptor implements HandlerInterceptor {
         Entitlements entitlements = entitlementService.resolve(tenantId);
         if (rule != SkuRule.NEVER_GATED && !entitlements.skus().contains(rule.sku())) {
             return refuse(response, Map.of("code", "SKU_REQUIRED", "sku", rule.sku().name(),
-                    "message", "Your plan doesn't include this feature. Upgrade in Subscription."));
+                    "message", TenantWriteRefusedException.SKU_REQUIRED_MESSAGE));
         }
         if (entitlements.readOnly() && !ReadRequests.isRead(request, path) && !ReadRequests.isStaffCutOff(request, path)) {
             return refuse(response, Map.of("code", "READ_ONLY", "message", TenantWriteRefusedException.READ_ONLY_MESSAGE));

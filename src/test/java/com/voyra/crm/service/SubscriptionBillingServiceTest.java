@@ -50,7 +50,7 @@ class SubscriptionBillingServiceTest {
 
     private static final Map<String, BigDecimal> PRICES = Map.of("CRM_CORE", new BigDecimal("2499"), "STAFF_SEATS",
             new BigDecimal("399"), "ACCOUNTS_GST", new BigDecimal("1999"), "REPORTS", new BigDecimal("699"), "VISA",
-            new BigDecimal("499"), "SUITE", new BigDecimal("4999"));
+            new BigDecimal("499"), "SUITE", new BigDecimal("4999"), "LITE", new BigDecimal("2999"));
 
     @Mock private SubscriptionRepository subscriptionRepository;
     @Mock private SubscriptionInvoiceRepository invoiceRepository;
@@ -115,6 +115,17 @@ class SubscriptionBillingServiceTest {
         assertThat(inv.getGst()).isEqualByComparingTo("1043.46");   // 5797 x 0.18
         assertThat(inv.getTotal()).isEqualByComparingTo("6840.46");
         assertThat(inv.getStatus()).isEqualTo("ISSUED");
+    }
+
+    @Test
+    void liteIsTheLitePriceWithThreeSeatsIncludedPlusExtraSeats() {
+        Subscription s = suite(1, BillingCycle.MONTHLY).toBuilder().plan(SubscriptionPlan.LITE).build();
+        List<Map<String, Object>> lines = SubscriptionBillingService.lines(s, PRICES);
+
+        assertThat(lines).hasSize(2);
+        assertThat(lines.get(0)).containsEntry("sku", "LITE").containsEntry("description", "Voyra CRM Lite (3 staff seats included)");
+        assertThat(amount(lines.get(0))).isEqualByComparingTo("2999");
+        assertThat(lines.get(1)).containsEntry("sku", "STAFF_SEATS").containsEntry("quantity", 1);
     }
 
     @Test

@@ -59,6 +59,7 @@ class SubscriptionServiceTest {
     @Mock private com.voyra.crm.repository.TenantRepository tenantRepository;
     @Mock private EntitlementService entitlementService;
     @Mock private PlatformAuditService auditService;
+    @Mock private NotificationService notificationService;
     @InjectMocks private SubscriptionService service;
 
     private Subscription sub;
@@ -127,6 +128,14 @@ class SubscriptionServiceTest {
         service.update("T1", update(SubscriptionPlan.SUITE, List.of(), 2, BillingCycle.MONTHLY));
         assertThat(sub.getSkus()).hasSize(Sku.values().length);
         assertThat(sub.getSeats()).isEqualTo(2);
+    }
+
+    @Test
+    void liteStoresItsFourSkusWhateverTheRequestSays() {
+        service.update("T1", update(SubscriptionPlan.LITE, List.of(Sku.ACCOUNTS_GST), 1, BillingCycle.MONTHLY));
+        assertThat(sub.getPlan()).isEqualTo(SubscriptionPlan.LITE);
+        assertThat(sub.getSkus()).containsExactly("CRM_CORE", "STAFF_SEATS", "REPORTS", "VISA");
+        assertThat(sub.getSeats()).isEqualTo(1);
     }
 
     @Test
@@ -369,5 +378,49 @@ class SubscriptionServiceTest {
         assertThatThrownBy(() -> service.extendTrial("T1", t)).isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Founding agencies don't need a trial");
         verify(subscriptionRepository, never()).save(any());
+    }
+
+    // ---- upgrade request
+
+    private void ownerOn(SubscriptionPlan plan) {
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+                new CustomUserPrincipal("T1", "owner", UserType.AGENCY_OWNER, "T1"), null, List.of()));
+        given(entitlementService.resolve("T1")).willReturn(new Entitlements(plan, SubscriptionStatus.ACTIVE, EnumSet.noneOf(Sku.class), 0, false, null));
+    }
+
+    private static com.voyra.crm.dto.SubscriptionUpgradeRequest upgrade(SubscriptionPlan plan, String note) {
+        com.voyra.crm.dto.SubscriptionUpgradeRequest r = new com.voyra.crm.dto.SubscriptionUpgradeRequest();
+        r.setPlan(plan);
+        r.setNote(note);
+        return r;
+    }
+
+    @Test
+    void anUpgradeRequestAlertsTheVoyraAdminsWithTheAgencyPlansAndNote() {
+        ownerOn(SubscriptionPlan.STARTER);
+        given(tenantRepository.findById("T1")).willReturn(Optional.of(com.voyra.crm.entity.Tenant.builder().id("T1").agencyName("Sky Trips").build()));
+
+        assertThat(service.requestUpgrade(upgrade(SubscriptionPlan.LITE, " Two agents joining ")).isRequested()).isTrue();
+
+        verify(notificationService).platformAlert(eq("Upgrade request: Sky Trips wants LITE"), org.mockito.ArgumentMatchers.argThat(body ->
+                body.contains("Sky Trips (T1)") && body.contains("Current plan: STARTER") && body.contains("Requested plan: LITE")
+                        && body.contains("Note: Two agents joining")));
+    }
+
+    @Test
+    void anUpgradeMustBeToAHigherPlan() {
+        for (SubscriptionPlan[] refused : new SubscriptionPlan[][]{
+                {SubscriptionPlan.LITE, SubscriptionPlan.LITE}, {SubscriptionPlan.SUITE, SubscriptionPlan.LITE},
+                {SubscriptionPlan.SUITE, SubscriptionPlan.SUITE}, {SubscriptionPlan.CUSTOM, SubscriptionPlan.LITE},
+                {SubscriptionPlan.STARTER, SubscriptionPlan.STARTER}, {SubscriptionPlan.STARTER, SubscriptionPlan.CUSTOM}}) {
+            ownerOn(refused[0]);
+            assertThatThrownBy(() -> service.requestUpgrade(upgrade(refused[1], null))).as(refused[0] + " -> " + refused[1])
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+        verify(notificationService, never()).platformAlert(any(), any());
+
+        ownerOn(SubscriptionPlan.CUSTOM);
+        assertThat(service.requestUpgrade(upgrade(SubscriptionPlan.SUITE, null)).isRequested()).isTrue();
+        verify(notificationService).platformAlert(eq("Upgrade request: T1 wants SUITE"), any());
     }
 }

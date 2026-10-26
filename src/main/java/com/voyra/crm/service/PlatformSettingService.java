@@ -49,15 +49,15 @@ public class PlatformSettingService {
     static final String VOYRA_ADDRESS = "voyra_address";
     static final String VOYRA_STATE_CODE = "voyra_state_code";
     static final String SUBSCRIPTION_SAC = "subscription_sac";
-    /** Monthly INR, excl. GST: one per SKU (STAFF_SEATS per seat) plus SUITE, which includes 5 seats. */
-    private static final Set<String> SKU_PRICE_KEYS = Set.of("CRM_CORE", "STAFF_SEATS", "ACCOUNTS_GST", "REPORTS", "VISA", "SUITE");
+    /** Monthly INR, excl. GST: one per SKU (STAFF_SEATS per seat) plus SUITE (5 seats included) and LITE (3 seats included). */
+    private static final Set<String> SKU_PRICE_KEYS = Set.of("CRM_CORE", "STAFF_SEATS", "ACCOUNTS_GST", "REPORTS", "VISA", "SUITE", "LITE");
 
     private static final Map<String, String> DEFAULTS = Map.ofEntries(
             Map.entry(DISCOUNT_BASE, "GROSS"),
             Map.entry(TDS_RATE, "0"),
             Map.entry(COMMISSION_ESTIMATE_PCT, "5"),
             Map.entry(VOYRA_CANCEL_FEE, "0"),
-            Map.entry(SKU_PRICES, "{\"CRM_CORE\":2499,\"STAFF_SEATS\":399,\"ACCOUNTS_GST\":1999,\"REPORTS\":699,\"VISA\":499,\"SUITE\":4999}"),
+            Map.entry(SKU_PRICES, "{\"CRM_CORE\":2499,\"STAFF_SEATS\":399,\"ACCOUNTS_GST\":1999,\"REPORTS\":699,\"VISA\":499,\"SUITE\":4999,\"LITE\":2999}"),
             Map.entry(FOUNDING_AGENCIES, "[\"Voyra Global\"]"),
             Map.entry(REFERENCE_FARE_BASKET, "[{\"label\":\"Domestic LCC\",\"gross\":5000,\"base\":3500},"
                     + "{\"label\":\"Domestic FSC\",\"gross\":9000,\"base\":6000},"

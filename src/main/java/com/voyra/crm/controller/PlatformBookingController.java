@@ -6,6 +6,7 @@ import com.voyra.crm.dto.PagedResponse;
 import com.voyra.crm.dto.PlatformBookingCancelRequest;
 import com.voyra.crm.dto.PlatformBookingConfirmRequest;
 import com.voyra.crm.dto.PlatformBookingResponse;
+import com.voyra.crm.dto.PlatformBookingSummaryResponse;
 import com.voyra.crm.dto.PlatformBookingReviewResponse;
 import com.voyra.crm.service.booking.CancelPreview;
 import com.voyra.crm.service.booking.PlatformBookingQueryService;
@@ -14,6 +15,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -23,6 +25,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.time.LocalDate;
 
 @RestController
 @RequestMapping("/api/platform-bookings")
@@ -80,6 +84,15 @@ public class PlatformBookingController {
     public ResponseEntity<PagedResponse<PlatformBookingResponse>> list(@RequestParam(value = "page", required = false) Integer page,
                                                                        @RequestParam(value = "size", required = false) Integer size) {
         return ResponseEntity.ok(queryService.list(page, size));
+    }
+
+    @GetMapping("/summary")
+    @Operation(summary = "Basic reports: bookings, sales and earnings in a date range, upcoming trips, bookings needing attention",
+            description = "Dates are IST days, default this month to today; at most 366 days. Agents see only their own bookings.")
+    public ResponseEntity<PlatformBookingSummaryResponse> summary(
+            @RequestParam(value = "from", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(value = "to", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return ResponseEntity.ok(queryService.summary(from, to));
     }
 
     @GetMapping("/{id}")

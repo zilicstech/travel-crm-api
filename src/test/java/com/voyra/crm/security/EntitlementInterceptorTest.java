@@ -138,8 +138,18 @@ class EntitlementInterceptorTest {
         mockMvc.perform(get("/api/reports/lead-pipeline").header("Authorization", owner))
                 .andExpect(status().is(402))
                 .andExpect(jsonPath("$.sku").value("REPORTS"));
-        // A read-style POST is still a gated feature.
-        mockMvc.perform(duplicateCheck()).andExpect(status().is(402)).andExpect(jsonPath("$.sku").value("CRM_CORE"));
+    }
+
+    /** Client management is in the free Basic plan, but a READ_ONLY agency still cannot write clients. */
+    @Test
+    void clientManagementIsFreeOnStarterAndStillReadOnlyOnWrites() throws Exception {
+        entitled(Set.of(), false);
+        mockMvc.perform(get("/api/clients").header("Authorization", owner)).andExpect(status().isOk());
+        mockMvc.perform(duplicateCheck()).andExpect(status().isOk());
+
+        entitled(EnumSet.allOf(Sku.class), true);
+        mockMvc.perform(post("/api/clients").header("Authorization", owner).contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().is(402)).andExpect(jsonPath("$.code").value("READ_ONLY"));
     }
 
     @Test

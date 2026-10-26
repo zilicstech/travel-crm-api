@@ -3,12 +3,15 @@ package com.voyra.crm.controller;
 import com.voyra.crm.dto.AgencySubscriptionResponse;
 import com.voyra.crm.dto.SubscriptionInvoiceResponse;
 import com.voyra.crm.dto.SubscriptionPaymentResponse;
+import com.voyra.crm.dto.SubscriptionUpgradeRequest;
+import com.voyra.crm.dto.SubscriptionUpgradeRequestResponse;
 import com.voyra.crm.security.SecurityContextUtil;
 import com.voyra.crm.service.SubscriptionBillingService;
 import com.voyra.crm.service.SubscriptionPaymentService;
 import com.voyra.crm.service.SubscriptionService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.Resource;
 import org.springframework.http.ContentDisposition;
@@ -20,6 +23,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -40,6 +44,14 @@ public class AgencySubscriptionController {
     @Operation(summary = "Plan, SKUs, seats used/total, status, period and invoices")
     public ResponseEntity<AgencySubscriptionResponse> get() {
         return ResponseEntity.ok(service.agencyView());
+    }
+
+    @PostMapping("/upgrade-request")
+    @Operation(summary = "Ask Voyra for a higher plan",
+            description = "LITE or SUITE, higher than the current plan (STARTER < LITE = CUSTOM < SUITE), else 400. "
+                    + "Voyra's admins are alerted and set the plan; nothing is charged here. Each call raises one alert.")
+    public ResponseEntity<SubscriptionUpgradeRequestResponse> requestUpgrade(@Valid @RequestBody SubscriptionUpgradeRequest request) {
+        return ResponseEntity.ok(service.requestUpgrade(request));
     }
 
     @PostMapping("/invoices/{id}/pay")
