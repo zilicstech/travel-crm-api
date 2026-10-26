@@ -75,6 +75,14 @@ class NotificationTemplatesTest {
         assertThat(e.html()).contains("href=\"" + URL + "/apply?application=a1&amp;token=t1\"");
     }
 
+    /** R3: the admin's note is in the email, escaped in the HTML part. */
+    @Test
+    void theMoreInfoNoteIsEscapedInTheHtml() {
+        Email e = NotificationTemplates.applicationMoreInfo("Asha", "Sky Tours", "PAN <b>blurred</b> & cut", URL + "/apply");
+        assertThat(e.text()).contains("PAN <b>blurred</b> & cut");
+        assertThat(e.html()).contains("PAN &lt;b&gt;blurred&lt;/b&gt; &amp; cut").doesNotContain("<b>blurred");
+    }
+
     @Test
     void theApprovalNeverMentionsAPassword() {
         Email e = NotificationTemplates.applicationApproved("Asha", "Sky Tours", "asha@sky.test", URL + "/login");

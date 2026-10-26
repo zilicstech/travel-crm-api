@@ -458,9 +458,12 @@ class AgencyApplicationServiceTest {
         String oldHash = app.getUploadTokenHash();
         when(applicationRepository.findByIdForUpdate("app-1")).thenReturn(Optional.of(app));
 
-        AgencyApplicationResponse response = service.decide("app-1", decision(ApplicationStatus.MORE_INFO, null));
+        ApplicationDecisionRequest ask = decision(ApplicationStatus.MORE_INFO, null);
+        ask.setNote("  Upload a clearer PAN card ");
+        AgencyApplicationResponse response = service.decide("app-1", ask);
 
         assertThat(app.getStatus()).isEqualTo(ApplicationStatus.MORE_INFO);
+        assertThat(app.getReviewNote()).isEqualTo("Upload a clearer PAN card"); // what the email tells the applicant
         assertThat(app.getUploadTokenHash()).isNotEqualTo(oldHash);
         assertThat(app.getUploadTokenExpiresAt()).isCloseTo(Instant.now().plus(Duration.ofDays(7)),
                 within(1, java.time.temporal.ChronoUnit.MINUTES));
@@ -468,6 +471,19 @@ class AgencyApplicationServiceTest {
         String token = response.getResumeUrl().substring("/apply?application=app-1&token=".length());
         assertThat(sha256Hex(token)).isEqualTo(app.getUploadTokenHash());
         verify(notificationService).applicationMoreInfo(app, response.getResumeUrl());
+    }
+
+    /** R3: the applicant's email says what is missing, so asking for more information without saying what is refused. */
+    @Test
+    void requestMoreInfoWithoutANoteIsRefusedAndMailsNothing() throws Exception {
+        AgencyApplication app = submitted();
+
+        ApplicationDecisionRequest ask = decision(ApplicationStatus.MORE_INFO, null);
+        ask.setNote("   ");
+        assertThatThrownBy(() -> service.decide("app-1", ask)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Say what information is needed - the applicant sees this note");
+        assertThat(app.getStatus()).isEqualTo(ApplicationStatus.SUBMITTED);
+        verify(notificationService, never()).applicationMoreInfo(any(), any());
     }
 
     @Test

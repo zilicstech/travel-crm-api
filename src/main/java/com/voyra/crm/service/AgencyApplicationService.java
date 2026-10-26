@@ -263,6 +263,10 @@ public class AgencyApplicationService {
         if (status == ApplicationStatus.REJECTED && reason == null) {
             throw new IllegalArgumentException("Give a reason for the rejection");
         }
+        if (status == ApplicationStatus.MORE_INFO && trimToNull(request.getNote()) == null) {
+            // the email to the applicant carries this note; without it they cannot tell what to upload
+            throw new IllegalArgumentException("Say what information is needed - the applicant sees this note");
+        }
         AgencyApplication app = reviewable(id);
         ApplicationStatus previous = app.getStatus();
         app.setStatus(status);
