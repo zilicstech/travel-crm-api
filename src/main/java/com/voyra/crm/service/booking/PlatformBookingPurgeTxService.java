@@ -8,6 +8,8 @@ import com.voyra.crm.enums.PlatformBookingStatus;
 import com.voyra.crm.enums.PricingProduct;
 import com.voyra.crm.repository.PlatformBookingEventRepository;
 import com.voyra.crm.repository.PlatformBookingRepository;
+import com.voyra.crm.scheduler.PlatformBookingMirrorRepairJob;
+import com.voyra.crm.service.NotificationService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -51,6 +53,8 @@ public class PlatformBookingPurgeTxService {
     private final PlatformBookingRepository bookingRepository;
     private final PlatformBookingEventRepository eventRepository;
     private final PlatformBookingQueryService queryService;
+    private final PlatformBookingEventRecorder recorder;
+    private final NotificationService notificationService;
 
     @Transactional
     public PurgeOutcome purge(String bookingId, Instant now, int retentionDays) {
@@ -63,7 +67,15 @@ public class PlatformBookingPurgeTxService {
             return PurgeOutcome.NOT_DUE;
         }
         if (b.getClientId() != null && (b.getMirrorStatus() == MirrorStatus.PENDING || b.getMirrorStatus() == MirrorStatus.FAILED)) {
-            return PurgeOutcome.SKIPPED_MIRROR; // the mirror repair job still needs the travellers; purged once the mirror is done
+            // the repair job has given up on a FAILED mirror: nothing will ever read the travellers, so they go on schedule
+            boolean abandoned = b.getMirrorStatus() == MirrorStatus.FAILED
+                    && eventRepository.countByPlatformBookingIdAndType(bookingId, "MIRROR_FAILED") >= PlatformBookingMirrorRepairJob.MAX_ATTEMPTS;
+            if (!abandoned) {
+                return PurgeOutcome.SKIPPED_MIRROR; // the mirror repair job still needs the travellers; purged once the mirror is done
+            }
+            recorder.record(bookingId, "MIRROR_ABANDONED", Map.of());
+            notificationService.platformAlert("CRM copy of a platform booking was never written",
+                    "CRM copy of booking " + bookingId + " was never written; passenger data purged on schedule");
         }
         b.setPaxEnc(null);
         b.setConfirmPayloadHash(null); // a hash of the passengers and contact: guessable, and useless once terminal

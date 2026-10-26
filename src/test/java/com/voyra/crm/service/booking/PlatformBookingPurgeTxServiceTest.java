@@ -40,13 +40,15 @@ class PlatformBookingPurgeTxServiceTest {
 
     @Mock private PlatformBookingRepository bookings;
     @Mock private PlatformBookingEventRepository events;
+    @Mock private PlatformBookingEventRecorder recorder;
+    @Mock private com.voyra.crm.service.NotificationService notifications;
 
     private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
 
     private PlatformBookingPurgeTxService service() {
         PaxCodec codec = new PaxCodec(objectMapper, "dGVzdC1vbmx5LWFlcy1rZXktMzItYnl0ZXMtbG9uZyE=");
         PlatformBookingQueryService query = new PlatformBookingQueryService(bookings, events, null, null, null, codec, objectMapper);
-        return new PlatformBookingPurgeTxService(bookings, events, query);
+        return new PlatformBookingPurgeTxService(bookings, events, query, recorder, notifications);
     }
 
     private static Instant daysAgo(long d) {
@@ -206,6 +208,35 @@ class PlatformBookingPurgeTxServiceTest {
 
         b.setClientId(null); // no client: nothing to mirror
         assertThat(service().purge("b1", NOW, DAYS)).isEqualTo(PurgeOutcome.PURGED);
+    }
+
+    @Test
+    void aFailedMirrorTheRepairJobGaveUpOnIsPurgedWithAnEventAndOneAlert() {
+        PlatformBooking b = booking(PlatformBookingStatus.FAILED, daysAgo(200));
+        b.setClientId("c1");
+        b.setMirrorStatus(MirrorStatus.FAILED);
+        stub(b);
+        given(events.countByPlatformBookingIdAndType("b1", "MIRROR_FAILED"))
+                .willReturn(com.voyra.crm.scheduler.PlatformBookingMirrorRepairJob.MAX_ATTEMPTS);
+
+        assertThat(service().purge("b1", NOW, DAYS)).isEqualTo(PurgeOutcome.PURGED);
+
+        assertThat(b.getPaxEnc()).isNull();
+        verify(recorder).record(org.mockito.ArgumentMatchers.eq("b1"), org.mockito.ArgumentMatchers.eq("MIRROR_ABANDONED"), any());
+        verify(notifications).platformAlert(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.contains("b1"));
+    }
+
+    @Test
+    void aFailedMirrorStillBelowTheCapKeepsItsPassengers() {
+        PlatformBooking b = booking(PlatformBookingStatus.FAILED, daysAgo(200));
+        b.setClientId("c1");
+        b.setMirrorStatus(MirrorStatus.FAILED);
+        stub(b);
+        given(events.countByPlatformBookingIdAndType("b1", "MIRROR_FAILED"))
+                .willReturn(com.voyra.crm.scheduler.PlatformBookingMirrorRepairJob.MAX_ATTEMPTS - 1);
+
+        assertThat(service().purge("b1", NOW, DAYS)).isEqualTo(PurgeOutcome.SKIPPED_MIRROR);
+        verify(notifications, never()).platformAlert(any(), any());
     }
 
     /** Carried minor: these exact keys (any case, underscores ignored) are personal; a key merely containing one is not. */
