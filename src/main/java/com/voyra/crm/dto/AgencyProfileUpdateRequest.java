@@ -26,9 +26,6 @@ public class AgencyProfileUpdateRequest {
     @Schema(example = "2.00")
     private BigDecimal defaultCommission;
 
-    @Schema(description = "Opaque storage key from FileStorageService")
-    private String logoKey;
-
     @Schema(example = "27")
     private String stateCode;
 

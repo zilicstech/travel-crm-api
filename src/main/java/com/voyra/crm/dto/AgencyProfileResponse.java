@@ -13,8 +13,8 @@ import java.math.BigDecimal;
 @NoArgsConstructor
 @AllArgsConstructor
 @Schema(description = "The signed-in owner's own agency profile - name/owner/email are set at "
-        + "onboarding and are read-only here; gstNumber/address/currency/defaultCommission/logoKey "
-        + "are the fields this endpoint can change.")
+        + "onboarding and are read-only here; gstNumber/address/currency/defaultCommission "
+        + "and the rest are the fields this endpoint can change; the logo has its own /logo endpoints.")
 public class AgencyProfileResponse {
 
     @Schema(example = "Global Explorer Travels")
@@ -40,6 +40,9 @@ public class AgencyProfileResponse {
 
     @Schema(description = "Opaque storage key from FileStorageService, never a filesystem path")
     private String logoKey;
+
+    @Schema(description = "True when the agency has a logo (GET /api/agency/profile/logo serves it)", example = "true")
+    private boolean hasLogo;
 
     @Schema(description = "GST home state code - decides CGST+SGST vs IGST on invoices", example = "27")
     private String stateCode;

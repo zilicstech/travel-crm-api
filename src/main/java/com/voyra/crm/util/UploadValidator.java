@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -19,6 +20,11 @@ public final class UploadValidator {
     private static final Set<String> ALLOWED_EXTENSIONS =
             Set.of("pdf", "jpg", "jpeg", "png", "webp", "doc", "docx", "xls", "xlsx", "csv");
 
+    public static final long MAX_LOGO_BYTES = 1024L * 1024;
+    private static final Map<String, String> LOGO_TYPES = Map.of(
+            "png", "image/png", "jpg", "image/jpeg", "jpeg", "image/jpeg", "webp", "image/webp");
+    public static final String LOGO_MESSAGE = "Upload the logo as a PNG, JPG or WEBP image of at most 1 MB";
+
     private static final String NOT_ALLOWED =
             "This file type is not allowed. Upload a PDF, JPG, PNG, WEBP, Word, Excel or CSV file.";
 
@@ -31,6 +37,24 @@ public final class UploadValidator {
             throw new IllegalArgumentException("File is larger than " + maxBytes / (1024 * 1024) + " MB");
         }
         assertAllowed(file);
+    }
+
+    /** An agency logo: PNG, JPEG or WebP by extension and by its first bytes, at most 1 MB. */
+    public static void assertLogo(MultipartFile file) {
+        if (file == null || file.isEmpty() || file.getSize() > MAX_LOGO_BYTES || logoContentType(file.getOriginalFilename()) == null) {
+            throw new IllegalArgumentException(LOGO_MESSAGE);
+        }
+        try {
+            assertAllowed(file);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException(LOGO_MESSAGE);
+        }
+    }
+
+    /** The image type of a logo file name or storage key, by extension (the upload checked the bytes match); null if not a logo type. */
+    public static String logoContentType(String name) {
+        int dot = name != null ? name.lastIndexOf('.') : -1;
+        return dot >= 0 ? LOGO_TYPES.get(name.substring(dot + 1).toLowerCase(Locale.ROOT)) : null;
     }
 
     public static void assertAllowed(MultipartFile file) {
