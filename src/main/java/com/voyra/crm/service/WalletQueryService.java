@@ -11,6 +11,8 @@ import com.voyra.crm.enums.PlatformAuditAction;
 import com.voyra.crm.enums.ReceivableStatus;
 import com.voyra.crm.enums.TopupStatus;
 import com.voyra.crm.exception.NotFoundException;
+import com.voyra.crm.enums.PricingProduct;
+import com.voyra.crm.repository.PlatformBookingRepository;
 import com.voyra.crm.repository.PlatformReceivableRepository;
 import com.voyra.crm.repository.TopupRequestRepository;
 import com.voyra.crm.repository.WalletEntryRepository;
@@ -33,11 +35,14 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class WalletQueryService {
 
+    private static final String BOOKING_REF = "PLATFORM_BOOKING";
+
     private final WalletRepository walletRepository;
     private final WalletEntryRepository entryRepository;
     private final PlatformReceivableRepository receivableRepository;
     private final TopupRequestRepository topupRequestRepository;
     private final WalletService walletService;
+    private final PlatformBookingRepository platformBookingRepository;
     private final PlatformAuditService auditService;
 
     @Transactional(readOnly = true)
@@ -46,7 +51,7 @@ public class WalletQueryService {
         List<ReceivableResponse> due = receivableRepository
                 .findByTenantIdAndStatusOrderByCreatedAt(tenantId, ReceivableStatus.DUE).stream()
                 .map(r -> ReceivableResponse.builder().id(r.getId()).amount(r.getAmount())
-                        .originalAmount(r.getOriginalAmount()).reason(r.getReason().name()).createdAt(r.getCreatedAt()).build())
+                        .originalAmount(r.getOriginalAmount()).reason(r.getReason().name()).reasonText(r.getReason().text()).createdAt(r.getCreatedAt()).build())
                 .toList();
         return WalletSummaryResponse.builder()
                 .balance(w.getBalance()).held(w.getHeld()).available(w.getBalance().subtract(w.getHeld()))
@@ -59,15 +64,18 @@ public class WalletQueryService {
     @Transactional(readOnly = true)
     public PagedResponse<WalletEntryResponse> entries(String tenantId, Pageable pageable) {
         Wallet w = find(tenantId);
-        return PagedResponse.from(entryRepository.findPagedByWalletIdOrderByCreatedAtDescIdDesc(w.getId(), pageable),
-                WalletQueryService::toResponse);
+        var page = entryRepository.findPagedByWalletIdOrderByCreatedAtDescIdDesc(w.getId(), pageable);
+        Map<String, String> bookings = bookingRefs(page.getContent());
+        return PagedResponse.from(page, e -> toResponse(e, bookings));
     }
 
     @Transactional(readOnly = true)
     public String csv(String tenantId) {
         Wallet w = find(tenantId);
-        List<List<String>> rows = entryRepository.findByWalletIdOrderByCreatedAtDescIdDesc(w.getId(), Pageable.unpaged()).stream()
-                .map(WalletQueryService::toResponse)
+        List<WalletEntry> all = entryRepository.findByWalletIdOrderByCreatedAtDescIdDesc(w.getId(), Pageable.unpaged());
+        Map<String, String> bookings = bookingRefs(all);
+        List<List<String>> rows = all.stream()
+                .map(e -> toResponse(e, bookings))
                 .map(e -> List.of(String.valueOf(e.getCreatedAt()), e.getType(), e.getAmount().toPlainString(),
                         e.getBalanceAfter().toPlainString(), e.getHeldAfter().toPlainString(),
                         e.getAvailableAfter().toPlainString(), safe(e.getNarration()), safe(e.getCreatedByName())))
@@ -117,10 +125,45 @@ public class WalletQueryService {
     }
 
     private static WalletEntryResponse toResponse(WalletEntry e) {
+        return toResponse(e, Map.of());
+    }
+
+    /** "flight booking MKK4EK" (or without the PNR before ticketing) per platform booking these entries point at. */
+    private Map<String, String> bookingRefs(List<WalletEntry> entries) {
+        List<String> ids = entries.stream().filter(e -> BOOKING_REF.equals(e.getRefType()) && e.getRefId() != null)
+                .map(WalletEntry::getRefId).distinct().toList();
+        if (ids.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, String> out = new java.util.HashMap<>();
+        platformBookingRepository.findAllById(ids).forEach(b -> out.put(b.getId(),
+                (b.getProduct() == PricingProduct.HOTEL ? "hotel booking" : "flight booking") + (b.getPnr() == null ? "" : " " + b.getPnr())));
+        return out;
+    }
+
+    /** Booking postings made without a narration (hold, release, debit, recall, TDS) read in words, not "-". */
+    private static String narration(WalletEntry e, Map<String, String> bookings) {
+        String ref = BOOKING_REF.equals(e.getRefType()) ? bookings.get(e.getRefId()) : null;
+        if (e.getNarration() != null || ref == null) {
+            return e.getNarration();
+        }
+        return switch (e.getType()) {
+            case HOLD -> "Held for " + ref;
+            case HOLD_RELEASE -> "Hold released for " + ref;
+            case BOOKING_DEBIT -> "Paid for " + ref;
+            case COMMISSION_CREDIT -> "Commission on " + ref;
+            case TDS_DEDUCTED -> "TDS on the commission for " + ref;
+            case REFUND_CREDIT -> "Refund on cancelled " + ref;
+            case COMMISSION_RECALL -> "Commission taken back on cancelled " + ref;
+            default -> null;
+        };
+    }
+
+    private static WalletEntryResponse toResponse(WalletEntry e, Map<String, String> bookings) {
         return WalletEntryResponse.builder().id(e.getId()).type(e.getType().name()).amount(e.getAmount())
                 .balanceAfter(e.getBalanceAfter()).heldAfter(e.getHeldAfter())
                 .availableAfter(e.getBalanceAfter().subtract(e.getHeldAfter()))
-                .narration(e.getNarration()).refType(e.getRefType()).refId(e.getRefId())
+                .narration(narration(e, bookings)).refType(e.getRefType()).refId(e.getRefId())
                 .createdByName(e.getCreatedByName()).createdAt(e.getCreatedAt()).build();
     }
 

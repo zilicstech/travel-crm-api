@@ -55,6 +55,8 @@ class WalletQueryServiceTest {
     private WalletService walletService;
     @Mock
     private PlatformAuditService auditService;
+    @Mock
+    private com.voyra.crm.repository.PlatformBookingRepository platformBookingRepository;
     @InjectMocks
     private WalletQueryService service;
 
@@ -83,6 +85,7 @@ class WalletQueryServiceTest {
         assertThat(s.getAvailable()).isEqualByComparingTo("700.00");
         assertThat(s.getDueReceivables()).hasSize(1);
         assertThat(s.getDueReceivables().get(0).getAmount()).isEqualByComparingTo("40.00");
+        assertThat(s.getDueReceivables().get(0).getReasonText()).isEqualTo("a ticket issued after its hold was released"); // R16
         assertThat(s.getPendingTopups()).isEqualTo(2);
         assertThat(s.getCurrency()).isEqualTo("INR");
         assertThat(s.getStatus()).isEqualTo("OPEN");
@@ -105,6 +108,33 @@ class WalletQueryServiceTest {
 
         assertThat(page.getContent().get(0).getAvailableAfter()).isEqualByComparingTo("700.00");
         assertThat(page.getTotalElements()).isEqualTo(1);
+    }
+
+    /** R19: booking rows posted without a narration read in words, with the PNR where the booking has one. */
+    @Test
+    void bookingEntriesWithoutANarrationGetAPlainOne() {
+        given(walletRepository.findByTenantId("T1")).willReturn(Optional.of(wallet()));
+        Pageable p = PageRequest.of(0, 25);
+        java.util.function.BiFunction<String, String, WalletEntry> pb = (type, ref) -> {
+            WalletEntry e = entry("E-" + type + ref, type, null);
+            e.setRefType("PLATFORM_BOOKING");
+            e.setRefId(ref);
+            return e;
+        };
+        WalletEntry topup = entry("E9", "TOPUP", null);
+        given(entryRepository.findPagedByWalletIdOrderByCreatedAtDescIdDesc("W1", p)).willReturn(new PageImpl<>(List.of(
+                pb.apply("HOLD", "PB1"), pb.apply("HOLD_RELEASE", "PB1"), pb.apply("BOOKING_DEBIT", "PB1"),
+                pb.apply("COMMISSION_RECALL", "PB2"), pb.apply("HOLD", "PB3"), topup), p, 6));
+        given(platformBookingRepository.findAllById(any())).willReturn(List.of(
+                com.voyra.crm.entity.PlatformBooking.builder().id("PB1").product(com.voyra.crm.enums.PricingProduct.FLIGHT).pnr("MKK4EK").build(),
+                com.voyra.crm.entity.PlatformBooking.builder().id("PB2").product(com.voyra.crm.enums.PricingProduct.HOTEL).pnr("MH82RJ").build(),
+                com.voyra.crm.entity.PlatformBooking.builder().id("PB3").product(com.voyra.crm.enums.PricingProduct.FLIGHT).build()));
+
+        List<String> narrations = service.entries("T1", p).getContent().stream().map(WalletEntryResponse::getNarration).toList();
+
+        assertThat(narrations).containsExactly("Held for flight booking MKK4EK", "Hold released for flight booking MKK4EK",
+                "Paid for flight booking MKK4EK", "Commission taken back on cancelled hotel booking MH82RJ",
+                "Held for flight booking", null);
     }
 
     @Test

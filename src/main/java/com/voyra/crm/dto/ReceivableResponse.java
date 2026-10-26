@@ -24,6 +24,9 @@ public class ReceivableResponse {
     @Schema(description = "Why it was opened", example = "LATE_TICKET")
     private String reason;
 
+    @Schema(description = "The reason in plain words, for screens", example = "commission taken back on a cancelled booking")
+    private String reasonText;
+
     @Schema(description = "When it was opened", example = "2026-10-25T10:00:00Z")
     private Instant createdAt;
 }

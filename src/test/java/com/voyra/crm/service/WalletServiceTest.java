@@ -232,6 +232,8 @@ class WalletServiceTest {
                 WalletEntryType.RECEIVABLE_SETTLED, WalletEntryType.RECEIVABLE_SETTLED);
         assertThat(entries.get(1).getAmount()).isEqualByComparingTo("-300");
         assertThat(entries.get(1).getRefId()).isEqualTo("R1");
+        // R16: the statement says why in words, never the reason code
+        assertThat(entries.get(1).getNarration()).isEqualTo("Amount due to Voyra settled: a payment reversed by the bank (chargeback)");
         assertThat(entries.get(2).getAmount()).isEqualByComparingTo("-300");
         assertThat(entries.get(2).getRefId()).isEqualTo("R2");
 

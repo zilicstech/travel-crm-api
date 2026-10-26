@@ -128,6 +128,22 @@ class PlatformBookingQueryServiceTest {
                 .containsExactly("Wallet amount reserved", "Ticket issued");
     }
 
+    /** R19: an owner's booking is booked by the owner (user id = tenant id), named from the agency, never "-". */
+    @Test
+    @SuppressWarnings("unchecked")
+    void anOwnersBookingNamesTheOwner() {
+        login("T1", UserType.AGENCY_OWNER, "T1");
+        given(bookings.findByIdAndTenantId("B1", "T1")).willReturn(Optional.of(booking("B1", "T1", "T1")));
+        given(tenants.findAllById(List.of("T1"))).willReturn(List.of(Tenant.builder().id("T1").agencyName("Acme Travel").ownerName("Dana Owner").build()));
+
+        assertThat(service().get("B1").getBookedByName()).isEqualTo("Dana Owner");
+
+        login("SA1", UserType.SUPER_ADMIN, null);
+        given(bookings.findAll(any(org.springframework.data.jpa.domain.Specification.class), any(Pageable.class)))
+                .willReturn((Page<PlatformBooking>) new PageImpl<>(List.of(booking("B1", "T1", "T1"))));
+        assertThat(service().adminList(0, 25, null, null).getContent().get(0).getBookedByName()).isEqualTo("Dana Owner");
+    }
+
     @Test
     void aPurgedBookingStillLoadsWithNoPassengers() {
         login("O1", UserType.AGENCY_OWNER, "T1");

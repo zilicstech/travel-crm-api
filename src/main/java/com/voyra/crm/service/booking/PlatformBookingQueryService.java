@@ -142,8 +142,7 @@ public class PlatformBookingQueryService {
     }
 
     private List<PlatformBookingResponse> agencyViews(List<PlatformBooking> rows, boolean detail) {
-        Map<String, String> agentNames = names(rows, PlatformBooking::getBookedBy,
-                agentRepository::findAllById, Agent::getId, Agent::getName);
+        Map<String, String> agentNames = bookerNames(rows);
         Map<String, String> clientNames = names(rows, PlatformBooking::getClientId,
                 clientRepository::findAllById, Client::getId, Client::getName);
         return rows.stream().<PlatformBookingResponse>map(b -> PlatformBookingResponse.builder()
@@ -159,8 +158,7 @@ public class PlatformBookingQueryService {
     private List<PlatformAdminBookingResponse> adminViews(List<PlatformBooking> rows, boolean detail) {
         Map<String, String> agencyNames = names(rows, PlatformBooking::getTenantId,
                 tenantRepository::findAllById, Tenant::getId, Tenant::getAgencyName);
-        Map<String, String> agentNames = names(rows, PlatformBooking::getBookedBy,
-                agentRepository::findAllById, Agent::getId, Agent::getName);
+        Map<String, String> agentNames = bookerNames(rows);
         return rows.stream().<PlatformAdminBookingResponse>map(b -> PlatformAdminBookingResponse.builder()
                 .id(b.getId()).product(b.getProduct()).status(b.getStatus()).pnr(b.getPnr()).ticketNumbers(b.getTicketNumbers())
                 .displayedFare(b.getDisplayed()).agencyEarns(agencyEarns(b)).itinerary(itinerary(b)).hotel(hotel(b)).passengers(passengers(b))
@@ -181,6 +179,15 @@ public class PlatformBookingQueryService {
      * One batched lookup of display names for the distinct, non-null ids on {@code rows} (no N+1). Always a HashMap:
      * a client-less or booker-less row looks up {@code null}, which an immutable {@code Map.of()} rejects with an NPE.
      */
+    /** Who booked: an agent's name, or for the owner (whose user id is the agency's tenant id) the agency's owner name. */
+    private Map<String, String> bookerNames(List<PlatformBooking> rows) {
+        Map<String, String> out = names(rows, PlatformBooking::getBookedBy, agentRepository::findAllById, Agent::getId, Agent::getName);
+        List<PlatformBooking> byOwner = rows.stream()
+                .filter(b -> b.getBookedBy() != null && b.getBookedBy().equals(b.getTenantId()) && !out.containsKey(b.getBookedBy())).toList();
+        out.putAll(names(byOwner, PlatformBooking::getTenantId, tenantRepository::findAllById, Tenant::getId, Tenant::getOwnerName));
+        return out;
+    }
+
     private static <T> Map<String, String> names(List<PlatformBooking> rows, Function<PlatformBooking, String> idOf,
                                                  Function<Collection<String>, ? extends Iterable<T>> loader,
                                                  Function<T, String> id, Function<T, String> name) {

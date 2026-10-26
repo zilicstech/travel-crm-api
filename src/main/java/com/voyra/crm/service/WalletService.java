@@ -261,7 +261,7 @@ public class WalletService {
             BigDecimal settle = budget.min(receivable.getAmount());
             post(wallet, new WalletPosting(WalletEntryType.RECEIVABLE_SETTLED, settle.negate(),
                     credit.idempotencyKey() + ":rs:" + receivable.getId(), RECEIVABLE_REF, receivable.getId(),
-                    "Settles " + receivable.getReason(), entry.getId()));
+                    "Amount due to Voyra settled: " + receivable.getReason().text(), entry.getId()));
             budget = budget.subtract(settle);
             receivable.setAmount(receivable.getAmount().subtract(settle));
             if (receivable.getAmount().signum() == 0) {
