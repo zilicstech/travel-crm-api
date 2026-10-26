@@ -125,6 +125,43 @@ class PlatformBookingControllerTest {
     }
 
     @Test
+    void summaryIsReadByEveryAgencyRoleAndNeverCarriesVoyraMoneyOrSupplierIds() throws Exception {
+        PlatformBookingResponse trip = PlatformBookingResponse.builder().id("B1").status(PlatformBookingStatus.TICKETED)
+                .displayedFare(new BigDecimal("4500.00")).agencyEarns(new BigDecimal("95.00")).build();
+        given(queryService.summary(java.time.LocalDate.of(2026, 10, 1), java.time.LocalDate.of(2026, 10, 27)))
+                .willReturn(com.voyra.crm.dto.PlatformBookingSummaryResponse.builder()
+                        .from(java.time.LocalDate.of(2026, 10, 1)).to(java.time.LocalDate.of(2026, 10, 27))
+                        .bookings(1).ticketed(1).sales(new BigDecimal("4500.00")).earned(new BigDecimal("95.00"))
+                        .byProduct(List.of(new com.voyra.crm.dto.PlatformBookingSummaryResponse.ProductSummary(
+                                com.voyra.crm.enums.PricingProduct.FLIGHT, 1, new BigDecimal("4500.00"), new BigDecimal("95.00"))))
+                        .upcoming(List.of(trip)).attention(List.of(trip)).build());
+
+        for (UserType type : List.of(UserType.AGENCY_OWNER, UserType.AGENT, UserType.ACCOUNTANT)) {
+            String json = mockMvc.perform(get("/api/platform-bookings/summary?from=2026-10-01&to=2026-10-27").with(as(type)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.from").value("2026-10-01"))
+                    .andExpect(jsonPath("$.sales").value(4500.00))
+                    .andExpect(jsonPath("$.upcoming[0].id").value("B1"))
+                    .andReturn().getResponse().getContentAsString();
+            for (String key : List.of("voyraEarned", "voyraNet", "gross", "base", "supplierReviewId", "supplierBookingId",
+                    "agencyCommission", "tds", "environment")) {
+                org.assertj.core.api.Assertions.assertThat(json).as(key).doesNotContain("\"" + key + "\"");
+            }
+        }
+        mockMvc.perform(get("/api/platform-bookings/summary").with(as(UserType.SUPER_ADMIN))).andExpect(status().isForbidden());
+    }
+
+    @Test
+    void summaryRefusesABadRangeWith400() throws Exception {
+        given(queryService.summary(java.time.LocalDate.of(2026, 10, 27), java.time.LocalDate.of(2026, 10, 1)))
+                .willThrow(new IllegalArgumentException("from must be on or before to"));
+        mockMvc.perform(get("/api/platform-bookings/summary?from=2026-10-27&to=2026-10-01").with(as(UserType.AGENCY_OWNER)))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(get("/api/platform-bookings/summary?from=27-10-2026").with(as(UserType.AGENCY_OWNER)))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
     void anotherAgencysBookingIs404() throws Exception {
         given(queryService.get("OTHER")).willThrow(new NotFoundException("Booking not found"));
         mockMvc.perform(get("/api/platform-bookings/OTHER").with(as(UserType.AGENCY_OWNER))).andExpect(status().isNotFound());

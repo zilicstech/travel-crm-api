@@ -336,4 +336,73 @@ class PlatformBookingQueryServiceTest {
         assertThat(admin.getSupplierMessage()).isEqualTo("Fare no longer available");
         assertThat(admin.getSupplierMessageRaw()).isEqualTo("ERR-4021: TJ fare SOLD OUT at GDS");
     }
+
+    // ---- summary (basic reports)
+
+    @Test
+    void summaryAddsUpTicketedSalesAndEarningsPerProductInIstDays() {
+        login("T1", UserType.AGENCY_OWNER, "T1");
+        java.time.LocalDate from = java.time.LocalDate.of(2026, 10, 1);
+        java.time.LocalDate to = java.time.LocalDate.of(2026, 10, 27);
+        given(bookings.summarize(eq("T1"), eq(null), eq(Instant.parse("2026-09-30T18:30:00Z")), eq(Instant.parse("2026-10-27T18:30:00Z")),
+                eq(java.util.EnumSet.of(PlatformBookingStatus.REVIEWING, PlatformBookingStatus.ABORTED)))).willReturn(List.of(
+                new Object[]{PricingProduct.FLIGHT, PlatformBookingStatus.TICKETED, 3L, new BigDecimal("13500.00"), new BigDecimal("285.00")},
+                new Object[]{PricingProduct.FLIGHT, PlatformBookingStatus.CANCELLED, 1L, new BigDecimal("4500.00"), new BigDecimal("95.00")},
+                new Object[]{PricingProduct.HOTEL, PlatformBookingStatus.TICKETED, 1L, new BigDecimal("9000"), 0},
+                new Object[]{PricingProduct.HOTEL, PlatformBookingStatus.FAILED, 2L, new BigDecimal("0"), new BigDecimal("0")}));
+        PlatformBooking upcoming = booking("B1", "T1", "T1");
+        given(bookings.findUpcoming(eq("T1"), eq(null), any())).willReturn(List.of(upcoming));
+        given(bookings.findNewestInStatuses(eq("T1"), eq(null), eq(java.util.EnumSet.of(PlatformBookingStatus.BOOKING,
+                PlatformBookingStatus.UNKNOWN, PlatformBookingStatus.CANCELLING)), any())).willReturn(List.of());
+
+        com.voyra.crm.dto.PlatformBookingSummaryResponse r = service().summary(from, to);
+
+        assertThat(r.getFrom()).isEqualTo(from);
+        assertThat(r.getTo()).isEqualTo(to);
+        assertThat(r.getBookings()).isEqualTo(7);
+        assertThat(r.getTicketed()).isEqualTo(4);
+        assertThat(r.getCancelled()).isEqualTo(1);
+        assertThat(r.getSales()).isEqualTo(new BigDecimal("22500.00"));
+        assertThat(r.getEarned()).isEqualTo(new BigDecimal("285.00"));
+        assertThat(r.getByProduct()).extracting(com.voyra.crm.dto.PlatformBookingSummaryResponse.ProductSummary::product)
+                .containsExactly(PricingProduct.FLIGHT, PricingProduct.HOTEL);
+        assertThat(r.getByProduct().get(0).bookings()).isEqualTo(4);
+        assertThat(r.getByProduct().get(1).bookings()).isEqualTo(3);
+        assertThat(r.getByProduct().get(1).sales()).isEqualTo(new BigDecimal("9000.00"));
+        assertThat(r.getUpcoming()).extracting(PlatformBookingResponse::getId).containsExactly("B1");
+        assertThat(r.getAttention()).isEmpty();
+    }
+
+    @Test
+    void summaryOfAnEmptyRangeStillListsBothProducts() {
+        login("T1", UserType.ACCOUNTANT, "T1");
+        given(bookings.summarize(any(), any(), any(), any(), any())).willReturn(List.of());
+        com.voyra.crm.dto.PlatformBookingSummaryResponse r = service().summary(null, null);
+        assertThat(r.getTo()).isEqualTo(com.voyra.crm.util.FinancialYear.today());
+        assertThat(r.getFrom()).isEqualTo(com.voyra.crm.util.FinancialYear.today().withDayOfMonth(1));
+        assertThat(r.getByProduct()).hasSize(2).allSatisfy(ps -> {
+            assertThat(ps.bookings()).isZero();
+            assertThat(ps.sales()).isEqualTo(new BigDecimal("0.00"));
+        });
+        assertThat(r.getSales()).isEqualTo(new BigDecimal("0.00"));
+    }
+
+    @Test
+    void anAgentsSummaryCountsOnlyTheirOwnBookings() {
+        login("AG1", UserType.AGENT, "T1");
+        given(bookings.summarize(eq("T1"), eq("AG1"), any(), any(), any())).willReturn(List.of());
+        service().summary(null, null);
+        verify(bookings).findUpcoming(eq("T1"), eq("AG1"), any());
+        verify(bookings).findNewestInStatuses(eq("T1"), eq("AG1"), any(), any());
+    }
+
+    @Test
+    void summaryRefusesABackwardsOrOverlongRange() {
+        login("T1", UserType.AGENCY_OWNER, "T1");
+        java.time.LocalDate d = java.time.LocalDate.of(2026, 10, 1);
+        assertThatThrownBy(() -> service().summary(d, d.minusDays(1))).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service().summary(d, d.plusDays(366))).isInstanceOf(IllegalArgumentException.class);
+        given(bookings.summarize(any(), any(), any(), any(), any())).willReturn(List.of());
+        assertThat(service().summary(d, d.plusDays(365)).getBookings()).isZero();
+    }
 }
