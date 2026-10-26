@@ -76,8 +76,8 @@ public final class TenantCache {
         return status(tenantId).filter(s -> s != TenantStatus.DEACTIVATED).isPresent();
     }
 
+    /** Upserts every row (never clears), so a periodic refresh keeps cached entitlements. Tenants are never deleted. */
     public static void loadFrom(Collection<TenantEntry> entries) {
-        CACHE.clear();
         entries.forEach(e -> put(e.tenantId(), e.name(), e.status()));
     }
 

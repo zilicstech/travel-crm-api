@@ -32,7 +32,34 @@ class InquiryRateLimiterTest {
         request.setRemoteAddr("10.0.0.9");
         request.addHeader("X-Forwarded-For", "6.6.6.6, 203.0.113.7");
 
-        assertThat(InquiryRateLimiter.callerOf(request)).isEqualTo("203.0.113.7");
+        assertThat(InquiryRateLimiter.callerOf(request, false)).isEqualTo("203.0.113.7");
+    }
+
+    @Test
+    void withTheFlagOffACfConnectingIpHeaderIsIgnoredSoAClientCannotDodgeTheLimitWithIt() {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.addHeader("CF-Connecting-IP", "6.6.6.6");
+        request.addHeader("X-Forwarded-For", "6.6.6.6, 203.0.113.7");
+
+        assertThat(InquiryRateLimiter.callerOf(request, false)).isEqualTo("203.0.113.7");
+    }
+
+    @Test
+    void withTheFlagOnTheCfConnectingIpIsTheCaller() {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.addHeader("CF-Connecting-IP", "198.51.100.4");
+        request.addHeader("X-Forwarded-For", "198.51.100.4, 172.68.1.1");
+
+        assertThat(InquiryRateLimiter.callerOf(request, true)).isEqualTo("198.51.100.4");
+    }
+
+    @Test
+    void withTheFlagOnButNoCfHeaderTheRightmostForwardedHopIsStillUsed() {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.addHeader("CF-Connecting-IP", " ");
+        request.addHeader("X-Forwarded-For", "6.6.6.6, 203.0.113.7");
+
+        assertThat(InquiryRateLimiter.callerOf(request, true)).isEqualTo("203.0.113.7");
     }
 
     @Test
@@ -40,7 +67,7 @@ class InquiryRateLimiterTest {
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.setRemoteAddr("10.0.0.9");
 
-        assertThat(InquiryRateLimiter.callerOf(request)).isEqualTo("10.0.0.9");
+        assertThat(InquiryRateLimiter.callerOf(request, false)).isEqualTo("10.0.0.9");
     }
 
     @Test

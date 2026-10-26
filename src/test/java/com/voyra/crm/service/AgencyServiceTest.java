@@ -3,6 +3,7 @@ package com.voyra.crm.service;
 import com.voyra.crm.cache.TenantCache;
 import com.voyra.crm.dto.AgencyCreateRequest;
 import com.voyra.crm.dto.AgencyResponse;
+import com.voyra.crm.dto.AgencyUpdateRequest;
 import com.voyra.crm.entity.AgencyApplication;
 import com.voyra.crm.entity.Tenant;
 import com.voyra.crm.entity.Wallet;
@@ -22,6 +23,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Instant;
 import java.util.Map;
@@ -151,5 +154,64 @@ class AgencyServiceTest {
         assertThat(wallet.getStatus()).isEqualTo(WalletStatus.OPEN);
         assertThat(wallet.getIsTest()).isFalse();
         TenantCache.put(created.getId(), "A", TenantStatus.ACTIVE);
+    }
+
+    @Test
+    void aStatusChangeReachesTheCacheOnlyAfterCommit() {
+        TenantCache.put(ID, "A", TenantStatus.ACTIVE);
+        when(tenantRepository.findById(ID)).thenReturn(Optional.of(
+                Tenant.builder().id(ID).agencyName("A").status(TenantStatus.ACTIVE).build()));
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            agencyService.updateStatus(ID, TenantStatus.SUSPENDED);
+            assertThat(TenantCache.status(ID)).contains(TenantStatus.ACTIVE); // not yet committed
+            TransactionSynchronizationManager.getSynchronizations()
+                    .forEach(sync -> sync.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
+            assertThat(TenantCache.status(ID)).contains(TenantStatus.ACTIVE);
+            TransactionSynchronizationManager.getSynchronizations().forEach(TransactionSynchronization::afterCommit);
+            assertThat(TenantCache.status(ID)).contains(TenantStatus.SUSPENDED);
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+    }
+
+    @Test
+    void aRenameReachesTheCacheOnlyAfterCommit() {
+        TenantCache.put(ID, "A", TenantStatus.SUSPENDED);
+        when(tenantRepository.findById(ID)).thenReturn(Optional.of(
+                Tenant.builder().id(ID).agencyName("A").status(TenantStatus.ACTIVE).build()));
+        AgencyUpdateRequest request = new AgencyUpdateRequest();
+        request.setAgencyName("B");
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            agencyService.updateAgency(ID, request);
+            assertThat(TenantCache.status(ID)).contains(TenantStatus.SUSPENDED);
+            TransactionSynchronizationManager.getSynchronizations().forEach(TransactionSynchronization::afterCommit);
+            assertThat(TenantCache.status(ID)).contains(TenantStatus.ACTIVE);
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+    }
+
+    @Test
+    void aNewAgencyReachesTheCacheWithItsEntitlementsOnlyAfterCommit() {
+        AgencyCreateRequest request = new AgencyCreateRequest();
+        request.setAgencyName("A");
+        request.setOwnerName("O");
+        request.setOwnerEmail("o@a.test");
+        request.setOwnerPassword("pw");
+        TransactionSynchronizationManager.initSynchronization();
+        String id = null;
+        try {
+            id = agencyService.createAgency(request).getId();
+            assertThat(TenantCache.isValidTenant(id)).isFalse();
+            assertThat(TenantCache.entitlements(id)).isEmpty();
+            TransactionSynchronizationManager.getSynchronizations().forEach(TransactionSynchronization::afterCommit);
+            assertThat(TenantCache.status(id)).contains(TenantStatus.ACTIVE);
+            assertThat(TenantCache.entitlements(id)).isPresent();
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+            TenantCache.remove(id);
+        }
     }
 }

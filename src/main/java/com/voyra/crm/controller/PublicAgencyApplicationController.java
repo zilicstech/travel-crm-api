@@ -49,7 +49,7 @@ public class PublicAgencyApplicationController {
     @ApiResponse(responseCode = "503", description = "CAPTCHA_UNAVAILABLE when Cloudflare cannot check the token - try again")
     public ResponseEntity<AgencyApplicationCreatedResponse> create(@Valid @RequestBody AgencyApplicationCreateRequest request,
                                                                    HttpServletRequest http) {
-        String caller = InquiryRateLimiter.callerOf(http);
+        String caller = inquiryRateLimiter.callerOf(http);
         inquiryRateLimiter.check(caller);
         turnstileVerifier.verify(request.getCaptchaToken(), TurnstileVerifier.remoteIpOf(http));
         return ResponseEntity.status(HttpStatus.CREATED).body(agencyApplicationService.create(request));
@@ -63,7 +63,7 @@ public class PublicAgencyApplicationController {
                                                       @RequestParam KycDocumentType type,
                                                       @RequestPart("file") MultipartFile file,
                                                       HttpServletRequest http) {
-        kycUploadRateLimiter.check(InquiryRateLimiter.callerOf(http));
+        kycUploadRateLimiter.check(inquiryRateLimiter.callerOf(http));
         return ResponseEntity.ok(agencyApplicationService.attachDocument(id, uploadToken, type, file));
     }
 

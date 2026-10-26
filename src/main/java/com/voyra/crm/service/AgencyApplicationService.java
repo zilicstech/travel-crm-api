@@ -381,8 +381,9 @@ public class AgencyApplicationService {
                 .build();
     }
 
+    /** Locks the row like reviewable(): a concurrent decision commits first and is then seen, never overwritten. */
     private AgencyApplication editable(String applicationId, String uploadToken) {
-        AgencyApplication app = applicationRepository.findById(applicationId)
+        AgencyApplication app = applicationRepository.findByIdForUpdate(applicationId)
                 .orElseThrow(() -> new NotFoundException("Application not found"));
         assertUploadToken(app, uploadToken);
         if (!EDITABLE.contains(app.getStatus())) {

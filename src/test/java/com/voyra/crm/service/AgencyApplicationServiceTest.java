@@ -178,7 +178,7 @@ class AgencyApplicationServiceTest {
 
     @Test
     void attachRefusesAWrongToken() throws Exception {
-        when(applicationRepository.findById("app-1")).thenReturn(Optional.of(draft(Instant.now().plusSeconds(60))));
+        when(applicationRepository.findByIdForUpdate("app-1")).thenReturn(Optional.of(draft(Instant.now().plusSeconds(60))));
 
         assertThatThrownBy(() -> service.attachDocument("app-1", "wrong-token", KycDocumentType.PAN, pdf()))
                 .isInstanceOf(AccessDeniedException.class);
@@ -187,7 +187,7 @@ class AgencyApplicationServiceTest {
 
     @Test
     void attachRefusesAnExpiredToken() throws Exception {
-        when(applicationRepository.findById("app-1")).thenReturn(Optional.of(draft(Instant.now().minusSeconds(1))));
+        when(applicationRepository.findByIdForUpdate("app-1")).thenReturn(Optional.of(draft(Instant.now().minusSeconds(1))));
 
         assertThatThrownBy(() -> service.attachDocument("app-1", TOKEN, KycDocumentType.PAN, pdf()))
                 .isInstanceOf(AccessDeniedException.class);
@@ -196,7 +196,7 @@ class AgencyApplicationServiceTest {
 
     @Test
     void attachRefusesAFileOver5Mb() throws Exception {
-        when(applicationRepository.findById("app-1")).thenReturn(Optional.of(draft(Instant.now().plusSeconds(60))));
+        when(applicationRepository.findByIdForUpdate("app-1")).thenReturn(Optional.of(draft(Instant.now().plusSeconds(60))));
         MockMultipartFile big = new MockMultipartFile("file", "pan.pdf", "application/pdf", new byte[5 * 1024 * 1024 + 1]);
 
         assertThatThrownBy(() -> service.attachDocument("app-1", TOKEN, KycDocumentType.PAN, big))
@@ -206,7 +206,7 @@ class AgencyApplicationServiceTest {
 
     @Test
     void attachStoresUnderThePlatformScope() throws Exception {
-        when(applicationRepository.findById("app-1")).thenReturn(Optional.of(draft(Instant.now().plusSeconds(60))));
+        when(applicationRepository.findByIdForUpdate("app-1")).thenReturn(Optional.of(draft(Instant.now().plusSeconds(60))));
         MockMultipartFile file = pdf();
         when(fileStorageService.store("platform", "kyc", "app-1", file)).thenReturn("tenant_platform/kyc/app-1/x.pdf");
 
@@ -229,7 +229,7 @@ class AgencyApplicationServiceTest {
     @Test
     void submitNeedsAPanDocument() throws Exception {
         AgencyApplication app = draft(Instant.now().plusSeconds(60));
-        when(applicationRepository.findById("app-1")).thenReturn(Optional.of(app));
+        when(applicationRepository.findByIdForUpdate("app-1")).thenReturn(Optional.of(app));
         when(kycDocumentRepository.countByApplicationIdAndTypeAndStatusNot("app-1", KycDocumentType.PAN, KycDocumentStatus.REJECTED)).thenReturn(0L);
 
         assertThatThrownBy(() -> service.submit("app-1", TOKEN)).isInstanceOf(IllegalStateException.class)
@@ -240,7 +240,7 @@ class AgencyApplicationServiceTest {
     @Test
     void submitMovesDraftToSubmitted() throws Exception {
         AgencyApplication app = draft(Instant.now().plusSeconds(60));
-        when(applicationRepository.findById("app-1")).thenReturn(Optional.of(app));
+        when(applicationRepository.findByIdForUpdate("app-1")).thenReturn(Optional.of(app));
         when(kycDocumentRepository.countByApplicationIdAndTypeAndStatusNot("app-1", KycDocumentType.PAN, KycDocumentStatus.REJECTED)).thenReturn(1L);
 
         service.submit("app-1", TOKEN);
@@ -345,7 +345,7 @@ class AgencyApplicationServiceTest {
 
     @Test
     void attachRefusesThe21stDocument() throws Exception {
-        when(applicationRepository.findById("app-1")).thenReturn(Optional.of(draft(Instant.now().plusSeconds(60))));
+        when(applicationRepository.findByIdForUpdate("app-1")).thenReturn(Optional.of(draft(Instant.now().plusSeconds(60))));
         when(kycDocumentRepository.countByApplicationId("app-1")).thenReturn(20L);
 
         assertThatThrownBy(() -> service.attachDocument("app-1", TOKEN, KycDocumentType.OTHER, pdf()))
@@ -356,7 +356,7 @@ class AgencyApplicationServiceTest {
 
     @Test
     void attachRefusesHtmlNamedPdfWithTheKycMessage() throws Exception {
-        when(applicationRepository.findById("app-1")).thenReturn(Optional.of(draft(Instant.now().plusSeconds(60))));
+        when(applicationRepository.findByIdForUpdate("app-1")).thenReturn(Optional.of(draft(Instant.now().plusSeconds(60))));
         MockMultipartFile html = new MockMultipartFile("file", "pan.pdf", "application/pdf",
                 "<html><script>alert(1)</script></html>".getBytes(StandardCharsets.UTF_8));
 
@@ -367,7 +367,7 @@ class AgencyApplicationServiceTest {
 
     @Test
     void attachRefusesAWordDocument() throws Exception {
-        when(applicationRepository.findById("app-1")).thenReturn(Optional.of(draft(Instant.now().plusSeconds(60))));
+        when(applicationRepository.findByIdForUpdate("app-1")).thenReturn(Optional.of(draft(Instant.now().plusSeconds(60))));
         MockMultipartFile docx = new MockMultipartFile("file", "pan.docx", "application/vnd.openxmlformats-officedocument",
                 new byte[] {'P', 'K', 3, 4, 0});
 
@@ -378,7 +378,7 @@ class AgencyApplicationServiceTest {
 
     @Test
     void attachRefusesASubmittedApplication() throws Exception {
-        when(applicationRepository.findById("app-1")).thenReturn(Optional.of(draft(Instant.now().plusSeconds(60))
+        when(applicationRepository.findByIdForUpdate("app-1")).thenReturn(Optional.of(draft(Instant.now().plusSeconds(60))
                 .toBuilder().status(ApplicationStatus.SUBMITTED).build()));
 
         assertThatThrownBy(() -> service.attachDocument("app-1", TOKEN, KycDocumentType.PAN, pdf()))
@@ -388,7 +388,7 @@ class AgencyApplicationServiceTest {
 
     @Test
     void attachShortensAnOverlongFileNameButKeepsItsExtension() throws Exception {
-        when(applicationRepository.findById("app-1")).thenReturn(Optional.of(draft(Instant.now().plusSeconds(60))));
+        when(applicationRepository.findByIdForUpdate("app-1")).thenReturn(Optional.of(draft(Instant.now().plusSeconds(60))));
         MockMultipartFile file = new MockMultipartFile("file", "p".repeat(300) + ".pdf", "x/" + "y".repeat(120),
                 "%PDF-1.4 pan".getBytes(StandardCharsets.UTF_8));
         when(fileStorageService.store(anyString(), anyString(), anyString(), any())).thenReturn("key");
@@ -402,9 +402,20 @@ class AgencyApplicationServiceTest {
     }
 
     @Test
+    void submitLocksTheRowSoItSeesADecisionCommittedMeanwhile() throws Exception {
+        // The lock waits for a concurrent approve; afterwards the row reads APPROVED and submit must not overwrite it.
+        when(applicationRepository.findByIdForUpdate("app-1")).thenReturn(Optional.of(draft(Instant.now().plusSeconds(60))
+                .toBuilder().status(ApplicationStatus.APPROVED).build()));
+
+        assertThatThrownBy(() -> service.submit("app-1", TOKEN)).isInstanceOf(IllegalStateException.class)
+                .hasMessage("This application has already been submitted");
+        verify(applicationRepository, never()).findById(anyString());
+    }
+
+    @Test
     void submitIgnoresARejectedPan() throws Exception {
         AgencyApplication app = draft(Instant.now().plusSeconds(60));
-        when(applicationRepository.findById("app-1")).thenReturn(Optional.of(app));
+        when(applicationRepository.findByIdForUpdate("app-1")).thenReturn(Optional.of(app));
         // The only PAN on file was rejected in an earlier round, so the non-rejected count is 0.
         when(kycDocumentRepository.countByApplicationIdAndTypeAndStatusNot("app-1", KycDocumentType.PAN,
                 KycDocumentStatus.REJECTED)).thenReturn(0L);

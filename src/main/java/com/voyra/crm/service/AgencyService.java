@@ -29,6 +29,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -131,8 +133,13 @@ public class AgencyService {
         tenantFlywayMigrator.migrate(tenant.getId());
         seedDefaultsForTenant(tenant.getId());
         seedChartOfAccountsFor(tenant.getId());
-        TenantCache.put(tenant.getId(), tenant.getAgencyName(), tenant.getStatus());
-        TenantCache.putEntitlements(tenant.getId(), EntitlementService.compute(trial, now));
+        String tenantId = tenant.getId();
+        String name = tenant.getAgencyName();
+        TenantStatus status = tenant.getStatus();
+        afterCommit(() -> {
+            TenantCache.put(tenantId, name, status);
+            TenantCache.putEntitlements(tenantId, EntitlementService.compute(trial, now));
+        });
     }
 
     @Transactional(readOnly = true)
@@ -160,7 +167,8 @@ public class AgencyService {
         platformAuditService.record(PlatformAuditAction.TENANT_STATUS, "TENANT", tenant.getId(),
                 Map.of("from", String.valueOf(from), "to", status.name()));
         // Same-method cache sync: a stale auth cache is a security bug (blueprint §8.10 rule 2).
-        TenantCache.put(tenant.getId(), tenant.getAgencyName(), status);
+        String name = tenant.getAgencyName();
+        afterCommit(() -> TenantCache.put(id, name, status));
         log.info("Agency status updated: tenantId={}, status={}", id, status);
         // includeRevenue=true - a caller updating one agency's status in place (the detail
         // modal) would otherwise see its revenue silently reset to zero on the very next
@@ -200,7 +208,9 @@ public class AgencyService {
             }
         }
         tenantRepository.save(tenant);
-        TenantCache.put(tenant.getId(), tenant.getAgencyName(), tenant.getStatus());
+        String name = tenant.getAgencyName();
+        TenantStatus status = tenant.getStatus();
+        afterCommit(() -> TenantCache.put(id, name, status));
         log.info("Agency updated: tenantId={}, agencyName={}", id, tenant.getAgencyName());
         return toResponse(tenant, true);
     }
@@ -300,6 +310,20 @@ public class AgencyService {
             } else {
                 TenantContext.setTenantId(previous);
             }
+        }
+    }
+
+    /** The tenant cache follows the committed row only: a rolled-back change never reaches it. */
+    private static void afterCommit(Runnable cacheWrite) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    cacheWrite.run();
+                }
+            });
+        } else {
+            cacheWrite.run();
         }
     }
 

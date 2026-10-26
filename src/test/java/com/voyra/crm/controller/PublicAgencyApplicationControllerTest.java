@@ -56,6 +56,11 @@ class PublicAgencyApplicationControllerTest {
     @MockBean
     private TurnstileVerifier turnstileVerifier;
 
+    @org.junit.jupiter.api.BeforeEach
+    void caller() {
+        given(inquiryRateLimiter.callerOf(any())).willReturn("203.0.113.7");
+    }
+
     @Test
     void createIsOpenToAnonymousAndRateLimited() throws Exception {
         given(agencyApplicationService.create(any()))

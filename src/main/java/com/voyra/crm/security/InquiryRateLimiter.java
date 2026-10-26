@@ -1,5 +1,7 @@
 package com.voyra.crm.security;
 
+import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.function.LongSupplier;
@@ -23,11 +25,24 @@ public class InquiryRateLimiter extends FixedWindowRateLimiter {
         super(LIMIT, WINDOW_MS, MESSAGE, clock);
     }
 
+    /** Only true when the API is reached solely through Cloudflare: otherwise a client could set the header itself. */
+    @Value("${app.security.trust-cf-connecting-ip:false}")
+    private boolean trustCfConnectingIp;
+
+    public String callerOf(HttpServletRequest request) {
+        return callerOf(request, trustCfConnectingIp);
+    }
+
     /**
-     * The visitor's address: the RIGHTMOST X-Forwarded-For entry - the hop our load balancer appends, which a
-     * client cannot forge (anything the client sends lands to its left) - else the socket's.
+     * The visitor's address: CF-Connecting-IP when trusted and present (behind Cloudflare the rightmost hop is the
+     * edge, shared by many visitors); else the RIGHTMOST X-Forwarded-For entry - the hop our load balancer appends,
+     * which a client cannot forge (anything the client sends lands to its left) - else the socket's.
      */
-    public static String callerOf(jakarta.servlet.http.HttpServletRequest request) {
+    static String callerOf(HttpServletRequest request, boolean trustCfConnectingIp) {
+        String cf = request.getHeader("CF-Connecting-IP");
+        if (trustCfConnectingIp && cf != null && !cf.isBlank()) {
+            return cf.trim();
+        }
         String forwarded = request.getHeader("X-Forwarded-For");
         if (forwarded == null || forwarded.isBlank()) {
             return request.getRemoteAddr();
