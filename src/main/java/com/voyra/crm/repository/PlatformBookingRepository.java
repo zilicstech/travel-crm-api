@@ -62,7 +62,7 @@ public interface PlatformBookingRepository extends JpaRepository<PlatformBooking
      */
     @Query("""
             SELECT b.product, b.status, COUNT(b), COALESCE(SUM(b.displayed), 0),
-                   COALESCE(SUM(CASE WHEN b.agencyCommission IS NULL THEN 0 ELSE b.agencyCommission - COALESCE(b.tds, 0) END), 0)
+                   COALESCE(SUM(b.agencyCommission - COALESCE(b.tds, 0)), 0)
             FROM PlatformBooking b
             WHERE b.tenantId = :tenantId AND (:bookedBy IS NULL OR b.bookedBy = :bookedBy)
               AND b.createdAt >= :from AND b.createdAt < :to AND b.status NOT IN :excluded
