@@ -205,9 +205,9 @@ public class SubscriptionBillingService {
         return buyer;
     }
 
-    /** Lifecycle job: the invoice for the period starting when the paid one ends - at most one per period, even after a void. */
+    /** Lifecycle job: the invoice for the period starting when the paid one ends - at most one live (ISSUED or PAID) per period; a voided one is raised again. */
     Optional<SubscriptionInvoice> raiseRenewal(Subscription s, Instant now) {
-        if (invoiceRepository.existsByTenantIdAndPeriodStart(s.getTenantId(), s.getPeriodEnd())
+        if (invoiceRepository.existsByTenantIdAndPeriodStartAndStatusIn(s.getTenantId(), s.getPeriodEnd(), List.of(ISSUED, PAID))
                 || lines(s, settingService.skuPrices()).isEmpty()) {
             return Optional.empty();
         }
@@ -235,6 +235,13 @@ public class SubscriptionBillingService {
                 throw new IllegalStateException("An invoice for this period already exists");
             }
             SubscriptionInvoice inv = issue(s, start, now);
+            // the new invoice's due date and grace now govern, so a lapsed (unwaived) agency is writable again
+            if (s.getStatus() == SubscriptionStatus.READ_ONLY && s.getWaivedReason() == null) {
+                s.setStatus(SubscriptionStatus.ACTIVE);
+                s.setUpdatedAt(now);
+                subscriptionRepository.save(s);
+                entitlementService.refresh(tenantId);
+            }
             auditService.record(PlatformAuditAction.SUBSCRIPTION_INVOICE_RAISE, REF_TYPE, inv.getId(),
                     Map.of("tenantId", tenantId, "number", inv.getNumber(), "total", inv.getTotal().toPlainString()));
             return inv;
@@ -282,7 +289,7 @@ public class SubscriptionBillingService {
         return toResponse(inv);
     }
 
-    /** An unpaid invoice only. PAST_DUE with nothing else overdue is ACTIVE again; READ_ONLY stays until paid, waived or re-raised. */
+    /** An unpaid invoice only. PAST_DUE with nothing else overdue is ACTIVE again; READ_ONLY stays until paid, waived or a new invoice is raised (raiseNow makes it ACTIVE). */
     @Transactional
     public SubscriptionInvoiceResponse voidInvoice(String tenantId, String invoiceId, String reason) {
         SubscriptionInvoice inv = lockIssued(tenantId, invoiceId);
