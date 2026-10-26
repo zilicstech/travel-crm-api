@@ -249,7 +249,8 @@ public class PlatformBookingMirrorTenantService {
         request.setType(CancellationType.CANCELLATION);
         request.setReason("Cancelled with Voyra");
         request.setAirlineCharge(BigDecimal.ZERO);
-        request.setSupplierCharge(FxMath.toBase(INR, pb.getDisplayed().subtract(pb.getCancelRefund()).max(BigDecimal.ZERO), rate, base).base());
+        // from the converted figures, so charge + refund is exactly the purchase the mirror booked (two roundings can drift a cent)
+        request.setSupplierCharge(FxMath.toBase(INR, pb.getDisplayed(), rate, base).base().subtract(refund).max(BigDecimal.ZERO));
         request.setAgencyFee(BigDecimal.ZERO);
         cancellationService.cancel(bookingId, request);
         if (refund.signum() > 0) {
