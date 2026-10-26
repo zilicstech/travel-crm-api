@@ -2,19 +2,24 @@ package com.voyra.crm.service;
 
 import com.voyra.crm.entity.GatewayOrder;
 import com.voyra.crm.entity.GatewayWebhookOrphan;
+import com.voyra.crm.entity.PlatformReceivable;
 import com.voyra.crm.entity.TopupRequest;
 import com.voyra.crm.entity.Wallet;
 import com.voyra.crm.entity.WalletEntry;
 import com.voyra.crm.enums.GatewayOrderPurpose;
 import com.voyra.crm.enums.GatewayOrderStatus;
 import com.voyra.crm.enums.ReceivableReason;
+import com.voyra.crm.enums.ReceivableStatus;
 import com.voyra.crm.enums.TopupMode;
 import com.voyra.crm.enums.TopupStatus;
 import com.voyra.crm.enums.WalletEntryType;
 import com.voyra.crm.enums.WalletStatus;
 import com.voyra.crm.repository.GatewayOrderRepository;
 import com.voyra.crm.repository.GatewayWebhookOrphanRepository;
+import com.voyra.crm.repository.PlatformReceivableRepository;
+import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.repository.TopupRequestRepository;
+import com.voyra.crm.repository.WalletEntryRepository;
 import com.voyra.crm.repository.WalletRepository;
 import com.voyra.crm.service.GatewayWebhookService.WebhookOutcome;
 import com.voyra.crm.service.payments.PaymentGateway;
@@ -27,6 +32,10 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
 import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -34,6 +43,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
@@ -62,6 +72,12 @@ class GatewayWebhookServiceTest {
     private PaymentGateway gateway;
     @Mock
     private SubscriptionBillingService billingService;
+    @Mock
+    private WalletEntryRepository entryRepository;
+    @Mock
+    private PlatformReceivableRepository receivableRepository;
+    @Mock
+    private TenantRepository tenantRepository;
 
     private GatewayWebhookService service;
 
@@ -284,9 +300,9 @@ class GatewayWebhookServiceTest {
         service.handle(reversal("payment.dispute.created", "dispute", "disp_1", 30000), "sig");
 
         verify(walletService).debitOrReceivable("T1", WalletEntryType.ADJUSTMENT, new BigDecimal("200.00"), "gw-refund:rfnd_1",
-                "TOPUP_REQUEST", "R1", ReceivableReason.CHARGEBACK);
+                "TOPUP_REQUEST", "R1", ReceivableReason.CHARGEBACK, null, "Gateway refund rfnd_1 on top-up R1");
         verify(walletService).debitOrReceivable("T1", WalletEntryType.ADJUSTMENT, new BigDecimal("300.00"), "gw-refund:disp_1",
-                "TOPUP_REQUEST", "R1", ReceivableReason.CHARGEBACK);
+                "TOPUP_REQUEST", "R1", ReceivableReason.CHARGEBACK, null, "Card dispute disp_1 on top-up R1");
     }
 
     @Test
@@ -302,10 +318,10 @@ class GatewayWebhookServiceTest {
         service.handle(reversal("refund.processed", "refund", "rfnd_2", 10000), "sig");
 
         verify(walletService).debitOrReceivable("T1", WalletEntryType.ADJUSTMENT, new BigDecimal("300.00"), "gw-refund:disp_1",
-                "TOPUP_REQUEST", "R1", ReceivableReason.CHARGEBACK);
+                "TOPUP_REQUEST", "R1", ReceivableReason.CHARGEBACK, null, "Card dispute disp_1 on top-up R1");
         verify(walletService).debitOrReceivable("T1", WalletEntryType.ADJUSTMENT, new BigDecimal("200.00"), "gw-refund:rfnd_1",
-                "TOPUP_REQUEST", "R1", ReceivableReason.CHARGEBACK);
-        verify(walletService, times(2)).debitOrReceivable(any(), any(), any(), any(), any(), any(), any());
+                "TOPUP_REQUEST", "R1", ReceivableReason.CHARGEBACK, null, "Gateway refund rfnd_1 on top-up R1");
+        verify(walletService, times(2)).debitOrReceivable(any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -319,7 +335,7 @@ class GatewayWebhookServiceTest {
         assertThat(service.handle(reversal("payment.dispute.created", "dispute", "disp_2", 50000, "pay_2"), "sig"))
                 .isEqualTo(WebhookOutcome.IGNORED);
 
-        verify(walletService, never()).debitOrReceivable(any(), any(), any(), any(), any(), any(), any());
+        verify(walletService, never()).debitOrReceivable(any(), any(), any(), any(), any(), any(), any(), any(), any());
         verify(notificationService, times(2)).platformAlert(anyString(), contains("never credited"));
     }
 
@@ -330,7 +346,7 @@ class GatewayWebhookServiceTest {
 
         assertThat(service.handle(reversal("refund.processed", "refund", "rfnd_1", 20000), "sig")).isEqualTo(WebhookOutcome.RETRY);
 
-        verify(walletService, never()).debitOrReceivable(any(), any(), any(), any(), any(), any(), any());
+        verify(walletService, never()).debitOrReceivable(any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -361,5 +377,144 @@ class GatewayWebhookServiceTest {
 
         verify(notificationService).platformAlert(anyString(), contains("rfnd_1"));
         verifyNoInteractions(billingService, walletService);
+    }
+
+    @Test
+    void disputeCreatedAlertsOnceNamingTheAgencyPaymentDisputeAndAmount() {
+        order(GatewayOrderPurpose.TOPUP);
+        topup(TopupStatus.APPROVED).setCreditEntryId("E1");
+
+        assertThat(service.handle(reversal("payment.dispute.created", "dispute", "disp_1", 30000), "sig"))
+                .isEqualTo(WebhookOutcome.PROCESSED);
+        service.handle(reversal("payment.dispute.created", "dispute", "disp_1", 30000), "sig");
+
+        verify(notificationService, times(1)).platformAlert(anyString(), argThat(m -> m.contains("T1") && m.contains("pay_1")
+                && m.contains("disp_1") && m.contains("300.00")));
+        verify(walletService, times(1)).debitOrReceivable(any(), any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void disputeWonWithNothingTakenDoesNothing() {
+        order(GatewayOrderPurpose.TOPUP);
+        topup(TopupStatus.APPROVED).setCreditEntryId("E1");
+
+        assertThat(service.handle(reversal("payment.dispute.won", "dispute", "disp_9", 30000), "sig"))
+                .isEqualTo(WebhookOutcome.IGNORED);
+
+        verify(walletService, never()).credit(any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void disputeLostMovesNoMoneyAndClosedAlertsOnlyWhenUndecided() {
+        order(GatewayOrderPurpose.TOPUP);
+        topup(TopupStatus.APPROVED).setCreditEntryId("E1");
+        service.handle(reversal("payment.dispute.created", "dispute", "disp_1", 30000), "sig");
+        service.handle(reversal("payment.dispute.created", "dispute", "disp_2", 10000), "sig");
+
+        service.handle(reversal("payment.dispute.lost", "dispute", "disp_1", 30000), "sig");
+        service.handle(reversal("payment.dispute.closed", "dispute", "disp_1", 30000), "sig");
+        service.handle(reversal("payment.dispute.closed", "dispute", "disp_2", 10000), "sig");
+
+        verify(walletService, never()).credit(any(), any(), any(), any(), any(), any(), any());
+        verify(notificationService, never()).platformAlert(anyString(), argThat(m -> m.contains("disp_1") && m.contains("closed")));
+        verify(notificationService).platformAlert(anyString(), argThat(m -> m.contains("disp_2") && m.contains("closed")));
+    }
+
+    // Round trips through a real WalletService over in-memory rows, so the balance and the receivable are checked.
+
+    private final List<WalletEntry> entries = new ArrayList<>();
+    private final List<PlatformReceivable> receivables = new ArrayList<>();
+
+    private GatewayWebhookService withRealWallet(Wallet w) {
+        given(walletRepository.findByTenantIdForUpdate("T1")).willReturn(Optional.of(w));
+        given(walletRepository.findById("W1")).willReturn(Optional.of(w));
+        given(walletRepository.save(any())).willAnswer(i -> i.getArgument(0));
+        given(entryRepository.save(any())).willAnswer(i -> {
+            entries.add(i.getArgument(0));
+            return i.getArgument(0);
+        });
+        given(entryRepository.findByIdempotencyKey(anyString())).willAnswer(i -> entries.stream()
+                .filter(e -> e.getIdempotencyKey().equals(i.getArgument(0))).findFirst());
+        given(entryRepository.sumAmountByTypeAndRef(any(), anyString(), anyString())).willAnswer(i -> entries.stream()
+                .filter(e -> e.getType() == i.getArgument(0) && Objects.equals(e.getRefType(), i.getArgument(1))
+                        && Objects.equals(e.getRefId(), i.getArgument(2)))
+                .map(WalletEntry::getAmount).reduce(BigDecimal.ZERO, BigDecimal::add));
+        given(receivableRepository.save(any())).willAnswer(i -> {
+            PlatformReceivable r = i.getArgument(0);
+            if (!receivables.contains(r)) {
+                receivables.add(r);
+            }
+            return r;
+        });
+        given(receivableRepository.findByTenantIdAndStatusOrderByCreatedAt("T1", ReceivableStatus.DUE))
+                .willAnswer(i -> receivables.stream().filter(r -> r.getStatus() == ReceivableStatus.DUE).toList());
+        given(receivableRepository.sumOriginalAmountByReasonAndRef(any(), anyString(), anyString())).willAnswer(i -> receivables.stream()
+                .filter(r -> r.getReason() == i.getArgument(0) && Objects.equals(r.getRefId(), i.getArgument(2)))
+                .map(PlatformReceivable::getOriginalAmount).reduce(BigDecimal.ZERO, BigDecimal::add));
+        WalletService real = new WalletService(walletRepository, entryRepository, receivableRepository, topupRepository,
+                tenantRepository, notificationService);
+        return new GatewayWebhookService(orderRepository, orphanRepository, topupRepository, walletRepository,
+                real, notificationService, gateway, billingService, 5);
+    }
+
+    private static Wallet funded(String balance) {
+        return Wallet.builder().id("W1").tenantId("T1").status(WalletStatus.OPEN).balance(new BigDecimal(balance))
+                .held(BigDecimal.ZERO).createdAt(Instant.now()).build();
+    }
+
+    @Test
+    void disputeWonAfterAFullDebitRestoresTheBalance() {
+        Wallet w = funded("500.00");
+        GatewayWebhookService svc = withRealWallet(w);
+        order(GatewayOrderPurpose.TOPUP);
+        topup(TopupStatus.APPROVED).setCreditEntryId("E1");
+
+        svc.handle(reversal("payment.dispute.created", "dispute", "disp_1", 30000), "sig");
+        assertThat(w.getBalance()).isEqualByComparingTo("200.00");
+        assertThat(entries.get(0).getNarration()).isEqualTo("Card dispute disp_1 on top-up R1");
+
+        assertThat(svc.handle(reversal("payment.dispute.won", "dispute", "disp_1", 30000), "sig"))
+                .isEqualTo(WebhookOutcome.PROCESSED);
+
+        assertThat(w.getBalance()).isEqualByComparingTo("500.00");
+        WalletEntry won = entries.get(entries.size() - 1);
+        assertThat(won.getType()).isEqualTo(WalletEntryType.ADJUSTMENT);
+        assertThat(won.getAmount()).isEqualByComparingTo("300.00");
+        assertThat(won.getIdempotencyKey()).isEqualTo("gw-dispute-won:disp_1");
+        assertThat(won.getNarration()).isEqualTo("Card dispute disp_1 won - reversed");
+    }
+
+    @Test
+    void disputeWonAfterAPartialDebitSettlesTheReceivableAndRestoresTheBalance() {
+        Wallet w = funded("100.00");
+        GatewayWebhookService svc = withRealWallet(w);
+        order(GatewayOrderPurpose.TOPUP);
+        topup(TopupStatus.APPROVED).setCreditEntryId("E1");
+
+        svc.handle(reversal("payment.dispute.created", "dispute", "disp_1", 30000), "sig");
+        assertThat(w.getBalance()).isEqualByComparingTo("0.00");
+        assertThat(receivables).singleElement().satisfies(r -> assertThat(r.getAmount()).isEqualByComparingTo("200.00"));
+
+        svc.handle(reversal("payment.dispute.won", "dispute", "disp_1", 30000), "sig");
+
+        assertThat(w.getBalance()).isEqualByComparingTo("100.00");
+        assertThat(receivables.get(0).getStatus()).isEqualTo(ReceivableStatus.SETTLED);
+        assertThat(receivables.get(0).getAmount()).isEqualByComparingTo("0");
+    }
+
+    @Test
+    void disputeWonReplayedCreditsOnce() {
+        Wallet w = funded("500.00");
+        GatewayWebhookService svc = withRealWallet(w);
+        order(GatewayOrderPurpose.TOPUP);
+        topup(TopupStatus.APPROVED).setCreditEntryId("E1");
+
+        svc.handle(reversal("payment.dispute.created", "dispute", "disp_1", 30000), "sig");
+        svc.handle(reversal("payment.dispute.won", "dispute", "disp_1", 30000), "sig");
+        int posted = entries.size();
+        svc.handle(reversal("payment.dispute.won", "dispute", "disp_1", 30000), "sig");
+
+        assertThat(entries).hasSize(posted);
+        assertThat(w.getBalance()).isEqualByComparingTo("500.00");
     }
 }

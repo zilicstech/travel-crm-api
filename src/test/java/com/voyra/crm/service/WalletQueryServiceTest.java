@@ -165,13 +165,13 @@ class WalletQueryServiceTest {
     }
 
     @Test
-    void adjustPostsWithTheRequestIdKeyAndIsAudited() {
+    void adjustKeysOnTheTenantAndRequestIdAndIsAudited() {
         WalletAdjustRequest req = new WalletAdjustRequest();
         req.setAmount(new BigDecimal("-25.00"));
         req.setReason("Typo fix");
         req.setRequestId("req-12345678");
         WalletEntry posted = entry("E1", "ADJUSTMENT", "Typo fix");
-        given(walletService.adjust("T1", req.getAmount(), "Typo fix", "adj:req-12345678")).willReturn(posted);
+        given(walletService.adjust("T1", req.getAmount(), "Typo fix", "adj:T1:req-12345678")).willReturn(posted);
 
         WalletEntryResponse r = service.adjust("T1", req);
 

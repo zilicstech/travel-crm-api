@@ -102,7 +102,7 @@ public class WalletQueryService {
 
     // Not transactional: WalletService commits in its own transaction, and the audit row follows the posting.
     public WalletEntryResponse adjust(String tenantId, WalletAdjustRequest request) {
-        WalletEntry entry = walletService.adjust(tenantId, request.getAmount(), request.getReason(), "adj:" + request.getRequestId());
+        WalletEntry entry = walletService.adjust(tenantId, request.getAmount(), request.getReason(), "adj:" + tenantId + ":" + request.getRequestId());
         auditService.record(PlatformAuditAction.WALLET_ADJUST, "Wallet", entry.getWalletId(),
                 Map.of("tenantId", tenantId, "amount", request.getAmount().toPlainString(), "reason", request.getReason(),
                         "entryId", entry.getId()));
