@@ -61,8 +61,6 @@ class PlatformAgencyPricingControllerTest {
     private PlatformSettingService settings;
     @MockBean
     private PlatformAuditService auditService;
-    @MockBean
-    private com.voyra.crm.service.SecondApproverRule secondApproverRule;
 
     private void seedBasket() {
         given(tenantRepository.existsById("T1")).willReturn(true);

@@ -53,8 +53,6 @@ class AgencyPricingServiceTest {
     private PlatformSettingService settings;
     @Mock
     private PlatformAuditService auditService;
-    @Mock
-    private SecondApproverRule secondApproverRule;
     @InjectMocks
     private AgencyPricingService service;
 
@@ -316,17 +314,18 @@ class AgencyPricingServiceTest {
         verify(settings, never()).referenceFareBasket(PricingProduct.FLIGHT);
     }
 
-    /** Final review Important 2: the slice 1 pricing second approver obeys the same independence rule. */
+    /**
+     * R2: pricing keeps the slice 1 rule (approver differs from the requester). The independence chain is only for the
+     * live switch - the seeded admin creates every admin, so the chain would make its loss-making rates unapprovable.
+     */
     @Test
-    void approveByAnAdminTheRuleRefusesStampsNothing() {
+    void anAdminTheRequesterCreatedMayApproveTheRequestersRate() {
         AgencyPricing pending = row("P1", Instant.now(), false);
         when(repository.findByIdForUpdate("P1")).thenReturn(Optional.of(pending));
         loginAs("U2");
-        org.mockito.Mockito.doThrow(new IllegalStateException("not independent"))
-                .when(secondApproverRule).requireIndependent("U2", "U1", pending.getCreatedAt());
 
-        assertThatThrownBy(() -> service.approve(T, "P1")).isInstanceOf(IllegalStateException.class).hasMessage("not independent");
-        verify(repository, never()).save(any());
-        verify(auditService, never()).record(any(), any(), any(), any());
+        assertThat(service.approve(T, "P1")).isNotNull();
+        assertThat(pending.getApprovedBy()).isEqualTo("U2");
+        verify(auditService).record(eq(PlatformAuditAction.PRICING_APPROVE), eq("AGENCY_PRICING"), eq("P1"), anyMap());
     }
 }
