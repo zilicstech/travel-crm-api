@@ -45,7 +45,7 @@ public class PlatformBookingSummaryResponse {
     @Schema(description = "Up to 5 bookings waiting on the supplier or cancelling, newest first (whatever the range)")
     private List<PlatformBookingResponse> attention;
 
-    @Schema(description = "One product's figures in the range")
+    /** One product's figures in the range. */
     public record ProductSummary(
             @Schema(description = "Product", example = "FLIGHT") PricingProduct product,
             @Schema(description = "Bookings created in the range, excluding reviewing and dropped", example = "8") int bookings,
