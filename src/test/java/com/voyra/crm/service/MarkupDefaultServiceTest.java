@@ -103,4 +103,25 @@ class MarkupDefaultServiceTest {
         assertThat(response.getValue()).isEqualByComparingTo("7.50");
         verify(markupDefaultRepository).save(existing);
     }
+
+    @Test
+    void percentAbove1000IsRefused() {
+        MarkupDefaultUpdateRequest request = new MarkupDefaultUpdateRequest();
+        request.setMode(MarkupMode.PERCENT);
+        request.setValue(new BigDecimal("99999999999"));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> markupDefaultService.upsert(ServiceType.HOTEL, request))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Percent markup cannot be more than 1000");
+        verify(markupDefaultRepository, org.mockito.Mockito.never()).save(any());
+    }
+
+    @Test
+    void flatAboveTheCapIsRefused() {
+        MarkupDefaultUpdateRequest request = new MarkupDefaultUpdateRequest();
+        request.setMode(MarkupMode.FLAT);
+        request.setValue(new BigDecimal("100000000"));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> markupDefaultService.upsert(ServiceType.HOTEL, request))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Flat markup cannot be more than 99,999,999");
+    }
 }

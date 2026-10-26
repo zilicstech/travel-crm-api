@@ -453,6 +453,19 @@ class AgencyApplicationServiceTest {
     }
 
     @Test
+    void rejectFromMoreInfoIsAllowedAndNotifiesTheApplicant() throws Exception {
+        AgencyApplication app = submitted().toBuilder().status(ApplicationStatus.MORE_INFO).build();
+        when(applicationRepository.findByIdForUpdate("app-1")).thenReturn(Optional.of(app));
+
+        service.decide("app-1", decision(ApplicationStatus.REJECTED, "PAN unreadable"));
+
+        assertThat(app.getStatus()).isEqualTo(ApplicationStatus.REJECTED);
+        assertThat(app.getRejectionReason()).isEqualTo("PAN unreadable");
+        verify(notificationService).applicationRejected(app);
+        verify(platformAuditService).record(eq(PlatformAuditAction.APPLICATION_DECISION), any(), any(), any());
+    }
+
+    @Test
     void requestMoreInfoRotatesTheTokenAndReturnsAResumeLink() throws Exception {
         AgencyApplication app = submitted();
         String oldHash = app.getUploadTokenHash();

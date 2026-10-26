@@ -26,6 +26,10 @@ import java.util.stream.Collectors;
 @Slf4j
 public class MarkupDefaultService {
 
+    // above 100 percent is legitimate (resale at a multiple); the flat cap keeps well inside NUMERIC(19,4)
+    private static final BigDecimal MAX_PERCENT = new BigDecimal("1000");
+    private static final BigDecimal MAX_FLAT = new BigDecimal("99999999");
+
     private final MarkupDefaultRepository markupDefaultRepository;
     private final AuditService auditService;
 
@@ -49,6 +53,12 @@ public class MarkupDefaultService {
 
     @Transactional
     public MarkupDefaultResponse upsert(ServiceType serviceType, MarkupDefaultUpdateRequest request) {
+        if (request.getMode() == MarkupMode.PERCENT && request.getValue().compareTo(MAX_PERCENT) > 0) {
+            throw new IllegalArgumentException("Percent markup cannot be more than 1000");
+        }
+        if (request.getMode() == MarkupMode.FLAT && request.getValue().compareTo(MAX_FLAT) > 0) {
+            throw new IllegalArgumentException("Flat markup cannot be more than 99,999,999");
+        }
         MarkupDefault d = markupDefaultRepository.findById(serviceType)
                 .orElseGet(() -> MarkupDefault.builder().serviceType(serviceType).build());
         d.setMode(request.getMode());
