@@ -31,7 +31,7 @@ public class PublicInquiryController {
             + "A filled honeypot field is accepted with the same response but not stored.")
     @ApiResponse(responseCode = "429", description = "More than 5 inquiries a minute from one connection")
     public ResponseEntity<SimpleAckResponse> submit(@Valid @RequestBody InquiryCreateRequest request, HttpServletRequest http) {
-        inquiryRateLimiter.check(InquiryRateLimiter.callerOf(http));
+        inquiryRateLimiter.check(inquiryRateLimiter.callerOf(http));
         inquiryService.submit(request);
         return ResponseEntity.ok(SimpleAckResponse.builder().success(true).message("Inquiry received").build());
     }
