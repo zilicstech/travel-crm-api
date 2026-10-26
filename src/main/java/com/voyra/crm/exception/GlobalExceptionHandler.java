@@ -124,6 +124,28 @@ public class GlobalExceptionHandler {
                         null, HttpStatus.METHOD_NOT_ALLOWED.value(), path));
     }
 
+    /** A body type the endpoint does not take (e.g. JSON on a multipart upload): 415, decided before any handler runs. */
+    @ExceptionHandler(org.springframework.web.HttpMediaTypeNotSupportedException.class)
+    public ResponseEntity<ApiErrorResponse> handleMediaTypeNotSupported(org.springframework.web.HttpMediaTypeNotSupportedException ex,
+                                                                        HttpServletRequest request) {
+        String path = getPath(request);
+        log.warn("Unsupported content type - path: {}, type: {}", path, ex.getContentType());
+        return ResponseEntity.status(HttpStatus.UNSUPPORTED_MEDIA_TYPE).body(
+                ApiErrorResponse.of("This endpoint does not accept that content type", "Unsupported media type",
+                        null, HttpStatus.UNSUPPORTED_MEDIA_TYPE.value(), path));
+    }
+
+    /** A multipart body that cannot be parsed is the caller's mistake (the more specific 413 handler below wins for size). */
+    @ExceptionHandler(org.springframework.web.multipart.MultipartException.class)
+    public ResponseEntity<ApiErrorResponse> handleMultipart(org.springframework.web.multipart.MultipartException ex,
+                                                            HttpServletRequest request) {
+        String path = getPath(request);
+        log.warn("Unreadable multipart body - path: {}", path);
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
+                ApiErrorResponse.of("The upload could not be read - send it as multipart form data", "Invalid request body",
+                        null, HttpStatus.BAD_REQUEST.value(), path));
+    }
+
     @ExceptionHandler(org.springframework.web.multipart.MaxUploadSizeExceededException.class)
     public ResponseEntity<ApiErrorResponse> handleUploadTooLarge(
             org.springframework.web.multipart.MaxUploadSizeExceededException ex, HttpServletRequest request) {

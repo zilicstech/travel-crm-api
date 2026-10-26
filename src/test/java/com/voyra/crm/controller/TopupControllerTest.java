@@ -72,6 +72,26 @@ class TopupControllerTest {
         verifyNoInteractions(service);
     }
 
+    /** R12: a JSON body on the multipart endpoint is 415 for every role (was 500), and never reaches the service. */
+    @Test
+    void aJsonBodyOnTheMultipartEndpointIs415() throws Exception {
+        for (UserType t : new UserType[]{UserType.AGENCY_OWNER, UserType.ACCOUNTANT, UserType.AGENT}) {
+            mockMvc.perform(post("/api/wallet/topups/bank").contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"amount\":100,\"bankRef\":\"SBIN1234\"}").with(as(t)))
+                    .andExpect(status().isUnsupportedMediaType());
+        }
+        verifyNoInteractions(service);
+    }
+
+    /** R12: a multipart body that cannot be parsed is the caller's mistake (400), not a server error. */
+    @Test
+    void anUnparseableMultipartBodyIs400() throws Exception {
+        mockMvc.perform(post("/api/wallet/topups/bank").contentType("multipart/form-data") // no boundary
+                        .content("garbage").with(as(UserType.AGENCY_OWNER)))
+                .andExpect(status().isBadRequest());
+        verifyNoInteractions(service);
+    }
+
     @Test
     void accountantAndAgentCannotRequest() throws Exception {
         for (UserType t : new UserType[]{UserType.ACCOUNTANT, UserType.AGENT}) {
