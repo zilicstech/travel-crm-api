@@ -12,7 +12,7 @@ import java.util.Optional;
 import java.util.Set;
 
 /**
- * The two-admin rule (tripjack_live_ready, loss-making agency rates) must take two people, and an admin is shown the
+ * The two-admin rule (tripjack_live_ready) must take two people, and an admin is shown the
  * password of every admin login they add. So the approver must be independent of the requester: neither login was added
  * by the other, directly or through admins they added (PLATFORM_ADMIN_CREATE in platform_audit_log), and the approver's
  * login existed before the request. The caller still refuses the requester approving their own request.
