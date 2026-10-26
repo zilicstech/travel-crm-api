@@ -80,6 +80,8 @@ public class PlatformBookingService {
     private static final TypeReference<Map<String, Object>> MAP = new TypeReference<>() { };
     /** Pricing-snapshot key of a flight's reviewed {adults, children, infants}. */
     private static final String PAX_MIX = "paxMix";
+    /** Pricing-snapshot key of the travel date (flight: first departure, hotel: check-in) the age check runs against. */
+    private static final String TRAVEL_DATE = "travelDate";
     /** Event marking that Voyra was alerted about a row the configured supplier does not serve (once per row). */
     static final String SUPPLIER_MISMATCH = "SUPPLIER_MISMATCH";
     static final String NOT_SERVED_MESSAGE = "This booking can't be changed right now. Voyra has been notified.";
@@ -218,10 +220,13 @@ public class PlatformBookingService {
         ReviewEnv env = admit(principal, PricingProduct.FLIGHT, request.getClientId(), request.getIssuedByAgentId(),
                 request.getServiceId(), request.getLeadId());
         FareReview fare = providers.flights().review(request);
+        Map<String, Object> itinerary = itineraryMap(fare.itinerary());
+        java.time.LocalDate travelDate = firstDeparture(itinerary);
         return stampReview(principal, PricingProduct.FLIGHT, env, fare, request.getClientId(),
                 request.getLeadId(), request.getServiceId(), request.getAdults() + request.getChildren() + request.getInfants(),
-                itineraryMap(fare.itinerary()), request.getSearchDisplayedFare(),
-                Map.of("adults", request.getAdults(), "children", request.getChildren(), "infants", request.getInfants()));
+                itinerary, request.getSearchDisplayedFare(),
+                Map.of("adults", request.getAdults(), "children", request.getChildren(), "infants", request.getInfants()),
+                travelDate != null ? travelDate : dateOrNull(request.getDepartDate()));
     }
 
     /**
@@ -243,7 +248,7 @@ public class PlatformBookingService {
         int guests = request.getRooms().stream()
                 .mapToInt(r -> r.getAdults() + (r.getChildAges() == null ? 0 : r.getChildAges().size())).sum();
         return stampReview(principal, PricingProduct.HOTEL, env, fare, request.getClientId(), request.getLeadId(),
-                request.getServiceId(), guests, hotelItinerary(request, fare), request.getSearchDisplayedFare(), null);
+                request.getServiceId(), guests, hotelItinerary(request, fare), request.getSearchDisplayedFare(), null, request.getCheckIn());
     }
 
     private record ReviewEnv(SupplierEnvironment environment, String credentialId) {
@@ -278,7 +283,7 @@ public class PlatformBookingService {
     private PlatformBookingReviewResponse stampReview(CustomUserPrincipal principal, PricingProduct product, ReviewEnv env,
                                                       FareReview fare, String clientId, String leadId, String serviceId,
                                                       int paxCount, Map<String, Object> itinerary, BigDecimal searched,
-                                                      Map<String, Integer> paxMix) {
+                                                      Map<String, Integer> paxMix, java.time.LocalDate travelDate) {
         String tenantId = principal.tenantId();
         if (fare.baseFare() == null) {
             // discount and commission are worked off the base fare, so there is no price to show without it
@@ -310,6 +315,9 @@ public class PlatformBookingService {
         stamp(booking, quote);
         if (paxMix != null) {
             booking.getPricingSnapshot().put(PAX_MIX, paxMix); // what the supplier priced; confirm must match it
+        }
+        if (travelDate != null) {
+            booking.getPricingSnapshot().put(TRAVEL_DATE, travelDate.toString());
         }
         tx.executeWithoutResult(s -> {
             bookingRepository.save(booking);
@@ -723,7 +731,7 @@ public class PlatformBookingService {
             throw new IllegalArgumentException("Enter " + b.getPaxCount() + " travellers, as reviewed");
         } else {
             requireReviewedMix(b, request.getPassengers());
-            requirePaxTypesFit(request.getPassengers(), firstDeparture(b));
+            requirePaxTypesFit(request.getPassengers(), travelDateOf(b));
         }
         if (request.getAcceptedDisplayedFare().compareTo(b.getDisplayed()) != 0) {
             throw priceChanged(b.getProduct(), b.getDisplayed());
@@ -734,7 +742,7 @@ public class PlatformBookingService {
             bookingRepository.save(b);
             events.record(bookingId, "REPRICED", Map.of("displayed", b.getDisplayed(), "pricingId", quote.pricingId()));
             // returned, not thrown, so the re-stamp commits
-            return new Held(b, priceChanged(b.getProduct(), b.getDisplayed()), false);
+            return new Held(b, priceChanged(b.getProduct(), b.getDisplayed(), quote.agencyEarns()), false);
         }
         if (b.getReviewExpiresAt() != null && Instant.now().isAfter(b.getReviewExpiresAt())) {
             throw reviewExpired(b.getProduct());
@@ -857,7 +865,7 @@ public class PlatformBookingService {
     }
 
     private void stamp(PlatformBooking b, PriceQuote q) {
-        Object paxMix = b.getPricingSnapshot() == null ? null : b.getPricingSnapshot().get(PAX_MIX); // survives a re-price
+        Map<String, Object> previous = b.getPricingSnapshot() == null ? Map.of() : b.getPricingSnapshot(); // mix and date survive a re-price
         b.setDiscountPct(q.discountPct());
         b.setDisplayed(q.displayed());
         b.setVoyraEarned(q.voyraEarned());
@@ -877,8 +885,10 @@ public class PlatformBookingService {
         snapshot.put("tds", q.tds());
         snapshot.put("agencyEarns", q.agencyEarns());
         snapshot.put("voyraNet", q.voyraNet());
-        if (paxMix != null) {
-            snapshot.put(PAX_MIX, paxMix);
+        for (String kept : List.of(PAX_MIX, TRAVEL_DATE)) {
+            if (previous.get(kept) != null) {
+                snapshot.put(kept, previous.get(kept));
+            }
         }
         b.setPricingSnapshot(snapshot);
     }
@@ -1002,8 +1012,17 @@ public class PlatformBookingService {
     }
 
     private static BookingConflictException priceChanged(PricingProduct product, BigDecimal displayed) {
-        return new BookingConflictException("PRICE_CHANGED", "The " + priceWord(product) + " is now " + displayed + " - confirm the new price",
-                Map.of("displayedFare", displayed));
+        return priceChanged(product, displayed, null);
+    }
+
+    /** {@code agencyEarns} rides along when the re-price changed it, so the screen shows the new earning with the new price. */
+    private static BookingConflictException priceChanged(PricingProduct product, BigDecimal displayed, BigDecimal agencyEarns) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("displayedFare", displayed);
+        if (agencyEarns != null) {
+            details.put("agencyEarns", agencyEarns);
+        }
+        return new BookingConflictException("PRICE_CHANGED", "The " + priceWord(product) + " is now " + displayed + " - confirm the new price", details);
     }
 
     private static PaxDetail toPax(PaxInput p) {
@@ -1054,13 +1073,28 @@ public class PlatformBookingService {
         };
     }
 
+    /** The travel date stamped at review; rows reviewed before it was stamped fall back to their itinerary. */
+    private java.time.LocalDate travelDateOf(PlatformBooking b) {
+        Object stamped = b.getPricingSnapshot() == null ? null : b.getPricingSnapshot().get(TRAVEL_DATE);
+        java.time.LocalDate d = stamped == null ? null : dateOrNull(stamped.toString());
+        return d != null ? d : firstDeparture(b.getItinerary());
+    }
+
+    private static java.time.LocalDate dateOrNull(String s) {
+        try {
+            return s == null || s.length() < 10 ? null : java.time.LocalDate.parse(s.substring(0, 10));
+        } catch (java.time.format.DateTimeParseException e) {
+            return null;
+        }
+    }
+
     /** The earliest departure date among the itinerary's segments ({@code sI[].dt}, Tripjack's and the mock's shape); null if none. */
-    private java.time.LocalDate firstDeparture(PlatformBooking b) {
-        if (b.getItinerary() == null) {
+    private java.time.LocalDate firstDeparture(Map<String, Object> itinerary) {
+        if (itinerary == null) {
             return null;
         }
         java.time.LocalDate first = null;
-        for (JsonNode legs : objectMapper.valueToTree(b.getItinerary()).findValues("sI")) {
+        for (JsonNode legs : objectMapper.valueToTree(itinerary).findValues("sI")) {
             for (JsonNode seg : legs) {
                 String dt = seg.path("dt").asText("");
                 try {

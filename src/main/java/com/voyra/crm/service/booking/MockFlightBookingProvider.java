@@ -48,21 +48,25 @@ public class MockFlightBookingProvider implements FlightBookingProvider {
     @Override
     public FareReview review(FlightReviewRequest r) {
         FareReview base = review(r.getOfferId(), r.getAdults(), r.getChildren(), r.getInfants());
-        if (r.getOrigin() == null || r.getDestination() == null) {
-            return base;
-        }
-        // shape mirrors Tripjack's sI segments so the same parser reads mock and real itineraries
+        // always a complete itinerary, like Tripjack (mirror, purge and the age check read it); shape mirrors its sI segments.
+        // shortcut: a request without the display hints gets DEL-BOM 30 days out - mock data only, never a real supplier
+        String date = blank(r.getDepartDate()) ? java.time.LocalDate.now().plusDays(30).toString() : r.getDepartDate();
         ObjectNode seg = JSON.createObjectNode();
         ObjectNode fD = seg.putObject("fD");
-        fD.put("fN", r.getFlightNumber());
-        fD.putObject("aI").put("code", r.getAirlineCode()).put("name", r.getAirline());
-        seg.putObject("da").put("code", r.getOrigin());
-        seg.putObject("aa").put("code", r.getDestination());
-        seg.put("dt", r.getDepartDate() + "T" + r.getDepartTime());
-        seg.put("at", r.getDepartDate() + "T" + r.getArriveTime());
+        fD.put("fN", blank(r.getFlightNumber()) ? "101" : r.getFlightNumber());
+        fD.putObject("aI").put("code", blank(r.getAirlineCode()) ? "MK" : r.getAirlineCode())
+                .put("name", blank(r.getAirline()) ? "Mock Air" : r.getAirline());
+        seg.putObject("da").put("code", blank(r.getOrigin()) ? "DEL" : r.getOrigin());
+        seg.putObject("aa").put("code", blank(r.getDestination()) ? "BOM" : r.getDestination());
+        seg.put("dt", date + "T" + (blank(r.getDepartTime()) ? "06:00" : r.getDepartTime()));
+        seg.put("at", date + "T" + (blank(r.getArriveTime()) ? "08:10" : r.getArriveTime()));
         ObjectNode itinerary = JSON.createObjectNode();
         itinerary.putArray("sI").add(seg);
         return new FareReview(base.reviewId(), base.totalFare(), base.baseFare(), base.currency(), base.fareRules(), base.expiresAt(), itinerary);
+    }
+
+    private static boolean blank(String s) {
+        return s == null || s.isBlank();
     }
 
     @Override

@@ -131,14 +131,6 @@ class MockFlightBookingProviderTest {
         assertThat(seg.path("fD").path("fN").asText()).isEqualTo("201");
     }
 
-    @Test
-    void reviewWithoutHintsHasNoItinerary() {
-        com.voyra.crm.dto.FlightReviewRequest r = new com.voyra.crm.dto.FlightReviewRequest();
-        r.setOfferId("o1");
-        r.setAdults(1);
-        assertThat(provider.review(r).itinerary()).isNull();
-    }
-
     /** platform_booking.supplier_booking_id held 80 characters; the old id repeated the ~70-character review id. */
     @Test
     void theBookingIdIsShortAndStillCarriesTheFareForTheRefund() {
@@ -169,5 +161,23 @@ class MockFlightBookingProviderTest {
                 assertThat(review.baseFare()).as(offer.getOfferId()).isEqualByComparingTo(offer.getBaseFare());
             }
         }
+    }
+
+    /** R1: like Tripjack, the mock always returns an sI itinerary, with the departure date whenever the request gives one. */
+    @Test
+    void reviewAlwaysReturnsAnItineraryCarryingTheDepartureDate() {
+        com.voyra.crm.dto.FlightReviewRequest r = new com.voyra.crm.dto.FlightReviewRequest();
+        r.setOfferId("mock-indigo-0615-PUBLISHED");
+        r.setAdults(1);
+        r.setDepartDate("2026-12-01");
+        FareReview review = provider.review(r);
+        assertThat(review.itinerary()).isNotNull();
+        assertThat(review.itinerary().path("sI").get(0).path("dt").asText()).startsWith("2026-12-01");
+
+        r.setDepartDate(null); // no hints at all: still a complete segment the mirror can use, never "nullT..."
+        com.fasterxml.jackson.databind.JsonNode seg = provider.review(r).itinerary().path("sI").get(0);
+        assertThat(seg.path("dt").asText()).isEqualTo(java.time.LocalDate.now().plusDays(30) + "T06:00");
+        assertThat(seg.path("da").path("code").asText()).isEqualTo("DEL");
+        assertThat(seg.path("aa").path("code").asText()).isEqualTo("BOM");
     }
 }

@@ -1273,6 +1273,58 @@ class PlatformBookingServiceTest {
                 .getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
     }
 
+    /**
+     * R1 (regression LH7): a supplier answer without an itinerary (the mock with no route hints) still gets the age check,
+     * from the travel date stamped at review out of the request's departure date.
+     */
+    @Test
+    void theAgeCheckUsesTheTravelDateStampedAtReviewWhenTheRowHasNoItinerary() {
+        FlightReviewRequest oneAdult = reviewRequest();
+        oneAdult.setAdults(1);
+        oneAdult.setChildren(0);
+        oneAdult.setDepartDate("2026-12-01");
+        String id = service.review(oneAdult).getBookingId();
+        assertThat(rows.get(id).getItinerary()).isNull();
+        assertThat(rows.get(id).getPricingSnapshot()).containsEntry("travelDate", "2026-12-01");
+
+        // a five-year-old in the adult slot
+        assertThatThrownBy(() -> service.confirm(id, withPax(pax("ADULT", LocalDate.of(2021, 6, 1)))))
+                .isInstanceOf(com.voyra.crm.exception.BookingRequestException.class)
+                .extracting("code").isEqualTo("PAX_TYPE_MISMATCH");
+
+        FlightReviewRequest adultAndChild = reviewRequest();
+        adultAndChild.setAdults(1);
+        adultAndChild.setChildren(1);
+        adultAndChild.setDepartDate("2026-12-01");
+        String id2 = service.review(adultAndChild).getBookingId();
+        // a thirty-year-old in the child slot
+        assertThatThrownBy(() -> service.confirm(id2, withPax(pax("ADULT", null), pax("CHILD", LocalDate.of(1996, 1, 1)))))
+                .isInstanceOf(com.voyra.crm.exception.BookingRequestException.class)
+                .extracting("code").isEqualTo("PAX_TYPE_MISMATCH");
+
+        verify(walletService, never()).hold(any(), any(), any(), any(), any());
+        verify(provider, never()).book(any());
+    }
+
+    /** R1: the supplier's own itinerary date wins over the request hint; a re-price keeps the stamped date. */
+    @Test
+    void theStampedTravelDateComesFromTheReviewedItineraryFirstAndSurvivesARePrice() {
+        com.fasterxml.jackson.databind.node.ObjectNode it = objectMapper.createObjectNode();
+        it.putArray("sI").addObject().put("dt", "2026-11-20T06:00");
+        when(provider.review(any(FlightReviewRequest.class))).thenReturn(new FareReview("rv-2", new BigDecimal("5000.00"),
+                new BigDecimal("4250.00"), "INR", "Refundable", Instant.now().plus(15, ChronoUnit.MINUTES), it));
+        FlightReviewRequest r = reviewRequest();
+        r.setDepartDate("2026-12-01");
+        String id = service.review(r).getBookingId();
+        assertThat(rows.get(id).getPricingSnapshot()).containsEntry("travelDate", "2026-11-20");
+
+        when(quoter.quote(eq(T), eq(PricingProduct.FLIGHT), any(), any())).thenReturn(quote("P2", "4600.00", "50.00", "0.00"));
+        assertThatThrownBy(() -> service.confirm(id, confirmRequest("key-00000001", "4500.00")))
+                .isInstanceOf(BookingConflictException.class)
+                .satisfies(e -> assertThat(((BookingConflictException) e).getDetails()).containsEntry("agencyEarns", new BigDecimal("50.00")));
+        assertThat(rows.get(id).getPricingSnapshot()).containsEntry("travelDate", "2026-11-20");
+    }
+
     @Test
     void aChildOrInfantWithoutADateOfBirthIsRefused() {
         String id = reviewedLeaving("2026-12-01");
