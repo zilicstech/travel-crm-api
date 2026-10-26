@@ -54,6 +54,16 @@ class PlatformTopupControllerTest {
                 List.of(new SimpleGrantedAuthority("ROLE_" + type.name()))));
     }
 
+    /** R15: approving more than 10,00,00,000 is a plain field error. */
+    @Test
+    void approvingAboveTheCapIsAFieldError() throws Exception {
+        mockMvc.perform(post("/api/platform/topups/R1/approve").with(as(UserType.SUPER_ADMIN))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"approvedAmount\":99999999999}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.details.errors.approvedAmount").value("A top-up can be at most ₹10,00,00,000"));
+        org.mockito.Mockito.verifyNoInteractions(service);
+    }
+
     @Test
     void superAdminApproves() throws Exception {
         given(service.approve(eq("R1"), eq("A1"), any())).willReturn(TopupResponse.builder().id("R1")

@@ -1,6 +1,8 @@
 package com.voyra.crm.dto;
 
 import io.swagger.v3.oas.annotations.media.Schema;
+import jakarta.validation.constraints.DecimalMax;
+import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -15,7 +17,9 @@ public class WalletAdjustRequest {
 
     @NotNull
     @NonZero
-    @Digits(integer = 17, fraction = 2)
+    @DecimalMin(value = "-100000000", message = "An adjustment can be at most ₹10,00,00,000 either way")
+    @DecimalMax(value = "100000000", message = "An adjustment can be at most ₹10,00,00,000 either way")
+    @Digits(integer = 17, fraction = 2, message = "Amount can have at most 2 decimal places")
     @Schema(description = "Positive credits the wallet, negative debits it", example = "-250.00")
     private BigDecimal amount;
 

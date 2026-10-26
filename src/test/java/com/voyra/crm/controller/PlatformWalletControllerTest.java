@@ -84,6 +84,18 @@ class PlatformWalletControllerTest {
                 .andExpect(status().isBadRequest()).andExpect(jsonPath("$.details.errors.requestId").exists());
     }
 
+    /** R15: an adjustment beyond 10,00,00,000 either way is a plain field error, never the raw digits wording. */
+    @Test
+    void anAdjustmentAboveTheCapIsAFieldError() throws Exception {
+        for (String amount : new String[]{"99999999999", "-100000000.01"}) {
+            mockMvc.perform(post(BASE + "/adjust").with(admin()).contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"amount\":" + amount + ",\"reason\":\"Typo fix\",\"requestId\":\"req-12345678\"}"))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.details.errors.amount").value("An adjustment can be at most ₹10,00,00,000 either way"));
+        }
+        org.mockito.Mockito.verifyNoInteractions(service);
+    }
+
     @Test
     void closeNeedsAUtr() throws Exception {
         mockMvc.perform(post(BASE + "/close").with(admin()).contentType(MediaType.APPLICATION_JSON).content("{}"))

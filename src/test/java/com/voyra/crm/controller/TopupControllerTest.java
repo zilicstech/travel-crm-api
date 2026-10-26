@@ -92,6 +92,20 @@ class TopupControllerTest {
         verifyNoInteractions(service);
     }
 
+    /** R15: a top-up above 10,00,00,000 says so in words (was "numeric value out of bounds (<9 digits>.<2 digits> expected)"). */
+    @Test
+    void aTopupAboveTheCapIsAPlainFieldError() throws Exception {
+        mockMvc.perform(multipart("/api/wallet/topups/bank").file(proof()).param("amount", "99999999999").param("bankRef", "SBIN1234")
+                        .with(as(UserType.AGENCY_OWNER)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.details.errors.amount").value("A top-up can be at most ₹10,00,00,000"));
+        mockMvc.perform(post("/api/wallet/topups/gateway").contentType(MediaType.APPLICATION_JSON).content("{\"amount\":99999999999}")
+                        .with(as(UserType.AGENCY_OWNER)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.details.errors.amount").value("A top-up can be at most ₹10,00,00,000"));
+        verifyNoInteractions(service);
+    }
+
     @Test
     void accountantAndAgentCannotRequest() throws Exception {
         for (UserType t : new UserType[]{UserType.ACCOUNTANT, UserType.AGENT}) {
