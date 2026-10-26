@@ -42,6 +42,7 @@ class BookingDocumentServiceTest {
     void nothingInvoiced() {
         org.mockito.Mockito.lenient().when(bookingService.invoiced(any()))
                 .thenReturn(new InvoiceLineSource.Invoiced(BigDecimal.ZERO, java.util.Set.of(), null));
+        org.mockito.Mockito.lenient().when(bookingService.invoicedPrice(any())).thenReturn(BigDecimal.ZERO);
         org.mockito.Mockito.lenient().when(bookingService.draftVoucherIds(any())).thenReturn(java.util.Set.of());
     }
 
@@ -171,6 +172,19 @@ class BookingDocumentServiceTest {
         booking.setSellingPrice(new BigDecimal("3300"));
 
         assertThatThrownBy(() -> service.updateDocument("B1", "D1", edit("3000", "10"))).hasMessageContaining("already invoiced");
+    }
+
+    @Test
+    void anAddedVoucherCannotPriceTheBookingBelowWhatIsInvoiced() {
+        signIn();
+        when(bookingService.lockAccessibleBooking("B1")).thenReturn(booking);
+        when(bookingService.invoicedPrice("B1")).thenReturn(new BigDecimal("4400"));
+        org.mockito.Mockito.doAnswer(i -> { booking.setSellingPrice(new BigDecimal("3300")); return null; })
+                .when(bookingService).applyVoucher(any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
+
+        assertThatThrownBy(() -> service.addDocument("B1", edit("3000", "10"))).hasMessageContaining("already invoiced");
+
+        verify(bookingDocumentRepository, never()).save(any());
     }
 
     @Test

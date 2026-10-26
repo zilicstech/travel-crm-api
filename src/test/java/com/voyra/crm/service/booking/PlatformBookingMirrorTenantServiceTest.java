@@ -285,6 +285,25 @@ class PlatformBookingMirrorTenantServiceTest {
         verify(cancellationService).recordVoyraWalletRefund("B1", new BigDecimal("48.00"));
     }
 
+    /** Rate 0.5: displayed 1.02 buys 0.51, refund 1.01 is 0.51 (0.505 up); rounding the 0.01 kept separately gave 0.01 and a refund bigger than the bill. */
+    @Test
+    void theSupplierChargeAndTheRefundAlwaysAddUpToWhatTheMirrorBought() {
+        org.mockito.Mockito.doReturn("USD").when(baseCurrency).code();
+        when(bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc("B1")).thenReturn(List.of(BookingDocument.builder()
+                .id("D1").bookingId("B1").docType(BookingDocumentType.E_TICKET).purchaseCurrency("INR")
+                .purchasePrice(new BigDecimal("1.02")).purchaseRate(new BigDecimal("0.5")).build()));
+        PlatformBooking pb = platformBooking();
+        pb.setDisplayed(new BigDecimal("1.02"));
+        pb.setCancelRefund(new BigDecimal("1.01"));
+
+        service.cancel("B1", pb);
+
+        ArgumentCaptor<BookingCancelRequest> request = ArgumentCaptor.forClass(BookingCancelRequest.class);
+        verify(cancellationService).cancel(eq("B1"), request.capture());
+        assertThat(request.getValue().getSupplierCharge()).isEqualByComparingTo("0.00");
+        verify(cancellationService).recordVoyraWalletRefund("B1", new BigDecimal("0.51"));
+    }
+
     @Test
     void ticketNumbersAreNeverCutMidWay() {
         assertThat(PlatformBookingMirrorTenantService.ticketNo(List.of("0981234567890", "0981234567891")))

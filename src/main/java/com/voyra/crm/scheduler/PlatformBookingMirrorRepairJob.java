@@ -21,7 +21,7 @@ public class PlatformBookingMirrorRepairJob {
 
     private static final Set<MirrorStatus> TO_REPAIR = EnumSet.of(MirrorStatus.FAILED, MirrorStatus.PENDING);
     /** About 24 hours of 10-minute retries; the first failure already alerted Voyra, so the row then waits for an admin. */
-    static final long MAX_ATTEMPTS = 144;
+    public static final long MAX_ATTEMPTS = 144;
 
     private final PlatformBookingRepository repository;
     private final PlatformBookingMirrorService mirrorService;

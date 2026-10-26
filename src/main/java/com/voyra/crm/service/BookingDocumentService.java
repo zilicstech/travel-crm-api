@@ -70,6 +70,9 @@ public class BookingDocumentService {
         applyTripType(booking, request.getInternationalTrip());
         document.keepForeign(pricing, base);
         bookingService.applyVoucher(booking, document, request.getVendorId(), Boolean.TRUE.equals(request.getOverrideCreditLimit()));
+        if (booking.getSellingPrice().compareTo(bookingService.invoicedPrice(bookingId)) < 0) {
+            throw new IllegalStateException("This voucher's price is already invoiced - it can't go below that");
+        }
         bookingDocumentRepository.save(document);
         bookingService.syncReference(booking, null);
 
