@@ -343,6 +343,11 @@ public class WalletService {
         walletRepository.save(wallet);
     }
 
+    @Transactional(readOnly = true)
+    public Optional<WalletEntry> findEntry(String idempotencyKey) {
+        return entryRepository.findByIdempotencyKey(idempotencyKey);
+    }
+
     /** The entry already posted under this key, if any; a key used on another wallet is refused, never replayed. */
     private Optional<WalletEntry> replay(Wallet wallet, String idempotencyKey) {
         Optional<WalletEntry> existing = entryRepository.findByIdempotencyKey(idempotencyKey);

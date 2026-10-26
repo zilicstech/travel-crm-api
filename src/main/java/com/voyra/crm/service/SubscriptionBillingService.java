@@ -207,7 +207,9 @@ public class SubscriptionBillingService {
 
     /** Lifecycle job: the invoice for the period starting when the paid one ends - at most one live (ISSUED or PAID) per period; a voided one is raised again. */
     Optional<SubscriptionInvoice> raiseRenewal(Subscription s, Instant now) {
-        if (invoiceRepository.existsByTenantIdAndPeriodStartAndStatusIn(s.getTenantId(), s.getPeriodEnd(), List.of(ISSUED, PAID))
+        // an open invoice (e.g. from raiseNow after READ_ONLY) already covers the agency; a stale period must not get a second one
+        if (invoiceRepository.findFirstByTenantIdAndStatusOrderByDueAtAsc(s.getTenantId(), ISSUED).isPresent()
+                || invoiceRepository.existsByTenantIdAndPeriodStartAndStatusIn(s.getTenantId(), s.getPeriodEnd(), List.of(ISSUED, PAID))
                 || lines(s, settingService.skuPrices()).isEmpty()) {
             return Optional.empty();
         }

@@ -69,8 +69,11 @@ public class BookingDocumentService {
         applyTrip(booking, document, request);
         applyTripType(booking, request.getInternationalTrip());
         document.keepForeign(pricing, base);
+        java.math.BigDecimal priceBefore = booking.getSellingPrice();
         bookingService.applyVoucher(booking, document, request.getVendorId(), Boolean.TRUE.equals(request.getOverrideCreditLimit()));
-        if (booking.getSellingPrice().compareTo(bookingService.invoicedPrice(bookingId)) < 0) {
+        // refuse only a voucher that lowers the price below what is invoiced (invoiced can exceed the price, e.g. cancellation charges)
+        if (booking.getSellingPrice().compareTo(bookingService.invoicedPrice(bookingId)) < 0
+                && booking.getSellingPrice().compareTo(priceBefore) < 0) {
             throw new IllegalStateException("This voucher's price is already invoiced - it can't go below that");
         }
         bookingDocumentRepository.save(document);

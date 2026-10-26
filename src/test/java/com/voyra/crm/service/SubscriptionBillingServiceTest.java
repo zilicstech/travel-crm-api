@@ -201,6 +201,17 @@ class SubscriptionBillingServiceTest {
     }
 
     @Test
+    void noRenewalIsRaisedWhileAnyInvoiceIsOpenEvenForAnEarlierPeriod() {
+        // after raiseNow lifted READ_ONLY, the stale old period must not get a second invoice
+        Subscription s = suite(0, BillingCycle.MONTHLY).toBuilder().periodEnd(Instant.parse("2026-10-01T00:00:00Z")).build();
+        given(invoiceRepository.findFirstByTenantIdAndStatusOrderByDueAtAsc("T1", "ISSUED"))
+                .willReturn(Optional.of(SubscriptionInvoice.builder().id("I0").number("VOY-SUB-2026-7").status("ISSUED").build()));
+
+        assertThat(service.raiseRenewal(s, Instant.parse("2026-10-27T01:00:00Z"))).isEmpty();
+        verify(invoiceRepository, never()).save(any());
+    }
+
+    @Test
     void aVoidedRenewalIsRaisedAgainOnTheNextRun() {
         Subscription s = suite(0, BillingCycle.MONTHLY).toBuilder().periodEnd(Instant.parse("2026-11-01T00:00:00Z")).build();
         given(invoiceRepository.existsByTenantIdAndPeriodStartAndStatusIn(eq("T1"), eq(s.getPeriodEnd()), any())).willReturn(false);

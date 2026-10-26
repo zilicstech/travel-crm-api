@@ -405,6 +405,21 @@ class GatewayWebhookServiceTest {
     }
 
     @Test
+    void disputeWonWithNoRecordedTakenButAWalletDebitAlertsAnAdmin() {
+        order(GatewayOrderPurpose.TOPUP);
+        topup(TopupStatus.APPROVED).setCreditEntryId("E1");
+        given(walletService.findEntry("gw-refund:disp_9")).willReturn(Optional.of(
+                WalletEntry.builder().id("D1").amount(new BigDecimal("-300.00")).build()));
+
+        assertThat(service.handle(reversal("payment.dispute.won", "dispute", "disp_9", 30000), "sig"))
+                .isEqualTo(WebhookOutcome.IGNORED);
+
+        verify(notificationService, times(1)).platformAlert(any(), argThat(m -> m.contains("disp_9") && m.contains("T1")
+                && m.contains("300.00") && m.contains("not recorded")));
+        verify(walletService, never()).credit(any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
     void disputeLostMovesNoMoneyAndClosedAlertsOnlyWhenUndecided() {
         order(GatewayOrderPurpose.TOPUP);
         topup(TopupStatus.APPROVED).setCreditEntryId("E1");

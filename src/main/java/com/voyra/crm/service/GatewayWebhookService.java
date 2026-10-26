@@ -249,7 +249,12 @@ public class GatewayWebhookService {
     private WebhookOutcome disputeWon(GatewayOrder order, String disputeId) {
         BigDecimal taken = taken(order, disputeId);
         if (taken == null) {
-            return WebhookOutcome.IGNORED;  // nothing was taken for this dispute
+            // a debit with no recorded amount (pre-deploy dispute, lost commit, or won before created): an admin repays it
+            walletService.findEntry("gw-refund:" + disputeId).ifPresent(debit ->
+                    notificationService.platformAlert("Card dispute won, amount taken not recorded",
+                            "Agency " + topup(order).getTenantId() + " won dispute " + disputeId + " but the amount taken was not recorded (wallet entry INR "
+                                    + debit.getAmount().abs().toPlainString() + "). Credit the agency by hand."));
+            return WebhookOutcome.IGNORED;  // nothing recorded to give back
         }
         TopupRequest topup = topup(order);
         // Checked here, not left to credit()'s throw: a rollback would make the gateway retry a dead wallet forever.
