@@ -61,6 +61,18 @@ class PlatformSupplierCredentialControllerTest {
         verifyNoInteractions(credentialService);
     }
 
+    /** R13: /api/platform/** is SUPER_ADMIN at the filter chain, so a non-admin's invalid body is 403, not 400 field errors. */
+    @Test
+    void anOwnersInvalidBodyIsForbiddenBeforeValidation() throws Exception {
+        for (String role : new String[]{"AGENCY_OWNER", "AGENT", "ACCOUNTANT"}) {
+            mockMvc.perform(put("/api/platform/supplier-credentials").with(user("u").roles(role))
+                            .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                    .andExpect(status().isForbidden())
+                    .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.status").value(403));
+        }
+        verifyNoInteractions(credentialService);
+    }
+
     @Test
     void missingBaseUrlIsABadRequest() throws Exception {
         mockMvc.perform(put("/api/platform/supplier-credentials").with(user("root").roles("SUPER_ADMIN"))
