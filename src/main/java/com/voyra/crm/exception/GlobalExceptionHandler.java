@@ -232,6 +232,7 @@ public class GlobalExceptionHandler {
         log.warn("Tenant write refused - code: {}, path: {}", ex.getCode(), path);
         ApiErrorResponse response = ApiErrorResponse.of(ex.getMessage(), "Write refused", null, ex.getStatus().value(), path);
         response.setCode(ex.getCode());
+        response.setSku(ex.getSku() == null ? null : ex.getSku().name());
         return ResponseEntity.status(ex.getStatus()).body(response);
     }
 

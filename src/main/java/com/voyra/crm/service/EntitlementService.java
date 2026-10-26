@@ -37,6 +37,9 @@ import java.util.stream.Collectors;
 public class EntitlementService {
 
     public static final int SUITE_INCLUDED_SEATS = 5;
+    public static final int LITE_INCLUDED_SEATS = 3;
+    /** CRM Lite: everything except Accounts and GST. */
+    public static final Set<Sku> LITE_SKUS = java.util.Collections.unmodifiableSet(EnumSet.of(Sku.CRM_CORE, Sku.STAFF_SEATS, Sku.REPORTS, Sku.VISA));
     static final Duration CACHE_TTL = Duration.ofMinutes(2);
     public static final Duration TRIAL_LENGTH = Duration.ofDays(14);
 
@@ -145,11 +148,13 @@ public class EntitlementService {
         int extra = s.getSeats() == null ? 0 : s.getSeats();
         Set<Sku> skus = switch (s.getPlan()) {
             case SUITE -> EnumSet.allOf(Sku.class);
+            case LITE -> LITE_SKUS;
             case CUSTOM -> parse(s.getSkus());
             case STARTER -> Set.of();
         };
         int seats = switch (s.getPlan()) {
             case SUITE -> SUITE_INCLUDED_SEATS + extra;
+            case LITE -> LITE_INCLUDED_SEATS + extra;
             case CUSTOM -> skus.contains(Sku.STAFF_SEATS) ? extra : 0;
             case STARTER -> 0;
         };

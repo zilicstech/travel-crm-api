@@ -4,6 +4,8 @@ import com.voyra.crm.cache.AgentCache;
 import com.voyra.crm.dto.AgentCreateRequest;
 import com.voyra.crm.entity.Agent;
 import com.voyra.crm.enums.ServiceType;
+import com.voyra.crm.enums.Sku;
+import com.voyra.crm.exception.TenantWriteRefusedException;
 import com.voyra.crm.enums.SubscriptionPlan;
 import com.voyra.crm.enums.UserType;
 import com.voyra.crm.models.Entitlements;
@@ -18,6 +20,7 @@ import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 
@@ -61,7 +64,7 @@ class AgentSeatLimitTest {
     }
 
     private void seats(int total, long used) {
-        when(entitlementService.resolve("T1")).thenReturn(new Entitlements(SubscriptionPlan.SUITE, null, Set.of(), total, false, null));
+        when(entitlementService.resolve("T1")).thenReturn(new Entitlements(SubscriptionPlan.SUITE, null, java.util.EnumSet.allOf(Sku.class), total, false, null));
         when(agentRepository.countByTenantIdAndIsActiveTrue("T1")).thenReturn(used);
     }
 
@@ -94,10 +97,59 @@ class AgentSeatLimitTest {
 
     @Test
     void zeroSeatsSaysTheAddOnIsNeeded() {
-        when(entitlementService.resolve("T1")).thenReturn(new Entitlements(SubscriptionPlan.STARTER, null, Set.of(), 0, false, null));
+        when(entitlementService.resolve("T1")).thenReturn(new Entitlements(SubscriptionPlan.CUSTOM, null, Set.of(Sku.STAFF_SEATS), 0, false, null));
         assertThatThrownBy(() -> agentService.createAgent(request()))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("Staff logins need the Staff seats add-on — add it in Subscription");
+    }
+
+    /** Agency plans: Basic (Starter) has no agent logins - 402 SKU_REQUIRED STAFF_SEATS, like the interceptor. */
+    @Test
+    void anAgentOnBasicIsRefusedNamingStaffSeats() {
+        when(entitlementService.resolve("T1")).thenReturn(new Entitlements(SubscriptionPlan.STARTER, null, Set.of(), 0, false, null));
+        assertThatThrownBy(() -> agentService.createAgent(request()))
+                .isInstanceOfSatisfying(TenantWriteRefusedException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.PAYMENT_REQUIRED);
+                    assertThat(e.getCode()).isEqualTo("SKU_REQUIRED");
+                    assertThat(e.getSku()).isEqualTo(Sku.STAFF_SEATS);
+                });
+        verify(agentRepository, never()).save(any());
+    }
+
+    /** Accountant logins need Accounts and GST (Premium): CRM Lite has seats but still refuses one. */
+    @Test
+    void anAccountantOnLiteIsRefusedNamingAccountsGst() {
+        when(entitlementService.resolve("T1")).thenReturn(new Entitlements(SubscriptionPlan.LITE, null,
+                EntitlementService.LITE_SKUS, 3, false, null));
+        AgentCreateRequest r = request();
+        r.setUserRole(UserType.ACCOUNTANT);
+        assertThatThrownBy(() -> agentService.createAgent(r))
+                .isInstanceOfSatisfying(TenantWriteRefusedException.class, e -> assertThat(e.getSku()).isEqualTo(Sku.ACCOUNTS_GST));
+        verify(agentRepository, never()).save(any());
+    }
+
+    @Test
+    void anAgentOnLiteIsCreated() {
+        when(entitlementService.resolve("T1")).thenReturn(new Entitlements(SubscriptionPlan.LITE, null,
+                EntitlementService.LITE_SKUS, 3, false, null));
+        when(agentRepository.countByTenantIdAndIsActiveTrue("T1")).thenReturn(0L);
+        agentService.createAgent(request());
+        verify(agentRepository).save(any(Agent.class));
+    }
+
+    @Test
+    void reactivatingAnAccountantOnLiteIsRefusedButDeactivatingIsNot() {
+        Agent agent = Agent.builder().id("A1").tenantId("T1").userRole(UserType.ACCOUNTANT).isActive(false).build();
+        when(agentRepository.findById("A1")).thenReturn(Optional.of(agent));
+        when(entitlementService.resolve("T1")).thenReturn(new Entitlements(SubscriptionPlan.LITE, null,
+                EntitlementService.LITE_SKUS, 3, false, null));
+        assertThatThrownBy(() -> agentService.updateStatus("A1", true))
+                .isInstanceOfSatisfying(TenantWriteRefusedException.class, e -> assertThat(e.getSku()).isEqualTo(Sku.ACCOUNTS_GST));
+        assertThat(agent.getIsActive()).isFalse();
+
+        agent.setIsActive(true);
+        agentService.updateStatus("A1", false);
+        assertThat(agent.getIsActive()).isFalse();
     }
 
     @Test

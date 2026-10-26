@@ -100,6 +100,7 @@ public class SubscriptionService {
         SubscriptionPlan plan = request.getPlan();
         List<String> skus = switch (plan) {
             case SUITE -> Arrays.stream(Sku.values()).map(Enum::name).toList();
+            case LITE -> EntitlementService.LITE_SKUS.stream().map(Enum::name).toList();
             case CUSTOM -> request.getSkus() == null ? List.<String>of()
                     : request.getSkus().stream().distinct().map(Enum::name).toList();
             case STARTER -> List.of();

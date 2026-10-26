@@ -107,13 +107,15 @@ public class SubscriptionBillingService {
 
     // ---- arithmetic
 
-    /** One line per SKU (Suite: the Suite price incl. 5 seats, plus extra seats); money as plain strings so JSONB keeps it exact. */
+    /** One line per SKU (Suite and Lite: the plan price incl. its seats, plus extra seats); money as plain strings so JSONB keeps it exact. */
     public static List<Map<String, Object>> lines(Subscription s, Map<String, BigDecimal> prices) {
         int months = s.getBillingCycle() == BillingCycle.ANNUAL ? ANNUAL_MONTHS_BILLED : 1;
         int seats = s.getSeats() == null ? 0 : s.getSeats();
         List<Map<String, Object>> lines = new ArrayList<>();
-        if (s.getPlan() == SubscriptionPlan.SUITE) {
-            lines.add(line("SUITE", "Agency Suite (" + EntitlementService.SUITE_INCLUDED_SEATS + " staff seats included)", 1, prices, months));
+        if (s.getPlan() == SubscriptionPlan.SUITE || s.getPlan() == SubscriptionPlan.LITE) {
+            lines.add(s.getPlan() == SubscriptionPlan.SUITE
+                    ? line("SUITE", "Agency Suite (" + EntitlementService.SUITE_INCLUDED_SEATS + " staff seats included)", 1, prices, months)
+                    : line("LITE", "Voyra CRM Lite (" + EntitlementService.LITE_INCLUDED_SEATS + " staff seats included)", 1, prices, months));
             if (seats > 0) {
                 lines.add(line(Sku.STAFF_SEATS.name(), "Extra staff seats", seats, prices, months));
             }

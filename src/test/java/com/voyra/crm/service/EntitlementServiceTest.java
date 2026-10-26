@@ -64,6 +64,15 @@ class EntitlementServiceTest {
     }
 
     @Test
+    void liteUnlocksEverythingButAccountsWithThreeSeatsPlusExtras() {
+        Entitlements e = EntitlementService.compute(sub(SubscriptionPlan.LITE, SubscriptionStatus.ACTIVE).seats(2).build(), NOW);
+        assertThat(e.skus()).containsExactly(Sku.CRM_CORE, Sku.STAFF_SEATS, Sku.REPORTS, Sku.VISA);
+        assertThat(e.seats()).isEqualTo(5);
+        assertThat(e.readOnly()).isFalse();
+        assertThat(e.plan()).isEqualTo(SubscriptionPlan.LITE);
+    }
+
+    @Test
     void runningTrialIsUsableAndSaysWhenItEnds() {
         Entitlements e = EntitlementService.compute(sub(SubscriptionPlan.SUITE, SubscriptionStatus.TRIAL)
                 .trialEndsAt(FUTURE).periodEnd(FUTURE).build(), NOW);

@@ -1,6 +1,8 @@
 package com.voyra.crm.security;
 
 import com.voyra.crm.controller.AgencySubscriptionController;
+import com.voyra.crm.controller.ClientController;
+import com.voyra.crm.controller.ClientSubResourceController;
 import com.voyra.crm.controller.InvoiceDocumentController;
 import com.voyra.crm.controller.OwnerAgentController;
 import com.voyra.crm.controller.OwnerDashboardController;
@@ -83,8 +85,8 @@ class ControllerSkuTableContractTest {
     }
 
     /**
-     * Exactly the spec's never-gated paths, plus the owner dashboard (Starter keeps a dashboard) and staff
-     * management (the seat check gates create/reactivate; an owner can always cut a login off).
+     * Exactly the spec's never-gated paths, plus the owner dashboard (Starter keeps a dashboard), staff
+     * management (the seat check gates create/reactivate; an owner can always cut a login off) and client management.
      */
     @Test
     void neverGatedIsExactlyTheSpecList() {
@@ -95,6 +97,8 @@ class ControllerSkuTableContractTest {
         expected.add(OwnerDashboardController.class.getSimpleName());
         expected.add(OwnerAgentController.class.getSimpleName());
         expected.add(AgencySubscriptionController.class.getSimpleName()); // a read-only owner must still see and pay
+        expected.add(ClientController.class.getSimpleName()); // client management is in the free Basic plan
+        expected.add(ClientSubResourceController.class.getSimpleName());
         Set<String> actual = ControllerSkuTable.TABLE.entrySet().stream()
                 .filter(e -> e.getValue() == SkuRule.NEVER_GATED)
                 .map(e -> e.getKey().getSimpleName())

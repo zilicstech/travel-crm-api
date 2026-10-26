@@ -130,6 +130,14 @@ class SubscriptionServiceTest {
     }
 
     @Test
+    void liteStoresItsFourSkusWhateverTheRequestSays() {
+        service.update("T1", update(SubscriptionPlan.LITE, List.of(Sku.ACCOUNTS_GST), 1, BillingCycle.MONTHLY));
+        assertThat(sub.getPlan()).isEqualTo(SubscriptionPlan.LITE);
+        assertThat(sub.getSkus()).containsExactly("CRM_CORE", "STAFF_SEATS", "REPORTS", "VISA");
+        assertThat(sub.getSeats()).isEqualTo(1);
+    }
+
+    @Test
     void updateRejectsNegativeSeats() {
         assertThatThrownBy(() -> service.update("T1", update(SubscriptionPlan.SUITE, List.of(), -1, BillingCycle.MONTHLY)))
                 .isInstanceOf(IllegalArgumentException.class);

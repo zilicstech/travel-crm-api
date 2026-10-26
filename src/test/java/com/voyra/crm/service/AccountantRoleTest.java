@@ -81,7 +81,7 @@ class AccountantRoleTest {
 
         when(passwordEncoder.encode(request.getPassword())).thenReturn("encoded");
         when(entitlementService.resolve("T1")).thenReturn(new com.voyra.crm.models.Entitlements(
-                com.voyra.crm.enums.SubscriptionPlan.SUITE, null, java.util.Set.of(), 5, false, null));
+                com.voyra.crm.enums.SubscriptionPlan.SUITE, null, java.util.EnumSet.allOf(com.voyra.crm.enums.Sku.class), 5, false, null));
 
         agentService.createAgent(request);
 

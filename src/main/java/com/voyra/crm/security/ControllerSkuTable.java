@@ -94,7 +94,7 @@ import static java.util.Map.entry;
  * Every controller class and the SKU it needs (spec §5.2 "Unlocks", §8). Explicit on purpose: a new
  * controller fails ControllerSkuTableContractTest and blueprint-audit.sh until it is added here.
  * Never gated = Starter: auth, public links, reference data, portal (search, platform bookings,
- * wallet), agency profile, owner dashboard, staff management, and the super-admin platform API.
+ * wallet), agency profile, owner dashboard, staff management, client management, and the super-admin platform API.
  */
 public final class ControllerSkuTable {
 
@@ -123,6 +123,9 @@ public final class ControllerSkuTable {
             entry(PlatformAgencySubscriptionController.class, NEVER_GATED),
             entry(OwnerDashboardController.class, NEVER_GATED),
             entry(OwnerAgentController.class, NEVER_GATED),
+            // client management is part of the free Basic plan (agency plans, 2026-10-27); still READ_ONLY on writes
+            entry(ClientController.class, NEVER_GATED),
+            entry(ClientSubResourceController.class, NEVER_GATED),
             entry(PlatformAdminBookingController.class, NEVER_GATED),
             entry(PlatformAdminController.class, NEVER_GATED),
             entry(PlatformDashboardController.class, NEVER_GATED),
@@ -146,8 +149,6 @@ public final class ControllerSkuTable {
             entry(CalendarController.class, CRM_CORE),
             entry(ShiftHandoverController.class, CRM_CORE),
             entry(EscalationController.class, CRM_CORE),
-            entry(ClientController.class, CRM_CORE),
-            entry(ClientSubResourceController.class, CRM_CORE),
             entry(CommunicationLogController.class, CRM_CORE),
             entry(FeedbackController.class, CRM_CORE),
             entry(BookingController.class, CRM_CORE),
