@@ -32,6 +32,7 @@ import com.voyra.crm.exception.BookingRequestException;
 import com.voyra.crm.exception.NotFoundException;
 import com.voyra.crm.exception.ReceivableDueException;
 import com.voyra.crm.exception.SupplierException;
+import com.voyra.crm.exception.SupplierTimeoutException;
 import com.voyra.crm.models.booking.BookRequest;
 import com.voyra.crm.models.booking.BookResult;
 import com.voyra.crm.models.booking.CancelQuote;
@@ -459,6 +460,9 @@ public class PlatformBookingService {
             notificationService.platformAlert("Cancellation of booking " + bookingId + " has no supplier answer",
                     "The supplier cancel call for booking " + bookingId + " failed (" + e.getClass().getSimpleName()
                             + "). The booking stays CANCELLING; check with the supplier and resolve the cancellation.");
+            if (e instanceof SupplierTimeoutException) {
+                return claim.booking(); // accepted-pending: already CANCELLING, a retry would only be refused
+            }
             throw asSupplierException(e);
         }
         if (!result.accepted()) {
@@ -517,7 +521,8 @@ public class PlatformBookingService {
             }
             Map<String, Object> detail = new LinkedHashMap<>();
             detail.put("cancelled", cancelled);
-            detail.put("refund", refund == null ? "NONE" : refund);
+            detail.put("requestedRefund", refund == null ? "NONE" : refund);
+            detail.put("postedRefund", cancelled ? refundOf(refund, b.getDisplayed(), fee) : "NONE");
             detail.put("by", principal.userId());
             detail.put("note", note);
             events.record(bookingId, "RESOLVED", detail);

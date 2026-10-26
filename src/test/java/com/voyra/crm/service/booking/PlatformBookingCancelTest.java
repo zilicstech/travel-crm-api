@@ -288,12 +288,13 @@ class PlatformBookingCancelTest {
         when(provider.cancelQuote("SB-1")).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
         when(provider.cancel("SB-1")).thenThrow(new SupplierTimeoutException("Tripjack cancel timed out", null));
 
-        assertThatThrownBy(() -> service.cancel(ID, "ck-1")).isInstanceOf(SupplierException.class);
+        // accepted-pending: answers normally with the CANCELLING booking, so the agency is not told to retry
+        assertThat(service.cancel(ID, "ck-1").getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
 
         // the supplier may have cancelled: no posting, no second submission, an admin settles it
         assertThat(rows.get(ID).getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
         assertThat(eventTypes()).contains("CANCEL_NO_ANSWER");
-        verify(notificationService).platformAlert(contains(ID), anyString());
+        verify(notificationService, times(1)).platformAlert(contains(ID), anyString());
         verifyNothingPosted();
         assertThat(service.cancel(ID, "ck-1").getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
         verify(provider, times(1)).cancel("SB-1");
@@ -382,7 +383,7 @@ class PlatformBookingCancelTest {
     private void cancellingAfterATimeout() {
         when(provider.cancelQuote("SB-1")).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
         when(provider.cancel("SB-1")).thenThrow(new SupplierTimeoutException("Tripjack cancel timed out", null));
-        assertThatThrownBy(() -> service.cancel(ID, "ck-1")).isInstanceOf(SupplierException.class);
+        service.cancel(ID, "ck-1");
         loginAsPlatformAdmin();
     }
 
@@ -399,6 +400,19 @@ class PlatformBookingCancelTest {
                 "pb-recall:" + ID, REF, ID, ReceivableReason.CANCEL_NET_NEGATIVE);
         verify(platformAuditService).record(eq(PlatformAuditAction.BOOKING_CANCEL_RESOLVE), eq(REF), eq(ID), any());
         assertThat(eventTypes()).contains("RESOLVED");
+    }
+
+    @Test
+    void resolveAuditRecordsTheTypedRefundAndTheCappedOneThatWasPosted() {
+        cancellingAfterATimeout();
+
+        service.resolveCancel(ID, true, new BigDecimal("20000.00"), "Tripjack confirmed by email");
+
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<Map<String, Object>> detail = org.mockito.ArgumentCaptor.forClass(Map.class);
+        verify(platformAuditService).record(eq(PlatformAuditAction.BOOKING_CANCEL_RESOLVE), eq(REF), eq(ID), detail.capture());
+        assertThat(detail.getValue()).containsEntry("requestedRefund", new BigDecimal("20000.00"))
+                .containsEntry("postedRefund", new BigDecimal("4500.00")); // capped at displayed
     }
 
     @Test
