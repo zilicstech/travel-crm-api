@@ -176,6 +176,40 @@ class BookingServiceTest {
         org.mockito.Mockito.verify(bookingRepository, org.mockito.Mockito.never()).save(org.mockito.ArgumentMatchers.any());
     }
 
+    /**
+     * R21: an owner logging a booking on an unassigned service for a named agent - the sync assigns the service to that
+     * agent, and the booking's service-agent snapshot follows in the same transaction (it was left blank).
+     */
+    @Test
+    void aBookingOnAnUnassignedServiceSnapshotsTheAgentTheServiceIsGivenTo() {
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+                new CustomUserPrincipal("O1", "dana", UserType.AGENCY_OWNER, "T1"), null, java.util.List.of()));
+        com.voyra.crm.entity.Agent vikram = com.voyra.crm.entity.Agent.builder().id("A2").name("Vikram Rao").build();
+        when(agentRepository.findByIdAndTenantId("A2", "T1")).thenReturn(Optional.of(vikram));
+        when(clientRepository.findById("C1")).thenReturn(Optional.of(com.voyra.crm.entity.Client.builder().id("C1").name("Asha").build()));
+        com.voyra.crm.entity.LeadService service = com.voyra.crm.entity.LeadService.builder().id("S1").leadId("L1")
+                .type(com.voyra.crm.enums.ServiceType.FLIGHT).build();
+        when(leadServiceRepository.findById("S1")).thenReturn(Optional.of(service));
+        org.mockito.Mockito.doAnswer(i -> {
+            service.setAssignedAgentId(i.getArgument(1));
+            service.setAssignedAgentName(i.getArgument(2));
+            return null;
+        }).when(serviceBookingStatusSync).onBookingLogged("S1", "A2", "Vikram Rao");
+        org.mockito.ArgumentCaptor<Booking> saved = org.mockito.ArgumentCaptor.forClass(Booking.class);
+        com.voyra.crm.dto.BookingCreateRequest request = new com.voyra.crm.dto.BookingCreateRequest();
+        request.setClientId("C1");
+        request.setAgentId("A2");
+        request.setServiceId("S1");
+        request.setType(com.voyra.crm.enums.BookingType.FLIGHT);
+
+        bookingService.createBooking(request);
+
+        org.mockito.Mockito.verify(bookingRepository, org.mockito.Mockito.atLeastOnce()).save(saved.capture());
+        Booking last = saved.getValue();
+        assertThat(last.getServiceAgentId()).isEqualTo("A2");
+        assertThat(last.getServiceAgentName()).isEqualTo("Vikram Rao");
+    }
+
     /** An owner booking "for" an agent must name one who handles the type, as assigning a service does. */
     @Test
     void anOwnerCannotPutAFlightOnAnAgentWhoDoesNotHandleFlights() {

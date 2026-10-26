@@ -259,6 +259,12 @@ public class BookingService {
             leadTimelineService.record(service.getLeadId(), service.getId(), LeadTimelineEventType.BOOKING_LOGGED,
                     labelOrType(booking) + " booking logged" + (booking.getPnr() != null ? " (" + booking.getPnr() + ")" : ""));
             serviceBookingStatusSync.onBookingLogged(service.getId(), owner.id(), owner.name());
+            // logging on an unassigned service gives it to the booking's agent: the snapshot follows (same managed entity)
+            if (booking.getServiceAgentId() == null && service.getAssignedAgentId() != null) {
+                booking.setServiceAgentId(service.getAssignedAgentId());
+                booking.setServiceAgentName(service.getAssignedAgentName());
+                bookingRepository.save(booking);
+            }
         }
 
         log.info("Booking created: bookingId={}, agentId={}, serviceId={}", booking.getId(), owner.id(), request.getServiceId());
