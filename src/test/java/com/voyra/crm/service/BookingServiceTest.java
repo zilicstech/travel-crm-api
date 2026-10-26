@@ -913,6 +913,36 @@ class BookingServiceTest {
                 .hasMessage("A cancelled booking can't be reopened - create a new booking instead");
     }
 
+    /**
+     * R11 (regression C, invariant "a voucher-priced booking's price is the sum of its vouchers"): a booking created through
+     * the API with a price takes its vouchers' money once it has one - the typed price is replaced, never added to.
+     */
+    @Test
+    void aBookingCreatedWithAPriceIsPricedBySumOfItsVouchers() {
+        Booking booking = pendingFlight(null, "5000.00"); // created with sell 5000 / net 4000, no vouchers
+        booking.setVendorId("V1");
+        org.mockito.Mockito.lenient().when(supplierInvoiceService.draftForVoucher(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(com.voyra.crm.dto.SupplierInvoiceResponse.builder().id("SI1").build());
+        com.voyra.crm.entity.BookingDocument first = com.voyra.crm.entity.BookingDocument.builder().id("D1").bookingId("B1")
+                .referenceNumber("PNR1").netCost(new BigDecimal("4000")).markupMode(MarkupMode.FLAT).markupValue(new BigDecimal("1000")).build();
+
+        bookingService.applyVoucher(booking, first, null, false);
+
+        assertThat(booking.getSellingPrice()).isEqualByComparingTo("5000");
+        assertThat(booking.getNetCost()).isEqualByComparingTo("4000");
+        assertThat(booking.getProfit()).isEqualByComparingTo("1000");
+
+        com.voyra.crm.entity.BookingDocument second = com.voyra.crm.entity.BookingDocument.builder().id("D2").bookingId("B1")
+                .referenceNumber("PNR2").netCost(new BigDecimal("3000")).markupMode(MarkupMode.FLAT).markupValue(new BigDecimal("500")).build();
+        when(bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc("B1")).thenReturn(List.of(first, second));
+
+        bookingService.applyVoucher(booking, second, null, false);
+
+        assertThat(booking.getSellingPrice()).isEqualByComparingTo("8500");
+        assertThat(booking.getNetCost()).isEqualByComparingTo("7000");
+        assertThat(booking.getProfit()).isEqualByComparingTo("1500");
+    }
+
     @Test
     void secondVoucherAddsUpAndAlertsAccountsOnAConfirmedBooking() {
         Booking booking = pendingFlight("PNR1", "5000.00");
@@ -921,7 +951,13 @@ class BookingServiceTest {
         org.mockito.Mockito.lenient().when(supplierInvoiceService.draftForVoucher(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
                 .thenReturn(com.voyra.crm.dto.SupplierInvoiceResponse.builder().id("SI9").build());
 
-        bookingService.applyVoucher(booking, voucher("1000", "20", "HTL-9"), null, false);
+        // the booking's 4000 / 5000 is its first voucher's (R11: totals are the sum of the live vouchers)
+        com.voyra.crm.entity.BookingDocument firstVoucher = com.voyra.crm.entity.BookingDocument.builder().id("D0").bookingId("B1")
+                .netCost(new BigDecimal("4000.00")).sellingPrice(new BigDecimal("5000.00")).build();
+        com.voyra.crm.entity.BookingDocument second = voucher("1000", "20", "HTL-9");
+        when(bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc("B1")).thenReturn(List.of(firstVoucher, second));
+
+        bookingService.applyVoucher(booking, second, null, false);
 
         assertThat(booking.getNetCost()).isEqualByComparingTo("5000");
         assertThat(booking.getSellingPrice()).isEqualByComparingTo("6200");

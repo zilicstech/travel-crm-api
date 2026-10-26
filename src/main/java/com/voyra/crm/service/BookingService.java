@@ -853,8 +853,9 @@ public class BookingService {
             throw new IllegalArgumentException("Pick the supplier of this voucher");
         }
         // One supplier per booking: beside other vouchers a voucher is with the booking's supplier.
-        boolean others = bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc(booking.getId()).stream()
-                .anyMatch(d -> !java.util.Objects.equals(d.getId(), voucher.getId()));
+        List<BookingDocument> otherVouchers = bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc(booking.getId()).stream()
+                .filter(d -> !java.util.Objects.equals(d.getId(), voucher.getId())).toList();
+        boolean others = !otherVouchers.isEmpty();
         if (others && !blank(booking.getVendorId()) && !booking.getVendorId().equals(vendorId)) {
             throw new IllegalArgumentException("This booking is with " + booking.getSupplier()
                     + " - every voucher on a booking is with its one supplier");
@@ -875,9 +876,10 @@ public class BookingService {
         if (!others && !blank(vendorId) && !vendorId.equals(booking.getVendorId())) {
             setVendor(booking, vendorId);
         }
-        booking.setNetCost(booking.getNetCost().add(cost));
-        booking.setSellingPrice(booking.getSellingPrice().add(voucher.getSellingPrice()));
-        booking.setCommission(nzMoney(booking.getCommission()).add(nzMoney(voucher.getCommissionInr())));
+        // A voucher-priced booking is the sum of its live vouchers: a price typed on create (API only) is replaced, never added to.
+        booking.setNetCost(otherVouchers.stream().map(d -> nzMoney(d.getNetCost())).reduce(cost, BigDecimal::add));
+        booking.setSellingPrice(otherVouchers.stream().map(d -> nzMoney(d.getSellingPrice())).reduce(voucher.getSellingPrice(), BigDecimal::add));
+        booking.setCommission(otherVouchers.stream().map(d -> nzMoney(d.getCommissionInr())).reduce(nzMoney(voucher.getCommissionInr()), BigDecimal::add));
         booking.setProfit(computeProfit(booking.getSellingPrice(), booking.getNetCost(), booking.getCommission()));
         if (voucher.getMarkupMode() != null) {
             booking.setMarkupMode(voucher.getMarkupMode());
