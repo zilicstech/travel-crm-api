@@ -188,6 +188,21 @@ class BookingDocumentServiceTest {
     }
 
     @Test
+    void anAddedVoucherThatDoesNotLowerThePriceIsAcceptedEvenWhenInvoicedExceedsIt() {
+        signIn();
+        when(bookingService.lockAccessibleBooking("B1")).thenReturn(booking);
+        // e.g. cancellation charges invoiced above the vouchers' total
+        when(bookingService.invoicedPrice("B1")).thenReturn(new BigDecimal("5000"));
+        booking.setSellingPrice(new BigDecimal("4400"));
+        org.mockito.Mockito.doAnswer(i -> { booking.setSellingPrice(new BigDecimal("4400")); return null; })
+                .when(bookingService).applyVoucher(any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
+
+        service.addDocument("B1", edit("0", "0"));
+
+        verify(bookingDocumentRepository).save(any());
+    }
+
+    @Test
     void aVoucherBoughtInAedIsCostedInBaseAndKeepsWhatWasTyped() {
         stub();
         when(bookingService.invoicedPrice("B1")).thenReturn(BigDecimal.ZERO);
