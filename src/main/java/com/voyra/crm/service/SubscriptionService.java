@@ -3,6 +3,8 @@ package com.voyra.crm.service;
 import com.voyra.crm.dto.AgencySubscriptionResponse;
 import com.voyra.crm.dto.SubscriptionAdminResponse;
 import com.voyra.crm.dto.SubscriptionUpdateRequest;
+import com.voyra.crm.dto.SubscriptionUpgradeRequest;
+import com.voyra.crm.dto.SubscriptionUpgradeRequestResponse;
 import com.voyra.crm.dto.SubscriptionWaiveRequest;
 import com.voyra.crm.dto.TrialExtendRequest;
 import com.voyra.crm.entity.Subscription;
@@ -49,6 +51,7 @@ public class SubscriptionService {
     private final TenantRepository tenantRepository;
     private final EntitlementService entitlementService;
     private final PlatformAuditService auditService;
+    private final NotificationService notificationService;
 
     @Transactional(readOnly = true)
     public SubscriptionAdminResponse adminView(String tenantId) {
@@ -84,6 +87,40 @@ public class SubscriptionService {
                 .invoices(invoiceRepository.findByTenantIdAndStatusNotOrderByCreatedAtDesc(tenantId, "DRAFT").stream()
                         .map(SubscriptionBillingService::toResponse).toList())
                 .build();
+    }
+
+    /**
+     * The owner asks Voyra for a higher plan (STARTER < LITE = CUSTOM < SUITE); the platform admins get an alert and set
+     * the plan themselves. Not idempotent: asking again raises another alert.
+     */
+    @Transactional(readOnly = true)
+    public SubscriptionUpgradeRequestResponse requestUpgrade(SubscriptionUpgradeRequest request) {
+        String tenantId = SecurityContextUtil.getCurrentUserOrThrow().tenantId();
+        if (tenantId == null) {
+            throw new AccessDeniedException("No tenant context for current user");
+        }
+        SubscriptionPlan current = entitlementService.resolve(tenantId).plan();
+        SubscriptionPlan wanted = request.getPlan();
+        if (wanted != SubscriptionPlan.LITE && wanted != SubscriptionPlan.SUITE) {
+            throw new IllegalArgumentException("Choose LITE or SUITE");
+        }
+        if (rank(wanted) <= rank(current)) {
+            throw new IllegalArgumentException("Your plan already includes everything in " + wanted);
+        }
+        String agency = tenantRepository.findById(tenantId).map(com.voyra.crm.entity.Tenant::getAgencyName).orElse(tenantId);
+        String note = request.getNote() == null || request.getNote().isBlank() ? "(none)" : request.getNote().trim();
+        notificationService.platformAlert("Upgrade request: " + agency + " wants " + wanted,
+                "Agency: " + agency + " (" + tenantId + ")\nCurrent plan: " + current + "\nRequested plan: " + wanted
+                        + "\nNote: " + note + "\n\nSet the plan in Platform > Agencies > Subscription.");
+        return new SubscriptionUpgradeRequestResponse(true);
+    }
+
+    private static int rank(SubscriptionPlan plan) {
+        return switch (plan) {
+            case STARTER -> 0;
+            case LITE, CUSTOM -> 1;
+            case SUITE -> 2;
+        };
     }
 
     /** Plan, SKUs, seats and cycle. A waiver is a separate switch and stays as it is. */

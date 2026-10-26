@@ -97,6 +97,23 @@ class PlatformAgencySubscriptionControllerTest {
     }
 
     @Test
+    void onlyTheOwnerRequestsAnUpgradeWithAValidBody() throws Exception {
+        given(service.requestUpgrade(any())).willReturn(new com.voyra.crm.dto.SubscriptionUpgradeRequestResponse(true));
+        mockMvc.perform(post("/api/agency/subscription/upgrade-request").with(as(UserType.AGENCY_OWNER))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"plan\":\"LITE\",\"note\":\"Soon please\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.requested").value(true));
+        mockMvc.perform(post("/api/agency/subscription/upgrade-request").with(as(UserType.AGENCY_OWNER))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"note\":\"no plan\"}"))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(post("/api/agency/subscription/upgrade-request").with(as(UserType.AGENCY_OWNER))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"plan\":\"SUITE\",\"note\":\"" + "x".repeat(501) + "\"}"))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(post("/api/agency/subscription/upgrade-request").with(as(UserType.AGENT))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"plan\":\"LITE\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     void ownerReadsTheirOwnSubscriptionButAgentsCannot() throws Exception {
         mockMvc.perform(get("/api/agency/subscription").with(as(UserType.AGENCY_OWNER))).andExpect(status().isOk());
         mockMvc.perform(get("/api/agency/subscription").with(as(UserType.AGENT))).andExpect(status().isForbidden());
