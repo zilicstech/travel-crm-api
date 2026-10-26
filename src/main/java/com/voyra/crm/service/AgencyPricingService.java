@@ -32,8 +32,9 @@ import java.util.Optional;
 import java.util.Set;
 
 /**
- * Per-agency discount and commission rates. A worst-case margin guard over the reference fare
- * basket decides whether a second platform admin must approve a rate before it can take effect.
+ * Per-agency discount and commission rates. Any platform admin sets a rate and it is approved at once
+ * by them; the worst-case margin over the reference fare basket is stored and audited, so the audit log
+ * shows who set a loss-making rate.
  */
 @Service
 @RequiredArgsConstructor
@@ -68,7 +69,6 @@ public class AgencyPricingService {
                 .build()).toList();
         return PricingPreviewResponse.builder()
                 .worstCaseNetPer10k(worst)
-                .requiresSecondApproval(needsSecondApproval(worst, allowCommissionAboveEarned))
                 .basketLines(lines)
                 .build();
     }
@@ -91,7 +91,6 @@ public class AgencyPricingService {
         BigDecimal c = request.getCommissionPct().setScale(2, RoundingMode.HALF_UP);
         BigDecimal worst = PricingMath.worstCaseNetPer10k(settings.referenceFareBasket(request.getProduct()), d, c,
                 settings.commissionEstimatePct(), settings.discountBase(), request.isAllowCommissionAboveEarned());
-        boolean second = needsSecondApproval(worst, request.isAllowCommissionAboveEarned());
         String actor = SecurityContextUtil.getCurrentUserOrThrow().userId();
         AgencyPricing saved = repository.save(AgencyPricing.builder()
                 .id(UniqueIdResolver.resolve(repository::existsById))
@@ -102,11 +101,11 @@ public class AgencyPricingService {
                 .allowCommissionAboveEarned(request.isAllowCommissionAboveEarned())
                 .effectiveFrom(from)
                 .worstCaseNetPer10k(worst)
-                .requiresSecondApproval(second)
+                .requiresSecondApproval(false)
                 .createdBy(actor)
                 .createdAt(now)
-                .approvedBy(second ? null : actor)
-                .approvedAt(second ? null : now)
+                .approvedBy(actor)
+                .approvedAt(now)
                 .build());
         Map<String, Object> detail = new HashMap<>();
         detail.put("tenantId", tenantId);
@@ -116,11 +115,13 @@ public class AgencyPricingService {
         detail.put("allowCommissionAboveEarned", saved.isAllowCommissionAboveEarned());
         detail.put("effectiveFrom", from.toString());
         detail.put("worstCaseNetPer10k", worst);
-        detail.put("requiresSecondApproval", second);
+        detail.put("lossMaking", worst.signum() < 0);
+        detail.put("createdBy", actor);
         auditService.record(PlatformAuditAction.PRICING_CREATE, ENTITY_TYPE, saved.getId(), detail);
         return toResponse(saved, isInForce(saved));
     }
 
+    /** For rows created before rates were approved at once that are still pending; any platform admin may approve. */
     @Transactional
     public AgencyPricingResponse approve(String tenantId, String pricingId) {
         AgencyPricing row = repository.findByIdForUpdate(pricingId)
@@ -133,9 +134,6 @@ public class AgencyPricingService {
             throw new IllegalStateException("This rate is already approved");
         }
         String actor = SecurityContextUtil.getCurrentUserOrThrow().userId();
-        if (actor.equals(row.getCreatedBy())) {
-            throw new IllegalStateException("A different platform admin must approve this rate");
-        }
         row.setApprovedBy(actor);
         row.setApprovedAt(Instant.now());
         AgencyPricing saved = repository.save(row);
@@ -216,10 +214,6 @@ public class AgencyPricingService {
     private boolean isInForce(AgencyPricing row) {
         return resolve(row.getTenantId(), row.getProduct(), Instant.now())
                 .map(r -> r.getId().equals(row.getId())).orElse(false);
-    }
-
-    private static boolean needsSecondApproval(BigDecimal worstCaseNetPer10k, boolean allowCommissionAboveEarned) {
-        return worstCaseNetPer10k.signum() < 0 || allowCommissionAboveEarned;
     }
 
     private void requireAgency(String tenantId) {

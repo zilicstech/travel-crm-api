@@ -78,7 +78,7 @@ class PlatformAgencyPricingControllerTest {
         mockMvc.perform(get(BASE + "/preview").param("product", "FLIGHT").param("discountPct", "10").param("commissionPct", "4")
                         .with(user("a").roles("SUPER_ADMIN")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.requiresSecondApproval").value(true))
+                .andExpect(jsonPath("$.requiresSecondApproval").doesNotExist())
                 .andExpect(jsonPath("$.worstCaseNetPer10k").value(-951.11))
                 .andExpect(jsonPath("$.basketLines.length()").value(3));
     }
@@ -98,9 +98,11 @@ class PlatformAgencyPricingControllerTest {
         mockMvc.perform(post(BASE).with(admin("U1")).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"product\":\"FLIGHT\",\"discountPct\":10,\"commissionPct\":4,\"effectiveFrom\":\"2099-01-01T00:00:00Z\"}"))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.requiresSecondApproval").value(true))
+                .andExpect(jsonPath("$.worstCaseNetPer10k").value(-951.11))
+                .andExpect(jsonPath("$.requiresSecondApproval").value(false))
                 .andExpect(jsonPath("$.createdBy").value("U1"))
-                .andExpect(jsonPath("$.approvedAt").doesNotExist());
+                .andExpect(jsonPath("$.approvedBy").value("U1"))
+                .andExpect(jsonPath("$.approvedAt").exists());
         mockMvc.perform(post(BASE).with(admin("U1")).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"product\":\"FLIGHT\",\"discountPct\":101,\"commissionPct\":0,\"effectiveFrom\":\"2099-01-01T00:00:00Z\"}"))
                 .andExpect(status().isBadRequest());
@@ -113,10 +115,10 @@ class PlatformAgencyPricingControllerTest {
                 .worstCaseNetPer10k(new BigDecimal("-951.11")).requiresSecondApproval(true)
                 .createdBy("U1").createdAt(Instant.now()).build();
         given(repository.findByIdForUpdate("P1")).willReturn(Optional.of(pending));
-        mockMvc.perform(post(BASE + "/P1/approve").with(admin("U1"))).andExpect(status().isConflict());
-        mockMvc.perform(post(BASE + "/P1/approve").with(admin("U2")))
+        // an old pending row: its creator may approve it now
+        mockMvc.perform(post(BASE + "/P1/approve").with(admin("U1")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.approvedBy").value("U2"));
+                .andExpect(jsonPath("$.approvedBy").value("U1"));
     }
 
     @Test

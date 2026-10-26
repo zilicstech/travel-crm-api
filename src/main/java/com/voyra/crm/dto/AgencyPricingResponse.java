@@ -37,7 +37,7 @@ public class AgencyPricingResponse {
     @Schema(description = "Lowest Voyra net per 10,000 of gross across the reference basket", example = "-251.11")
     private BigDecimal worstCaseNetPer10k;
 
-    @Schema(example = "true")
+    @Schema(description = "True only on rates created before rates were approved at once that waited for a second admin", example = "false")
     private boolean requiresSecondApproval;
 
     @Schema(description = "Platform admin user id", example = "u-1")

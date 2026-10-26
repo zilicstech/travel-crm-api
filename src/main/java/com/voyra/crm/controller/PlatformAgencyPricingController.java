@@ -50,14 +50,14 @@ public class PlatformAgencyPricingController {
     }
 
     @PostMapping
-    @Operation(summary = "Add a rate; loss-making rates wait for a second admin")
+    @Operation(summary = "Add a rate; it is approved at once by the admin who adds it and audited")
     public ResponseEntity<AgencyPricingResponse> create(@PathVariable String id,
                                                         @Valid @RequestBody AgencyPricingCreateRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(service.create(id, request));
     }
 
     @PostMapping("/{pricingId}/approve")
-    @Operation(summary = "Approve a rate as a second platform admin")
+    @Operation(summary = "Approve a pending rate created before rates were approved at once")
     public ResponseEntity<AgencyPricingResponse> approve(@PathVariable String id, @PathVariable String pricingId) {
         return ResponseEntity.ok(service.approve(id, pricingId));
     }

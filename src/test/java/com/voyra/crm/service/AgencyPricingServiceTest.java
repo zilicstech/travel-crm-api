@@ -17,6 +17,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -27,6 +28,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -136,32 +138,43 @@ class AgencyPricingServiceTest {
         verify(auditService).record(eq(PlatformAuditAction.PRICING_CREATE), eq("AGENCY_PRICING"), anyString(), anyMap());
     }
 
+    /** Owner ruling: no second approver for rates; the audit log carries who set a loss-making rate and its figures. */
     @Test
-    void createLeavesALossMakingRowUnapproved() {
+    @SuppressWarnings("unchecked")
+    void createApprovesALossMakingRowAtOnceAndAuditsIt() {
         AgencyPricingResponse r = service.create(T, request("10", "4", Instant.now()));
         assertThat(r.getWorstCaseNetPer10k()).isNegative();
-        assertThat(r.isRequiresSecondApproval()).isTrue();
-        assertThat(r.getApprovedAt()).isNull();
-        assertThat(r.getApprovedBy()).isNull();
+        assertThat(r.isRequiresSecondApproval()).isFalse();
+        assertThat(r.getApprovedAt()).isNotNull().isEqualTo(r.getCreatedAt());
+        assertThat(r.getApprovedBy()).isEqualTo("U1").isEqualTo(r.getCreatedBy());
+        ArgumentCaptor<Map<String, Object>> detail = ArgumentCaptor.forClass(Map.class);
+        verify(auditService).record(eq(PlatformAuditAction.PRICING_CREATE), eq("AGENCY_PRICING"), eq(r.getId()), detail.capture());
+        assertThat(detail.getValue()).containsEntry("lossMaking", true).containsEntry("createdBy", "U1")
+                .containsEntry("discountPct", new BigDecimal("10.00")).containsEntry("commissionPct", new BigDecimal("4.00"))
+                .containsEntry("allowCommissionAboveEarned", false).containsEntry("worstCaseNetPer10k", r.getWorstCaseNetPer10k());
     }
 
     @Test
-    void createNeedsSecondApprovalWhenCommissionMayExceedEarned() {
+    @SuppressWarnings("unchecked")
+    void createApprovesAtOnceWhenCommissionMayExceedEarned() {
         AgencyPricingCreateRequest req = request("0", "0", Instant.now());
         req.setAllowCommissionAboveEarned(true);
         AgencyPricingResponse r = service.create(T, req);
         assertThat(r.getWorstCaseNetPer10k()).isNotNegative();
-        assertThat(r.isRequiresSecondApproval()).isTrue();
-        assertThat(r.getApprovedAt()).isNull();
+        assertThat(r.isRequiresSecondApproval()).isFalse();
+        assertThat(r.getApprovedBy()).isEqualTo("U1");
+        ArgumentCaptor<Map<String, Object>> detail = ArgumentCaptor.forClass(Map.class);
+        verify(auditService).record(eq(PlatformAuditAction.PRICING_CREATE), eq("AGENCY_PRICING"), anyString(), detail.capture());
+        assertThat(detail.getValue()).containsEntry("lossMaking", false).containsEntry("allowCommissionAboveEarned", true);
     }
 
     @Test
-    void approveNeedsADifferentAdmin() {
+    void theCreatorMayApproveAnOldPendingRow() {
         when(repository.findByIdForUpdate("P1")).thenReturn(Optional.of(row("P1", Instant.now(), false)));
-        assertThatThrownBy(() -> service.approve(T, "P1"))
-                .isInstanceOf(IllegalStateException.class).hasMessage("A different platform admin must approve this rate");
-        verify(repository, never()).save(any());
-        verify(auditService, never()).record(any(), any(), any(), any());
+        AgencyPricingResponse r = service.approve(T, "P1");
+        assertThat(r.getApprovedBy()).isEqualTo("U1").isEqualTo(r.getCreatedBy());
+        assertThat(r.getApprovedAt()).isNotNull();
+        verify(auditService).record(eq(PlatformAuditAction.PRICING_APPROVE), eq("AGENCY_PRICING"), eq("P1"), anyMap());
     }
 
     @Test
@@ -243,7 +256,6 @@ class AgencyPricingServiceTest {
     void previewFlagsALossMakingRate() {
         PricingPreviewResponse p = service.preview(T, PricingProduct.FLIGHT, new BigDecimal("3"), new BigDecimal("4"), false);
         assertThat(p.getWorstCaseNetPer10k()).isEqualByComparingTo("-251.11");
-        assertThat(p.isRequiresSecondApproval()).isTrue();
         assertThat(p.getBasketLines()).hasSize(3);
         assertThat(p.getBasketLines().get(2).getVoyraNet()).isEqualByComparingTo("-1130.00");
         assertThat(p.getBasketLines().get(2).getDisplayed()).isEqualByComparingTo("43650.00");
@@ -314,10 +326,7 @@ class AgencyPricingServiceTest {
         verify(settings, never()).referenceFareBasket(PricingProduct.FLIGHT);
     }
 
-    /**
-     * R2: pricing keeps the slice 1 rule (approver differs from the requester). The independence chain is only for the
-     * live switch - the seeded admin creates every admin, so the chain would make its loss-making rates unapprovable.
-     */
+    /** The independence chain is only for the live switch: pricing approval has no two-admin rule. */
     @Test
     void anAdminTheRequesterCreatedMayApproveTheRequestersRate() {
         AgencyPricing pending = row("P1", Instant.now(), false);
