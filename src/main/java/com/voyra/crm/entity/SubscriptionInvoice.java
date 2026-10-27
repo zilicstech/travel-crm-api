@@ -1,7 +1,10 @@
 package com.voyra.crm.entity;
 
+import com.voyra.crm.enums.SubscriptionPlan;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import lombok.AllArgsConstructor;
@@ -102,6 +105,11 @@ public class SubscriptionInvoice {
     /** Gateway payment id or bank reference. */
     @Column(name = "paid_ref", length = 100)
     private String paidRef;
+
+    /** Set on an owner's upgrade invoice: paying it moves the agency to this plan (LITE or SUITE). */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "target_plan", length = 10)
+    private SubscriptionPlan targetPlan;
 
     @Column(name = "pdf_key", length = 500)
     private String pdfKey;

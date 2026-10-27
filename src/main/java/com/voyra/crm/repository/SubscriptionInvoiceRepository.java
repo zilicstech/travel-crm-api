@@ -32,6 +32,9 @@ public interface SubscriptionInvoiceRepository extends JpaRepository<Subscriptio
 
     Optional<SubscriptionInvoice> findFirstByTenantIdAndStatusOrderByDueAtAsc(String tenantId, String status);
 
+    /** Upgrade invoices left unpaid past their due date (the lifecycle job voids them). */
+    List<SubscriptionInvoice> findByTenantIdAndStatusAndTargetPlanIsNotNullAndDueAtLessThanEqual(String tenantId, String status, Instant dueAt);
+
     /** Only the key: a full save here could overwrite a settlement that committed after the invoice was read. */
     @Modifying
     @Query("update SubscriptionInvoice i set i.pdfKey = :key where i.id = :id")

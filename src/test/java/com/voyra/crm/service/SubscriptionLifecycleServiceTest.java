@@ -108,7 +108,8 @@ class SubscriptionLifecycleServiceTest {
         service.processTenant("T1", NOW);
 
         assertThat(s.getStatus()).isEqualTo(SubscriptionStatus.ACTIVE);
-        verifyNoInteractions(billingService, entitlementService, notificationService);
+        verify(billingService, never()).raiseRenewal(any(), any());  // an abandoned upgrade may lapse, nothing is billed
+        verifyNoInteractions(entitlementService, notificationService);
         verify(subscriptionRepository, never()).save(any());
     }
 
@@ -181,7 +182,8 @@ class SubscriptionLifecycleServiceTest {
         service.processTenant("T1", NOW);
 
         assertThat(s.getStatus()).isEqualTo(SubscriptionStatus.READ_ONLY);
-        verifyNoInteractions(billingService, notificationService);
+        verify(billingService, never()).raiseRenewal(any(), any());  // an abandoned upgrade may lapse, nothing is billed
+        verifyNoInteractions(notificationService);
     }
 
     @Test
@@ -247,7 +249,8 @@ class SubscriptionLifecycleServiceTest {
 
         assertThat(service.processTenant("T1", NOW)).isNull();
 
-        verifyNoInteractions(billingService, notificationService, entitlementService);
+        verify(billingService, never()).raiseRenewal(any(), any());  // an abandoned upgrade may lapse, nothing is billed
+        verifyNoInteractions(notificationService, entitlementService);
         verify(subscriptionRepository, never()).save(s);
     }
 }

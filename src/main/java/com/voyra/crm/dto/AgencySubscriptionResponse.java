@@ -8,8 +8,10 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Builder;
 import lombok.Data;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 @Data
@@ -55,4 +57,7 @@ public class AgencySubscriptionResponse {
 
     @Schema(description = "Issued, paid and void invoices, newest first")
     private List<SubscriptionInvoiceResponse> invoices;
+
+    @Schema(description = "Monthly price before GST of each plan the owner can upgrade to: LITE and SUITE")
+    private Map<String, BigDecimal> planPrices;
 }

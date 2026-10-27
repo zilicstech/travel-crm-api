@@ -4,7 +4,6 @@ import com.voyra.crm.dto.AgencySubscriptionResponse;
 import com.voyra.crm.dto.SubscriptionInvoiceResponse;
 import com.voyra.crm.dto.SubscriptionPaymentResponse;
 import com.voyra.crm.dto.SubscriptionUpgradeRequest;
-import com.voyra.crm.dto.SubscriptionUpgradeRequestResponse;
 import com.voyra.crm.security.SecurityContextUtil;
 import com.voyra.crm.service.SubscriptionBillingService;
 import com.voyra.crm.service.SubscriptionPaymentService;
@@ -46,12 +45,13 @@ public class AgencySubscriptionController {
         return ResponseEntity.ok(service.agencyView());
     }
 
-    @PostMapping("/upgrade-request")
-    @Operation(summary = "Ask Voyra for a higher plan",
-            description = "LITE or SUITE, higher than the current plan (STARTER < LITE = CUSTOM < SUITE), else 400. "
-                    + "Voyra's admins are alerted and set the plan; nothing is charged here. Each call raises one alert.")
-    public ResponseEntity<SubscriptionUpgradeRequestResponse> requestUpgrade(@Valid @RequestBody SubscriptionUpgradeRequest request) {
-        return ResponseEntity.ok(service.requestUpgrade(request));
+    @PostMapping("/upgrade")
+    @Operation(summary = "Upgrade to a higher plan: raise its invoice to pay now",
+            description = "LITE or SUITE, higher than the current plan (STARTER < LITE = CUSTOM < SUITE), else 400. Returns the "
+                    + "ISSUED invoice; pay it with /invoices/{id}/pay. The plan switches only when it is paid. The same plan again "
+                    + "returns the open upgrade invoice; another plan replaces it. 409 while a renewal invoice is unpaid.")
+    public ResponseEntity<SubscriptionInvoiceResponse> upgrade(@Valid @RequestBody SubscriptionUpgradeRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(service.upgrade(request.getPlan()));
     }
 
     @PostMapping("/invoices/{id}/pay")

@@ -97,18 +97,16 @@ class PlatformAgencySubscriptionControllerTest {
     }
 
     @Test
-    void onlyTheOwnerRequestsAnUpgradeWithAValidBody() throws Exception {
-        given(service.requestUpgrade(any())).willReturn(new com.voyra.crm.dto.SubscriptionUpgradeRequestResponse(true));
-        mockMvc.perform(post("/api/agency/subscription/upgrade-request").with(as(UserType.AGENCY_OWNER))
-                        .contentType(MediaType.APPLICATION_JSON).content("{\"plan\":\"LITE\",\"note\":\"Soon please\"}"))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.requested").value(true));
-        mockMvc.perform(post("/api/agency/subscription/upgrade-request").with(as(UserType.AGENCY_OWNER))
-                        .contentType(MediaType.APPLICATION_JSON).content("{\"note\":\"no plan\"}"))
+    void theOwnerUpgradesAndGetsTheInvoiceToPay() throws Exception {
+        given(service.upgrade(com.voyra.crm.enums.SubscriptionPlan.LITE)).willReturn(SubscriptionInvoiceResponse.builder()
+                .id("I9").status("ISSUED").targetPlan(com.voyra.crm.enums.SubscriptionPlan.LITE).build());
+        mockMvc.perform(post("/api/agency/subscription/upgrade").with(as(UserType.AGENCY_OWNER))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"plan\":\"LITE\"}"))
+                .andExpect(status().isCreated()).andExpect(jsonPath("$.id").value("I9")).andExpect(jsonPath("$.targetPlan").value("LITE"));
+        mockMvc.perform(post("/api/agency/subscription/upgrade").with(as(UserType.AGENCY_OWNER))
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isBadRequest());
-        mockMvc.perform(post("/api/agency/subscription/upgrade-request").with(as(UserType.AGENCY_OWNER))
-                        .contentType(MediaType.APPLICATION_JSON).content("{\"plan\":\"SUITE\",\"note\":\"" + "x".repeat(501) + "\"}"))
-                .andExpect(status().isBadRequest());
-        mockMvc.perform(post("/api/agency/subscription/upgrade-request").with(as(UserType.AGENT))
+        mockMvc.perform(post("/api/agency/subscription/upgrade").with(as(UserType.AGENT))
                         .contentType(MediaType.APPLICATION_JSON).content("{\"plan\":\"LITE\"}"))
                 .andExpect(status().isForbidden());
     }

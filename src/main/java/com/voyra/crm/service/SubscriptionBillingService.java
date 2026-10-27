@@ -114,7 +114,7 @@ public class SubscriptionBillingService {
         List<Map<String, Object>> lines = new ArrayList<>();
         if (s.getPlan() == SubscriptionPlan.SUITE || s.getPlan() == SubscriptionPlan.LITE) {
             lines.add(s.getPlan() == SubscriptionPlan.SUITE
-                    ? line("SUITE", "Agency Suite (" + EntitlementService.SUITE_INCLUDED_SEATS + " staff seats included)", 1, prices, months)
+                    ? line("SUITE", "Voyra Premium (" + EntitlementService.SUITE_INCLUDED_SEATS + " staff seats included)", 1, prices, months)
                     : line("LITE", "Voyra CRM Lite (" + EntitlementService.LITE_INCLUDED_SEATS + " staff seats included)", 1, prices, months));
             if (seats > 0) {
                 lines.add(line(Sku.STAFF_SEATS.name(), "Extra staff seats", seats, prices, months));
@@ -254,6 +254,70 @@ public class SubscriptionBillingService {
         return toResponse(issued);
     }
 
+    /** Upgrade order: Basic < Lite = Custom < Premium (Suite). */
+    static int rank(SubscriptionPlan plan) {
+        return switch (plan) {
+            case STARTER -> 0;
+            case LITE, CUSTOM -> 1;
+            case SUITE -> 2;
+        };
+    }
+
+    /**
+     * Owner self-serve upgrade: an invoice for the higher plan (its price incl. its seats, plus any extra seats already
+     * held), period starting now. Nothing changes until it is paid - {@link #settle} then switches the plan. Asking for
+     * the same plan again returns the open upgrade invoice; another plan replaces it (void). A renewal invoice still
+     * open must be paid first. An unpaid upgrade lapses at its due date ({@link #lapseUpgrades}).
+     */
+    public SubscriptionInvoiceResponse raiseUpgrade(String tenantId, SubscriptionPlan wanted) {
+        if (wanted != SubscriptionPlan.LITE && wanted != SubscriptionPlan.SUITE) {
+            throw new IllegalArgumentException("Choose LITE or SUITE");
+        }
+        SubscriptionInvoice inv = tx.execute(status -> {
+            Subscription s = subscriptionRepository.findByTenantIdForUpdate(tenantId)
+                    .orElseThrow(() -> new NotFoundException("Agency subscription not found"));
+            Instant now = Instant.now().truncatedTo(ChronoUnit.SECONDS);
+            SubscriptionPlan current = EntitlementService.compute(s, now).plan();
+            if (rank(wanted) <= rank(current)) {
+                throw new IllegalArgumentException("Your plan already includes everything in this plan");
+            }
+            Optional<SubscriptionInvoice> open = invoiceRepository.findFirstByTenantIdAndStatusOrderByDueAtAsc(tenantId, ISSUED);
+            if (open.isPresent()) {
+                SubscriptionInvoice o = open.get();
+                if (o.getTargetPlan() == wanted) {
+                    return o;
+                }
+                if (o.getTargetPlan() == null) {
+                    throw new IllegalStateException("Pay invoice " + o.getNumber() + " first, then upgrade");
+                }
+                // the owner changed their mind before paying: only an upgrade invoice is replaced, never a renewal
+                o.setStatus(VOID);
+                invoiceRepository.save(o);
+                rerenderPdfAfterCommit(o.getId());
+            }
+            Subscription priced = Subscription.builder().tenantId(tenantId).plan(wanted)
+                    .seats(s.getPlan() == SubscriptionPlan.STARTER || s.getSeats() == null ? 0 : s.getSeats())
+                    .billingCycle(s.getBillingCycle()).build();
+            SubscriptionInvoice issued = issue(priced, now, now);
+            issued.setTargetPlan(wanted);
+            return invoiceRepository.save(issued);
+        });
+        ensurePdfQuietly(inv.getId());
+        return toResponse(inv);
+    }
+
+    /** Lifecycle job, under the subscription lock: an upgrade left unpaid past its due date is voided, never made overdue. */
+    int lapseUpgrades(String tenantId, Instant now) {
+        List<SubscriptionInvoice> lapsed = invoiceRepository
+                .findByTenantIdAndStatusAndTargetPlanIsNotNullAndDueAtLessThanEqual(tenantId, ISSUED, now);
+        for (SubscriptionInvoice inv : lapsed) {
+            inv.setStatus(VOID);
+            invoiceRepository.save(inv);
+            rerenderPdfAfterCommit(inv.getId());
+        }
+        return lapsed.size();
+    }
+
     // ---- settling
 
     /**
@@ -328,6 +392,13 @@ public class SubscriptionBillingService {
             s.setPeriodEnd(inv.getPeriodEnd());
         } else if (s.getPeriodStart() == null) {
             s.setPeriodStart(inv.getPeriodStart());
+        }
+        if (inv.getTargetPlan() != null) {  // a paid upgrade: the new plan from this invoice's period, any trial over
+            s.setPlan(inv.getTargetPlan());
+            s.setSkus(EntitlementService.planSkus(inv.getTargetPlan()));
+            s.setTrialEndsAt(null);
+            s.setPeriodStart(inv.getPeriodStart());
+            s.setPeriodEnd(inv.getPeriodEnd());
         }
         s.setWaivedReason(null);
         s.setStatus(SubscriptionStatus.ACTIVE);
@@ -421,6 +492,7 @@ public class SubscriptionBillingService {
                 .periodStart(i.getPeriodStart()).periodEnd(i.getPeriodEnd()).amount(i.getAmount()).gst(i.getGst())
                 .cgst(i.getCgst()).sgst(i.getSgst()).igst(i.getIgst())
                 .total(i.getTotal()).status(i.getStatus()).dueAt(i.getDueAt()).paidAt(i.getPaidAt()).paidVia(i.getPaidVia())
+                .targetPlan(i.getTargetPlan())
                 .build();
     }
 

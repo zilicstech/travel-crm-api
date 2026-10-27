@@ -40,6 +40,15 @@ public class EntitlementService {
     public static final int LITE_INCLUDED_SEATS = 3;
     /** CRM Lite: everything except Accounts and GST. */
     public static final Set<Sku> LITE_SKUS = java.util.Collections.unmodifiableSet(EnumSet.of(Sku.CRM_CORE, Sku.STAFF_SEATS, Sku.REPORTS, Sku.VISA));
+
+    /** The SKU names stored for a fixed plan (Suite: every SKU, Lite: LITE_SKUS, Starter: none); CUSTOM keeps its own list. */
+    public static List<String> planSkus(SubscriptionPlan plan) {
+        return switch (plan) {
+            case SUITE -> Arrays.stream(Sku.values()).map(Enum::name).toList();
+            case LITE -> LITE_SKUS.stream().map(Enum::name).toList();
+            case STARTER, CUSTOM -> List.of();
+        };
+    }
     static final Duration CACHE_TTL = Duration.ofMinutes(2);
     public static final Duration TRIAL_LENGTH = Duration.ofDays(14);
 

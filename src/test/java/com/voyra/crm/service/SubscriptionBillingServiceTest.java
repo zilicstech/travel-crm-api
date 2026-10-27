@@ -491,4 +491,91 @@ class SubscriptionBillingServiceTest {
         assertThat(s.getPeriodStart()).isNotNull();
         assertThat(s.getPeriodEnd()).isNotNull();
     }
+
+    // ---- owner upgrade
+
+    private Subscription starter() {
+        Subscription s = Subscription.builder().id("S1").tenantId("T1").plan(SubscriptionPlan.STARTER).skus(List.of()).seats(0)
+                .status(SubscriptionStatus.ACTIVE).billingCycle(BillingCycle.MONTHLY).updatedAt(Instant.now()).build();
+        given(subscriptionRepository.findByTenantIdForUpdate("T1")).willReturn(Optional.of(s));
+        return s;
+    }
+
+    @Test
+    void anUpgradeRaisesAnInvoiceForTheNewPlanAndChangesNothingUntilPaid() {
+        Subscription s = starter();
+
+        SubscriptionInvoiceResponse r = service.raiseUpgrade("T1", SubscriptionPlan.LITE);
+
+        assertThat(r.getTargetPlan()).isEqualTo(SubscriptionPlan.LITE);
+        assertThat(r.getStatus()).isEqualTo("ISSUED");
+        assertThat(r.getAmount()).isEqualByComparingTo("2999.00");
+        assertThat(s.getPlan()).isEqualTo(SubscriptionPlan.STARTER);
+        verify(subscriptionRepository, never()).save(any());
+        verify(entitlementService, never()).refresh(anyString());
+    }
+
+    @Test
+    void theSamePlanAgainReturnsTheOpenUpgradeInvoiceAndAnotherPlanReplacesIt() {
+        starter();
+        SubscriptionInvoice open = issued("ISSUED");
+        open.setTargetPlan(SubscriptionPlan.LITE);
+        given(invoiceRepository.findFirstByTenantIdAndStatusOrderByDueAtAsc("T1", "ISSUED")).willReturn(Optional.of(open));
+
+        assertThat(service.raiseUpgrade("T1", SubscriptionPlan.LITE).getId()).isEqualTo("I1");
+        verify(jdbcTemplate, never()).queryForObject(anyString(), eq(Long.class), any(), any());  // no new number
+
+        SubscriptionInvoiceResponse premium = service.raiseUpgrade("T1", SubscriptionPlan.SUITE);
+        assertThat(open.getStatus()).isEqualTo("VOID");
+        assertThat(premium.getTargetPlan()).isEqualTo(SubscriptionPlan.SUITE);
+        assertThat(premium.getAmount()).isEqualByComparingTo("4999.00");
+    }
+
+    @Test
+    void anUpgradeIsRefusedToTheSameOrALowerPlanAndWhileARenewalIsUnpaid() {
+        Subscription s = starter();
+        s.setPlan(SubscriptionPlan.LITE);
+        assertThatThrownBy(() -> service.raiseUpgrade("T1", SubscriptionPlan.LITE)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.raiseUpgrade("T1", SubscriptionPlan.STARTER)).isInstanceOf(IllegalArgumentException.class);
+
+        SubscriptionInvoice renewal = issued("ISSUED");
+        given(invoiceRepository.findFirstByTenantIdAndStatusOrderByDueAtAsc("T1", "ISSUED")).willReturn(Optional.of(renewal));
+        assertThatThrownBy(() -> service.raiseUpgrade("T1", SubscriptionPlan.SUITE)).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("VOY-SUB-2026-1");
+        assertThat(renewal.getStatus()).isEqualTo("ISSUED");
+    }
+
+    @Test
+    void payingAnUpgradeSwitchesThePlanEndsAnyTrialOrWaiverAndStartsTheInvoicedPeriod() {
+        Subscription s = starter();
+        s.setPlan(SubscriptionPlan.LITE);
+        s.setStatus(SubscriptionStatus.TRIAL);
+        s.setTrialEndsAt(Instant.parse("2026-12-20T00:00:00Z"));
+        s.setWaivedReason(WaivedReason.COMPLIMENTARY);
+        SubscriptionInvoice inv = issued("ISSUED");
+        inv.setTargetPlan(SubscriptionPlan.SUITE);
+
+        assertThat(service.markPaid("I1", "pay_up")).isTrue();
+
+        assertThat(s.getPlan()).isEqualTo(SubscriptionPlan.SUITE);
+        assertThat(s.getSkus()).containsExactlyElementsOf(EnumSet.allOf(Sku.class).stream().map(Enum::name).toList());
+        assertThat(s.getStatus()).isEqualTo(SubscriptionStatus.ACTIVE);
+        assertThat(s.getTrialEndsAt()).isNull();
+        assertThat(s.getWaivedReason()).isNull();
+        assertThat(s.getPeriodStart()).isEqualTo(inv.getPeriodStart());
+        assertThat(s.getPeriodEnd()).isEqualTo(inv.getPeriodEnd());
+        verify(entitlementService).refresh("T1");
+    }
+
+    @Test
+    void anUpgradeLeftUnpaidPastItsDueDateLapsesToVoid() {
+        SubscriptionInvoice inv = issued("ISSUED");
+        inv.setTargetPlan(SubscriptionPlan.LITE);
+        Instant now = Instant.parse("2026-11-09T00:00:00Z");
+        given(invoiceRepository.findByTenantIdAndStatusAndTargetPlanIsNotNullAndDueAtLessThanEqual("T1", "ISSUED", now))
+                .willReturn(List.of(inv));
+
+        assertThat(service.lapseUpgrades("T1", now)).isEqualTo(1);
+        assertThat(inv.getStatus()).isEqualTo("VOID");
+    }
 }

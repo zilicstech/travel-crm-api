@@ -2,9 +2,8 @@ package com.voyra.crm.service;
 
 import com.voyra.crm.dto.AgencySubscriptionResponse;
 import com.voyra.crm.dto.SubscriptionAdminResponse;
+import com.voyra.crm.dto.SubscriptionInvoiceResponse;
 import com.voyra.crm.dto.SubscriptionUpdateRequest;
-import com.voyra.crm.dto.SubscriptionUpgradeRequest;
-import com.voyra.crm.dto.SubscriptionUpgradeRequestResponse;
 import com.voyra.crm.dto.SubscriptionWaiveRequest;
 import com.voyra.crm.dto.TrialExtendRequest;
 import com.voyra.crm.entity.Subscription;
@@ -25,6 +24,7 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -51,7 +51,8 @@ public class SubscriptionService {
     private final TenantRepository tenantRepository;
     private final EntitlementService entitlementService;
     private final PlatformAuditService auditService;
-    private final NotificationService notificationService;
+    private final PlatformSettingService settingService;
+    private final SubscriptionBillingService billingService;
 
     @Transactional(readOnly = true)
     public SubscriptionAdminResponse adminView(String tenantId) {
@@ -86,41 +87,17 @@ public class SubscriptionService {
                 .waived(waived).waivedLabel(waived ? WAIVER_LABELS.get(s.getWaivedReason()) : null)
                 .invoices(invoiceRepository.findByTenantIdAndStatusNotOrderByCreatedAtDesc(tenantId, "DRAFT").stream()
                         .map(SubscriptionBillingService::toResponse).toList())
+                .planPrices(planPrices())
                 .build();
     }
 
-    /**
-     * The owner asks Voyra for a higher plan (STARTER < LITE = CUSTOM < SUITE); the platform admins get an alert and set
-     * the plan themselves. Not idempotent: asking again raises another alert.
-     */
-    @Transactional(readOnly = true)
-    public SubscriptionUpgradeRequestResponse requestUpgrade(SubscriptionUpgradeRequest request) {
+    /** Owner self-serve upgrade: raises the invoice for the higher plan; paying it switches the plan. */
+    public SubscriptionInvoiceResponse upgrade(SubscriptionPlan plan) {
         String tenantId = SecurityContextUtil.getCurrentUserOrThrow().tenantId();
         if (tenantId == null) {
             throw new AccessDeniedException("No tenant context for current user");
         }
-        SubscriptionPlan current = entitlementService.resolve(tenantId).plan();
-        SubscriptionPlan wanted = request.getPlan();
-        if (wanted != SubscriptionPlan.LITE && wanted != SubscriptionPlan.SUITE) {
-            throw new IllegalArgumentException("Choose LITE or SUITE");
-        }
-        if (rank(wanted) <= rank(current)) {
-            throw new IllegalArgumentException("Your plan already includes everything in " + wanted);
-        }
-        String agency = tenantRepository.findById(tenantId).map(com.voyra.crm.entity.Tenant::getAgencyName).orElse(tenantId);
-        String note = request.getNote() == null || request.getNote().isBlank() ? "(none)" : request.getNote().trim();
-        notificationService.platformAlert("Upgrade request: " + agency + " wants " + wanted,
-                "Agency: " + agency + " (" + tenantId + ")\nCurrent plan: " + current + "\nRequested plan: " + wanted
-                        + "\nNote: " + note + "\n\nSet the plan in Platform > Agencies > Subscription.");
-        return new SubscriptionUpgradeRequestResponse(true);
-    }
-
-    private static int rank(SubscriptionPlan plan) {
-        return switch (plan) {
-            case STARTER -> 0;
-            case LITE, CUSTOM -> 1;
-            case SUITE -> 2;
-        };
+        return billingService.raiseUpgrade(tenantId, plan);
     }
 
     /** Plan, SKUs, seats and cycle. A waiver is a separate switch and stays as it is. */
@@ -136,11 +113,9 @@ public class SubscriptionService {
         Subscription s = loadForUpdate(tenantId);
         SubscriptionPlan plan = request.getPlan();
         List<String> skus = switch (plan) {
-            case SUITE -> Arrays.stream(Sku.values()).map(Enum::name).toList();
-            case LITE -> EntitlementService.LITE_SKUS.stream().map(Enum::name).toList();
             case CUSTOM -> request.getSkus() == null ? List.<String>of()
                     : request.getSkus().stream().distinct().map(Enum::name).toList();
-            case STARTER -> List.of();
+            case SUITE, LITE, STARTER -> EntitlementService.planSkus(plan);
         };
         int newSeats = plan == SubscriptionPlan.STARTER ? 0 : request.getSeats();
         boolean changes = plan != s.getPlan() || !skus.equals(s.getSkus()) || newSeats != s.getSeats()
@@ -258,5 +233,17 @@ public class SubscriptionService {
             }
             return entitlementService.startMissingTrial(tenantId);
         });
+    }
+
+    /** What the upgrade cards show: each paid plan's monthly price before GST, from sku_prices. */
+    private Map<String, BigDecimal> planPrices() {
+        Map<String, BigDecimal> prices = settingService.skuPrices();
+        Map<String, BigDecimal> shown = new java.util.LinkedHashMap<>();
+        for (String plan : List.of("LITE", "SUITE")) {
+            if (prices.get(plan) != null) {
+                shown.put(plan, prices.get(plan));
+            }
+        }
+        return shown;
     }
 }

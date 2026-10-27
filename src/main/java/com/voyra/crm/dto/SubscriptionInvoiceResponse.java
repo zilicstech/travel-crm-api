@@ -1,5 +1,6 @@
 package com.voyra.crm.dto;
 
+import com.voyra.crm.enums.SubscriptionPlan;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Builder;
 import lombok.Data;
@@ -53,4 +54,7 @@ public class SubscriptionInvoiceResponse {
 
     @Schema(description = "GATEWAY or BANK", nullable = true)
     private String paidVia;
+
+    @Schema(description = "On an upgrade invoice: the plan paying it switches to (LITE or SUITE)", nullable = true)
+    private SubscriptionPlan targetPlan;
 }

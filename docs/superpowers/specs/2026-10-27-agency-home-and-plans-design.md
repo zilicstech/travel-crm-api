@@ -96,8 +96,8 @@ A wallet balance pill also sits in the top bar on every page.
 `/agency/account`, `/agency/wallet` and `/agency/subscription` keep their URLs (tests, emails and
 bookmarks use them) and share one "Account" header with three tabs: Profile, Wallet, Plan and
 billing. The Plan tab gets a three-column plan comparison (Basic / CRM Lite / Premium, the
-current one marked). Upgrading is a request in this release: the agency clicks "Upgrade" and the
-platform admin sets the plan (self-serve plan change with payment is a later step).
+current one marked). Upgrade raises an invoice for the new plan and opens payment at once; the plan
+switches only when it is paid (owner ruling 2026-10-27).
 
 ## Logo at onboarding and in the profile
 
@@ -128,4 +128,4 @@ script, so each plan can be tried side by side.
 3. Basic is single-login (owner only): agent management is Lite, accountants are Premium.
 4. Client invoicing shows only on Premium (menu), though the server still allows it on Lite.
 5. Locked features stay visible with a lock rather than hidden.
-6. Upgrade is a request to Voyra, not a payment, in this release.
+6. ~~Upgrade is a request to Voyra~~ Owner ruling 2026-10-27: Upgrade goes to payment. It raises the plan's invoice (period from now), the owner pays at once, and the plan switches when the payment is confirmed; prices stay dummy (`sku_prices`: LITE 2999, SUITE 4999) until the owner sets them.

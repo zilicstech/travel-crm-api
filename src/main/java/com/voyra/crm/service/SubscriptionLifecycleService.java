@@ -75,6 +75,9 @@ public class SubscriptionLifecycleService {
     /** One tenant, inside the caller's transaction. Returns the id of a renewal invoice raised, if any. */
     String processTenant(String tenantId, Instant now) {
         Subscription s = subscriptionRepository.findByTenantIdForUpdate(tenantId).orElse(null);
+        if (s != null) {
+            billingService.lapseUpgrades(tenantId, now);  // an abandoned upgrade is never an overdue invoice
+        }
         if (s == null || s.getStatus() == SubscriptionStatus.CANCELLED || s.getPlan() == SubscriptionPlan.STARTER
                 || (s.getWaivedReason() != null && s.getPeriodEnd() == null)) {
             return null;  // founding agency: no expiry, no invoice, never READ_ONLY
