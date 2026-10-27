@@ -75,6 +75,10 @@ class SupplierPaymentServiceTest {
     private JournalEntryRepository journalEntryRepository;
     @Mock
     private ExchangeRateProvider exchangeRateProvider;
+    @Mock
+    private com.voyra.crm.repository.BookingRepository bookingRepository;
+    @Mock
+    private LedgerAccountResolver ledgerAccountResolver;
 
     @org.mockito.Spy
 
@@ -128,7 +132,7 @@ class SupplierPaymentServiceTest {
     void payingAgainstABillPostsTheSettledJournal() {
         when(vendorRepository.findById("V1")).thenReturn(Optional.of(vendor()));
         SupplierInvoice invoice = approvedBill(new BigDecimal("1000.00"));
-        when(supplierInvoiceRepository.findById("SI1")).thenReturn(Optional.of(invoice));
+        when(supplierInvoiceRepository.findByIdForUpdate("SI1")).thenReturn(Optional.of(invoice));
         when(supplierPaymentRepository.existsById(any())).thenReturn(false);
         when(documentNumberService.next(DocumentKind.PAYMENT_VOUCHER, LocalDate.of(2026, 9, 19)))
                 .thenReturn("PAY/2026-27/0001");
@@ -152,7 +156,7 @@ class SupplierPaymentServiceTest {
     @Test
     void payingMoreThanTheBalanceDueIsRejectedAndPostsNothing() {
         when(vendorRepository.findById("V1")).thenReturn(Optional.of(vendor()));
-        when(supplierInvoiceRepository.findById("SI1")).thenReturn(Optional.of(approvedBill(new BigDecimal("1000.00"))));
+        when(supplierInvoiceRepository.findByIdForUpdate("SI1")).thenReturn(Optional.of(approvedBill(new BigDecimal("1000.00"))));
 
         assertThatThrownBy(() -> supplierPaymentService.pay(request("SI1", new BigDecimal("1000.01"))))
                 .isInstanceOf(IllegalStateException.class)
@@ -162,9 +166,18 @@ class SupplierPaymentServiceTest {
     }
 
     @Test
+    void theOverBalanceMessageShowsFormattedAmounts() {
+        when(vendorRepository.findById("V1")).thenReturn(Optional.of(vendor()));
+        when(supplierInvoiceRepository.findByIdForUpdate("SI1")).thenReturn(Optional.of(approvedBill(new BigDecimal("10000.00"))));
+
+        assertThatThrownBy(() -> supplierPaymentService.pay(request("SI1", new BigDecimal("15000"))))
+                .hasMessageContaining("payment of ₹15,000 exceeds the bill's balance due of ₹10,000.");
+    }
+
+    @Test
     void payingExactlyTheBalanceDueIsAllowed() {
         when(vendorRepository.findById("V1")).thenReturn(Optional.of(vendor()));
-        when(supplierInvoiceRepository.findById("SI1")).thenReturn(Optional.of(approvedBill(new BigDecimal("1000.00"))));
+        when(supplierInvoiceRepository.findByIdForUpdate("SI1")).thenReturn(Optional.of(approvedBill(new BigDecimal("1000.00"))));
         when(supplierPaymentRepository.existsById(any())).thenReturn(false);
         when(documentNumberService.next(DocumentKind.PAYMENT_VOUCHER, LocalDate.of(2026, 9, 19))).thenReturn("PAY/2026-27/0001");
 
@@ -209,8 +222,8 @@ class SupplierPaymentServiceTest {
         when(supplierPaymentRepository.save(any())).thenAnswer(i -> { saved.add(i.getArgument(0)); return i.getArgument(0); });
         when(supplierPaymentRepository.findById(any())).thenAnswer(i -> saved.stream().filter(p -> p.getId().equals(i.getArgument(0))).findFirst());
         when(supplierPaymentRepository.findByVendorIdAndIsAdvanceTrueOrderByPaidOnAsc("V1")).thenAnswer(i -> saved.subList(0, 1));
-        when(supplierInvoiceRepository.findById("SI1")).thenReturn(Optional.of(older));
-        when(supplierInvoiceRepository.findById("SI2")).thenReturn(Optional.of(newer));
+        when(supplierInvoiceRepository.findByIdForUpdate("SI1")).thenReturn(Optional.of(older));
+        when(supplierInvoiceRepository.findByIdForUpdate("SI2")).thenReturn(Optional.of(newer));
         when(supplierInvoiceRepository.findByVendorIdAndCurrencyCodeAndStatusInAndBalanceDueGreaterThanOrderByInvoiceDateAscCreatedDateAsc(
                 org.mockito.ArgumentMatchers.eq("V1"), org.mockito.ArgumentMatchers.eq("INR"), any(), any())).thenReturn(List.of(older, newer));
         SupplierPaymentRequest r = request(null, new BigDecimal("5000.00"));
@@ -230,7 +243,7 @@ class SupplierPaymentServiceTest {
         SupplierPayment advance = SupplierPayment.builder().id("D1").vendorId("V1").vendorName("Novotel Goa")
                 .direction(SupplierPaymentDirection.PAYMENT).isAdvance(true)
                 .amount(new BigDecimal("50000.00")).amountInr(new BigDecimal("50000.00")).build();
-        when(supplierInvoiceRepository.findById("SI1")).thenReturn(Optional.of(invoice));
+        when(supplierInvoiceRepository.findByIdForUpdate("SI1")).thenReturn(Optional.of(invoice));
         when(supplierPaymentRepository.findById("D1")).thenReturn(Optional.of(advance));
         when(supplierPaymentRepository.findByVendorIdAndIsAdvanceTrueOrderByPaidOnAsc("V1")).thenReturn(List.of(advance));
         when(supplierPaymentRepository.findByVendorIdAndAppliedFromAdvanceTrueOrderByPaidOnAsc("V1")).thenReturn(List.of());
@@ -279,10 +292,10 @@ class SupplierPaymentServiceTest {
         invoice.setAmountPaid(new BigDecimal("400.00"));
         JournalEntry settledEntry = JournalEntry.builder().id("JE1").build();
 
-        when(supplierPaymentRepository.findById("P1")).thenReturn(Optional.of(original));
+        when(supplierPaymentRepository.findByIdForUpdate("P1")).thenReturn(Optional.of(original));
         when(supplierPaymentRepository.existsById(any())).thenReturn(false);
         when(documentNumberService.next(DocumentKind.PAYMENT_VOUCHER, LocalDate.now())).thenReturn("PAY/2026-27/0003");
-        when(supplierInvoiceRepository.findById("SI1")).thenReturn(Optional.of(invoice));
+        when(supplierInvoiceRepository.findByIdForUpdate("SI1")).thenReturn(Optional.of(invoice));
         when(journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(
                 JournalSourceType.SUPPLIER_PAYMENT, "P1", JournalPurpose.SUPPLIER_PAYMENT_SETTLED))
                 .thenReturn(Optional.of(settledEntry));
@@ -312,12 +325,12 @@ class SupplierPaymentServiceTest {
         SupplierInvoice invoice = approvedBill(new BigDecimal("1000.00"));
         invoice.setAmountPaid(new BigDecimal("400.00"));
 
-        when(supplierPaymentRepository.findById("P9")).thenReturn(Optional.of(advance));
-        when(supplierPaymentRepository.findById("A1")).thenReturn(Optional.of(applied));
+        when(supplierPaymentRepository.findByIdForUpdate("P9")).thenReturn(Optional.of(advance));
+        when(supplierPaymentRepository.findByIdForUpdate("A1")).thenReturn(Optional.of(applied));
         when(supplierPaymentRepository.findByVendorIdAndAppliedFromAdvanceTrueAndReversedAtIsNull("V1")).thenReturn(List.of(applied));
         when(supplierPaymentRepository.existsById(any())).thenReturn(false);
         when(documentNumberService.next(any(), any())).thenReturn("PAY/2026-27/0009");
-        when(supplierInvoiceRepository.findById("SI1")).thenReturn(Optional.of(invoice));
+        when(supplierInvoiceRepository.findByIdForUpdate("SI1")).thenReturn(Optional.of(invoice));
         when(journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(any(), any(), any())).thenReturn(Optional.empty());
 
         supplierPaymentService.reverse("P9", "paid the wrong supplier");
@@ -336,7 +349,7 @@ class SupplierPaymentServiceTest {
     void settlingAForeignBillAtAHigherRateThanTheBillPostsARealizedForexLoss() {
         when(vendorRepository.findById("V1")).thenReturn(Optional.of(vendor()));
         SupplierInvoice invoice = foreignBill(new BigDecimal("1000.00"), new BigDecimal("83.000000"));
-        when(supplierInvoiceRepository.findById("SI1")).thenReturn(Optional.of(invoice));
+        when(supplierInvoiceRepository.findByIdForUpdate("SI1")).thenReturn(Optional.of(invoice));
         when(supplierPaymentRepository.existsById(any())).thenReturn(false);
         when(documentNumberService.next(DocumentKind.PAYMENT_VOUCHER, LocalDate.of(2026, 9, 19)))
                 .thenReturn("PAY/2026-27/0004");
@@ -370,7 +383,7 @@ class SupplierPaymentServiceTest {
     void settlingAForeignBillAtALowerRateThanTheBillPostsARealizedForexGain() {
         when(vendorRepository.findById("V1")).thenReturn(Optional.of(vendor()));
         SupplierInvoice invoice = foreignBill(new BigDecimal("1000.00"), new BigDecimal("83.000000"));
-        when(supplierInvoiceRepository.findById("SI1")).thenReturn(Optional.of(invoice));
+        when(supplierInvoiceRepository.findByIdForUpdate("SI1")).thenReturn(Optional.of(invoice));
         when(supplierPaymentRepository.existsById(any())).thenReturn(false);
         when(documentNumberService.next(DocumentKind.PAYMENT_VOUCHER, LocalDate.of(2026, 9, 19)))
                 .thenReturn("PAY/2026-27/0005");
@@ -404,7 +417,7 @@ class SupplierPaymentServiceTest {
     void anInrBillsVarianceIsAlwaysExactlyZeroRegardlessOfAnySettlementRateField() {
         when(vendorRepository.findById("V1")).thenReturn(Optional.of(vendor()));
         SupplierInvoice invoice = approvedBill(new BigDecimal("1000.00"));
-        when(supplierInvoiceRepository.findById("SI1")).thenReturn(Optional.of(invoice));
+        when(supplierInvoiceRepository.findByIdForUpdate("SI1")).thenReturn(Optional.of(invoice));
         when(supplierPaymentRepository.existsById(any())).thenReturn(false);
         when(documentNumberService.next(DocumentKind.PAYMENT_VOUCHER, LocalDate.of(2026, 9, 19)))
                 .thenReturn("PAY/2026-27/0006");
@@ -419,7 +432,7 @@ class SupplierPaymentServiceTest {
     void anExplicitSettlementRateOnTheRequestIsUsedWithoutConsultingTheExchangeRateTable() {
         when(vendorRepository.findById("V1")).thenReturn(Optional.of(vendor()));
         SupplierInvoice invoice = foreignBill(new BigDecimal("1000.00"), new BigDecimal("83.000000"));
-        when(supplierInvoiceRepository.findById("SI1")).thenReturn(Optional.of(invoice));
+        when(supplierInvoiceRepository.findByIdForUpdate("SI1")).thenReturn(Optional.of(invoice));
         when(supplierPaymentRepository.existsById(any())).thenReturn(false);
         when(documentNumberService.next(DocumentKind.PAYMENT_VOUCHER, LocalDate.of(2026, 9, 19)))
                 .thenReturn("PAY/2026-27/0007");
@@ -435,7 +448,7 @@ class SupplierPaymentServiceTest {
     void withNoExplicitRateTheDailyExchangeRateTableIsConsultedForThePaymentDate() {
         when(vendorRepository.findById("V1")).thenReturn(Optional.of(vendor()));
         SupplierInvoice invoice = foreignBill(new BigDecimal("1000.00"), new BigDecimal("83.000000"));
-        when(supplierInvoiceRepository.findById("SI1")).thenReturn(Optional.of(invoice));
+        when(supplierInvoiceRepository.findByIdForUpdate("SI1")).thenReturn(Optional.of(invoice));
         when(supplierPaymentRepository.existsById(any())).thenReturn(false);
         when(documentNumberService.next(DocumentKind.PAYMENT_VOUCHER, LocalDate.of(2026, 9, 19)))
                 .thenReturn("PAY/2026-27/0009");
@@ -452,7 +465,7 @@ class SupplierPaymentServiceTest {
     void aMissingExchangeRateFallsBackToTheBillsOwnRateRatherThanBlockingThePayment() {
         when(vendorRepository.findById("V1")).thenReturn(Optional.of(vendor()));
         SupplierInvoice invoice = foreignBill(new BigDecimal("1000.00"), new BigDecimal("83.000000"));
-        when(supplierInvoiceRepository.findById("SI1")).thenReturn(Optional.of(invoice));
+        when(supplierInvoiceRepository.findByIdForUpdate("SI1")).thenReturn(Optional.of(invoice));
         when(supplierPaymentRepository.existsById(any())).thenReturn(false);
         when(documentNumberService.next(DocumentKind.PAYMENT_VOUCHER, LocalDate.of(2026, 9, 19)))
                 .thenReturn("PAY/2026-27/0008");
@@ -462,5 +475,64 @@ class SupplierPaymentServiceTest {
         SupplierPaymentResponse response = supplierPaymentService.pay(request("SI1", new BigDecimal("100.00")));
 
         assertThat(response.getFxVarianceInr()).isEqualByComparingTo("0.00"); // fell back to the bill's own rate - no variance
+    }
+
+    /** The mirror's bill is paid from the Voyra wallet: Dr payable, Cr 1310 "Voyra Wallet (advance to supplier)" - never Bank 1110. */
+    @Test
+    void mirrorSupplierBillPostsToVoyraWalletNot1110() {
+        when(vendorRepository.findById("V1")).thenReturn(Optional.of(vendor()));
+        SupplierInvoice invoice = approvedBill(new BigDecimal("5400.00"));
+        when(supplierInvoiceRepository.findByIdForUpdate("SI1")).thenReturn(Optional.of(invoice));
+        when(ledgerAccountResolver.voyraWalletCode()).thenReturn("1310");
+        SupplierPaymentRequest request = request("SI1", new BigDecimal("5400.00"));
+        request.setPaymentMode(PaymentMode.VOYRA_WALLET);
+
+        org.mockito.Mockito.doReturn("INR").when(baseCurrency).code();
+        com.voyra.crm.security.SystemActor.call("T1", () -> supplierPaymentService.pay(request));
+
+        ArgumentCaptor<JournalPosting> captor = ArgumentCaptor.forClass(JournalPosting.class);
+        verify(journalService).post(captor.capture());
+        assertThat(captor.getValue().lines()).extracting(l -> l.accountCode()).containsExactly("2200", "1310");
+        assertThat(captor.getValue().lines().get(1).creditAmount()).isEqualByComparingTo("5400.00");
+    }
+
+    @Test
+    void crmEditOfAMirrorIs409() {
+        when(vendorRepository.findById("V1")).thenReturn(Optional.of(vendor()));
+        SupplierInvoice invoice = approvedBill(new BigDecimal("5400.00"));
+        invoice.setBookingId("B1");
+        when(supplierInvoiceRepository.findByIdForUpdate("SI1")).thenReturn(Optional.of(invoice));
+        when(bookingRepository.existsByIdAndPlatformBookingIdIsNotNull("B1")).thenReturn(true);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> supplierPaymentService.pay(request("SI1", new BigDecimal("100.00"))))
+                .isInstanceOf(com.voyra.crm.exception.BookingConflictException.class)
+                .hasMessage("Managed from Platform Bookings");
+        verify(supplierPaymentRepository, org.mockito.Mockito.never()).save(any());
+    }
+
+    /** Only Voyra (the system actor writing a mirror) pays from the Voyra wallet - no user picks it on a bill or an advance. */
+    @Test
+    void voyraWalletPaymentsAreRecordedByVoyraOnly() {
+        SupplierPaymentRequest bill = request("SI1", new BigDecimal("100.00"));
+        bill.setPaymentMode(PaymentMode.VOYRA_WALLET);
+        SupplierPaymentRequest advance = request(null, new BigDecimal("100.00"));
+        advance.setPaymentMode(PaymentMode.VOYRA_WALLET);
+
+        for (SupplierPaymentRequest r : List.of(bill, advance)) {
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> supplierPaymentService.pay(r))
+                    .isInstanceOf(IllegalArgumentException.class).hasMessage("Voyra Wallet payments are recorded by Voyra only");
+        }
+
+        SupplierPayment voyraAdvance = SupplierPayment.builder().id("D1").vendorId("V1").isAdvance(true)
+                .paymentMode(PaymentMode.VOYRA_WALLET).amount(new BigDecimal("500.00")).build();
+        when(supplierInvoiceRepository.findByIdForUpdate("SI1")).thenReturn(Optional.of(approvedBill(new BigDecimal("1000.00"))));
+        when(supplierPaymentRepository.findById("D1")).thenReturn(Optional.of(voyraAdvance));
+        SupplierAdvanceApplyRequest apply = new SupplierAdvanceApplyRequest();
+        apply.setAdvancePaymentId("D1");
+        apply.setAmount(new BigDecimal("100.00"));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> supplierPaymentService.applyAdvance("SI1", apply))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Voyra Wallet payments are recorded by Voyra only");
+        verify(supplierPaymentRepository, never()).save(any());
+        verify(journalService, never()).post(any());
     }
 }

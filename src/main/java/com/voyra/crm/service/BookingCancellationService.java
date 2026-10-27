@@ -29,7 +29,9 @@ import com.voyra.crm.repository.CreditNoteRepository;
 import com.voyra.crm.repository.InvoiceRepository;
 import com.voyra.crm.repository.SupplierCreditNoteRepository;
 import com.voyra.crm.repository.SupplierInvoiceRepository;
+import com.voyra.crm.security.SystemActor;
 import com.voyra.crm.util.CancellationMath;
+import com.voyra.crm.util.PlatformManaged;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -111,6 +113,8 @@ public class BookingCancellationService {
         assertNotNegative(request.getAirlineCharge(), request.getSupplierCharge(), request.getAgencyFee());
         lock(bookingId);
         Booking booking = cancellable(bookingId);
+        // only PlatformBookingService cancels a mirror, as the system actor
+        PlatformManaged.check(booking.getPlatformBookingId() != null);
         if (request.getType() == com.voyra.crm.enums.CancellationType.VOID && booking.getType() != com.voyra.crm.enums.BookingType.FLIGHT) {
             throw new IllegalArgumentException("Void is only for airline tickets - use Cancellation or No show");
         }
@@ -175,6 +179,27 @@ public class BookingCancellationService {
         return bookingService.toResponsePublic(booking);
     }
 
+    /**
+     * The platform's refund on a cancelled mirror (spec 7.5): already credited to the agency's Voyra wallet, so it is
+     * posted against "Voyra Wallet (advance to supplier)" on the mirror's supplier credit note - no bank claim.
+     * Only the system actor records it.
+     */
+    @Transactional
+    public BookingResponse recordVoyraWalletRefund(String bookingId, BigDecimal amount) {
+        if (!SystemActor.isActive()) {
+            throw new org.springframework.security.access.AccessDeniedException("Only Voyra records a Voyra wallet refund");
+        }
+        lock(bookingId);
+        Booking booking = cancelled(bookingId);
+        RefundSettlementRequest refund = new RefundSettlementRequest();
+        refund.setAmount(amount);
+        refund.setPaidOn(LocalDate.now());
+        refund.setPaymentMode(PaymentMode.VOYRA_WALLET);
+        refund.setReference("Voyra wallet");
+        postSupplierRefund(booking, refund, false);
+        return bookingService.toResponsePublic(booking);
+    }
+
     @Transactional
     public BookingResponse payCustomer(String bookingId, RefundSettlementRequest request) {
         lock(bookingId);
@@ -234,6 +259,7 @@ public class BookingCancellationService {
     public BookingResponse recordSupplierRefund(String bookingId, RefundSettlementRequest request) {
         lock(bookingId);
         Booking booking = cancelled(bookingId);
+        PlatformManaged.check(booking.getPlatformBookingId() != null);
         // Either way, an open bank claim is settled first - otherwise the claim could never be confirmed.
         if (booking.getSupplierRefundClaimAmount() != null) {
             throw new IllegalArgumentException("A bank refund is already waiting for the accountant's check");
@@ -260,6 +286,7 @@ public class BookingCancellationService {
     public BookingResponse confirmSupplierRefund(String bookingId, RefundSettlementRequest request) {
         lock(bookingId);
         Booking booking = cancelled(bookingId);
+        PlatformManaged.check(booking.getPlatformBookingId() != null);
         BigDecimal claim = booking.getSupplierRefundClaimAmount();
         if (claim == null) {
             throw new IllegalStateException("No supplier refund is waiting for a bank check");
@@ -279,6 +306,7 @@ public class BookingCancellationService {
     public BookingResponse rejectSupplierRefund(String bookingId) {
         lock(bookingId);
         Booking booking = cancelled(bookingId);
+        PlatformManaged.check(booking.getPlatformBookingId() != null);
         if (booking.getSupplierRefundClaimAmount() == null) {
             throw new IllegalStateException("No supplier refund is waiting for a bank check");
         }
@@ -476,7 +504,10 @@ public class BookingCancellationService {
 
     private Booking cancellable(String bookingId) {
         Booking booking = bookingService.findAccessibleBooking(bookingId);
-        if (booking.getBookingStatus() != BookingStatus.PENDING && booking.getBookingStatus() != BookingStatus.CONFIRMED) {
+        // a mirror whose trip is over is still cancellable by the platform (spec 7.5)
+        boolean completedMirror = booking.getBookingStatus() == BookingStatus.COMPLETED
+                && booking.getPlatformBookingId() != null && SystemActor.isActive();
+        if (booking.getBookingStatus() != BookingStatus.PENDING && booking.getBookingStatus() != BookingStatus.CONFIRMED && !completedMirror) {
             throw new IllegalStateException("Only a pending or confirmed booking can be cancelled");
         }
         return booking;

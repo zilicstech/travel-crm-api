@@ -131,6 +131,7 @@ public class BookingService {
     private final com.voyra.crm.repository.JournalEntryRepository journalEntryRepository;
     private final BaseCurrency baseCurrency;
     private final InvoiceLineSource invoiceLineSource;
+    private final BookingAccountingSync bookingAccountingSync;
 
     /** FRD US-ACC-6.1's example rate, used whenever an agency hasn't set its own in Settings. */
     private static final BigDecimal DEFAULT_LOW_MARGIN_THRESHOLD_PERCENT = BigDecimal.valueOf(8);
@@ -141,7 +142,8 @@ public class BookingService {
         if (request.getNetCost() == null) request.setNetCost(BigDecimal.ZERO);
         if (request.getSellingPrice() == null) request.setSellingPrice(BigDecimal.ZERO);
         AuthorResolver.AuthorInfo owner = resolveOwningAgent(request.getAgentId());
-        if (request.getServiceId() == null || request.getServiceId().isBlank()) {
+        // The platform's mirror names the agent who issued the ticket; Voyra already checked they may book it.
+        if ((request.getServiceId() == null || request.getServiceId().isBlank()) && !com.voyra.crm.security.SystemActor.isActive()) {
             assertAgentHandlesStandaloneType(request.getType(), owner.id());
         }
         clientCreditService.assertWithinLimit(request.getClientId(), request.getSellingPrice(),
@@ -257,6 +259,12 @@ public class BookingService {
             leadTimelineService.record(service.getLeadId(), service.getId(), LeadTimelineEventType.BOOKING_LOGGED,
                     labelOrType(booking) + " booking logged" + (booking.getPnr() != null ? " (" + booking.getPnr() + ")" : ""));
             serviceBookingStatusSync.onBookingLogged(service.getId(), owner.id(), owner.name());
+            // logging on an unassigned service gives it to the booking's agent: the snapshot follows (same managed entity)
+            if (booking.getServiceAgentId() == null && service.getAssignedAgentId() != null) {
+                booking.setServiceAgentId(service.getAssignedAgentId());
+                booking.setServiceAgentName(service.getAssignedAgentName());
+                bookingRepository.save(booking);
+            }
         }
 
         log.info("Booking created: bookingId={}, agentId={}, serviceId={}", booking.getId(), owner.id(), request.getServiceId());
@@ -470,7 +478,7 @@ public class BookingService {
     public BookingResponse updateBooking(String id, BookingUpdateRequest request) {
         // Locked first: a supplier picked on a confirmed booking drafts its bill, once.
         bookingRepository.findByIdForUpdate(id);
-        Booking booking = findAccessibleBooking(id);
+        Booking booking = findWritableBooking(id);
         boolean alreadyConfirmed = booking.getBookingStatus() == BookingStatus.CONFIRMED;
         LocalDate oldDepartureDate = booking.getDepartureDate();
         Map<String, String> before = AuditSnapshot.of(booking, AUDITED);
@@ -667,7 +675,7 @@ public class BookingService {
         }
         // Locked first: two confirms at once must not both draft the supplier bill.
         bookingRepository.findByIdForUpdate(id);
-        Booking booking = findAccessibleBooking(id);
+        Booking booking = findWritableBooking(id);
         if (booking.getBookingStatus() == BookingStatus.CANCELLED) {
             throw new IllegalStateException("A cancelled booking can't be reopened - create a new booking instead");
         }
@@ -717,7 +725,7 @@ public class BookingService {
 
     @Transactional
     public BookingResponse updateDeadlines(String id, BookingDeadlineUpdateRequest request) {
-        Booking booking = findAccessibleBooking(id);
+        Booking booking = findWritableBooking(id);
         Map<String, String> before = AuditSnapshot.of(booking, AUDITED);
         if (request.getTicketingDeadline() != null) booking.setTicketingDeadline(request.getTicketingDeadline());
         if (request.getCancellationDeadline() != null) booking.setCancellationDeadline(request.getCancellationDeadline());
@@ -731,7 +739,7 @@ public class BookingService {
 
     @Transactional
     public BookingResponse updatePaymentStatus(String id, BookingPaymentStatusUpdateRequest request) {
-        Booking booking = findAccessibleBooking(id);
+        Booking booking = findWritableBooking(id);
         if (booking.getPaymentStatusSource() == PaymentStatusSource.DERIVED) {
             throw new IllegalStateException("Payment status is derived from invoices - record a receipt instead");
         }
@@ -761,7 +769,7 @@ public class BookingService {
     }
 
     private void deleteBookingRows(String id) {
-        Booking booking = findAccessibleBooking(id);
+        Booking booking = findWritableBooking(id);
         if (booking.getBookingStatus() != BookingStatus.PENDING) {
             throw new IllegalStateException("Only a pending booking can be deleted - cancel it instead");
         }
@@ -851,8 +859,9 @@ public class BookingService {
             throw new IllegalArgumentException("Pick the supplier of this voucher");
         }
         // One supplier per booking: beside other vouchers a voucher is with the booking's supplier.
-        boolean others = bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc(booking.getId()).stream()
-                .anyMatch(d -> !java.util.Objects.equals(d.getId(), voucher.getId()));
+        List<BookingDocument> otherVouchers = bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc(booking.getId()).stream()
+                .filter(d -> !java.util.Objects.equals(d.getId(), voucher.getId())).toList();
+        boolean others = !otherVouchers.isEmpty();
         if (others && !blank(booking.getVendorId()) && !booking.getVendorId().equals(vendorId)) {
             throw new IllegalArgumentException("This booking is with " + booking.getSupplier()
                     + " - every voucher on a booking is with its one supplier");
@@ -873,9 +882,10 @@ public class BookingService {
         if (!others && !blank(vendorId) && !vendorId.equals(booking.getVendorId())) {
             setVendor(booking, vendorId);
         }
-        booking.setNetCost(booking.getNetCost().add(cost));
-        booking.setSellingPrice(booking.getSellingPrice().add(voucher.getSellingPrice()));
-        booking.setCommission(nzMoney(booking.getCommission()).add(nzMoney(voucher.getCommissionInr())));
+        // A voucher-priced booking is the sum of its live vouchers: a price typed on create (API only) is replaced, never added to.
+        booking.setNetCost(otherVouchers.stream().map(d -> nzMoney(d.getNetCost())).reduce(cost, BigDecimal::add));
+        booking.setSellingPrice(otherVouchers.stream().map(d -> nzMoney(d.getSellingPrice())).reduce(voucher.getSellingPrice(), BigDecimal::add));
+        booking.setCommission(otherVouchers.stream().map(d -> nzMoney(d.getCommissionInr())).reduce(nzMoney(voucher.getCommissionInr()), BigDecimal::add));
         booking.setProfit(computeProfit(booking.getSellingPrice(), booking.getNetCost(), booking.getCommission()));
         if (voucher.getMarkupMode() != null) {
             booking.setMarkupMode(voucher.getMarkupMode());
@@ -899,6 +909,14 @@ public class BookingService {
         auditService.recordUpdate(AuditEntityType.BOOKING, booking.getId(), labelFor(booking), changes);
         if (wasConfirmed) {
             raiseChangeAlerts(booking, changes);
+        }
+        syncPaymentIfInvoiced(booking);
+    }
+
+    /** Once invoiced, a voucher added or taken off changes what is still to collect - and so the payment status. */
+    private void syncPaymentIfInvoiced(Booking booking) {
+        if (booking.getPaymentStatusSource() == PaymentStatusSource.DERIVED) {
+            bookingAccountingSync.syncPayment(booking.getId());
         }
     }
 
@@ -952,12 +970,20 @@ public class BookingService {
         if (booking.getBookingStatus() == BookingStatus.CONFIRMED) {
             raiseChangeAlerts(booking, changes);
         }
+        syncPaymentIfInvoiced(booking);
     }
 
     /** Row lock first, then the usual access check - two vouchers saved at once must not lose either's amounts. */
     Booking lockAccessibleBooking(String id) {
         bookingRepository.findByIdForUpdate(id);
-        return findAccessibleBooking(id);
+        return findWritableBooking(id);
+    }
+
+    /** {@link #findAccessibleBooking} for a change: a platform booking's CRM mirror is changed only by the platform (409). */
+    Booking findWritableBooking(String id) {
+        Booking booking = findAccessibleBooking(id);
+        com.voyra.crm.util.PlatformManaged.check(booking.getPlatformBookingId() != null);
+        return booking;
     }
 
     /** Removes a voucher and its amounts in one transaction. @return its stored file key, deleted by the caller after commit */
@@ -1213,7 +1239,7 @@ public class BookingService {
      */
     public Booking findAccessibleBooking(String id) {
         Booking booking = bookingRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("Booking not found: " + id));
+                .orElseThrow(() -> new com.voyra.crm.exception.NotFoundException("Booking not found: " + id));
         CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
         if (!principal.isAgent()) {
             return booking;
@@ -1253,7 +1279,7 @@ public class BookingService {
                 .leadId(b.getLeadId()).serviceId(b.getServiceId()).serviceType(b.getServiceType())
                 .serviceLabel(b.getServiceLabel()).serviceAgentId(b.getServiceAgentId()).serviceAgentName(b.getServiceAgentName())
                 .type(b.getType())
-                .destination(b.getDestination()).pnr(b.getPnr()).ticketNo(b.getTicketNo())
+                .destination(b.getDestination()).pnr(b.getPnr()).platformBookingId(b.getPlatformBookingId()).ticketNo(b.getTicketNo())
                 .airline(b.getAirline()).supplier(b.getSupplier()).vendorId(b.getVendorId()).journeyDate(b.getJourneyDate())
                 .returnDate(b.getReturnDate()).tripType(b.getTripType()).notes(b.getNotes())
                 .flightNumber(b.getFlightNumber()).flightFrom(b.getFlightFrom()).flightTo(b.getFlightTo())
@@ -1446,7 +1472,7 @@ public class BookingService {
      */
     @Transactional
     public List<BookingCostComponentResponse> replaceCostComponents(String bookingId, List<BookingCostComponentRequest> requests) {
-        Booking booking = findAccessibleBooking(bookingId);
+        Booking booking = findWritableBooking(bookingId);
         bookingCostComponentRepository.deleteByBookingId(bookingId);
 
         LocalDateTime now = LocalDateTime.now();

@@ -66,6 +66,44 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    void insufficientBalanceMapsTo409WithCodeAndAvailable() throws Exception {
+        mockMvc.perform(get("/test/insufficient-balance"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("INSUFFICIENT_BALANCE"))
+                .andExpect(jsonPath("$.details.available").value(600.00));
+    }
+
+    @Test
+    void receivableDueMapsTo409WithCode() throws Exception {
+        mockMvc.perform(get("/test/receivable-due"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("RECEIVABLE_DUE"));
+    }
+
+    @Test
+    void bookingRequestMapsTo400WithCode() throws Exception {
+        mockMvc.perform(get("/test/issuing-agent"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("ISSUING_AGENT_REQUIRED"))
+                .andExpect(jsonPath("$.message").value("Choose the agent this booking is issued by"));
+    }
+
+    @Test
+    void bookingConflictMapsTo409WithCodeAndDetails() throws Exception {
+        mockMvc.perform(get("/test/price-changed"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("PRICE_CHANGED"))
+                .andExpect(jsonPath("$.details.displayedFare").value(4600.00));
+    }
+
+    @Test
+    void fareUnavailableMapsTo409WithCode() throws Exception {
+        mockMvc.perform(get("/test/fare-unavailable"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("FARE_UNAVAILABLE"));
+    }
+
+    @Test
     void accessDeniedMapsTo403() throws Exception {
         mockMvc.perform(get("/test/access-denied"))
                 .andExpect(status().isForbidden());

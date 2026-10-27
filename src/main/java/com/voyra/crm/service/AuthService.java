@@ -2,14 +2,19 @@ package com.voyra.crm.service;
 
 import com.voyra.crm.dto.LoginRequest;
 import com.voyra.crm.dto.LoginResponse;
+import com.voyra.crm.dto.AgencyEntitlementsResponse;
+import com.voyra.crm.cache.TenantCache;
 import com.voyra.crm.entity.Agent;
 import com.voyra.crm.entity.PlatformAdmin;
 import com.voyra.crm.entity.Tenant;
+import com.voyra.crm.enums.TenantStatus;
 import com.voyra.crm.enums.UserType;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.PlatformAdminRepository;
 import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.security.JwtService;
+import com.voyra.crm.security.SecurityContextUtil;
+import org.springframework.security.access.AccessDeniedException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -41,6 +46,16 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
     private final BaseCurrency baseCurrency;
+    private final EntitlementService entitlementService;
+
+    /** The caller's agency entitlements, same shape as at login; refreshed by the frontend after plan changes. */
+    public AgencyEntitlementsResponse currentEntitlements() {
+        String tenantId = SecurityContextUtil.getCurrentUserOrThrow().tenantId();
+        if (tenantId == null) {
+            throw new AccessDeniedException("No agency for the current user");
+        }
+        return new AgencyEntitlementsResponse(entitlementService.resolve(tenantId), TenantCache.status(tenantId).orElse(null));
+    }
 
     /**
      * Resolves the principal from the credentials alone - no role is supplied by the caller.
@@ -107,7 +122,8 @@ public class AuthService {
 
     private Optional<LoginResponse> tryOwner(LoginRequest request) {
         Optional<Tenant> tenant = tenantRepository.findByOwnerEmailIgnoreCase(request.getEmail());
-        if (tenant.isEmpty() || !Boolean.TRUE.equals(tenant.get().getIsActive())
+        // SUSPENDED still signs in (read-only, enforced by TenantStatusInterceptor); only DEACTIVATED is refused.
+        if (tenant.isEmpty() || tenant.get().getStatus() == TenantStatus.DEACTIVATED
                 || !passwordEncoder.matches(request.getPassword(), tenant.get().getPassword())) {
             return Optional.empty();
         }
@@ -121,6 +137,7 @@ public class AuthService {
                 .role(UserType.AGENCY_OWNER.name())
                 .tenantId(t.getId())
                 .baseCurrencyCode(baseCurrency.of(t.getId()))
+                .entitlements(new AgencyEntitlementsResponse(entitlementService.resolve(t.getId()), t.getStatus()))
                 .token(jwtService.generateToken(t.getOwnerEmail(), UserType.AGENCY_OWNER, t.getId(), t.getId()))
                 .build());
     }
@@ -129,6 +146,10 @@ public class AuthService {
         Optional<Agent> agent = agentRepository.findByEmailIgnoreCase(request.getEmail());
         if (agent.isEmpty() || !Boolean.TRUE.equals(agent.get().getIsActive())
                 || !passwordEncoder.matches(request.getPassword(), agent.get().getPassword())) {
+            return Optional.empty();
+        }
+        Optional<Tenant> tenant = loginTenant(agent.get().getTenantId());
+        if (tenant.isEmpty()) {
             return Optional.empty();
         }
         Agent a = agent.get();
@@ -142,7 +163,14 @@ public class AuthService {
                 .role(role.name())
                 .tenantId(a.getTenantId())
                 .baseCurrencyCode(baseCurrency.of(a.getTenantId()))
+                .entitlements(new AgencyEntitlementsResponse(entitlementService.resolve(a.getTenantId()), tenant.get().getStatus()))
                 .token(jwtService.generateToken(a.getEmail(), role, a.getId(), a.getTenantId()))
                 .build());
+    }
+
+    /** An agent of a DEACTIVATED (or missing) agency is refused (empty); SUSPENDED still signs in read-only. */
+    private Optional<Tenant> loginTenant(String tenantId) {
+        return tenantId == null ? Optional.empty() : tenantRepository.findById(tenantId)
+                .filter(t -> t.getStatus() != TenantStatus.DEACTIVATED);
     }
 }

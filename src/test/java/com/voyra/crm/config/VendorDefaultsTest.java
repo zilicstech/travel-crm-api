@@ -25,7 +25,17 @@ class VendorDefaultsTest {
 
     @Test
     void seedsTheDefaultVendorsIntoAnEmptyTenant() {
-        when(vendorRepository.count()).thenReturn(0L);
+        when(vendorRepository.countByNameNotIgnoreCase("Voyra Platform")).thenReturn(0L);
+
+        assertTrue(runner.seedCurrentTenant());
+
+        verify(vendorRepository, times(10)).save(any());
+    }
+
+    @Test
+    void aTenantWithOnlyTheVoyraPlatformVendorStillGetsTheDefaults() {
+        // the repository call excludes "Voyra Platform", so a tenant holding only that vendor counts as empty
+        when(vendorRepository.countByNameNotIgnoreCase("Voyra Platform")).thenReturn(0L);
 
         assertTrue(runner.seedCurrentTenant());
 
@@ -34,7 +44,7 @@ class VendorDefaultsTest {
 
     @Test
     void leavesATenantThatAlreadyHasVendorsAlone() {
-        when(vendorRepository.count()).thenReturn(3L);
+        when(vendorRepository.countByNameNotIgnoreCase("Voyra Platform")).thenReturn(3L);
 
         assertFalse(runner.seedCurrentTenant());
 

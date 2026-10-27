@@ -27,8 +27,11 @@ public class PublicFeedbackService {
 
     private static final String NOT_FOUND_MESSAGE = "This feedback link is invalid or has expired";
 
+    private static final String NO_LONGER_AVAILABLE = "This link is no longer available";
+
     private final FeedbackLinkRepository feedbackLinkRepository;
     private final PublicFeedbackTenantService tenantService;
+    private final EntitlementService entitlementService;
 
     @Transactional(readOnly = true)
     public PublicFeedbackResponse getFeedbackPage(String token) {
@@ -53,6 +56,9 @@ public class PublicFeedbackService {
                 .orElseThrow(() -> new IllegalArgumentException(NOT_FOUND_MESSAGE));
         if (link.getExpiresAt() != null && link.getExpiresAt().isBefore(LocalDateTime.now())) {
             throw new IllegalArgumentException(NOT_FOUND_MESSAGE);
+        }
+        if (!entitlementService.publicLinksAvailable(link.getTenantId())) {
+            throw new com.voyra.crm.exception.NotFoundException(NO_LONGER_AVAILABLE);
         }
         return link;
     }

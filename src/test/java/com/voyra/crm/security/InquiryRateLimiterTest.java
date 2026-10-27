@@ -1,9 +1,11 @@
 package com.voyra.crm.security;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.mock.web.MockHttpServletRequest;
 
 import java.util.concurrent.atomic.AtomicLong;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -21,6 +23,65 @@ class InquiryRateLimiterTest {
         assertThatCode(() -> limiter.check("5.6.7.8")).doesNotThrowAnyException();
 
         now.addAndGet(InquiryRateLimiter.WINDOW_MS);
+        assertThatCode(() -> limiter.check("1.2.3.4")).doesNotThrowAnyException();
+    }
+
+    @Test
+    void callerIsTheRightmostForwardedHopSoAClientCannotSpoofIt() {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setRemoteAddr("10.0.0.9");
+        request.addHeader("X-Forwarded-For", "6.6.6.6, 203.0.113.7");
+
+        assertThat(InquiryRateLimiter.callerOf(request, false)).isEqualTo("203.0.113.7");
+    }
+
+    @Test
+    void withTheFlagOffACfConnectingIpHeaderIsIgnoredSoAClientCannotDodgeTheLimitWithIt() {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.addHeader("CF-Connecting-IP", "6.6.6.6");
+        request.addHeader("X-Forwarded-For", "6.6.6.6, 203.0.113.7");
+
+        assertThat(InquiryRateLimiter.callerOf(request, false)).isEqualTo("203.0.113.7");
+    }
+
+    @Test
+    void withTheFlagOnTheCfConnectingIpIsTheCaller() {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.addHeader("CF-Connecting-IP", "198.51.100.4");
+        request.addHeader("X-Forwarded-For", "198.51.100.4, 172.68.1.1");
+
+        assertThat(InquiryRateLimiter.callerOf(request, true)).isEqualTo("198.51.100.4");
+    }
+
+    @Test
+    void withTheFlagOnButNoCfHeaderTheRightmostForwardedHopIsStillUsed() {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.addHeader("CF-Connecting-IP", " ");
+        request.addHeader("X-Forwarded-For", "6.6.6.6, 203.0.113.7");
+
+        assertThat(InquiryRateLimiter.callerOf(request, true)).isEqualTo("203.0.113.7");
+    }
+
+    @Test
+    void callerFallsBackToTheSocketWithoutAForwardedHeader() {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setRemoteAddr("10.0.0.9");
+
+        assertThat(InquiryRateLimiter.callerOf(request, false)).isEqualTo("10.0.0.9");
+    }
+
+    @Test
+    void uploadsAllowThirtyPerTenMinutesThenRefuse() {
+        AtomicLong now = new AtomicLong(1_000_000);
+        KycUploadRateLimiter limiter = new KycUploadRateLimiter(now::get);
+        for (int i = 0; i < 30; i++) {
+            limiter.check("1.2.3.4");
+        }
+        assertThatThrownBy(() -> limiter.check("1.2.3.4")).isInstanceOf(InquiryRateLimiter.TooManyInquiriesException.class);
+
+        now.addAndGet(KycUploadRateLimiter.WINDOW_MS - 1);
+        assertThatThrownBy(() -> limiter.check("1.2.3.4")).isInstanceOf(InquiryRateLimiter.TooManyInquiriesException.class);
+        now.addAndGet(1);
         assertThatCode(() -> limiter.check("1.2.3.4")).doesNotThrowAnyException();
     }
 }

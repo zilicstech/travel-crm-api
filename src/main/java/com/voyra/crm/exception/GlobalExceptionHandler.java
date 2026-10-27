@@ -69,6 +69,16 @@ public class GlobalExceptionHandler {
         return ResponseEntity.badRequest().body(response);
     }
 
+    @ExceptionHandler(FieldValidationException.class)
+    public ResponseEntity<ApiErrorResponse> handleFieldValidation(FieldValidationException ex, HttpServletRequest request) {
+        String path = getPath(request);
+        log.warn("Validation failed - path: {}, field: {}", path, ex.getField());
+        ApiErrorResponse response = ApiErrorResponse.of("Validation failed",
+                "One or more request fields are invalid", null, HttpStatus.BAD_REQUEST.value(), path);
+        response.setDetails(Map.of("errors", Map.of(ex.getField(), ex.getMessage())));
+        return ResponseEntity.badRequest().body(response);
+    }
+
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<ApiErrorResponse> handleMessageNotReadable(HttpMessageNotReadableException ex,
                                                                         HttpServletRequest request) {
@@ -80,15 +90,24 @@ public class GlobalExceptionHandler {
                         "Invalid request body", null, HttpStatus.BAD_REQUEST.value(), path));
     }
 
-    /** A query/path parameter that is missing or can't be read (a bad enum, a malformed date) is the caller's mistake. */
+    /** A query/path parameter, header or multipart part that is missing or can't be read (a bad enum, a malformed date) is the caller's mistake. */
     @ExceptionHandler({org.springframework.web.bind.MissingServletRequestParameterException.class,
-            org.springframework.web.method.annotation.MethodArgumentTypeMismatchException.class})
+            org.springframework.web.method.annotation.MethodArgumentTypeMismatchException.class,
+            org.springframework.web.bind.MissingRequestHeaderException.class,
+            org.springframework.web.multipart.support.MissingServletRequestPartException.class})
     public ResponseEntity<ApiErrorResponse> handleBadParameter(Exception ex, HttpServletRequest request) {
         String path = getPath(request);
-        String message = ex instanceof org.springframework.web.bind.MissingServletRequestParameterException missing
-                ? "The '" + missing.getParameterName() + "' parameter is required"
-                : "The '" + ((org.springframework.web.method.annotation.MethodArgumentTypeMismatchException) ex).getName()
-                        + "' parameter has an invalid value";
+        String message;
+        if (ex instanceof org.springframework.web.bind.MissingServletRequestParameterException missing) {
+            message = "The '" + missing.getParameterName() + "' parameter is required";
+        } else if (ex instanceof org.springframework.web.bind.MissingRequestHeaderException missingHeader) {
+            message = "The '" + missingHeader.getHeaderName() + "' header is required";
+        } else if (ex instanceof org.springframework.web.multipart.support.MissingServletRequestPartException missingPart) {
+            message = "The '" + missingPart.getRequestPartName() + "' part is required";
+        } else {
+            message = "The '" + ((org.springframework.web.method.annotation.MethodArgumentTypeMismatchException) ex).getName()
+                    + "' parameter has an invalid value";
+        }
         log.warn("Bad request parameter - path: {}, {}", path, message);
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
                 ApiErrorResponse.of(message, "Invalid request parameter", null, HttpStatus.BAD_REQUEST.value(), path));
@@ -103,6 +122,28 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED).body(
                 ApiErrorResponse.of("This HTTP method is not supported for this endpoint", "Method not allowed",
                         null, HttpStatus.METHOD_NOT_ALLOWED.value(), path));
+    }
+
+    /** A body type the endpoint does not take (e.g. JSON on a multipart upload): 415, decided before any handler runs. */
+    @ExceptionHandler(org.springframework.web.HttpMediaTypeNotSupportedException.class)
+    public ResponseEntity<ApiErrorResponse> handleMediaTypeNotSupported(org.springframework.web.HttpMediaTypeNotSupportedException ex,
+                                                                        HttpServletRequest request) {
+        String path = getPath(request);
+        log.warn("Unsupported content type - path: {}, type: {}", path, ex.getContentType());
+        return ResponseEntity.status(HttpStatus.UNSUPPORTED_MEDIA_TYPE).body(
+                ApiErrorResponse.of("This endpoint does not accept that content type", "Unsupported media type",
+                        null, HttpStatus.UNSUPPORTED_MEDIA_TYPE.value(), path));
+    }
+
+    /** A multipart body that cannot be parsed is the caller's mistake (the more specific 413 handler below wins for size). */
+    @ExceptionHandler(org.springframework.web.multipart.MultipartException.class)
+    public ResponseEntity<ApiErrorResponse> handleMultipart(org.springframework.web.multipart.MultipartException ex,
+                                                            HttpServletRequest request) {
+        String path = getPath(request);
+        log.warn("Unreadable multipart body - path: {}", path);
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
+                ApiErrorResponse.of("The upload could not be read - send it as multipart form data", "Invalid request body",
+                        null, HttpStatus.BAD_REQUEST.value(), path));
     }
 
     @ExceptionHandler(org.springframework.web.multipart.MaxUploadSizeExceededException.class)
@@ -185,6 +226,79 @@ public class GlobalExceptionHandler {
                         HttpStatus.CONFLICT.value(), path));
     }
 
+    @ExceptionHandler(TenantWriteRefusedException.class)
+    public ResponseEntity<ApiErrorResponse> handleTenantWriteRefused(TenantWriteRefusedException ex, HttpServletRequest request) {
+        String path = getPath(request);
+        log.warn("Tenant write refused - code: {}, path: {}", ex.getCode(), path);
+        ApiErrorResponse response = ApiErrorResponse.of(ex.getMessage(), "Write refused", null, ex.getStatus().value(), path);
+        response.setCode(ex.getCode());
+        response.setSku(ex.getSku() == null ? null : ex.getSku().name());
+        return ResponseEntity.status(ex.getStatus()).body(response);
+    }
+
+    @ExceptionHandler(InsufficientBalanceException.class)
+    public ResponseEntity<ApiErrorResponse> handleInsufficientBalance(InsufficientBalanceException ex,
+                                                                      HttpServletRequest request) {
+        String path = getPath(request);
+        log.warn("Insufficient wallet balance - available: {}, path: {}", ex.getAvailable(), path);
+        ApiErrorResponse response = ApiErrorResponse.of(ex.getMessage(), "Insufficient balance", null,
+                HttpStatus.CONFLICT.value(), path);
+        response.setCode("INSUFFICIENT_BALANCE");
+        response.setDetails(Map.of("available", ex.getAvailable()));
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
+    }
+
+    @ExceptionHandler(PricingNotConfiguredException.class)
+    public ResponseEntity<ApiErrorResponse> handlePricingNotConfigured(PricingNotConfiguredException ex,
+                                                                       HttpServletRequest request) {
+        String path = getPath(request);
+        log.warn("Pricing not configured - path: {}", path);
+        ApiErrorResponse response = ApiErrorResponse.of(ex.getMessage(), "Pricing not configured", null,
+                HttpStatus.CONFLICT.value(), path);
+        response.setCode("PRICING_NOT_CONFIGURED");
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
+    }
+
+    @ExceptionHandler(ReceivableDueException.class)
+    public ResponseEntity<ApiErrorResponse> handleReceivableDue(ReceivableDueException ex, HttpServletRequest request) {
+        String path = getPath(request);
+        log.warn("Receivable due - path: {}", path);
+        ApiErrorResponse response = ApiErrorResponse.of(ex.getMessage(), "Receivable due", null,
+                HttpStatus.CONFLICT.value(), path);
+        response.setCode("RECEIVABLE_DUE");
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
+    }
+
+    @ExceptionHandler(BookingRequestException.class)
+    public ResponseEntity<ApiErrorResponse> handleBookingRequest(BookingRequestException ex, HttpServletRequest request) {
+        String path = getPath(request);
+        log.warn("Booking request refused {} - path: {}", ex.getCode(), path);
+        ApiErrorResponse response = ApiErrorResponse.of(ex.getMessage(), "Invalid request", null, HttpStatus.BAD_REQUEST.value(), path);
+        response.setCode(ex.getCode());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
+    }
+
+    @ExceptionHandler(BookingConflictException.class)
+    public ResponseEntity<ApiErrorResponse> handleBookingConflict(BookingConflictException ex, HttpServletRequest request) {
+        String path = getPath(request);
+        log.warn("Booking conflict {} - path: {}", ex.getCode(), path);
+        ApiErrorResponse response = ApiErrorResponse.of(ex.getMessage(), "Booking conflict", null,
+                HttpStatus.CONFLICT.value(), path);
+        response.setCode(ex.getCode());
+        response.setDetails(ex.getDetails());
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
+    }
+
+    @ExceptionHandler(FareUnavailableException.class)
+    public ResponseEntity<ApiErrorResponse> handleFareUnavailable(FareUnavailableException ex, HttpServletRequest request) {
+        String path = getPath(request);
+        log.warn("Fare unavailable - path: {}", path);
+        ApiErrorResponse response = ApiErrorResponse.of(ex.getMessage(), "Fare unavailable", null,
+                HttpStatus.CONFLICT.value(), path);
+        response.setCode("FARE_UNAVAILABLE");
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
+    }
+
     @ExceptionHandler(ObjectOptimisticLockingFailureException.class)
     public ResponseEntity<ApiErrorResponse> handleOptimisticLocking(ObjectOptimisticLockingFailureException ex,
                                                                      HttpServletRequest request) {
@@ -213,6 +327,15 @@ public class GlobalExceptionHandler {
         log.warn("Rate limited - path: {}", path);
         return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(
                 ApiErrorResponse.of(ex.getMessage(), "Too many requests", null, HttpStatus.TOO_MANY_REQUESTS.value(), path));
+    }
+
+    @ExceptionHandler(CaptchaException.class)
+    public ResponseEntity<ApiErrorResponse> handleCaptcha(CaptchaException ex, HttpServletRequest request) {
+        String path = getPath(request);
+        log.warn("CAPTCHA refused {} - path: {}", ex.getCode(), path);
+        ApiErrorResponse response = ApiErrorResponse.of(ex.getMessage(), "Verification failed", null, ex.getStatus().value(), path);
+        response.setCode(ex.getCode());
+        return ResponseEntity.status(ex.getStatus()).body(response);
     }
 
     @ExceptionHandler(SupplierException.class)

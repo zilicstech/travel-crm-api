@@ -8,8 +8,17 @@ import com.voyra.crm.dto.AgencyResponse;
 import com.voyra.crm.dto.AgencyUpdateRequest;
 import com.voyra.crm.dto.CredentialsResponse;
 import com.voyra.crm.dto.PasswordResetRequest;
+import com.voyra.crm.entity.AgencyApplication;
 import com.voyra.crm.entity.Tenant;
+import com.voyra.crm.entity.Subscription;
+import com.voyra.crm.entity.Wallet;
+import com.voyra.crm.repository.SubscriptionRepository;
+import com.voyra.crm.enums.WalletStatus;
+import com.voyra.crm.repository.WalletRepository;
+import com.voyra.crm.enums.PlatformAuditAction;
+import com.voyra.crm.enums.TenantStatus;
 import com.voyra.crm.migration.TenantFlywayMigrator;
+import com.voyra.crm.repository.AgencyApplicationRepository;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.security.AesPasswordEncoder;
@@ -20,9 +29,13 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 
 /** Platform (SUPER_ADMIN) management of Agencies. Agency creation = tenant provisioning. */
 @Service
@@ -38,6 +51,10 @@ public class AgencyService {
     private final TenantDefaultsSeeder tenantDefaultsSeeder;
     private final ChartOfAccountsSeedService chartOfAccountsSeedService;
     private final LoginEmailService loginEmailService;
+    private final PlatformAuditService platformAuditService;
+    private final AgencyApplicationRepository agencyApplicationRepository;
+    private final WalletRepository walletRepository;
+    private final SubscriptionRepository subscriptionRepository;
 
     @Transactional
     public AgencyCreateResponse createAgency(AgencyCreateRequest request) {
@@ -52,14 +69,7 @@ public class AgencyService {
                 .isActive(true)
                 .baseCurrencyCode(com.voyra.crm.util.FxMath.code(request.getBaseCurrencyCode(), BaseCurrency.DEFAULT))
                 .build();
-
-        // Flush first: a concurrent create with the same owner email (a double-click) waits on the
-        // unique index here and fails before it builds a schema, instead of leaving an orphan one.
-        tenantRepository.saveAndFlush(tenant);
-        tenantFlywayMigrator.migrate(tenant.getId());
-        seedDefaultsForTenant(tenant.getId());
-        seedChartOfAccountsFor(tenant.getId());
-        TenantCache.put(tenant.getId(), tenant.getAgencyName(), true);
+        provision(tenant);
 
         log.info("Agency created: tenantId={}, agencyName={}", tenant.getId(), tenant.getAgencyName());
         return AgencyCreateResponse.builder()
@@ -69,6 +79,68 @@ public class AgencyService {
                 .ownerEmail(tenant.getOwnerEmail())
                 .baseCurrencyCode(tenant.getBaseCurrencyCode())
                 .build();
+    }
+
+    /**
+     * An approved application becomes an agency: its KYC identity is copied onto the tenant and the
+     * caller (a SUPER_ADMIN) is recorded as the approver; {@code logoKey} (null = none) is its onboarding logo file. The caller marks the application APPROVED.
+     */
+    @Transactional
+    public Tenant provisionFromApplication(AgencyApplication app, String ownerPassword, String logoKey) {
+        loginEmailService.assertFree(app.getOwnerEmail());
+        Tenant tenant = Tenant.builder()
+                .id(generateUniqueTenantId())
+                .agencyName(app.getAgencyName())
+                .legalName(app.getLegalName())
+                .tradeName(app.getTradeName())
+                .pan(app.getPan())
+                .cin(app.getCin())
+                .gstNumber(app.getGstin())
+                .address(app.getAddress())
+                .stateCode(app.getStateCode())
+                .ownerName(app.getOwnerName())
+                .ownerEmail(app.getOwnerEmail())
+                .contactPhone(app.getOwnerPhone())
+                .contactEmail(app.getOwnerEmail())
+                .logoKey(logoKey)
+                .password(passwordEncoder.encode(ownerPassword))
+                .baseCurrencyCode(com.voyra.crm.util.FxMath.code(app.getBaseCurrencyCode(), BaseCurrency.DEFAULT))
+                .approvedAt(Instant.now())
+                .approvedBy(SecurityContextUtil.getCurrentUserOrThrow().userId())
+                .build();
+        tenant.setStatus(TenantStatus.ACTIVE);
+        provision(tenant);
+        log.info("Agency provisioned from application: tenantId={}, applicationId={}", tenant.getId(), app.getId());
+        return tenant;
+    }
+
+    /** Agency creation = tenant provisioning: the row, its schema, its defaults, then the auth cache. */
+    private void provision(Tenant tenant) {
+        // Flush first: a concurrent create with the same owner email (a double-click) waits on the
+        // unique index here and fails before it builds a schema, instead of leaving an orphan one.
+        tenantRepository.saveAndFlush(tenant);
+        walletRepository.save(Wallet.builder()
+                .id(UniqueIdResolver.resolve(walletRepository::existsById))
+                .tenantId(tenant.getId())
+                .balance(BigDecimal.ZERO.setScale(2))
+                .held(BigDecimal.ZERO.setScale(2))
+                .status(WalletStatus.OPEN)
+                .createdAt(Instant.now())
+                .build());
+        Instant now = Instant.now();
+        Subscription trial = EntitlementService.newTrial(
+                UniqueIdResolver.resolve(subscriptionRepository::existsById), tenant.getId(), now);
+        subscriptionRepository.save(trial);
+        tenantFlywayMigrator.migrate(tenant.getId());
+        seedDefaultsForTenant(tenant.getId());
+        seedChartOfAccountsFor(tenant.getId());
+        String tenantId = tenant.getId();
+        String name = tenant.getAgencyName();
+        TenantStatus status = tenant.getStatus();
+        afterCommit(() -> {
+            TenantCache.put(tenantId, name, status);
+            TenantCache.putEntitlements(tenantId, EntitlementService.compute(trial, now));
+        });
     }
 
     @Transactional(readOnly = true)
@@ -85,13 +157,20 @@ public class AgencyService {
     }
 
     @Transactional
-    public AgencyResponse updateStatus(String id, boolean isActive) {
+    public AgencyResponse updateStatus(String id, TenantStatus status) {
         Tenant tenant = findById(id);
-        tenant.setIsActive(isActive);
+        TenantStatus from = tenant.getStatus();
+        if (from == status) {
+            return toResponse(tenant, true);
+        }
+        tenant.setStatus(status);
         tenantRepository.save(tenant);
+        platformAuditService.record(PlatformAuditAction.TENANT_STATUS, "TENANT", tenant.getId(),
+                Map.of("from", String.valueOf(from), "to", status.name()));
         // Same-method cache sync: a stale auth cache is a security bug (blueprint §8.10 rule 2).
-        TenantCache.put(tenant.getId(), tenant.getAgencyName(), isActive);
-        log.info("Agency status updated: tenantId={}, isActive={}", id, isActive);
+        String name = tenant.getAgencyName();
+        afterCommit(() -> TenantCache.put(id, name, status));
+        log.info("Agency status updated: tenantId={}, status={}", id, status);
         // includeRevenue=true - a caller updating one agency's status in place (the detail
         // modal) would otherwise see its revenue silently reset to zero on the very next
         // render, since a null totalRevenue reads as 0 wherever this response gets cached.
@@ -130,7 +209,9 @@ public class AgencyService {
             }
         }
         tenantRepository.save(tenant);
-        TenantCache.put(tenant.getId(), tenant.getAgencyName(), tenant.getIsActive());
+        String name = tenant.getAgencyName();
+        TenantStatus status = tenant.getStatus();
+        afterCommit(() -> TenantCache.put(id, name, status));
         log.info("Agency updated: tenantId={}, agencyName={}", id, tenant.getAgencyName());
         return toResponse(tenant, true);
     }
@@ -146,12 +227,17 @@ public class AgencyService {
         log.info("Agency owner password reset: tenantId={}, by={}", id, SecurityContextUtil.getAuditInfo());
     }
 
-    private AgencyResponse toResponse(Tenant tenant, boolean includeRevenue) {
+    /** Package-visible so an approved application can answer with the agency it created. */
+    AgencyResponse toResponse(Tenant tenant, boolean includeRevenue) {
         // Agents only: accountants share the table but are not agents.
         long agentsCount = agentRepository.countByTenantIdAndUserRole(tenant.getId(), com.voyra.crm.enums.UserType.AGENT);
         BigDecimal totalRevenue = null;
+        String applicationId = null;
         if (includeRevenue) {
+            // Detail-only reads: the list path would turn these into one query per agency.
             totalRevenue = readRevenueForTenant(tenant.getId());
+            applicationId = agencyApplicationRepository.findFirstByTenantId(tenant.getId())
+                    .map(AgencyApplication::getId).orElse(null);
         }
         return AgencyResponse.builder()
                 .id(tenant.getId())
@@ -159,10 +245,15 @@ public class AgencyService {
                 .ownerName(tenant.getOwnerName())
                 .ownerEmail(tenant.getOwnerEmail())
                 .isActive(tenant.getIsActive())
+                .status(tenant.getStatus())
                 .agentsCount(agentsCount)
                 .totalRevenue(totalRevenue)
                 .createdDate(tenant.getCreatedDate())
                 .baseCurrencyCode(tenant.getBaseCurrencyCode())
+                .pan(tenant.getPan())
+                .cin(tenant.getCin())
+                .approvedAt(tenant.getApprovedAt())
+                .applicationId(applicationId)
                 .build();
     }
 
@@ -220,6 +311,20 @@ public class AgencyService {
             } else {
                 TenantContext.setTenantId(previous);
             }
+        }
+    }
+
+    /** The tenant cache follows the committed row only: a rolled-back change never reaches it. */
+    private static void afterCommit(Runnable cacheWrite) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    cacheWrite.run();
+                }
+            });
+        } else {
+            cacheWrite.run();
         }
     }
 

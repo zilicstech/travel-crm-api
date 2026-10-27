@@ -43,6 +43,11 @@ public interface BookingRepository extends JpaRepository<Booking, String>, JpaSp
 
     List<Booking> findByBookingStatus(com.voyra.crm.enums.BookingStatus status);
 
+    /** The CRM mirror of a platform booking (at most one: the column is UNIQUE). */
+    java.util.Optional<Booking> findByPlatformBookingId(String platformBookingId);
+
+    boolean existsByIdAndPlatformBookingIdIsNotNull(String id);
+
     /** Drives the auto-BOOKED/back-to-CONFIRMED transition: zero means nothing live remains. */
     long countByServiceIdAndBookingStatusNot(String serviceId, BookingStatus excludedStatus);
 

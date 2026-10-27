@@ -16,10 +16,18 @@ echo "=== BACKEND_BLUEPRINT.md compliance audit ==="
 # §5.3 - every controller class or method carries @PreAuthorize (auth + public are exempt)
 UNGUARDED=0
 for f in $SRC/controller/*.java; do
-  case "$(basename "$f")" in AuthController.java|PublicProposalController.java|PublicFeedbackController.java|PublicInquiryController.java) continue ;; esac
+  case "$(basename "$f")" in AuthController.java|PublicProposalController.java|PublicFeedbackController.java|PublicInquiryController.java|PublicAgencyApplicationController.java|PublicPaymentWebhookController.java) continue ;; esac
   grep -q '@PreAuthorize' "$f" || { echo "    unguarded controller: $f"; UNGUARDED=$((UNGUARDED+1)); }
 done
 check "§5.3 all controllers guarded by @PreAuthorize" 0 "$UNGUARDED"
+
+# Spec §8 - every controller is classified in ControllerSkuTable (NEVER_GATED or one SKU);
+# ControllerSkuTableContractTest checks the same against the live handler mapping.
+UNCLASSIFIED=0
+for f in $SRC/controller/*Controller.java; do
+  grep -q "\b$(basename "$f" .java)\.class" $SRC/security/ControllerSkuTable.java || { echo "    unclassified controller: $f"; UNCLASSIFIED=$((UNCLASSIFIED+1)); }
+done
+check "spec §8 every controller in ControllerSkuTable" 0 "$UNCLASSIFIED"
 
 # §7.3 - controllers never return JPA entities.
 # The alternation is an explicit allowlist of entity class names, so it has to be extended
@@ -40,8 +48,16 @@ check "§5.3 all controllers guarded by @PreAuthorize" 0 "$UNGUARDED"
 # Extended for the accounts-payable rebuild: SupplierInvoiceLineItem (entity/SupplierInvoiceLineItem.java),
 # SupplierPayment (entity/SupplierPayment.java), SupplierLedgerEntry (entity/SupplierLedgerEntry.java),
 # SupplierCreditNote (entity/SupplierCreditNote.java). Extended for marketing inquiries: Inquiry (entity/Inquiry.java).
+# Extended for agency applications: AgencyApplication (entity/AgencyApplication.java), KycDocument (entity/KycDocument.java). PlatformSetting (entity/PlatformSetting.java). AgencyPricing (entity/AgencyPricing.java).
+# Extended for the wallet: Wallet, WalletEntry, TopupRequest, GatewayOrder, GatewayWebhookOrphan, PlatformReceivable (entity/).
+# Extended for platform bookings: PlatformBooking, PlatformBookingEvent (entity/).
+# Extended for subscriptions: Subscription, SubscriptionInvoice (entity/).
 check "§7.3 no entities returned from controllers" 0 \
-  "$(grep -rlE 'ResponseEntity<(List<)?(Lead|LeadMember|LeadNote|LeadProposal|LeadTimeline|LeadService|LeadFollowUp|LeadVoucher|AgencySetting|Client|Member|MemberDocument|BookingDocument|Booking|Visa|Agent|Tenant|ClientInvoice|SupplierInvoice|PlatformAdmin|SupplierCredential|AuditLog|Vendor|CommunicationLog|Feedback|FeedbackLink|ShiftHandover|TaxRateConfig|InvoiceLineItem|Invoice|PaymentReceipt|CustomerLedgerEntry|CreditNote|SupplierInvoiceLineItem|SupplierPayment|SupplierLedgerEntry|SupplierCreditNote|Inquiry)[>,]' $SRC/controller/ 2>/dev/null | wc -l | tr -d ' ')"
+  "$(grep -rlE 'ResponseEntity<(List<)?(Lead|LeadMember|LeadNote|LeadProposal|LeadTimeline|LeadService|LeadFollowUp|LeadVoucher|AgencySetting|Client|Member|MemberDocument|BookingDocument|Booking|Visa|Agent|Tenant|ClientInvoice|SupplierInvoice|PlatformAdmin|PlatformSupplierCredential|AuditLog|Vendor|CommunicationLog|Feedback|FeedbackLink|ShiftHandover|TaxRateConfig|InvoiceLineItem|Invoice|PaymentReceipt|CustomerLedgerEntry|CreditNote|SupplierInvoiceLineItem|SupplierPayment|SupplierLedgerEntry|SupplierCreditNote|Inquiry|AgencyApplication|KycDocument|PlatformSetting|AgencyPricing|Wallet|WalletEntry|TopupRequest|GatewayOrder|GatewayWebhookOrphan|PlatformReceivable|PlatformBooking|PlatformBookingEvent|Subscription|SubscriptionInvoice)[>,]' $SRC/controller/ 2>/dev/null | wc -l | tr -d ' ')"
+
+# Public tables must not be shadowed by a same-named tenant table (tenant search_path is "tenant_x, public").
+check "public wallet/booking/subscription tables not shadowed by tenant migrations" 0 \
+  "$(grep -liE 'create[[:space:]]+table[[:space:]]+(if[[:space:]]+not[[:space:]]+exists[[:space:]]+)?(public\.)?(wallet|wallet_entry|topup_request|gateway_order|gateway_webhook_orphan|platform_receivable|platform_booking|platform_booking_event|subscription|subscription_invoice|voyra_invoice_sequence)([[:space:]]|\()' src/main/resources/db/migration/tenant/*.sql 2>/dev/null | wc -l | tr -d ' ')"
 
 # §8.1 - controllers hold no repository access and no try/catch
 check "§8.1 no repository access in controllers" 0 \

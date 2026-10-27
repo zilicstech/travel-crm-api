@@ -12,12 +12,16 @@ import com.voyra.crm.dto.TeammateResponse;
 import com.voyra.crm.entity.Agent;
 import com.voyra.crm.enums.LeadStatus;
 import com.voyra.crm.enums.ServiceType;
+import com.voyra.crm.enums.Sku;
+import com.voyra.crm.exception.TenantWriteRefusedException;
+import com.voyra.crm.models.Entitlements;
 import com.voyra.crm.enums.UserType;
 import com.voyra.crm.models.AgentStats;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.BookingRepository;
 import com.voyra.crm.repository.LeadNoteRepository;
 import com.voyra.crm.repository.LeadRepository;
+import com.voyra.crm.repository.SubscriptionRepository;
 import com.voyra.crm.repository.VisaRepository;
 import com.voyra.crm.security.AesPasswordEncoder;
 import com.voyra.crm.security.CustomUserPrincipal;
@@ -57,6 +61,8 @@ public class AgentService {
     private final VisaRepository visaRepository;
     private final AesPasswordEncoder passwordEncoder;
     private final LoginEmailService loginEmailService;
+    private final EntitlementService entitlementService;
+    private final SubscriptionRepository subscriptionRepository;
 
     @Transactional
     public AgentCreateResponse createAgent(AgentCreateRequest request) {
@@ -71,6 +77,8 @@ public class AgentService {
         if (role == UserType.AGENT && manageableServices.isEmpty()) {
             throw new IllegalArgumentException("At least one manageable service is required for an Agent");
         }
+
+        assertSeatFree(tenantId, role);
 
         Agent agent = Agent.builder()
                 .id(generateUniqueAgentId())
@@ -194,6 +202,11 @@ public class AgentService {
     @Transactional
     public AgentPerformanceResponse updateStatus(String id, boolean isActive) {
         Agent agent = findOwnedAgent(id);
+        if (isActive && !Boolean.TRUE.equals(agent.getIsActive())) {
+            // the interceptors let this route through so an owner can always deactivate; reactivating is a write
+            entitlementService.assertWritable(agent.getTenantId());
+            assertSeatFree(agent.getTenantId(), agent.getUserRole());
+        }
         agent.setIsActive(isActive);
         agentRepository.save(agent);
         AgentCache.put(agent.getId(), isActive);
@@ -321,6 +334,27 @@ public class AgentService {
             throw new AccessDeniedException("Agent does not belong to your agency");
         }
         return agent;
+    }
+
+    /**
+     * Spec §8: a login needs a free seat to be created or reactivated; existing logins are never cut off. Agency plans
+     * (2026-10-27): an agent login needs Staff seats (CRM Lite) and an accountant login Accounts and GST (Premium).
+     */
+    private void assertSeatFree(String tenantId, UserType role) {
+        // lock the tenant's subscription row until commit so two concurrent creates cannot both take the last seat
+        subscriptionRepository.findByTenantIdForUpdate(tenantId);
+        Entitlements entitlements = entitlementService.resolve(tenantId);
+        Sku needed = role == UserType.ACCOUNTANT ? Sku.ACCOUNTS_GST : Sku.STAFF_SEATS;
+        if (!entitlements.skus().contains(needed)) {
+            throw TenantWriteRefusedException.skuRequired(needed);
+        }
+        int seats = entitlements.seats();
+        if (seats == 0) {
+            throw new IllegalStateException("Staff logins need the Staff seats add-on — add it in Subscription");
+        }
+        if (agentRepository.countByTenantIdAndIsActiveTrue(tenantId) >= seats) {
+            throw new IllegalStateException("All " + seats + " seats are in use — add seats in Subscription");
+        }
     }
 
     private String ownerTenantId() {

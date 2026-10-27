@@ -160,8 +160,6 @@ public interface LeadRepository extends JpaRepository<Lead, String> {
 
     long countByStatus(LeadStatus status);
 
-    long countByFollowUpDateLessThanEqualAndStatusNotIn(LocalDate date, Collection<LeadStatus> excludedStatuses);
-
     long countByCreatedByAndStatus(String createdBy, LeadStatus status);
 
     long countByCreatedByAndStatusIn(String createdBy, Collection<LeadStatus> statuses);

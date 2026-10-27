@@ -59,6 +59,10 @@ class SupplierCreditNoteServiceTest {
     private JournalEntryRepository journalEntryRepository;
     @Mock
     private JournalLineRepository journalLineRepository;
+    @Mock
+    private com.voyra.crm.repository.BookingRepository bookingRepository;
+    @Mock
+    private LedgerAccountResolver ledgerAccountResolver;
 
     @org.mockito.Spy
 
@@ -237,5 +241,47 @@ class SupplierCreditNoteServiceTest {
         assertThat(invoice.getAmountPaid()).isEqualByComparingTo("0.00");
         assertThat(invoice.getBalanceDue()).isEqualByComparingTo("0.00");
         assertThat(note.getRefundedAmount()).isEqualByComparingTo("2000.00");
+    }
+
+    /** The platform's refund on a cancelled mirror lands back on 1310 "Voyra Wallet (advance to supplier)", not the bank. */
+    @Test
+    void aVoyraWalletRefundDebitsTheVoyraWalletAccount() {
+        SupplierCreditNote note = SupplierCreditNote.builder()
+                .id("CN1").vendorId("V1").supplierInvoiceId("SI1").bookingId("B1")
+                .status(SupplierCreditNoteStatus.RECORDED).currencyCode("INR").fxRateToInr(BigDecimal.ONE)
+                .totalAmount(new BigDecimal("4000.00")).totalAmountInr(new BigDecimal("4000.00"))
+                .refundableAmount(new BigDecimal("4000.00")).refundedAmount(BigDecimal.ZERO).build();
+        SupplierInvoice invoice = approvedBill("ELIGIBLE");
+        invoice.setAmountPaid(new BigDecimal("5400.00"));
+        invoice.setCreditNoteTotal(new BigDecimal("4000.00"));
+        when(supplierCreditNoteRepository.findById("CN1")).thenReturn(Optional.of(note));
+        when(supplierInvoiceRepository.findById("SI1")).thenReturn(Optional.of(invoice));
+        when(supplierPaymentRepository.save(org.mockito.ArgumentMatchers.any())).thenAnswer(inv -> inv.getArgument(0));
+        when(bookingRepository.existsByIdAndPlatformBookingIdIsNotNull("B1")).thenReturn(true);
+        when(ledgerAccountResolver.voyraWalletCode()).thenReturn("1310");
+        com.voyra.crm.dto.SupplierCreditNoteRefundRequest req = new com.voyra.crm.dto.SupplierCreditNoteRefundRequest();
+        req.setAmount(new BigDecimal("4000.00"));
+        req.setPaymentMode(com.voyra.crm.enums.PaymentMode.VOYRA_WALLET);
+        req.setReceivedOn(java.time.LocalDate.of(2026, 10, 1));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> supplierCreditNoteService.receiveRefund("CN1", req, false))
+                .isInstanceOf(IllegalArgumentException.class); // a user can't pick Voyra Wallet (and the mirror's note is the platform's)
+        com.voyra.crm.security.SystemActor.call("T1", () -> supplierCreditNoteService.receiveRefund("CN1", req, false));
+
+        org.mockito.ArgumentCaptor<com.voyra.crm.models.JournalPosting> captor = org.mockito.ArgumentCaptor.forClass(com.voyra.crm.models.JournalPosting.class);
+        org.mockito.Mockito.verify(journalService).post(captor.capture());
+        assertThat(captor.getValue().lines()).extracting(l -> l.accountCode()).containsExactly("1310", "2200");
+    }
+
+    @Test
+    void aVoyraWalletRefundIsRecordedByVoyraOnly() {
+        com.voyra.crm.dto.SupplierCreditNoteRefundRequest req = new com.voyra.crm.dto.SupplierCreditNoteRefundRequest();
+        req.setAmount(new BigDecimal("4000.00"));
+        req.setPaymentMode(com.voyra.crm.enums.PaymentMode.VOYRA_WALLET);
+        req.setReceivedOn(java.time.LocalDate.of(2026, 10, 1));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> supplierCreditNoteService.receiveRefund("CN1", req))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Voyra Wallet payments are recorded by Voyra only");
+        org.mockito.Mockito.verify(supplierPaymentRepository, org.mockito.Mockito.never()).save(org.mockito.ArgumentMatchers.any());
     }
 }

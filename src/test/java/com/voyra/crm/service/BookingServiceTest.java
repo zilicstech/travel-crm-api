@@ -126,6 +126,9 @@ class BookingServiceTest {
 
     private ClientCreditService clientCreditService;
 
+    @Mock
+    private BookingAccountingSync bookingAccountingSync;
+
 
     @org.mockito.Spy
 
@@ -173,6 +176,40 @@ class BookingServiceTest {
         org.mockito.Mockito.verify(bookingRepository, org.mockito.Mockito.never()).save(org.mockito.ArgumentMatchers.any());
     }
 
+    /**
+     * R21: an owner logging a booking on an unassigned service for a named agent - the sync assigns the service to that
+     * agent, and the booking's service-agent snapshot follows in the same transaction (it was left blank).
+     */
+    @Test
+    void aBookingOnAnUnassignedServiceSnapshotsTheAgentTheServiceIsGivenTo() {
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+                new CustomUserPrincipal("O1", "dana", UserType.AGENCY_OWNER, "T1"), null, java.util.List.of()));
+        com.voyra.crm.entity.Agent vikram = com.voyra.crm.entity.Agent.builder().id("A2").name("Vikram Rao").build();
+        when(agentRepository.findByIdAndTenantId("A2", "T1")).thenReturn(Optional.of(vikram));
+        when(clientRepository.findById("C1")).thenReturn(Optional.of(com.voyra.crm.entity.Client.builder().id("C1").name("Asha").build()));
+        com.voyra.crm.entity.LeadService service = com.voyra.crm.entity.LeadService.builder().id("S1").leadId("L1")
+                .type(com.voyra.crm.enums.ServiceType.FLIGHT).build();
+        when(leadServiceRepository.findById("S1")).thenReturn(Optional.of(service));
+        org.mockito.Mockito.doAnswer(i -> {
+            service.setAssignedAgentId(i.getArgument(1));
+            service.setAssignedAgentName(i.getArgument(2));
+            return null;
+        }).when(serviceBookingStatusSync).onBookingLogged("S1", "A2", "Vikram Rao");
+        org.mockito.ArgumentCaptor<Booking> saved = org.mockito.ArgumentCaptor.forClass(Booking.class);
+        com.voyra.crm.dto.BookingCreateRequest request = new com.voyra.crm.dto.BookingCreateRequest();
+        request.setClientId("C1");
+        request.setAgentId("A2");
+        request.setServiceId("S1");
+        request.setType(com.voyra.crm.enums.BookingType.FLIGHT);
+
+        bookingService.createBooking(request);
+
+        org.mockito.Mockito.verify(bookingRepository, org.mockito.Mockito.atLeastOnce()).save(saved.capture());
+        Booking last = saved.getValue();
+        assertThat(last.getServiceAgentId()).isEqualTo("A2");
+        assertThat(last.getServiceAgentName()).isEqualTo("Vikram Rao");
+    }
+
     /** An owner booking "for" an agent must name one who handles the type, as assigning a service does. */
     @Test
     void anOwnerCannotPutAFlightOnAnAgentWhoDoesNotHandleFlights() {
@@ -190,6 +227,42 @@ class BookingServiceTest {
         assertThatThrownBy(() -> bookingService.createBooking(request))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Priya doesn't handle FLIGHT");
+    }
+
+    /** A CRM booking mirrored from a platform booking is changed only by the platform (spec 6). */
+    @Test
+    void crmEditOfAMirrorIs409() {
+        Booking mirror = Booking.builder().id("B1").agentId("A1").platformBookingId("PB1")
+                .bookingStatus(BookingStatus.CONFIRMED).paymentStatusSource(PaymentStatusSource.MANUAL).build();
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(mirror));
+        BookingStatusUpdateRequest confirm = new BookingStatusUpdateRequest();
+        confirm.setBookingStatus(BookingStatus.CONFIRMED);
+        BookingPaymentStatusUpdateRequest paid = new BookingPaymentStatusUpdateRequest();
+        paid.setPaymentStatus(PaymentStatus.PAID);
+
+        java.util.List<org.assertj.core.api.ThrowableAssert.ThrowingCallable> edits = java.util.List.of(
+                () -> bookingService.updateBooking("B1", new com.voyra.crm.dto.BookingUpdateRequest()),
+                () -> bookingService.updateStatus("B1", confirm),
+                () -> bookingService.updateDeadlines("B1", new com.voyra.crm.dto.BookingDeadlineUpdateRequest()),
+                () -> bookingService.updatePaymentStatus("B1", paid),
+                () -> bookingService.deleteBooking("B1"),
+                () -> bookingService.removeVoucher("B1", "D1"),
+                () -> bookingService.lockAccessibleBooking("B1"),
+                () -> bookingService.replaceCostComponents("B1", java.util.List.of()));
+        for (org.assertj.core.api.ThrowableAssert.ThrowingCallable edit : edits) {
+            assertThatThrownBy(edit).isInstanceOf(com.voyra.crm.exception.BookingConflictException.class)
+                    .hasMessage("Managed from Platform Bookings")
+                    .extracting("code").isEqualTo("MANAGED_FROM_PLATFORM");
+        }
+        org.mockito.Mockito.verify(bookingRepository, org.mockito.Mockito.never()).save(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void theSystemActorMayWriteAMirror() {
+        Booking mirror = Booking.builder().id("B1").agentId("A1").platformBookingId("PB1").build();
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(mirror));
+
+        assertThat(com.voyra.crm.security.SystemActor.call("T1", () -> bookingService.lockAccessibleBooking("B1"))).isSameAs(mirror);
     }
 
     @Test
@@ -435,6 +508,14 @@ class BookingServiceTest {
     }
 
     @Test
+    void aMissingOrDeletedBookingIsNotFound() {
+        when(bookingRepository.findById("GONE")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> bookingService.getBooking("GONE"))
+                .isInstanceOf(com.voyra.crm.exception.NotFoundException.class).hasMessageContaining("Booking not found");
+    }
+
+    @Test
     void aBookingPastPendingCannotBeDeleted() {
         Booking booking = Booking.builder().id("B1").agentId("A1").bookingStatus(BookingStatus.CONFIRMED).build();
         when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking));
@@ -589,6 +670,40 @@ class BookingServiceTest {
         // Made without a supplier: it takes the voucher's, so it can be invoiced with that supplier's other bookings.
         assertThat(booking.getVendorId()).isEqualTo("V1");
         assertThat(booking.getSupplier()).isEqualTo("TripJack");
+    }
+
+    /** Regression C1: a voucher added to (or taken off) an invoiced booking changes what is to collect, so its payment status is re-derived. */
+    @Test
+    void aVoucherOnAnInvoicedBookingReDerivesItsPaymentStatus() {
+        Booking booking = pendingWithoutFare();
+        booking.setBookingStatus(BookingStatus.CONFIRMED);
+        booking.setPnr("PNR0");
+        booking.setVendorId("V1");
+        booking.setPaymentStatusSource(com.voyra.crm.enums.PaymentStatusSource.DERIVED);
+        com.voyra.crm.entity.BookingDocument v = voucher("1000", "50", "PNR0");
+        when(supplierInvoiceService.draftForVoucher(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(com.voyra.crm.dto.SupplierInvoiceResponse.builder().id("S1").build());
+
+        bookingService.applyVoucher(booking, v, "V1", false);
+        bookingService.reverseVoucher(booking, v, false);
+
+        org.mockito.Mockito.verify(bookingAccountingSync, org.mockito.Mockito.times(2)).syncPayment("B1");
+    }
+
+    /** An uninvoiced booking keeps its manually set payment status - nothing is re-derived. */
+    @Test
+    void aVoucherOnAnUninvoicedBookingLeavesItsPaymentStatusAlone() {
+        Booking booking = pendingWithoutFare();
+        when(supplierInvoiceService.draftForVoucher(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(com.voyra.crm.dto.SupplierInvoiceResponse.builder().id("S1").build());
+        when(vendorRepository.findById("V1")).thenReturn(Optional.of(
+                com.voyra.crm.entity.Vendor.builder().id("V1").name("TripJack").build()));
+
+        bookingService.applyVoucher(booking, voucher("1000", "50", "PNR0"), "V1", false);
+
+        org.mockito.Mockito.verify(bookingAccountingSync, org.mockito.Mockito.never()).syncPayment(org.mockito.ArgumentMatchers.any());
     }
 
     /** A flight voucher's commission is the agency's: it goes on the booking's profit and on the supplier bill. */
@@ -832,6 +947,36 @@ class BookingServiceTest {
                 .hasMessage("A cancelled booking can't be reopened - create a new booking instead");
     }
 
+    /**
+     * R11 (regression C, invariant "a voucher-priced booking's price is the sum of its vouchers"): a booking created through
+     * the API with a price takes its vouchers' money once it has one - the typed price is replaced, never added to.
+     */
+    @Test
+    void aBookingCreatedWithAPriceIsPricedBySumOfItsVouchers() {
+        Booking booking = pendingFlight(null, "5000.00"); // created with sell 5000 / net 4000, no vouchers
+        booking.setVendorId("V1");
+        org.mockito.Mockito.lenient().when(supplierInvoiceService.draftForVoucher(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(com.voyra.crm.dto.SupplierInvoiceResponse.builder().id("SI1").build());
+        com.voyra.crm.entity.BookingDocument first = com.voyra.crm.entity.BookingDocument.builder().id("D1").bookingId("B1")
+                .referenceNumber("PNR1").netCost(new BigDecimal("4000")).markupMode(MarkupMode.FLAT).markupValue(new BigDecimal("1000")).build();
+
+        bookingService.applyVoucher(booking, first, null, false);
+
+        assertThat(booking.getSellingPrice()).isEqualByComparingTo("5000");
+        assertThat(booking.getNetCost()).isEqualByComparingTo("4000");
+        assertThat(booking.getProfit()).isEqualByComparingTo("1000");
+
+        com.voyra.crm.entity.BookingDocument second = com.voyra.crm.entity.BookingDocument.builder().id("D2").bookingId("B1")
+                .referenceNumber("PNR2").netCost(new BigDecimal("3000")).markupMode(MarkupMode.FLAT).markupValue(new BigDecimal("500")).build();
+        when(bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc("B1")).thenReturn(List.of(first, second));
+
+        bookingService.applyVoucher(booking, second, null, false);
+
+        assertThat(booking.getSellingPrice()).isEqualByComparingTo("8500");
+        assertThat(booking.getNetCost()).isEqualByComparingTo("7000");
+        assertThat(booking.getProfit()).isEqualByComparingTo("1500");
+    }
+
     @Test
     void secondVoucherAddsUpAndAlertsAccountsOnAConfirmedBooking() {
         Booking booking = pendingFlight("PNR1", "5000.00");
@@ -840,7 +985,13 @@ class BookingServiceTest {
         org.mockito.Mockito.lenient().when(supplierInvoiceService.draftForVoucher(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
                 .thenReturn(com.voyra.crm.dto.SupplierInvoiceResponse.builder().id("SI9").build());
 
-        bookingService.applyVoucher(booking, voucher("1000", "20", "HTL-9"), null, false);
+        // the booking's 4000 / 5000 is its first voucher's (R11: totals are the sum of the live vouchers)
+        com.voyra.crm.entity.BookingDocument firstVoucher = com.voyra.crm.entity.BookingDocument.builder().id("D0").bookingId("B1")
+                .netCost(new BigDecimal("4000.00")).sellingPrice(new BigDecimal("5000.00")).build();
+        com.voyra.crm.entity.BookingDocument second = voucher("1000", "20", "HTL-9");
+        when(bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc("B1")).thenReturn(List.of(firstVoucher, second));
+
+        bookingService.applyVoucher(booking, second, null, false);
 
         assertThat(booking.getNetCost()).isEqualByComparingTo("5000");
         assertThat(booking.getSellingPrice()).isEqualByComparingTo("6200");

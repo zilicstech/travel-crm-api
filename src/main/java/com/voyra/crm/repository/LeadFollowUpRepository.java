@@ -31,6 +31,8 @@ public interface LeadFollowUpRepository extends JpaRepository<LeadFollowUp, Stri
     /** Owner-wide escalation feed. Agent's own uses the assignedAgentId-scoped variant above. */
     List<LeadFollowUp> findByStatusAndDueDateLessThanOrderByDueDateAsc(FollowUpStatus status, LocalDate dueDate);
 
+    long countByStatusAndDueDateLessThan(FollowUpStatus status, LocalDate dueDate);
+
     List<LeadFollowUp> findByAssignedAgentIdAndStatusAndDueDateLessThanOrderByDueDateAsc(
             String assignedAgentId, FollowUpStatus status, LocalDate dueDate);
 

@@ -62,6 +62,7 @@ public class MockHotelSearchProvider implements HotelSearchProvider {
                         .nights(nights)
                         .supplier("Tripjack")
                         .price(price(t.baseRatePerNight(), nights, rooms))
+                        .baseFare(baseOf(price(t.baseRatePerNight(), nights, rooms)))
                         .currency("INR")
                         .refundable(t.refundable())
                         .cancellationPolicy(t.refundable()
@@ -137,6 +138,7 @@ public class MockHotelSearchProvider implements HotelSearchProvider {
                 .mealBasis(board)
                 .inclusions("suite".equals(key) ? List.of("Airport transfer") : List.of())
                 .price(price(t.baseRatePerNight().multiply(factor), nights, rooms))
+                .baseFare(baseOf(price(t.baseRatePerNight().multiply(factor), nights, rooms)))
                 .currency("INR")
                 .refundable(refundable)
                 .cancellationPolicy(refundable ? "Free cancellation until 48 hours before check-in" : "Non-refundable")
@@ -157,6 +159,22 @@ public class MockHotelSearchProvider implements HotelSearchProvider {
 
     private static int nights(HotelSearchQuery query) {
         return (int) Math.max(1, ChronoUnit.DAYS.between(query.getCheckIn(), query.getCheckOut()));
+    }
+
+    /** The room rate excluding taxes: 82 % of the total, in the search and in the booking review alike. */
+    public static BigDecimal baseOf(BigDecimal total) {
+        return total.multiply(new BigDecimal("0.82")).setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private static final java.util.Map<String, BigDecimal> OPTION_FACTORS = java.util.Map.of("std", BigDecimal.ONE, "up", new BigDecimal("1.35"), "suite", new BigDecimal("1.8"));
+
+    /** The total the detail page shows for a mock option, so a review can price it identically; null for an id that is not a mock option. */
+    public static BigDecimal optionTotal(String hotelId, String optionId, int nights, int rooms) {
+        return TEMPLATES.stream().filter(t -> t.id().equals(hotelId)).findFirst().map(t -> {
+            String prefix = "mock-" + t.id() + "-";
+            BigDecimal factor = optionId != null && optionId.startsWith(prefix) ? OPTION_FACTORS.get(optionId.substring(prefix.length())) : null;
+            return factor == null ? null : price(t.baseRatePerNight().multiply(factor), nights, Math.max(1, rooms));
+        }).orElse(null);
     }
 
     private static BigDecimal price(BigDecimal perNight, int nights, int rooms) {

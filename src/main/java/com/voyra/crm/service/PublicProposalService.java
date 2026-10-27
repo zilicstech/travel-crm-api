@@ -30,8 +30,11 @@ public class PublicProposalService {
 
     private static final String NOT_FOUND_MESSAGE = "This proposal link is invalid or has expired";
 
+    private static final String NO_LONGER_AVAILABLE = "This link is no longer available";
+
     private final ProposalLinkRepository proposalLinkRepository;
     private final PublicProposalTenantService tenantService;
+    private final EntitlementService entitlementService;
 
     @Transactional(readOnly = true)
     public PublicProposalResponse getProposal(String token) {
@@ -76,6 +79,9 @@ public class PublicProposalService {
                 .orElseThrow(() -> new com.voyra.crm.exception.NotFoundException(NOT_FOUND_MESSAGE));
         if (link.getExpiresAt() != null && link.getExpiresAt().isBefore(LocalDateTime.now())) {
             throw new com.voyra.crm.exception.NotFoundException(NOT_FOUND_MESSAGE);
+        }
+        if (!entitlementService.publicLinksAvailable(link.getTenantId())) {
+            throw new com.voyra.crm.exception.NotFoundException(NO_LONGER_AVAILABLE);
         }
         return link;
     }

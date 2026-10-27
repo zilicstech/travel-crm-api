@@ -1,6 +1,7 @@
 package com.voyra.crm.service;
 
 import com.voyra.crm.dto.ServiceAssignRequest;
+import com.voyra.crm.dto.ServiceStatusUpdateRequest;
 import com.voyra.crm.entity.Agent;
 import com.voyra.crm.entity.Lead;
 import com.voyra.crm.entity.LeadService;
@@ -131,5 +132,21 @@ class ServiceInstanceServiceReassignReleaseTest {
         assertThatThrownBy(() -> serviceInstanceService.releaseService("L1", "S1"))
                 .isInstanceOf(IllegalStateException.class);
         verify(leadTimelineService, never()).record(eq("L1"), eq("S1"), eq(LeadTimelineEventType.SERVICE_RELEASED), any());
+    }
+
+    /** Booked follows the bookings (ServiceBookingStatusSync): moving it by hand would let a release
+     *  strip the agent off a service whose booking is still live. */
+    @Test
+    void aBookedServiceCannotLeaveBookedByHand() {
+        flight.setStatus(ServiceStatus.BOOKED);
+        ServiceStatusUpdateRequest r = new ServiceStatusUpdateRequest();
+        r.setStatus(ServiceStatus.IN_PROGRESS);
+        for (UserType role : List.of(UserType.AGENT, UserType.AGENCY_OWNER)) {
+            as(role == UserType.AGENT ? "VIKRAM" : "O1", role);
+            assertThatThrownBy(() -> serviceInstanceService.setStatus("L1", "S1", r))
+                    .isInstanceOf(IllegalStateException.class);
+        }
+        assertThat(flight.getStatus()).isEqualTo(ServiceStatus.BOOKED);
+        verify(leadServiceRepository, never()).save(any());
     }
 }

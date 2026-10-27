@@ -58,10 +58,13 @@ public class SupplierCreditNoteService {
     private final JournalService journalService;
     private final JournalEntryRepository journalEntryRepository;
     private final JournalLineRepository journalLineRepository;
+    private final com.voyra.crm.repository.BookingRepository bookingRepository;
+    private final LedgerAccountResolver ledgerAccountResolver;
 
     @Transactional
     public SupplierCreditNoteResponse record(SupplierCreditNoteRequest request) {
         SupplierInvoice invoice = findInvoice(request.getSupplierInvoiceId());
+        assertNotPlatformManaged(invoice.getBookingId());
         if (invoice.getStatus() != SupplierInvoiceStatus.APPROVED && invoice.getStatus() != SupplierInvoiceStatus.PARTIALLY_PAID
                 && invoice.getStatus() != SupplierInvoiceStatus.PAID) {
             throw new IllegalStateException("Only an approved bill can carry a credit note");
@@ -136,6 +139,7 @@ public class SupplierCreditNoteService {
     @Transactional
     public SupplierCreditNoteResponse cancel(String id, String reason) {
         SupplierCreditNote note = findById(id);
+        assertNotPlatformManaged(note.getBookingId());
         if (note.getStatus() == SupplierCreditNoteStatus.CANCELLED) {
             throw new IllegalStateException("This credit note is already cancelled");
         }
@@ -185,7 +189,9 @@ public class SupplierCreditNoteService {
      */
     @Transactional
     public SupplierCreditNoteResponse receiveRefund(String id, SupplierCreditNoteRefundRequest request, boolean toWallet) {
+        com.voyra.crm.util.PlatformManaged.checkPaymentMode(request.getPaymentMode());
         SupplierCreditNote note = findById(id);
+        assertNotPlatformManaged(note.getBookingId());
         if (note.getStatus() != SupplierCreditNoteStatus.RECORDED) {
             throw new IllegalStateException("Only a recorded credit note can be refunded");
         }
@@ -319,7 +325,8 @@ public class SupplierCreditNoteService {
         if (amountInr == null || amountInr.compareTo(BigDecimal.ZERO) <= 0) {
             return;
         }
-        String bankCode = payment.getPaymentMode() == com.voyra.crm.enums.PaymentMode.CASH
+        String bankCode = payment.getPaymentMode() == com.voyra.crm.enums.PaymentMode.VOYRA_WALLET ? ledgerAccountResolver.voyraWalletCode()
+                : payment.getPaymentMode() == com.voyra.crm.enums.PaymentMode.CASH
                 ? com.voyra.crm.enums.SystemAccount.CASH_IN_HAND.code()
                 : com.voyra.crm.enums.SystemAccount.BANK_ACCOUNTS.code();
         String narration = refundNarration(note, toWallet);
@@ -332,6 +339,11 @@ public class SupplierCreditNoteService {
                                 : com.voyra.crm.models.JournalLinePosting.debit(bankCode, amountInr, narration),
                         com.voyra.crm.models.JournalLinePosting.creditParty(
                                 com.voyra.crm.enums.SystemAccount.ACCOUNTS_PAYABLE.code(), "VENDOR", note.getVendorId(), amountInr, narration))));
+    }
+
+    /** The supplier side of a platform booking's CRM mirror is the platform's (409 for anyone else). */
+    private void assertNotPlatformManaged(String bookingId) {
+        com.voyra.crm.util.PlatformManaged.check(bookingId != null && bookingRepository.existsByIdAndPlatformBookingIdIsNotNull(bookingId));
     }
 
     private SupplierInvoice findInvoice(String id) {

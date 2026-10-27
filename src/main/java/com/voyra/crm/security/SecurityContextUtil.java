@@ -11,7 +11,12 @@ public final class SecurityContextUtil {
     private SecurityContextUtil() {
     }
 
+    /** Inside a {@link SystemActor} scope the system principal wins over whoever is signed in. */
     public static Optional<CustomUserPrincipal> getCurrentUser() {
+        Optional<CustomUserPrincipal> system = SystemActor.principal();
+        if (system.isPresent()) {
+            return system;
+        }
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || !(auth.getPrincipal() instanceof CustomUserPrincipal p)) {
             return Optional.empty();

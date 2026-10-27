@@ -274,6 +274,10 @@ public class ServiceInstanceService {
             throw new IllegalArgumentException(
                     "Booked is set automatically when the first booking is logged - it cannot be chosen by hand");
         }
+        if (service.getStatus() == ServiceStatus.BOOKED) {
+            throw new IllegalStateException(
+                    "This service is Booked while its booking is live - cancel the booking to change its status");
+        }
         Map<String, String> before = AuditSnapshot.of(service, AUDITED);
 
         service.setStatus(request.getStatus());
@@ -522,7 +526,7 @@ public class ServiceInstanceService {
     /** Owner, or an agent whose manageableServices covers this type, or the agent already on the job. */
     /** Package-private - also called from BookingService so logging a booking on a service
      *  goes through the exact same gate as every other mutation to that service. */
-    void assertEditAccess(LeadService service) {
+    public void assertEditAccess(LeadService service) {
         CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
         if (!principal.isAgent()) {
             return;

@@ -29,6 +29,31 @@ public class GlobalExceptionHandlerFixtureController {
         throw new IllegalStateException("bad state");
     }
 
+    @GetMapping("/test/insufficient-balance")
+    public String insufficientBalance() {
+        throw new InsufficientBalanceException(new java.math.BigDecimal("600.00"));
+    }
+
+    @GetMapping("/test/receivable-due")
+    public String receivableDue() {
+        throw new ReceivableDueException();
+    }
+
+    @GetMapping("/test/issuing-agent")
+    public String issuingAgent() {
+        throw new BookingRequestException("ISSUING_AGENT_REQUIRED", "Choose the agent this booking is issued by");
+    }
+
+    @GetMapping("/test/price-changed")
+    public String priceChanged() {
+        throw new BookingConflictException("PRICE_CHANGED", "The fare changed", java.util.Map.of("displayedFare", new java.math.BigDecimal("4600.00")));
+    }
+
+    @GetMapping("/test/fare-unavailable")
+    public String fareUnavailable() {
+        throw new FareUnavailableException("gone");
+    }
+
     @GetMapping("/test/access-denied")
     public String accessDenied() {
         throw new AccessDeniedException("denied");

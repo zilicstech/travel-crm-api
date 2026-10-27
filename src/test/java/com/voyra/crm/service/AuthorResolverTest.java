@@ -69,4 +69,18 @@ class AuthorResolverTest {
         assertThat(info.id()).isEqualTo("T1");
         assertThat(info.name()).isEqualTo("John Davis");
     }
+
+    /** Platform-driven tenant writes are authored by Voyra itself, whoever (if anyone) is signed in on the thread. */
+    @Test
+    void theSystemActorIsVoyraAndOnlyInsideItsScope() {
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+                new CustomUserPrincipal("ROOT", "root@voyra.test", UserType.SUPER_ADMIN, null), null, List.of()));
+
+        AuthorResolver.AuthorInfo inside = com.voyra.crm.security.SystemActor.call("T1", authorResolver::resolveCurrentAuthor);
+
+        assertThat(inside.id()).isEqualTo("system");
+        assertThat(inside.name()).isEqualTo("Voyra Platform");
+        assertThat(com.voyra.crm.security.SecurityContextUtil.getCurrentUserOrThrow().userId()).isEqualTo("ROOT");
+        assertThat(com.voyra.crm.security.SystemActor.isActive()).isFalse();
+    }
 }

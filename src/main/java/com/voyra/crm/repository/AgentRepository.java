@@ -25,6 +25,9 @@ public interface AgentRepository extends JpaRepository<Agent, String> {
 
     long countByTenantId(String tenantId);
 
+    /** Seats in use (spec §8); soft-deleted rows are excluded by Agent's @SQLRestriction. */
+    long countByTenantIdAndIsActiveTrue(String tenantId);
+
     long countByTenantIdAndUserRole(String tenantId, UserType userRole);
 
     Optional<Agent> findByIdAndTenantId(String id, String tenantId);

@@ -49,15 +49,17 @@ public class PayablesDashboardService {
         LocalDate monthStart = today.withDayOfMonth(1);
         LocalDate monthEnd = today.withDayOfMonth(today.lengthOfMonth());
 
-        List<SupplierInvoice> thisMonth = supplierInvoiceRepository.findByStatusNotAndInvoiceDateBetween(
-                SupplierInvoiceStatus.CANCELLED, monthStart, monthEnd);
+        // Only posted bills: a draft or one awaiting approval isn't in the books yet.
+        List<SupplierInvoice> thisMonth = supplierInvoiceRepository.findByStatusNotInAndInvoiceDateBetween(
+                List.of(SupplierInvoiceStatus.CANCELLED, SupplierInvoiceStatus.DRAFT, SupplierInvoiceStatus.PENDING_APPROVAL),
+                monthStart, monthEnd);
         BigDecimal billedThisMonth = sum(thisMonth, SupplierInvoice::getGrandTotalInr);
         BigDecimal inputTaxThisMonth = sum(thisMonth, SupplierInvoice::getGstTotalInr);
 
         List<SupplierPayment> paidThisMonth = supplierPaymentRepository.findByDirectionAndPaidOnBetween(
                 SupplierPaymentDirection.PAYMENT, monthStart, monthEnd);
         BigDecimal paid = paidThisMonth.stream()
-                .filter(p -> !p.getIsAdvance() && p.getReversesPaymentId() == null)
+                .filter(p -> !p.getIsAdvance() && p.getReversesPaymentId() == null && p.getReversedAt() == null)
                 .map(SupplierPayment::getAmountInr)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
@@ -188,9 +190,8 @@ public class PayablesDashboardService {
     }
 
     private List<SupplierInvoice> billsInRange(LocalDate from, LocalDate to) {
-        return supplierInvoiceRepository.findByStatusNotAndInvoiceDateBetween(SupplierInvoiceStatus.CANCELLED, from, to).stream()
-                .filter(i -> i.getStatus() != SupplierInvoiceStatus.DRAFT)
-                .toList();
+        return supplierInvoiceRepository.findByStatusNotInAndInvoiceDateBetween(
+                List.of(SupplierInvoiceStatus.CANCELLED, SupplierInvoiceStatus.DRAFT), from, to);
     }
 
     private static <T> BigDecimal sum(List<T> items, Function<T, BigDecimal> extractor) {

@@ -16,6 +16,11 @@ import java.util.List;
 @Repository
 public interface SupplierInvoiceRepository extends JpaRepository<SupplierInvoice, String>, JpaSpecificationExecutor<SupplierInvoice> {
 
+    /** Row lock for money landing on the bill, so two payments or reversals at once can't both settle the same balance. */
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("select s from SupplierInvoice s where s.id = :id")
+    java.util.Optional<SupplierInvoice> findByIdForUpdate(@Param("id") String id);
+
     /** supplier_invoice.supplier_name is a live reference stored as a string, not an FK - see VendorService. */
     @Modifying
     @Query("UPDATE SupplierInvoice s SET s.vendorName = :newName WHERE s.vendorName = :oldName")
@@ -29,7 +34,7 @@ public interface SupplierInvoiceRepository extends JpaRepository<SupplierInvoice
     /** Bank-reconciliation tier-1 amount narrowing (Rule 4.3) - open bills whose outstanding balance equals the bank line's amount exactly. */
     List<SupplierInvoice> findByStatusInAndBalanceDueInr(List<SupplierInvoiceStatus> statuses, BigDecimal balanceDueInr);
 
-    List<SupplierInvoice> findByStatusNotAndInvoiceDateBetween(SupplierInvoiceStatus excludedStatus, LocalDate from, LocalDate to);
+    List<SupplierInvoice> findByStatusNotInAndInvoiceDateBetween(java.util.Collection<SupplierInvoiceStatus> excluded, LocalDate from, LocalDate to);
 
     /** Cost reconciliation input: every non-cancelled bill against one booking, whichever vendor. */
     List<SupplierInvoice> findByBookingIdAndStatusNot(String bookingId, SupplierInvoiceStatus excludedStatus);

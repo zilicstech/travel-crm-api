@@ -2,6 +2,7 @@ package com.voyra.crm.security;
 
 import com.voyra.crm.cache.AgentCache;
 import com.voyra.crm.cache.TenantCache;
+import com.voyra.crm.enums.TenantStatus;
 import com.voyra.crm.enums.UserType;
 import jakarta.servlet.FilterChain;
 import org.junit.jupiter.api.AfterEach;
@@ -30,7 +31,7 @@ class JwtAuthenticationFilterAccountantTest {
     void setUp() {
         ReflectionTestUtils.setField(jwtService, "jwtSecret", "test-only-jwt-secret-key-at-least-256-bits-long-for-hs256-signing");
         ReflectionTestUtils.setField(jwtService, "jwtExpirationMs", 86_400_000L);
-        TenantCache.put("T1", "Agency", true);
+        TenantCache.put("T1", "Agency", TenantStatus.ACTIVE);
     }
 
     @AfterEach

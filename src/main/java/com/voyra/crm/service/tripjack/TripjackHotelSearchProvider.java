@@ -6,12 +6,12 @@ import com.voyra.crm.dto.HotelDetailResponse;
 import com.voyra.crm.dto.HotelOfferResponse;
 import com.voyra.crm.dto.HotelSearchQuery;
 import com.voyra.crm.dto.HotelThumbnailResponse;
-import com.voyra.crm.dto.SupplierCredentialRevealResponse;
+import com.voyra.crm.models.ResolvedCredential;
 import com.voyra.crm.enums.SupplierEnvironment;
 import com.voyra.crm.enums.SupplierProvider;
 import com.voyra.crm.exception.SupplierException;
 import com.voyra.crm.service.HotelSearchProvider;
-import com.voyra.crm.service.SupplierCredentialService;
+import com.voyra.crm.service.PlatformSupplierCredentialService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
@@ -83,7 +83,7 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
     private record StaticData(Map<String, List<Region>> cities, Map<String, String> nationalities, Instant builtAt) { }
     private record Cached<T>(T value, Instant at) { }
 
-    private final SupplierCredentialService supplierCredentialService;
+    private final PlatformSupplierCredentialService platformSupplierCredentialService;
     private final RestClient.Builder restClientBuilder;
     private final String uatBaseUrl;
     private final String prodBaseUrl;
@@ -102,11 +102,11 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
     });
     private final java.util.concurrent.atomic.AtomicBoolean shapeLogged = new java.util.concurrent.atomic.AtomicBoolean();
 
-    public TripjackHotelSearchProvider(SupplierCredentialService supplierCredentialService,
+    public TripjackHotelSearchProvider(PlatformSupplierCredentialService platformSupplierCredentialService,
                                        @Qualifier("tripjackRestClientBuilder") RestClient.Builder restClientBuilder,
                                        @Value("${app.hotel-supplier.tripjack.uat-base-url:https://apitest-hms.tripjack.com}") String uatBaseUrl,
                                        @Value("${app.hotel-supplier.tripjack.prod-base-url:https://hms-search.tripjack.com}") String prodBaseUrl) {
-        this.supplierCredentialService = supplierCredentialService;
+        this.platformSupplierCredentialService = platformSupplierCredentialService;
         this.restClientBuilder = restClientBuilder;
         this.uatBaseUrl = uatBaseUrl;
         this.prodBaseUrl = prodBaseUrl;
@@ -201,9 +201,9 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
     private record Conn(RestClient client, String host) { }
 
     private Conn connect() {
-        SupplierCredentialRevealResponse credential = supplierCredentialService.resolveActive(SupplierProvider.TRIPJACK);
-        String host = credential.getEnvironment() == SupplierEnvironment.PROD ? prodBaseUrl : uatBaseUrl;
-        return new Conn(restClientBuilder.clone().baseUrl(host).defaultHeader("apikey", credential.getApiKey()).build(), host);
+        ResolvedCredential credential = platformSupplierCredentialService.resolveActive(SupplierProvider.TRIPJACK);
+        String host = credential.environment() == SupplierEnvironment.PROD ? prodBaseUrl : uatBaseUrl;
+        return new Conn(restClientBuilder.clone().baseUrl(host).defaultHeader("apikey", credential.apiKey()).build(), host);
     }
 
     /**
@@ -235,10 +235,40 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
                 .nights(nights)
                 .supplier("Tripjack")
                 .price(new BigDecimal(best.path("pricing").path("totalPrice").asText("0")).setScale(2, java.math.RoundingMode.HALF_UP))
+                .baseFare(baseRate(best.path("pricing")))
                 .currency(best.path("pricing").path("currency").asText("INR"))
                 .refundable(refundable)
                 .cancellationPolicy(cancellationPolicy(best.path("cancellation"), refundable))
                 .build();
+    }
+
+    /**
+     * The room rate excluding taxes of an option's {@code pricing} node, or null when the supplier does not give it
+     * (never 0: the option is then not bookable). An allow-list, not a guess: only {@code baseRate} / {@code baseFare},
+     * else {@code totalPrice} minus an explicit numeric tax. A net or room rate is never read as the base - commission is
+     * worked off it, so a wrong field would misprice every booking. Confirm the names in slice 0.
+     */
+    public static BigDecimal baseRate(JsonNode pricing) {
+        for (String key : List.of("baseRate", "baseFare")) {
+            BigDecimal v = positive(pricing.path(key));
+            if (v != null) return v.setScale(2, java.math.RoundingMode.HALF_UP);
+        }
+        BigDecimal total = positive(pricing.path("totalPrice"));
+        for (String key : List.of("totalTax", "taxes", "tax")) {
+            JsonNode tax = pricing.path(key);
+            if (total != null && tax.isNumber() && tax.decimalValue().signum() >= 0 && tax.decimalValue().compareTo(total) < 0) {
+                return total.subtract(tax.decimalValue()).setScale(2, java.math.RoundingMode.HALF_UP);
+            }
+        }
+        return null;
+    }
+
+    private static BigDecimal positive(JsonNode n) {
+        if (n.isNumber() || (n.isTextual() && n.asText().matches("\\d+(\\.\\d+)?"))) {
+            BigDecimal v = new BigDecimal(n.asText());
+            return v.signum() > 0 ? v : null;
+        }
+        return null;
     }
 
     /** The listing's hero image, if it has one - an images array, or a plain url under one of the names it goes by. */
@@ -263,7 +293,7 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
         return 0;
     }
 
-    static String cancellationPolicy(JsonNode cancellation, boolean refundable) {
+    public static String cancellationPolicy(JsonNode cancellation, boolean refundable) {
         if (!refundable) return "Non-refundable";
         String deadline = cancellation.path("deadlineDateTime").asText("");
         // The last free slab ends where the penalty starts.
@@ -330,6 +360,7 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
                     .inclusions(strings(o.path("inclusions")))
                     .bookingNotes(text(o.path("bookingNotes").asText("")))
                     .price(new BigDecimal(o.path("pricing").path("totalPrice").asText("0")).setScale(2, java.math.RoundingMode.HALF_UP))
+                    .baseFare(baseRate(o.path("pricing")))
                     .currency(o.path("pricing").path("currency").asText("INR"))
                     .refundable(refundable)
                     .cancellationPolicy(cancellationPolicy(o.path("cancellation"), refundable))
@@ -532,7 +563,7 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
 
     /**
      * This host's city list and nationalities, however old - a week-old copy is replaced in the background, never
-     * while a search waits. Not loaded yet (just started, or the agency moved to another Tripjack environment): the
+     * while a search waits. Not loaded yet (just started, or the platform credential moved to another Tripjack environment): the
      * load starts in the background and the search is asked to retry.
      */
     private StaticData loaded(Conn conn) {
@@ -551,8 +582,8 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
     }
 
     /**
-     * Loads this agency's Tripjack host's city list and nationalities unless a copy under a week old is already held.
-     * Called by the scheduled job, with the agency's tenant set so its credential can be read.
+     * Loads the platform Tripjack host's city list and nationalities unless a copy under a week old is already held.
+     * Called by the scheduled job.
      */
     public void refreshStaticData() {
         Conn conn = connect();

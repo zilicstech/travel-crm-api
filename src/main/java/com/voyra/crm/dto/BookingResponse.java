@@ -87,6 +87,10 @@ public class BookingResponse {
     @Schema(example = "ABCXYZ")
     private String pnr;
 
+    @Schema(description = "Set when this is the read-only CRM mirror of a Voyra platform booking - managed from Platform Bookings",
+            example = "3f2c9a1e-...")
+    private String platformBookingId;
+
     @Schema(example = "0987654321")
     private String ticketNo;
 

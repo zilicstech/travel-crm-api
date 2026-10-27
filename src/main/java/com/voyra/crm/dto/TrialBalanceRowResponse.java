@@ -25,7 +25,7 @@ public class TrialBalanceRowResponse {
     @Schema(example = "ASSET")
     private LedgerAccountType accountType;
 
-    @Schema(description = "Null for every account today - no chart-of-accounts row currently sets parentCode.", example = "null")
+    @Schema(description = "Code of the parent account (e.g. 1300 for the Voyra wallet account 1310); null for top-level accounts.", example = "null")
     private String parentCode;
 
     @Schema(example = "48500.00")

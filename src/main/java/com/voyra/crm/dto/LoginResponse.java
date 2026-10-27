@@ -39,6 +39,9 @@ public class LoginResponse {
     @Schema(description = "Bearer JWT - pass as 'Authorization: Bearer <token>' on subsequent requests")
     private String token;
 
+    @Schema(description = "What the agency's subscription unlocks right now, and the agency status. Omitted for SUPER_ADMIN")
+    private AgencyEntitlementsResponse entitlements;
+
     public static LoginResponse failure(String message) {
         return LoginResponse.builder().success(false).message(message).build();
     }

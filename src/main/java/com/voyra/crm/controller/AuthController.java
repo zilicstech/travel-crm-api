@@ -2,6 +2,7 @@ package com.voyra.crm.controller;
 
 import com.voyra.crm.dto.LoginRequest;
 import com.voyra.crm.dto.LoginResponse;
+import com.voyra.crm.dto.AgencyEntitlementsResponse;
 import com.voyra.crm.service.AuthService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -10,6 +11,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -50,6 +53,13 @@ public class AuthController {
     public ResponseEntity<LoginResponse> loginAgent(@Valid @RequestBody LoginRequest request) {
         LoginResponse response = authService.loginAgent(request);
         return respond(response);
+    }
+
+    @GetMapping("/entitlements")
+    @PreAuthorize("hasAnyRole('AGENCY_OWNER','AGENT','ACCOUNTANT')")
+    @Operation(summary = "The caller's agency entitlements", description = "Same shape as LoginResponse.entitlements (incl. agencyStatus); never gated, works while read-only or suspended.")
+    public ResponseEntity<AgencyEntitlementsResponse> entitlements() {
+        return ResponseEntity.ok(authService.currentEntitlements());
     }
 
     private ResponseEntity<LoginResponse> respond(LoginResponse response) {

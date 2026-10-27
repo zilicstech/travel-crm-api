@@ -103,4 +103,37 @@ class HotelSearchControllerTest {
                         .content("{\"hotelIds\":[]}"))
                 .andExpect(status().isBadRequest());
     }
+
+    /** An agency must never be able to work out Voyra's earnings or net from a hotel response. */
+    @Test
+    void detail_rawJsonHasNoVoyraFiguresOrBaseFare() throws Exception {
+        var option = com.voyra.crm.dto.HotelDetailResponse.RoomOption.builder().optionId("o1").price(new java.math.BigDecimal("5000"))
+                .baseFare(new java.math.BigDecimal("4100")).publishedFare(new java.math.BigDecimal("5000"))
+                .displayedFare(new java.math.BigDecimal("4900")).agencyEarns(new java.math.BigDecimal("50")).bookable(true).build();
+        when(hotelSearchService.detail(any(), any())).thenReturn(com.voyra.crm.dto.HotelDetailResponse.builder()
+                .hotelId("h1").options(List.of(option)).build());
+        mockMvc.perform(post("/api/hotels/h1/detail")
+                        .with(SecurityMockMvcRequestPostProcessors.user("agent1").roles("AGENT"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(searchQuery())))
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.options[0].displayedFare").value(4900))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.options[0].voyraEarned").doesNotExist())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.options[0].voyraNet").doesNotExist())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.options[0].baseFare").doesNotExist());
+    }
+
+    @Test
+    void search_rawJsonHasNoBaseFare() throws Exception {
+        var page = com.voyra.crm.dto.HotelSearchPageResponse.builder().offers(List.of(com.voyra.crm.dto.HotelOfferResponse.builder()
+                .hotelId("h1").baseFare(new java.math.BigDecimal("4100")).publishedFare(new java.math.BigDecimal("5000")).build())).build();
+        when(hotelSearchService.search(any())).thenReturn(page);
+        mockMvc.perform(post("/api/hotels/search")
+                        .with(SecurityMockMvcRequestPostProcessors.user("agent1").roles("AGENT"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(searchQuery())))
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.offers[0].publishedFare").value(5000))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.offers[0].baseFare").doesNotExist());
+    }
 }

@@ -27,6 +27,9 @@ public class ApiErrorResponse {
     @Schema(description = "Short reason/category for the failure")
     private String reason;
 
+    @Schema(description = "Machine-readable error code for the UI to branch on, e.g. INSUFFICIENT_BALANCE", example = "INSUFFICIENT_BALANCE")
+    private String code;
+
     @Schema(description = "Root cause (debugging aid)")
     private String cause;
 
@@ -41,6 +44,9 @@ public class ApiErrorResponse {
 
     @Schema(description = "Additional details, e.g. validation field errors")
     private Map<String, Object> details;
+
+    @Schema(description = "With code SKU_REQUIRED: the SKU the plan lacks", example = "ACCOUNTS_GST")
+    private String sku;
 
     public static ApiErrorResponse of(String message, String reason, String cause,
                                        int status, String path) {

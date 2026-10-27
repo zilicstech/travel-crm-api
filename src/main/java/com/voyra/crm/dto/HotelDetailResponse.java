@@ -1,5 +1,6 @@
 package com.voyra.crm.dto;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -139,5 +140,24 @@ public class HotelDetailResponse {
         private boolean refundable;
         @Schema(example = "Free cancellation until 2026-05-18 23:59")
         private String cancellationPolicy;
+
+        @JsonIgnore
+        @Schema(hidden = true, description = "Room rate excluding taxes; internal, never serialised - it would reveal Voyra's earnings")
+        private BigDecimal baseFare;
+
+        @Schema(description = "Supplier published price (shown struck through); null for a platform admin search", example = "24000.00")
+        private BigDecimal publishedFare;
+
+        @Schema(description = "What the agency pays after its discount; null for a platform admin search", example = "23000.00")
+        private BigDecimal displayedFare;
+
+        @Schema(description = "Commission the agency earns, net of TDS; null for a platform admin search", example = "120.00")
+        private BigDecimal agencyEarns;
+
+        @Schema(description = "False when the agency cannot book this with Voyra yet", example = "true")
+        private boolean bookable;
+
+        @Schema(description = "Why bookable is false, e.g. PRICING_NOT_CONFIGURED or BASE_FARE_UNAVAILABLE; null when bookable")
+        private String notBookableReason;
     }
 }

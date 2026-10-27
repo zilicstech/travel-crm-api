@@ -20,7 +20,28 @@ class BookingCompletionServiceTest {
 
     @Mock private BookingRepository bookingRepository;
     @Mock private com.voyra.crm.repository.BookingDocumentRepository bookingDocumentRepository;
+    @Mock private com.voyra.crm.repository.PlatformBookingRepository platformBookingRepository;
     @InjectMocks private BookingCompletionService service;
+
+    /** A mirror whose platform booking is still moving (a cancellation in flight) waits; a ticketed one completes after travel. */
+    @Test
+    void completionJobSkipsLiveMirrors() {
+        LocalDate today = LocalDate.of(2026, 12, 10);
+        Booking cancelling = Booking.builder().id("B1").bookingStatus(BookingStatus.CONFIRMED).platformBookingId("PB1")
+                .journeyDate(today.minusDays(5)).build();
+        Booking ticketed = Booking.builder().id("B2").bookingStatus(BookingStatus.CONFIRMED).platformBookingId("PB2")
+                .journeyDate(today.minusDays(5)).build();
+        Booking plain = Booking.builder().id("B3").bookingStatus(BookingStatus.CONFIRMED).journeyDate(today.minusDays(5)).build();
+        when(bookingRepository.findByBookingStatus(BookingStatus.CONFIRMED)).thenReturn(List.of(cancelling, ticketed, plain));
+        when(platformBookingRepository.findAllById(org.mockito.ArgumentMatchers.anyIterable())).thenReturn(List.of(
+                com.voyra.crm.entity.PlatformBooking.builder().id("PB1").status(com.voyra.crm.enums.PlatformBookingStatus.CANCELLING).build(),
+                com.voyra.crm.entity.PlatformBooking.builder().id("PB2").status(com.voyra.crm.enums.PlatformBookingStatus.TICKETED).build()));
+
+        assertThat(service.completeFinished(today)).isEqualTo(2);
+        assertThat(cancelling.getBookingStatus()).isEqualTo(BookingStatus.CONFIRMED);
+        assertThat(ticketed.getBookingStatus()).isEqualTo(BookingStatus.COMPLETED);
+        assertThat(plain.getBookingStatus()).isEqualTo(BookingStatus.COMPLETED);
+    }
 
     @Test
     void onlyTripsThatHaveEndedAreCompleted() {

@@ -42,6 +42,7 @@ class BookingDocumentServiceTest {
     void nothingInvoiced() {
         org.mockito.Mockito.lenient().when(bookingService.invoiced(any()))
                 .thenReturn(new InvoiceLineSource.Invoiced(BigDecimal.ZERO, java.util.Set.of(), null));
+        org.mockito.Mockito.lenient().when(bookingService.invoicedPrice(any())).thenReturn(BigDecimal.ZERO);
         org.mockito.Mockito.lenient().when(bookingService.draftVoucherIds(any())).thenReturn(java.util.Set.of());
     }
 
@@ -171,6 +172,34 @@ class BookingDocumentServiceTest {
         booking.setSellingPrice(new BigDecimal("3300"));
 
         assertThatThrownBy(() -> service.updateDocument("B1", "D1", edit("3000", "10"))).hasMessageContaining("already invoiced");
+    }
+
+    @Test
+    void anAddedVoucherCannotPriceTheBookingBelowWhatIsInvoiced() {
+        signIn();
+        when(bookingService.lockAccessibleBooking("B1")).thenReturn(booking);
+        when(bookingService.invoicedPrice("B1")).thenReturn(new BigDecimal("4400"));
+        org.mockito.Mockito.doAnswer(i -> { booking.setSellingPrice(new BigDecimal("3300")); return null; })
+                .when(bookingService).applyVoucher(any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
+
+        assertThatThrownBy(() -> service.addDocument("B1", edit("3000", "10"))).hasMessageContaining("already invoiced");
+
+        verify(bookingDocumentRepository, never()).save(any());
+    }
+
+    @Test
+    void anAddedVoucherThatDoesNotLowerThePriceIsAcceptedEvenWhenInvoicedExceedsIt() {
+        signIn();
+        when(bookingService.lockAccessibleBooking("B1")).thenReturn(booking);
+        // e.g. cancellation charges invoiced above the vouchers' total
+        when(bookingService.invoicedPrice("B1")).thenReturn(new BigDecimal("5000"));
+        booking.setSellingPrice(new BigDecimal("4400"));
+        org.mockito.Mockito.doAnswer(i -> { booking.setSellingPrice(new BigDecimal("4400")); return null; })
+                .when(bookingService).applyVoucher(any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
+
+        service.addDocument("B1", edit("0", "0"));
+
+        verify(bookingDocumentRepository).save(any());
     }
 
     @Test
@@ -354,5 +383,17 @@ class BookingDocumentServiceTest {
         domestic.setInternationalTrip(false);
         assertThatThrownBy(() -> service.addDocument("F1", domestic))
                 .isInstanceOf(IllegalStateException.class).hasMessage("This booking is already on an invoice as International - its trip type can't change");
+    }
+
+    /** The ticket on a platform mirror is the platform's: no file swapped in from the CRM. */
+    @org.junit.jupiter.api.Test
+    void crmEditOfAMirrorIs409() {
+        booking.setPlatformBookingId("PB1");
+        when(bookingService.findAccessibleBooking("B1")).thenReturn(booking);
+
+        assertThatThrownBy(() -> service.attachFile("B1", "D1", org.mockito.Mockito.mock(org.springframework.web.multipart.MultipartFile.class)))
+                .isInstanceOf(com.voyra.crm.exception.BookingConflictException.class)
+                .hasMessage("Managed from Platform Bookings");
+        verify(fileStorageService, never()).store(any(), any(), any(), any());
     }
 }

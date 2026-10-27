@@ -108,6 +108,10 @@ public class Booking {
     @Column(name = "supplier", length = 150)
     private String supplier;
 
+    /** Set on the CRM mirror of a platform booking: marks it read-only in the CRM. */
+    @Column(name = "platform_booking_id", length = 36)
+    private String platformBookingId;
+
     /** The real Vendor this was booked with, when the agent picked one from the vendor
      *  master rather than typing a free-text name - what lets the booking auto-draft the
      *  matching supplier bill (see SupplierInvoiceService#createAutoDraft). Flat FK, no JPA

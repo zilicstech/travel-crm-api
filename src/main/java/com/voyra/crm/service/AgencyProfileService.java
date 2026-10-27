@@ -3,13 +3,18 @@ package com.voyra.crm.service;
 import com.voyra.crm.dto.AgencyProfileResponse;
 import com.voyra.crm.dto.AgencyProfileUpdateRequest;
 import com.voyra.crm.entity.Tenant;
+import com.voyra.crm.exception.NotFoundException;
 import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.security.SecurityContextUtil;
+import com.voyra.crm.util.UploadValidator;
 import com.voyra.crm.util.ValidationPatterns;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.io.Resource;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
 /**
  * The signed-in owner's own agency profile - the fields Account/Settings needs that
@@ -22,7 +27,14 @@ import org.springframework.transaction.annotation.Transactional;
 @Slf4j
 public class AgencyProfileService {
 
+    static final String LOGO_CATEGORY = "logo";
+
     private final TenantRepository tenantRepository;
+    private final FileStorageService fileStorageService;
+
+    /** Not a DTO - unpacked into an image response by the controller. */
+    public record Logo(Resource resource, String contentType) {
+    }
 
     @Transactional(readOnly = true)
     public AgencyProfileResponse getProfile() {
@@ -43,9 +55,6 @@ public class AgencyProfileService {
         }
         if (request.getDefaultCommission() != null) {
             tenant.setDefaultCommission(request.getDefaultCommission());
-        }
-        if (request.getLogoKey() != null) {
-            tenant.setLogoKey(request.getLogoKey());
         }
         if (request.getStateCode() != null) {
             tenant.setStateCode(request.getStateCode());
@@ -94,6 +103,57 @@ public class AgencyProfileService {
         return toResponse(tenant);
     }
 
+    /** Owner: PNG, JPEG or WebP up to 1 MB replaces the logo; the previous logo file is deleted. */
+    @Transactional
+    public AgencyProfileResponse uploadLogo(MultipartFile file) {
+        UploadValidator.assertLogo(file);
+        Tenant tenant = findOwnTenant();
+        String previous = tenant.getLogoKey();
+        tenant.setLogoKey(fileStorageService.store(tenant.getId(), LOGO_CATEGORY, tenant.getId(), file));
+        tenantRepository.save(tenant);
+        deleteOwnLogoFile(previous);
+        log.info("Agency logo uploaded: tenantId={}", tenant.getId());
+        return toResponse(tenant);
+    }
+
+    @Transactional
+    public AgencyProfileResponse removeLogo() {
+        Tenant tenant = findOwnTenant();
+        String previous = tenant.getLogoKey();
+        tenant.setLogoKey(null);
+        tenantRepository.save(tenant);
+        deleteOwnLogoFile(previous);
+        log.info("Agency logo removed: tenantId={}", tenant.getId());
+        return toResponse(tenant);
+    }
+
+    /** Any user of the agency; 404 when it has none. */
+    @Transactional(readOnly = true)
+    public Logo logo() {
+        String tenantId = SecurityContextUtil.getCurrentUserOrThrow().tenantId();
+        String key = tenantId == null ? null : tenantRepository.findById(tenantId).map(Tenant::getLogoKey).orElse(null);
+        if (key == null || key.isBlank()) {
+            throw new NotFoundException("This agency has no logo");
+        }
+        String type = UploadValidator.logoContentType(key);
+        return new Logo(fileStorageService.retrieve(key), type != null ? type : MediaType.APPLICATION_OCTET_STREAM_VALUE);
+    }
+
+    /**
+     * Only a file this endpoint stored: a logo carried over from onboarding is the application's KYC document file, which
+     * approval keeps as KYC evidence. A failed delete leaves an orphan file, never a failed request.
+     */
+    private void deleteOwnLogoFile(String key) {
+        if (key == null || !key.contains("/" + LOGO_CATEGORY + "/")) {
+            return;
+        }
+        try {
+            fileStorageService.delete(key);
+        } catch (RuntimeException e) {
+            log.warn("Old agency logo not deleted: key={}", key, e);
+        }
+    }
+
     private Tenant findOwnTenant() {
         String ownerId = SecurityContextUtil.getCurrentUserOrThrow().userId();
         return tenantRepository.findById(ownerId)
@@ -105,6 +165,7 @@ public class AgencyProfileService {
                 .agencyName(t.getAgencyName()).ownerName(t.getOwnerName()).ownerEmail(t.getOwnerEmail())
                 .gstNumber(t.getGstNumber()).address(t.getAddress()).currency(t.getCurrency())
                 .defaultCommission(t.getDefaultCommission()).logoKey(t.getLogoKey())
+                .hasLogo(t.getLogoKey() != null && !t.getLogoKey().isBlank())
                 .stateCode(t.getStateCode()).baseCurrencyCode(t.getBaseCurrencyCode())
                 .defaultSacCode(t.getDefaultSacCode()).invoiceTerms(t.getInvoiceTerms())
                 .legalName(t.getLegalName())

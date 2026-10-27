@@ -121,4 +121,16 @@ class TripjackHotelDetailMappingTest {
         assertThat(o.getStarRating()).isEqualTo(4);
         assertThat(o.getAddress()).isEqualTo("Calangute");
     }
+
+    /** Readiness: only the documented base names count; anything else (a net or room rate) leaves the option not bookable. */
+    @Test
+    void theBaseRateIsReadOnlyFromTheAllowListedFields() throws Exception {
+        assertThat(TripjackHotelSearchProvider.baseRate(M.readTree("{\"totalPrice\":1180,\"baseRate\":1000}"))).isEqualByComparingTo("1000");
+        assertThat(TripjackHotelSearchProvider.baseRate(M.readTree("{\"totalPrice\":1180,\"baseFare\":\"1000\"}"))).isEqualByComparingTo("1000");
+        assertThat(TripjackHotelSearchProvider.baseRate(M.readTree("{\"totalPrice\":1180,\"totalTax\":180}"))).isEqualByComparingTo("1000");
+        assertThat(TripjackHotelSearchProvider.baseRate(M.readTree("{\"totalPrice\":1180,\"netRate\":900}"))).isNull();
+        assertThat(TripjackHotelSearchProvider.baseRate(M.readTree("{\"totalPrice\":1180,\"roomRate\":1000}"))).isNull();
+        assertThat(TripjackHotelSearchProvider.baseRate(M.readTree("{\"totalPrice\":1180,\"tax\":\"180\"}"))).isNull(); // tax not a number
+        assertThat(TripjackHotelSearchProvider.baseRate(M.readTree("{\"totalPrice\":1180}"))).isNull();
+    }
 }

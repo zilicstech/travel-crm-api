@@ -22,6 +22,7 @@ import com.voyra.crm.repository.SupplierPaymentRepository;
 import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.repository.VendorRepository;
 import com.voyra.crm.security.SecurityContextUtil;
+import com.voyra.crm.util.BookingNextStep;
 import com.voyra.crm.util.FinancialYear;
 import com.voyra.crm.util.PaymentAdvicePdfRenderer;
 import com.voyra.crm.util.SupplierInvoiceLifecyclePolicy;
@@ -63,9 +64,12 @@ public class SupplierPaymentService {
     private final com.voyra.crm.repository.JournalEntryRepository journalEntryRepository;
     private final ExchangeRateProvider exchangeRateProvider;
     private final BaseCurrency baseCurrency;
+    private final com.voyra.crm.repository.BookingRepository bookingRepository;
+    private final LedgerAccountResolver ledgerAccountResolver;
 
     @Transactional
     public SupplierPaymentResponse pay(SupplierPaymentRequest request) {
+        com.voyra.crm.util.PlatformManaged.checkPaymentMode(request.getPaymentMode());
         if (request.getPaidOn() != null && request.getPaidOn().isAfter(FinancialYear.today())) {
             throw new IllegalArgumentException("The payment date can't be in the future");
         }
@@ -73,11 +77,12 @@ public class SupplierPaymentService {
         SupplierInvoice invoice = null;
         boolean isAdvance = request.getSupplierInvoiceId() == null || request.getSupplierInvoiceId().isBlank();
         if (!isAdvance) {
-            invoice = findInvoice(request.getSupplierInvoiceId());
+            invoice = lockInvoice(request.getSupplierInvoiceId());
             if (!vendor.getId().equals(invoice.getVendorId())) {
                 throw new IllegalArgumentException("This bill does not belong to the selected vendor");
             }
             SupplierInvoiceLifecyclePolicy.assertPayable(invoice.getStatus());
+            assertNotPlatformManaged(invoice.getBookingId());
             assertWithinBalanceDue(invoice, request.getAmount());
         }
 
@@ -169,8 +174,9 @@ public class SupplierPaymentService {
     private static void assertWithinBalanceDue(SupplierInvoice invoice, BigDecimal amount) {
         BigDecimal balanceDue = invoice.getBalanceDue();
         if (balanceDue != null && amount.compareTo(balanceDue) > 0) {
-            throw new IllegalStateException("This payment of " + amount + " exceeds the bill's balance due of "
-                    + balanceDue + ". Pay the balance against the bill and record any surplus as an advance.");
+            String currency = invoice.getCurrencyCode();
+            throw new IllegalStateException("This payment of " + BookingNextStep.money(amount, currency)
+                    + " exceeds the bill's balance due of " + BookingNextStep.money(balanceDue, currency) + ". Pay the balance against the bill and record any surplus as an advance.");
         }
     }
 
@@ -221,14 +227,16 @@ public class SupplierPaymentService {
 
     @Transactional
     public SupplierPaymentResponse applyAdvance(String supplierInvoiceId, SupplierAdvanceApplyRequest request) {
-        SupplierInvoice invoice = findInvoice(supplierInvoiceId);
+        SupplierInvoice invoice = lockInvoice(supplierInvoiceId);
         SupplierInvoiceLifecyclePolicy.assertPayable(invoice.getStatus());
+        assertNotPlatformManaged(invoice.getBookingId());
 
         SupplierPayment advance = supplierPaymentRepository.findById(request.getAdvancePaymentId())
                 .orElseThrow(() -> new IllegalArgumentException("Advance payment not found: " + request.getAdvancePaymentId()));
         if (!Boolean.TRUE.equals(advance.getIsAdvance()) || advance.getReversedAt() != null) {
             throw new IllegalArgumentException("This payment is not an active advance");
         }
+        com.voyra.crm.util.PlatformManaged.checkPaymentMode(advance.getPaymentMode());
         if (!advance.getVendorId().equals(invoice.getVendorId())) {
             throw new IllegalArgumentException("This advance belongs to a different vendor");
         }
@@ -276,13 +284,15 @@ public class SupplierPaymentService {
     /** Writes a new, opposite-signed payment and stamps the original as reversed - the original's own amount is never edited. */
     @Transactional
     public SupplierPaymentResponse reverse(String id, String reason) {
-        SupplierPayment original = findById(id);
+        SupplierPayment original = supplierPaymentRepository.findByIdForUpdate(id)
+                .orElseThrow(() -> new IllegalArgumentException("Payment not found: " + id));
         if (original.getReversesPaymentId() != null) {
             throw new IllegalStateException("Cannot reverse a reversing entry");
         }
         if (original.getReversedAt() != null) {
             throw new IllegalStateException("This payment has already been reversed");
         }
+        assertNotPlatformManaged(original.getBookingId());
 
         if (Boolean.TRUE.equals(original.getIsAdvance())) {
             // An advance taken back can't stay spent on bills: undo what was applied from it, reopening those bills.
@@ -336,7 +346,7 @@ public class SupplierPaymentService {
         supplierPaymentRepository.save(original);
 
         if (original.getSupplierInvoiceId() != null) {
-            SupplierInvoice invoice = findInvoice(original.getSupplierInvoiceId());
+            SupplierInvoice invoice = lockInvoice(original.getSupplierInvoiceId());
             applySettlement(invoice, original.getAmount().negate());
         }
 
@@ -490,7 +500,8 @@ public class SupplierPaymentService {
         if (amountInr == null || amountInr.compareTo(BigDecimal.ZERO) <= 0) {
             return;
         }
-        String bankCode = payment.getPaymentMode() == PaymentMode.CASH
+        String bankCode = payment.getPaymentMode() == PaymentMode.VOYRA_WALLET ? ledgerAccountResolver.voyraWalletCode()
+                : payment.getPaymentMode() == PaymentMode.CASH
                 ? com.voyra.crm.enums.SystemAccount.CASH_IN_HAND.code()
                 : com.voyra.crm.enums.SystemAccount.BANK_ACCOUNTS.code();
         String narration = "Payment " + orId(payment.getVoucherNumber(), payment.getId()) + " recorded";
@@ -564,6 +575,11 @@ public class SupplierPaymentService {
         supplierInvoiceRepository.save(invoice);
     }
 
+    /** The bills and payments of a platform booking's CRM mirror are the platform's (409 for anyone else). */
+    private void assertNotPlatformManaged(String bookingId) {
+        com.voyra.crm.util.PlatformManaged.check(bookingId != null && bookingRepository.existsByIdAndPlatformBookingIdIsNotNull(bookingId));
+    }
+
     private Vendor findVendor(String vendorId) {
         return vendorRepository.findById(vendorId)
                 .orElseThrow(() -> new IllegalArgumentException("Vendor not found: " + vendorId));
@@ -571,6 +587,11 @@ public class SupplierPaymentService {
 
     private SupplierInvoice findInvoice(String id) {
         return supplierInvoiceRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Supplier bill not found: " + id));
+    }
+
+    private SupplierInvoice lockInvoice(String id) {
+        return supplierInvoiceRepository.findByIdForUpdate(id)
                 .orElseThrow(() -> new IllegalArgumentException("Supplier bill not found: " + id));
     }
 

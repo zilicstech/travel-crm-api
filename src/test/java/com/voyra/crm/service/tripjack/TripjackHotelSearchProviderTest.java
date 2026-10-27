@@ -2,11 +2,11 @@ package com.voyra.crm.service.tripjack;
 
 import com.voyra.crm.dto.HotelOfferResponse;
 import com.voyra.crm.dto.HotelSearchQuery;
-import com.voyra.crm.dto.SupplierCredentialRevealResponse;
+import com.voyra.crm.models.ResolvedCredential;
 import com.voyra.crm.enums.SupplierEnvironment;
 import com.voyra.crm.enums.SupplierProvider;
 import com.voyra.crm.exception.SupplierException;
-import com.voyra.crm.service.SupplierCredentialService;
+import com.voyra.crm.service.PlatformSupplierCredentialService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -39,19 +39,18 @@ class TripjackHotelSearchProviderTest {
     private static final String HOST = "https://apitest-hms.tripjack.com";
 
     @Mock
-    private SupplierCredentialService supplierCredentialService;
+    private PlatformSupplierCredentialService platformSupplierCredentialService;
 
     private MockRestServiceServer server;
     private TripjackHotelSearchProvider provider;
 
     @BeforeEach
     void setUp() {
-        org.mockito.Mockito.lenient().when(supplierCredentialService.resolveActive(SupplierProvider.TRIPJACK)).thenReturn(SupplierCredentialRevealResponse.builder()
-                .provider(SupplierProvider.TRIPJACK).environment(SupplierEnvironment.UAT)
-                .baseUrl("https://apitest.tripjack.com").apiKey("test-key").build());
+        org.mockito.Mockito.lenient().when(platformSupplierCredentialService.resolveActive(SupplierProvider.TRIPJACK)).thenReturn(new ResolvedCredential(SupplierProvider.TRIPJACK, SupplierEnvironment.UAT,
+                "https://apitest.tripjack.com", "test-key", null));
         RestClient.Builder builder = RestClient.builder();
         server = MockRestServiceServer.bindTo(builder).build();
-        provider = new TripjackHotelSearchProvider(supplierCredentialService, builder, HOST, "https://hms-search.tripjack.com");
+        provider = new TripjackHotelSearchProvider(platformSupplierCredentialService, builder, HOST, "https://hms-search.tripjack.com");
     }
 
     private HotelSearchQuery query(String city, String country) {

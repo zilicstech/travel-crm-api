@@ -242,8 +242,9 @@ public class BookingLifecycleService {
         BigDecimal received = nz(b.getReceivedTotalInr());
         // Before the invoice, money already held on the client's account will be applied to it, so it is not asked for again.
         // After the invoice, a voucher added since then is still to collect too (before its GST, which its own invoice adds).
-        BigDecimal sinceInvoice = cancelled || !invoiced ? BigDecimal.ZERO
-                : nz(b.getSellingPrice()).subtract(nz(f.invoicedPriceInr())).max(BigDecimal.ZERO);
+        // The same figure BookingAccountingSync derives the booking's payment status from, so badge and step agree.
+        BigDecimal uninvoiced = BookingAccountingSync.uninvoiced(b, f.invoicedPriceInr());
+        BigDecimal sinceInvoice = invoiced ? uninvoiced : BigDecimal.ZERO;
         // What its invoices still owe for this booking - on an invoice shared with other bookings, its own account
         // (its share less its own credit notes and the payments recorded for it).
         BigDecimal owedOnInvoices = liveInvoices.stream().filter(i -> i.getStatus() != InvoiceLifecycle.DRAFT)
@@ -277,7 +278,6 @@ public class BookingLifecycleService {
         steps.add(step("VOUCHER", f.documentCount() > 0 ? (unpriced ? "PARTIAL" : "DONE") : cancelled ? "NA" : "OPEN",
                 f.documentCount() > 0 ? f.documentCount() + " voucher" + (f.documentCount() == 1 ? "" : "s") + " uploaded"
                         + (unpriced ? " - add the cost and markup to confirm" : "") : "No voucher uploaded yet"));
-        BigDecimal uninvoiced = cancelled ? BigDecimal.ZERO : nz(b.getSellingPrice()).subtract(nz(f.invoicedPriceInr())).max(BigDecimal.ZERO);
         steps.add(step("INVOICE", invoiced ? (uninvoiced.signum() > 0 ? "PARTIAL" : "DONE") : cancelled ? "NA" : "OPEN",
                 invoiced ? "Invoiced " + money(invoicedTotal, currency) + (uninvoiced.signum() > 0 ? " · " + money(uninvoiced, currency) + " added since the last invoice" : "")
                         : liveInvoices.isEmpty() ? "Not invoiced yet" : "Draft invoice not issued yet"));

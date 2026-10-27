@@ -68,7 +68,10 @@ public final class VoucherTrip {
         put(out, "airline", first.getAirline());
         put(out, "flightNumber", first.getFlightNumber());
         put(out, "flightFrom", first.getFrom());
-        put(out, "flightTo", last.getTo());
+        // Out and back (DEL-BOM-DEL) reads DEL to BOM, returning on the last flight's date - not DEL to DEL.
+        boolean outAndBack = legs.size() > 1 && Objects.equals(first.getFrom(), last.getTo());
+        put(out, "flightTo", outAndBack ? first.getTo() : last.getTo());
+        if (outAndBack) put(out, "returnDate", last.getTravelDate().toString());
         put(out, "journeyDate", first.getTravelDate().toString());
         put(out, "flightDepartTime", first.getDepartTime());
         put(out, "flightArriveTime", last.getArriveTime());

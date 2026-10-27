@@ -5,6 +5,7 @@ import com.voyra.crm.dto.CreditNoteRefundRequest;
 import com.voyra.crm.dto.CreditNoteRequest;
 import com.voyra.crm.dto.CreditNoteResponse;
 import com.voyra.crm.dto.RefundSettlementRequest;
+import com.voyra.crm.dto.SupplierCreditNoteRefundRequest;
 import com.voyra.crm.dto.SupplierCreditNoteRequest;
 import com.voyra.crm.entity.Booking;
 import com.voyra.crm.entity.Invoice;
@@ -882,5 +883,63 @@ class BookingCancellationServiceTest {
         assertThatThrownBy(() -> service.recordSupplierRefund("B1", wallet))
                 .hasMessage("A bank refund is already waiting for the accountant's check");
         verify(supplierCreditNoteService, never()).receiveRefund(any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
+    }
+
+    /** Only the platform cancels a mirror and settles its supplier side; the agency's own customer refund stays the agency's. */
+    @Test
+    void crmEditOfAMirrorIs409() {
+        Booking b = booking(BookingStatus.CONFIRMED);
+        b.setPlatformBookingId("PB1");
+
+        assertThatThrownBy(() -> service.cancel("B1", cancel("1000", "0")))
+                .isInstanceOf(com.voyra.crm.exception.BookingConflictException.class).hasMessage("Managed from Platform Bookings");
+        b.setBookingStatus(BookingStatus.CANCELLED);
+        b.setSupplierRefundExpected(d("6000"));
+        assertThatThrownBy(() -> service.recordSupplierRefund("B1", pay("6000")))
+                .isInstanceOf(com.voyra.crm.exception.BookingConflictException.class);
+        assertThatThrownBy(() -> service.confirmSupplierRefund("B1", pay("6000")))
+                .isInstanceOf(com.voyra.crm.exception.BookingConflictException.class);
+        assertThatThrownBy(() -> service.rejectSupplierRefund("B1"))
+                .isInstanceOf(com.voyra.crm.exception.BookingConflictException.class);
+        assertThatThrownBy(() -> service.recordVoyraWalletRefund("B1", d("6000")))
+                .isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
+        verify(supplierCreditNoteService, never()).record(any());
+        verify(supplierCreditNoteService, never()).receiveRefund(any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
+    }
+
+    /** The platform's cancel of a (even completed) mirror: the paid bill gets its supplier credit note, the refund lands on 1310. */
+    @Test
+    void theSystemActorCancelsAMirrorAndRecordsTheRefundAgainstTheVoyraWallet() {
+        Booking b = booking(BookingStatus.COMPLETED);
+        b.setPlatformBookingId("PB1");
+        b.setReceivedTotalInr(BigDecimal.ZERO);
+        SupplierInvoice paid = SupplierInvoice.builder().id("S1").vendorId("V-VOYRA").status(SupplierInvoiceStatus.PAID)
+                .grandTotal(d("5400")).amountPaid(d("5400")).creditNoteTotal(BigDecimal.ZERO)
+                .cgstAmount(BigDecimal.ZERO).sgstAmount(BigDecimal.ZERO).igstAmount(BigDecimal.ZERO).build();
+        when(supplierInvoiceRepository.findByBookingIdAndStatusNot("B1", SupplierInvoiceStatus.CANCELLED)).thenReturn(List.of(paid));
+        SupplierCreditNote note = SupplierCreditNote.builder().id("SCN1").vendorId("V-VOYRA")
+                .refundableAmount(d("4000")).refundedAmount(BigDecimal.ZERO).build();
+        when(supplierCreditNoteRepository.findByBookingIdAndStatus("B1", SupplierCreditNoteStatus.RECORDED)).thenReturn(List.of(note));
+        BookingCancelRequest request = cancel("1400", "0");
+        request.setAirlineCharge(BigDecimal.ZERO);
+        org.mockito.Mockito.doAnswer(i -> {
+            b.setBookingStatus(BookingStatus.CANCELLED);
+            return null;
+        }).when(bookingService).markCancelled(eq(b), any());
+
+        com.voyra.crm.security.SystemActor.call("T1", () -> {
+            service.cancel("B1", request);
+            return service.recordVoyraWalletRefund("B1", d("4000"));
+        });
+
+        ArgumentCaptor<SupplierCreditNoteRequest> credit = ArgumentCaptor.forClass(SupplierCreditNoteRequest.class);
+        verify(supplierCreditNoteService).record(credit.capture());
+        assertThat(credit.getValue().getTaxableValue()).isEqualByComparingTo("4000");
+        ArgumentCaptor<SupplierCreditNoteRefundRequest> refund = ArgumentCaptor.forClass(SupplierCreditNoteRefundRequest.class);
+        verify(supplierCreditNoteService).receiveRefund(eq("SCN1"), refund.capture(), eq(false));
+        assertThat(refund.getValue().getPaymentMode()).isEqualTo(PaymentMode.VOYRA_WALLET);
+        assertThat(refund.getValue().getAmount()).isEqualByComparingTo("4000");
+        verify(supplierPaymentService, never()).creditWallet(any(), any(), any(), anyString());
+        assertThat(b.getSupplierRefundReceived()).isEqualByComparingTo("4000");
     }
 }

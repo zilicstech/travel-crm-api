@@ -1,0 +1,56 @@
+package com.voyra.crm.repository;
+
+import com.voyra.crm.enums.NotificationOutboxStatus;
+import com.voyra.crm.entity.NotificationOutbox;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
+import java.util.List;
+
+@Repository
+public interface NotificationOutboxRepository extends JpaRepository<NotificationOutbox, String> {
+
+    /** DPDP: drops the bodies of dead (FAILED) rows created before {@code before} and of SENT rows sent before it; the rows stay. */
+    @Transactional
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE NotificationOutbox o SET o.bodyHtml = NULL, o.bodyText = NULL WHERE (o.bodyHtml IS NOT NULL OR o.bodyText IS NOT NULL) "
+            + "AND ((o.status = com.voyra.crm.enums.NotificationOutboxStatus.FAILED AND o.createdAt < :before) "
+            + "OR (o.status = com.voyra.crm.enums.NotificationOutboxStatus.SENT AND o.sentAt < :before))")
+    int clearOldBodies(@Param("before") Instant before);
+
+    /**
+     * DPDP: PENDING or SENDING rows created before {@code before} (SMTP off or failing all that time) are given up - FAILED,
+     * reason recorded, body dropped - so a switched-off mailer never keeps resume links and names forever.
+     */
+    @Transactional
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE NotificationOutbox o SET o.status = com.voyra.crm.enums.NotificationOutboxStatus.FAILED, "
+            + "o.lastError = 'Expired: not sent within the retention period', o.bodyHtml = NULL, o.bodyText = NULL "
+            + "WHERE o.status IN (com.voyra.crm.enums.NotificationOutboxStatus.PENDING, com.voyra.crm.enums.NotificationOutboxStatus.SENDING) "
+            + "AND o.createdAt < :before")
+    int expireUnsent(@Param("before") Instant before);
+
+    /** PENDING rows due now, and SENDING rows whose lease ran out (the instance sending them died). */
+    @Query("SELECT o.id FROM NotificationOutbox o WHERE o.status IN (com.voyra.crm.enums.NotificationOutboxStatus.PENDING, "
+            + "com.voyra.crm.enums.NotificationOutboxStatus.SENDING) AND o.nextAttemptAt <= :now ORDER BY o.nextAttemptAt")
+    List<String> findDueIds(@Param("now") Instant now, Pageable pageable);
+
+    /**
+     * Claims one due row for this instance: 1 if claimed, 0 if another instance got it first. A concurrent claim blocks on the
+     * row lock and re-checks the WHERE after the first commits, so it sees SENDING with a future lease and updates nothing.
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE NotificationOutbox o SET o.status = com.voyra.crm.enums.NotificationOutboxStatus.SENDING, "
+            + "o.attempts = o.attempts + 1, o.nextAttemptAt = :leaseUntil WHERE o.id = :id "
+            + "AND o.status IN (com.voyra.crm.enums.NotificationOutboxStatus.PENDING, com.voyra.crm.enums.NotificationOutboxStatus.SENDING) "
+            + "AND o.nextAttemptAt <= :now")
+    int claim(@Param("id") String id, @Param("now") Instant now, @Param("leaseUntil") Instant leaseUntil);
+
+    long countByStatus(NotificationOutboxStatus status);
+}

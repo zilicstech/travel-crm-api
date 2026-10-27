@@ -1,6 +1,7 @@
 package com.voyra.crm.dto;
 
 import io.swagger.v3.oas.annotations.media.Schema;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -79,4 +80,23 @@ public class FlightOfferResponse {
 
     @Schema(example = "Saver")
     private String fareType;
+
+    @JsonIgnore
+    @Schema(hidden = true, description = "Commissionable base for the whole party; internal, never serialised - it would reveal Voyra's earnings")
+    private BigDecimal baseFare;
+
+    @Schema(description = "Supplier published fare for the whole party (shown struck through); null for a platform admin search", example = "5000.00")
+    private BigDecimal publishedFare;
+
+    @Schema(description = "What the agency pays for the whole party after its discount; null for a platform admin search", example = "4500.00")
+    private BigDecimal displayedFare;
+
+    @Schema(description = "Commission the agency earns on this fare, net of TDS; null for a platform admin search", example = "120.00")
+    private BigDecimal agencyEarns;
+
+    @Schema(description = "False when the agency cannot book this fare with Voyra yet", example = "true")
+    private boolean bookable;
+
+    @Schema(description = "Why bookable is false, e.g. PRICING_NOT_CONFIGURED; null when bookable", example = "PRICING_NOT_CONFIGURED")
+    private String notBookableReason;
 }

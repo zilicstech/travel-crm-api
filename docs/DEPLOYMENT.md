@@ -58,6 +58,29 @@ Flyway catch-up migration and the in-memory cache loaders (`TenantCache`, `Agent
 zero, revisit `RUN_TENANT_MIGRATIONS` (move the catch-up to a one-off Cloud Run Job instead)
 and the cache-consistency note below.
 
+## Scheduled jobs need CPU always allocated
+
+The subscription lifecycle, gateway reconciliation, booking poll and repair, and purge jobs are
+`@Scheduled` tasks inside the app process. Deploy with `--no-cpu-throttling` and `--min-instances 1`
+(or more); with request-only CPU they pause between requests and do not run reliably.
+
+## Connection pool
+
+Each instance keeps up to `DB_POOL_SIZE` connections (default 10, base config and `cloudrun`
+profile). Keep `instances x DB_POOL_SIZE`, doubled for the overlap of a rolling deploy, under the
+database's connection limit: a 1 GB Cloud SQL instance allows about 22, so one instance at 10 fits,
+two need `DB_POOL_SIZE=5`.
+
+## Tripjack live switch
+
+`FLIGHT_BOOKING_PROVIDER=tripjack` or `HOTEL_BOOKING_PROVIDER=tripjack` makes the app refuse to
+start, and saving a PROD Tripjack credential returns 409, until platform setting
+`tripjack_live_ready` is true. One platform admin requests it
+(`POST /api/platform/settings/tripjack_live_ready/requests` with `{"value":"true"}`), a second
+admin approves it (`POST /api/platform/settings/requests/{id}/approve`); both steps are audited.
+Turning it back to `false` is a plain setting change. Work through the "Before enabling ...=tripjack"
+checklists in the B2B PR description first.
+
 ## Pre-deploy checklist
 
 - [ ] All three Secret Manager values are the real production secrets, not copies of local `.env`.
