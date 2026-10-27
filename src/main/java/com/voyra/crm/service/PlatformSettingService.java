@@ -39,7 +39,7 @@ public class PlatformSettingService {
     static final String VOYRA_CANCEL_FEE = "voyra_cancel_fee";
     static final String REFERENCE_FARE_BASKET = "reference_fare_basket";
     static final String REFERENCE_FARE_BASKET_HOTEL = "reference_fare_basket_hotel";
-    /** Off until a second platform admin approves it ({@link PlatformSettingRequestService}); guards the Tripjack live switch. */
+    /** Off until a platform admin turns it on (owner ruling 2026-10-27: one admin, audited); guards the Tripjack live switch. */
     static final String TRIPJACK_LIVE_READY = "tripjack_live_ready";
     static final String PAX_RETENTION_DAYS = "pax_retention_days";
     static final String SKU_PRICES = "sku_prices";
@@ -117,16 +117,10 @@ public class PlatformSettingService {
         return Integer.parseInt(raw(PAX_RETENTION_DAYS));
     }
 
-    /** Whether a second platform admin has cleared Tripjack for live (PROD credential, Tripjack booking providers). */
+    /** Whether a platform admin has cleared Tripjack for live (PROD credential, Tripjack booking providers). */
     @Transactional(readOnly = true)
     public boolean tripjackLiveReady() {
         return "true".equals(raw(TRIPJACK_LIVE_READY));
-    }
-
-    /** Only for {@link PlatformSettingRequestService}: writes a change a second admin just approved, in the approval's transaction, audited like {@link #set}. */
-    @Transactional
-    public void applyApproved(String key, String value) {
-        write(key, value);
     }
 
     /** Monthly INR price per key of {@link #SKU_PRICE_KEYS}; annual billing is 10 of these. */
@@ -251,10 +245,7 @@ public class PlatformSettingService {
                 }
             }
             case TRIPJACK_LIVE_READY -> {
-                if (v.equals("true")) {
-                    throw new IllegalArgumentException(key + " is turned on by a second platform admin: request the change, and another admin approves it");
-                }
-                if (!v.equals("false")) {
+                if (!v.equals("true") && !v.equals("false")) {
                     throw new IllegalArgumentException(key + " must be true or false");
                 }
             }

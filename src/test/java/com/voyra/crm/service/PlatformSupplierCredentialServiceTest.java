@@ -303,7 +303,7 @@ class PlatformSupplierCredentialServiceTest {
                 .doesNotContain("reveal");
     }
 
-    /** Review Focus 3: a PROD key is refused (409) until a second platform admin has turned tripjack_live_ready on; UAT stays open. */
+    /** Review Focus 3: a PROD key is refused (409) until a platform admin has turned tripjack_live_ready on; UAT stays open. */
     @Test
     void aProdCredentialIsRefusedUntilTripjackIsLiveReady() {
         when(settings.tripjackLiveReady()).thenReturn(false);

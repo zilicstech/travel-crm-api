@@ -7,9 +7,7 @@ import com.voyra.crm.entity.PlatformAdmin;
 import com.voyra.crm.enums.PlatformAuditAction;
 import com.voyra.crm.enums.UserType;
 import com.voyra.crm.exception.NotFoundException;
-import com.voyra.crm.entity.PlatformSettingRequest;
 import com.voyra.crm.repository.PlatformAdminRepository;
-import com.voyra.crm.repository.PlatformSettingRequestRepository;
 import com.voyra.crm.security.AesPasswordEncoder;
 import com.voyra.crm.security.CustomUserPrincipal;
 import org.junit.jupiter.api.AfterEach;
@@ -51,7 +49,6 @@ class PlatformAdminServiceTest {
     @Mock private AesPasswordEncoder passwordEncoder;
     @Mock private LoginEmailService loginEmailService;
     @Mock private PlatformAuditService auditService;
-    @Mock private PlatformSettingRequestRepository settingRequestRepository;
     @InjectMocks private PlatformAdminService service;
 
     private final Map<String, PlatformAdmin> rows = new LinkedHashMap<>();
@@ -180,24 +177,6 @@ class PlatformAdminServiceTest {
         admin("SA1", true);
         assertThatThrownBy(() -> service.deactivate("NOPE")).isInstanceOf(NotFoundException.class);
         assertThatThrownBy(() -> service.reactivate("NOPE")).isInstanceOf(NotFoundException.class);
-    }
-
-    /** Final review minor 9: a deactivated admin's open setting requests are withdrawn (audited), so nobody can approve them later. */
-    @Test
-    void deactivatingAnAdminWithdrawsTheirOpenSettingRequests() {
-        admin("SA1", true);
-        admin("SA2", true);
-        PlatformSettingRequest open = PlatformSettingRequest.builder().id("R1").settingKey("tripjack_live_ready").value("true")
-                .requestedBy("SA2").requestedAt(Instant.now()).build();
-        when(settingRequestRepository.findByRequestedByAndDecidedAtIsNull("SA2")).thenReturn(List.of(open));
-
-        service.deactivate("SA2");
-
-        assertThat(open.getOutcome()).isEqualTo("WITHDRAWN");
-        assertThat(open.getDecidedBy()).isEqualTo("SA1");
-        assertThat(open.getDecidedAt()).isNotNull();
-        verify(settingRequestRepository).save(open);
-        verify(auditService).record(eq(PlatformAuditAction.SETTING_CHANGE_WITHDRAW), eq("PLATFORM_SETTING"), eq("tripjack_live_ready"), anyMap());
     }
 
     /** Carried minor: the liveness cache changes only after the commit; a rolled-back deactivate leaves it as it was. */

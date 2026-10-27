@@ -233,12 +233,10 @@ class PlatformSettingServiceTest {
         bad("reference_fare_basket_hotel", "[{\"label\":\"Z\",\"gross\":100,\"base\":200}]");
     }
 
-    /** Review Focus 3: the live switch is off by default and can never be turned on through a plain setting write. */
+    /** Owner ruling 2026-10-27: the live switch is off by default and one platform admin turns it on with a plain, audited write. */
     @Test
-    void tripjackLiveReadyIsOffByDefaultAndOnlyASecondAdminTurnsItOn() {
+    void tripjackLiveReadyIsOffByDefaultAndOneAdminTurnsItOn() {
         assertThat(service().tripjackLiveReady()).isFalse();
-        assertThatThrownBy(() -> service().set("tripjack_live_ready", "true"))
-                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("second platform admin");
         bad("tripjack_live_ready", "yes");
         when(repository.findById("tripjack_live_ready"))
                 .thenReturn(Optional.of(PlatformSetting.builder().key("tripjack_live_ready").value("true").build()));

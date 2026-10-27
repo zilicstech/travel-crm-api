@@ -62,8 +62,8 @@ public class PlatformSupplierCredentialService {
                     + " - wait for them to finish before changing the supplier credential");
         }
         if (request.getEnvironment() == SupplierEnvironment.PROD && !settings.tripjackLiveReady()) {
-            throw new IllegalStateException("A PROD Tripjack key needs platform setting tripjack_live_ready, "
-                    + "which a platform admin requests and a second admin approves");
+            throw new IllegalStateException("A PROD Tripjack key needs platform setting tripjack_live_ready: "
+                    + "turn on Go live on the Supplier page first");
         }
         List<PlatformSupplierCredential> rows = repository.findByProviderOrderByUpdatedAtDesc(request.getProvider());
         PlatformSupplierCredential credential = rows.isEmpty()

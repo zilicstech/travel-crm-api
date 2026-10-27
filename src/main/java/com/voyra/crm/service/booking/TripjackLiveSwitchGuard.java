@@ -13,8 +13,8 @@ import java.util.EnumSet;
 import java.util.Set;
 
 /**
- * Fails startup on a Tripjack booking provider until platform setting {@code tripjack_live_ready} is on (set only by a
- * second platform admin). Runs while the context starts, before the scheduler polls, so a Tripjack book is never sent
+ * Fails startup on a Tripjack booking provider until platform setting {@code tripjack_live_ready} is on (set by a
+ * platform admin, audited). Runs while the context starts, before the scheduler polls, so a Tripjack book is never sent
  * from an instance that was not cleared for it. Exception: with the switch off but Tripjack bookings still in flight
  * (HELD, BOOKING, UNKNOWN, CANCELLING), the instance starts with a WARN, because only the Tripjack provider can settle
  * them (the mock would answer for bookings it never saw); new live bookings stay refused at review and confirm.
@@ -47,7 +47,7 @@ public class TripjackLiveSwitchGuard {
             return;
         }
         throw new IllegalStateException(env + "=tripjack is refused: platform setting tripjack_live_ready is false. "
-                + "A platform admin requests it and a second admin approves it (Platform settings), then restart - "
+                + "A platform admin turns on Go live (Platform > Supplier), then restart - "
                 + "or unset " + env + " to keep the mock supplier.");
     }
 }

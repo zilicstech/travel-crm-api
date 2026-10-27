@@ -6,9 +6,7 @@ import com.voyra.crm.dto.PlatformAdminResponse;
 import com.voyra.crm.entity.PlatformAdmin;
 import com.voyra.crm.enums.PlatformAuditAction;
 import com.voyra.crm.exception.NotFoundException;
-import com.voyra.crm.entity.PlatformSettingRequest;
 import com.voyra.crm.repository.PlatformAdminRepository;
-import com.voyra.crm.repository.PlatformSettingRequestRepository;
 import com.voyra.crm.security.SecurityContextUtil;
 import com.voyra.crm.security.AesPasswordEncoder;
 import com.voyra.crm.util.UniqueIdResolver;
@@ -21,7 +19,6 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.security.SecureRandom;
-import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -46,7 +43,6 @@ public class PlatformAdminService {
     private final AesPasswordEncoder passwordEncoder;
     private final LoginEmailService loginEmailService;
     private final PlatformAuditService auditService;
-    private final PlatformSettingRequestRepository settingRequestRepository;
 
     @Transactional(readOnly = true)
     public List<PlatformAdminResponse> list() {
@@ -84,7 +80,6 @@ public class PlatformAdminService {
         admin.setIsActive(false);
         repository.save(admin);
         auditService.record(PlatformAuditAction.PLATFORM_ADMIN_DEACTIVATE, ENTITY_TYPE, id, Map.of("email", admin.getEmail()));
-        withdrawOpenRequests(id);
         cacheAfterCommit(id, false);
         log.info("Platform admin deactivated: id={}", id);
         return toResponse(admin, null);
@@ -101,24 +96,6 @@ public class PlatformAdminService {
             log.info("Platform admin reactivated: id={}", id);
         }
         return toResponse(admin, null);
-    }
-
-    /** A deactivated admin's open setting requests are withdrawn, so nobody approves a request its author can no longer stand behind. */
-    private void withdrawOpenRequests(String adminId) {
-        String actor = SecurityContextUtil.getCurrentUserOrThrow().userId();
-        for (PlatformSettingRequest r : settingRequestRepository.findByRequestedByAndDecidedAtIsNull(adminId)) {
-            r.setDecidedBy(actor);
-            r.setDecidedAt(Instant.now());
-            r.setOutcome("WITHDRAWN");
-            settingRequestRepository.save(r);
-            Map<String, Object> detail = new LinkedHashMap<>();
-            detail.put("requestId", r.getId());
-            detail.put("value", r.getValue());
-            detail.put("requestedBy", r.getRequestedBy());
-            detail.put("decidedBy", actor);
-            detail.put("reason", "Requester deactivated");
-            auditService.record(PlatformAuditAction.SETTING_CHANGE_WITHDRAW, "PLATFORM_SETTING", r.getSettingKey(), detail);
-        }
     }
 
     /** The liveness cache follows the committed row only: a rolled-back change never reaches it. */
