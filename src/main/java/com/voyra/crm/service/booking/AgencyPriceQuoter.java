@@ -1,6 +1,5 @@
 package com.voyra.crm.service.booking;
 
-import com.voyra.crm.entity.AgencyPricing;
 import com.voyra.crm.enums.DiscountBase;
 import com.voyra.crm.enums.PricingProduct;
 import com.voyra.crm.exception.PricingNotConfiguredException;
@@ -12,7 +11,6 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.time.Instant;
 import java.util.Optional;
 import java.util.function.BiFunction;
 
@@ -30,29 +28,31 @@ public class AgencyPriceQuoter {
         return quoterFor(tenantId, product).orElseThrow(PricingNotConfiguredException::new).apply(gross, base);
     }
 
-    /** Resolves the rate and settings once so a whole result list is priced without a query per fare; empty when no rate is in force. */
+    /** Resolves the agency's rules and settings once so a whole result list is priced without a query per fare; empty only if a Default rule is missing. */
     public Optional<BiFunction<BigDecimal, BigDecimal, PriceQuote>> quoterFor(String tenantId, PricingProduct product) {
-        return pricingService.resolve(tenantId, product, Instant.now()).map(row -> {
+        return pricingService.resolve(tenantId, product).map(rules -> {
             DiscountBase db = settings.discountBase();
             BigDecimal earnedPct = settings.commissionEstimatePct();
             BigDecimal tdsPct = settings.tdsRate();
-            return (gross, base) -> price(row, db, earnedPct, tdsPct, gross, base);
+            return (gross, base) -> price(rules, db, earnedPct, tdsPct, gross, base);
         });
     }
 
-    private static PriceQuote price(AgencyPricing row, DiscountBase db, BigDecimal earnedPct, BigDecimal tdsPct,
+    private static PriceQuote price(AgencyPricingService.EffectivePricing rules, DiscountBase db, BigDecimal earnedPct, BigDecimal tdsPct,
                                     BigDecimal gross, BigDecimal base) {
-        BigDecimal displayed = PricingMath.displayed(gross, base, row.getDiscountPct(), db);
+        BigDecimal discountPct = rules.discount().getPct();
+        BigDecimal commissionPct = rules.commission().getPct();
+        BigDecimal displayed = PricingMath.displayed(gross, base, discountPct, db);
         // shortcut: voyraEarned is always the platform estimate until API/statement figures exist (spec 5.1)
         BigDecimal earned = round(base.multiply(earnedPct).divide(HUNDRED));
-        BigDecimal commission = round(base.multiply(row.getCommissionPct()).divide(HUNDRED));
-        if (!row.isAllowCommissionAboveEarned()) {
+        BigDecimal commission = round(base.multiply(commissionPct).divide(HUNDRED));
+        if (!rules.commission().isAllowAboveEarned()) {
             commission = commission.min(earned);
         }
         BigDecimal tds = round(commission.multiply(tdsPct).divide(HUNDRED));
         BigDecimal net = PricingMath.voyraNetOf(earned, gross, displayed, commission);
         return new PriceQuote(displayed, commission.subtract(tds), earned, commission, tds, net,
-                row.getId(), row.getDiscountPct(), row.getCommissionPct());
+                rules.pricingId(), discountPct, commissionPct);
     }
 
     private static BigDecimal round(BigDecimal v) {

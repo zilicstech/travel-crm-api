@@ -1,16 +1,23 @@
 package com.voyra.crm.service;
 
-import com.voyra.crm.exception.NotFoundException;
-import com.voyra.crm.dto.AgencyPricingCreateRequest;
-import com.voyra.crm.dto.AgencyPricingResponse;
-import com.voyra.crm.dto.PricingPreviewResponse;
-import com.voyra.crm.entity.AgencyPricing;
+import com.voyra.crm.dto.AgencyPricingAssignRequest;
+import com.voyra.crm.dto.AgencyPricingAssignmentResponse;
+import com.voyra.crm.dto.PricingRuleCreateRequest;
+import com.voyra.crm.dto.PricingRuleImpactResponse;
+import com.voyra.crm.dto.PricingRuleResponse;
+import com.voyra.crm.dto.PricingRuleUpdateRequest;
+import com.voyra.crm.entity.AgencyPricingAssignment;
+import com.voyra.crm.entity.PricingRule;
+import com.voyra.crm.entity.Tenant;
 import com.voyra.crm.enums.DiscountBase;
 import com.voyra.crm.enums.PlatformAuditAction;
 import com.voyra.crm.enums.PricingProduct;
+import com.voyra.crm.enums.PricingRuleKind;
 import com.voyra.crm.enums.UserType;
+import com.voyra.crm.exception.BookingConflictException;
 import com.voyra.crm.models.ReferenceFare;
-import com.voyra.crm.repository.AgencyPricingRepository;
+import com.voyra.crm.repository.AgencyPricingAssignmentRepository;
+import com.voyra.crm.repository.PricingRuleRepository;
 import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import org.junit.jupiter.api.AfterEach;
@@ -25,8 +32,6 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.context.SecurityContextHolder;
 
 import java.math.BigDecimal;
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -34,7 +39,6 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
@@ -45,30 +49,37 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class AgencyPricingServiceTest {
 
-    private static final String T = "T1";
+    @Mock private PricingRuleRepository ruleRepository;
+    @Mock private AgencyPricingAssignmentRepository assignmentRepository;
+    @Mock private TenantRepository tenantRepository;
+    @Mock private PlatformSettingService settings;
+    @Mock private PlatformAuditService auditService;
+    @InjectMocks private AgencyPricingService service;
 
-    @Mock
-    private AgencyPricingRepository repository;
-    @Mock
-    private TenantRepository tenantRepository;
-    @Mock
-    private PlatformSettingService settings;
-    @Mock
-    private PlatformAuditService auditService;
-    @InjectMocks
-    private AgencyPricingService service;
+    private final PricingRule defaultDiscount = rule("DD", PricingRuleKind.DISCOUNT, "Default", "0", true);
+    private final PricingRule defaultCommission = rule("DC", PricingRuleKind.COMMISSION, "Default", "0", true);
+    private final PricingRule silver = rule("S", PricingRuleKind.DISCOUNT, "Silver", "3", false);
+    private final PricingRule standard = rule("C2", PricingRuleKind.COMMISSION, "Standard", "2", false);
+
+    private static PricingRule rule(String id, PricingRuleKind kind, String name, String pct, boolean isDefault) {
+        return PricingRule.builder().id(id).kind(kind).product(PricingProduct.FLIGHT).name(name).pct(new BigDecimal(pct))
+                .isDefault(isDefault).version(1).build();
+    }
 
     @BeforeEach
     void setUp() {
-        lenient().when(tenantRepository.existsById(T)).thenReturn(true);
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+                new CustomUserPrincipal("A1", "admin@voyra.test", UserType.SUPER_ADMIN, null), null, List.of()));
         lenient().when(settings.discountBase()).thenReturn(DiscountBase.GROSS);
         lenient().when(settings.commissionEstimatePct()).thenReturn(new BigDecimal("5"));
-        lenient().when(settings.referenceFareBasket(com.voyra.crm.enums.PricingProduct.FLIGHT)).thenReturn(List.of(
+        lenient().when(settings.referenceFareBasket(PricingProduct.FLIGHT)).thenReturn(List.of(
                 new ReferenceFare("Domestic LCC", new BigDecimal("5000"), new BigDecimal("3500")),
-                new ReferenceFare("Domestic FSC", new BigDecimal("9000"), new BigDecimal("6000")),
                 new ReferenceFare("International", new BigDecimal("45000"), new BigDecimal("22000"))));
-        lenient().when(repository.save(any())).thenAnswer(i -> i.getArgument(0));
-        loginAs("U1");
+        lenient().when(ruleRepository.findByKindAndProductAndIsDefaultTrue(PricingRuleKind.DISCOUNT, PricingProduct.FLIGHT)).thenReturn(Optional.of(defaultDiscount));
+        lenient().when(ruleRepository.findByKindAndProductAndIsDefaultTrue(PricingRuleKind.COMMISSION, PricingProduct.FLIGHT)).thenReturn(Optional.of(defaultCommission));
+        lenient().when(ruleRepository.save(any(PricingRule.class))).thenAnswer(i -> i.getArgument(0));
+        lenient().when(assignmentRepository.save(any(AgencyPricingAssignment.class))).thenAnswer(i -> i.getArgument(0));
+        lenient().when(tenantRepository.existsById(anyString())).thenReturn(true);
     }
 
     @AfterEach
@@ -76,265 +87,136 @@ class AgencyPricingServiceTest {
         SecurityContextHolder.clearContext();
     }
 
-    private static void loginAs(String userId) {
-        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
-                new CustomUserPrincipal(userId, "admin", UserType.SUPER_ADMIN, null), null));
-    }
+    @Test
+    void anAgencyWithNoAssignmentIsPricedOnTheDefaultRules() {
+        when(assignmentRepository.findByTenantIdAndProduct("T1", PricingProduct.FLIGHT)).thenReturn(Optional.empty());
 
-    private static AgencyPricingCreateRequest request(String d, String c, Instant from) {
-        AgencyPricingCreateRequest r = new AgencyPricingCreateRequest();
-        r.setProduct(PricingProduct.FLIGHT);
-        r.setDiscountPct(new BigDecimal(d));
-        r.setCommissionPct(new BigDecimal(c));
-        r.setEffectiveFrom(from);
-        return r;
-    }
+        AgencyPricingService.EffectivePricing p = service.requireInForce("T1", PricingProduct.FLIGHT);
 
-    private static AgencyPricing row(String id, Instant from, boolean approved) {
-        return AgencyPricing.builder().id(id).tenantId(T).product(PricingProduct.FLIGHT)
-                .discountPct(BigDecimal.ONE).commissionPct(BigDecimal.ONE).effectiveFrom(from)
-                .worstCaseNetPer10k(BigDecimal.ZERO).requiresSecondApproval(!approved).createdBy("U1")
-                .createdAt(from).approvedBy(approved ? "U1" : null).approvedAt(approved ? from : null).build();
+        assertThat(p.discount()).isSameAs(defaultDiscount);
+        assertThat(p.commission()).isSameAs(defaultCommission);
+        assertThat(p.pricingId()).isEqualTo("D:DD:v1|C:DC:v1");
     }
 
     @Test
-    void createRefusesAPastEffectiveDate() {
-        assertThatThrownBy(() -> service.create(T, request("0", "0", Instant.now().minus(1, ChronoUnit.HOURS))))
-                .isInstanceOf(IllegalArgumentException.class).hasMessage("Effective date must be now or later");
-        verify(repository, never()).save(any());
+    void anAssignedAgencyIsPricedOnItsRules() {
+        when(assignmentRepository.findByTenantIdAndProduct("T1", PricingProduct.FLIGHT)).thenReturn(Optional.of(
+                AgencyPricingAssignment.builder().tenantId("T1").product(PricingProduct.FLIGHT).discountRuleId("S").commissionRuleId("C2").build()));
+        when(ruleRepository.findById("S")).thenReturn(Optional.of(silver));
+        when(ruleRepository.findById("C2")).thenReturn(Optional.of(standard));
+
+        AgencyPricingService.EffectivePricing p = service.requireInForce("T1", PricingProduct.FLIGHT);
+
+        assertThat(p.discount().getPct()).isEqualByComparingTo("3");
+        assertThat(p.commission().getPct()).isEqualByComparingTo("2");
     }
 
     @Test
-    void createRefusesAnUnknownAgency() {
-        assertThatThrownBy(() -> service.create("nope", request("0", "0", Instant.now())))
-                .isInstanceOf(NotFoundException.class).hasMessage("Agency not found: nope");
+    void createRefusesADuplicateNameAndAuditsANewRule() {
+        PricingRuleCreateRequest req = new PricingRuleCreateRequest();
+        req.setKind(PricingRuleKind.DISCOUNT);
+        req.setProduct(PricingProduct.FLIGHT);
+        req.setName(" Gold ");
+        req.setPct(new BigDecimal("5"));
+        req.setAllowAboveEarned(true);  // ignored on a discount rule
+        when(ruleRepository.existsByKindAndProductAndNameIgnoreCase(PricingRuleKind.DISCOUNT, PricingProduct.FLIGHT, "Gold")).thenReturn(false);
+
+        PricingRuleResponse r = service.createRule(req);
+
+        assertThat(r.getName()).isEqualTo("Gold");
+        assertThat(r.getPct()).isEqualByComparingTo("5.00");
+        assertThat(r.isAllowAboveEarned()).isFalse();
+        assertThat(r.getVersion()).isEqualTo(1);
+        verify(auditService).record(eq(PlatformAuditAction.PRICING_RULE_CREATE), eq("PRICING_RULE"), anyString(), any());
+
+        when(ruleRepository.existsByKindAndProductAndNameIgnoreCase(PricingRuleKind.DISCOUNT, PricingProduct.FLIGHT, "Gold")).thenReturn(true);
+        assertThatThrownBy(() -> service.createRule(req)).isInstanceOf(IllegalStateException.class).hasMessageContaining("Gold");
     }
 
     @Test
-    void createAcceptsUpToAMinuteOfClockSkew() {
-        assertThat(service.create(T, request("0", "0", Instant.now().minusSeconds(59))).getId()).isNotNull();
-        assertThatThrownBy(() -> service.create(T, request("0", "0", Instant.now().minusSeconds(61))))
-                .isInstanceOf(IllegalArgumentException.class).hasMessage("Effective date must be now or later");
-    }
+    void anEditInUseAppliesAtOnceMovesTheVersionAndNamesTheAgenciesItMakesLossMaking() {
+        when(ruleRepository.findByIdForUpdate("S")).thenReturn(Optional.of(silver));
+        when(ruleRepository.findByProduct(PricingProduct.FLIGHT)).thenReturn(List.of(defaultDiscount, defaultCommission, silver, standard));
+        when(assignmentRepository.findByProduct(PricingProduct.FLIGHT)).thenReturn(List.of(
+                AgencyPricingAssignment.builder().tenantId("T1").product(PricingProduct.FLIGHT).discountRuleId("S").commissionRuleId("C2").build(),
+                AgencyPricingAssignment.builder().tenantId("T2").product(PricingProduct.FLIGHT).discountRuleId("DD").commissionRuleId("DC").build()));
+        when(tenantRepository.findAll()).thenReturn(List.of(Tenant.builder().id("T1").agencyName("Sky").build(),
+                Tenant.builder().id("T2").agencyName("Sea").build(), Tenant.builder().id("T3").agencyName("Land").build()));
+        PricingRuleUpdateRequest req = new PricingRuleUpdateRequest();
+        req.setName("Silver");
+        req.setPct(new BigDecimal("12"));  // 12 % off with 2 % commission on a 5 % earning loses money
 
-    @Test
-    void createRefusesADuplicateEffectiveDate() {
-        // nanoseconds are dropped to match what Postgres stores
-        Instant from = Instant.parse("2099-01-01T00:00:00.123456789Z");
-        Instant stored = Instant.parse("2099-01-01T00:00:00.123456Z");
-        when(repository.existsByTenantIdAndProductAndEffectiveFrom(T, PricingProduct.FLIGHT, stored)).thenReturn(true);
-        assertThatThrownBy(() -> service.create(T, request("0", "0", from))).isInstanceOf(IllegalStateException.class)
-                .hasMessage("A FLIGHT rate already starts at 01 Jan 2099, 05:30 IST for this agency");
-        verify(repository, never()).save(any());
-    }
+        PricingRuleResponse r = service.updateRule("S", req);
 
-    @Test
-    void createAutoApprovesAProfitableRow() {
-        AgencyPricingResponse r = service.create(T, request("0", "0", Instant.now()));
-        assertThat(r.getWorstCaseNetPer10k()).isEqualByComparingTo("244.44");
-        assertThat(r.isRequiresSecondApproval()).isFalse();
-        assertThat(r.getApprovedAt()).isNotNull().isEqualTo(r.getCreatedAt());
-        assertThat(r.getApprovedBy()).isEqualTo("U1").isEqualTo(r.getCreatedBy());
-        verify(auditService).record(eq(PlatformAuditAction.PRICING_CREATE), eq("AGENCY_PRICING"), anyString(), anyMap());
-    }
-
-    /** Owner ruling: no second approver for rates; the audit log carries who set a loss-making rate and its figures. */
-    @Test
-    @SuppressWarnings("unchecked")
-    void createApprovesALossMakingRowAtOnceAndAuditsIt() {
-        AgencyPricingResponse r = service.create(T, request("10", "4", Instant.now()));
-        assertThat(r.getWorstCaseNetPer10k()).isNegative();
-        assertThat(r.isRequiresSecondApproval()).isFalse();
-        assertThat(r.getApprovedAt()).isNotNull().isEqualTo(r.getCreatedAt());
-        assertThat(r.getApprovedBy()).isEqualTo("U1").isEqualTo(r.getCreatedBy());
+        assertThat(r.getPct()).isEqualByComparingTo("12.00");
+        assertThat(r.getVersion()).isEqualTo(2);
+        assertThat(r.getAgencyCount()).isEqualTo(1);
+        @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, Object>> detail = ArgumentCaptor.forClass(Map.class);
-        verify(auditService).record(eq(PlatformAuditAction.PRICING_CREATE), eq("AGENCY_PRICING"), eq(r.getId()), detail.capture());
-        assertThat(detail.getValue()).containsEntry("lossMaking", true).containsEntry("createdBy", "U1")
-                .containsEntry("discountPct", new BigDecimal("10.00")).containsEntry("commissionPct", new BigDecimal("4.00"))
-                .containsEntry("allowCommissionAboveEarned", false).containsEntry("worstCaseNetPer10k", r.getWorstCaseNetPer10k());
+        verify(auditService).record(eq(PlatformAuditAction.PRICING_RULE_UPDATE), eq("PRICING_RULE"), eq("S"), detail.capture());
+        assertThat(detail.getValue()).containsEntry("lossMakingAgencies", List.of("T1")).containsEntry("agencyCount", 1L);
     }
 
     @Test
-    @SuppressWarnings("unchecked")
-    void createApprovesAtOnceWhenCommissionMayExceedEarned() {
-        AgencyPricingCreateRequest req = request("0", "0", Instant.now());
-        req.setAllowCommissionAboveEarned(true);
-        AgencyPricingResponse r = service.create(T, req);
-        assertThat(r.getWorstCaseNetPer10k()).isNotNegative();
-        assertThat(r.isRequiresSecondApproval()).isFalse();
-        assertThat(r.getApprovedBy()).isEqualTo("U1");
-        ArgumentCaptor<Map<String, Object>> detail = ArgumentCaptor.forClass(Map.class);
-        verify(auditService).record(eq(PlatformAuditAction.PRICING_CREATE), eq("AGENCY_PRICING"), anyString(), detail.capture());
-        assertThat(detail.getValue()).containsEntry("lossMaking", false).containsEntry("allowCommissionAboveEarned", true);
+    void aRenameAloneKeepsTheVersionSoReviewedBookingsAreNotRepriced() {
+        when(ruleRepository.findByIdForUpdate("S")).thenReturn(Optional.of(silver));
+        PricingRuleUpdateRequest req = new PricingRuleUpdateRequest();
+        req.setName("Silver tier");
+        req.setPct(new BigDecimal("3"));
+
+        assertThat(service.updateRule("S", req).getVersion()).isEqualTo(1);
     }
 
     @Test
-    void theCreatorMayApproveAnOldPendingRow() {
-        when(repository.findByIdForUpdate("P1")).thenReturn(Optional.of(row("P1", Instant.now(), false)));
-        AgencyPricingResponse r = service.approve(T, "P1");
-        assertThat(r.getApprovedBy()).isEqualTo("U1").isEqualTo(r.getCreatedBy());
-        assertThat(r.getApprovedAt()).isNotNull();
-        verify(auditService).record(eq(PlatformAuditAction.PRICING_APPROVE), eq("AGENCY_PRICING"), eq("P1"), anyMap());
+    void theDefaultRuleCountsEveryUnassignedAgencyAndAnImpactCoversThem() {
+        when(ruleRepository.findById("DD")).thenReturn(Optional.of(defaultDiscount));
+        when(ruleRepository.findByProduct(PricingProduct.FLIGHT)).thenReturn(List.of(defaultDiscount, defaultCommission));
+        when(assignmentRepository.findByProduct(PricingProduct.FLIGHT)).thenReturn(List.of());
+        when(tenantRepository.findAll()).thenReturn(List.of(Tenant.builder().id("T1").agencyName("Sky").build(),
+                Tenant.builder().id("T2").agencyName("Sea").build()));
+
+        PricingRuleImpactResponse impact = service.impact("DD", new BigDecimal("1"), false);
+
+        assertThat(impact.getAgencyCount()).isEqualTo(2);
+        assertThat(impact.getLossMaking()).isEmpty();
     }
 
     @Test
-    void approveByASecondAdminStampsAndAudits() {
-        when(repository.findByIdForUpdate("P1")).thenReturn(Optional.of(row("P1", Instant.now(), false)));
-        loginAs("U2");
-        AgencyPricingResponse r = service.approve(T, "P1");
-        assertThat(r.getApprovedBy()).isEqualTo("U2");
-        assertThat(r.getApprovedAt()).isNotNull();
-        verify(auditService).record(eq(PlatformAuditAction.PRICING_APPROVE), eq("AGENCY_PRICING"), eq("P1"), anyMap());
+    void aRuleInUseOrTheDefaultCannotBeDeleted() {
+        when(ruleRepository.findByIdForUpdate("S")).thenReturn(Optional.of(silver));
+        when(assignmentRepository.findUsing("S")).thenReturn(List.of(new AgencyPricingAssignment()));
+        assertThatThrownBy(() -> service.deleteRule("S")).isInstanceOf(BookingConflictException.class)
+                .hasMessageContaining("Used by 1 agency").extracting("code").isEqualTo("RULE_IN_USE");
+
+        when(ruleRepository.findByIdForUpdate("DD")).thenReturn(Optional.of(defaultDiscount));
+        assertThatThrownBy(() -> service.deleteRule("DD")).isInstanceOf(BookingConflictException.class).extracting("code").isEqualTo("DEFAULT_RULE");
+        verify(ruleRepository, never()).delete(any());
+
+        when(assignmentRepository.findUsing("S")).thenReturn(List.of());
+        service.deleteRule("S");
+        verify(ruleRepository).delete(silver);
+        verify(auditService).record(eq(PlatformAuditAction.PRICING_RULE_DELETE), eq("PRICING_RULE"), eq("S"), any());
     }
 
     @Test
-    void approveRefusesAnApprovedRowAndAnotherAgencysRow() {
-        when(repository.findByIdForUpdate("P1")).thenReturn(Optional.of(row("P1", Instant.now(), true)));
-        loginAs("U2");
-        assertThatThrownBy(() -> service.approve(T, "P1"))
-                .isInstanceOf(IllegalStateException.class).hasMessage("This rate is already approved");
-        assertThatThrownBy(() -> service.approve("T2", "P1")).isInstanceOf(NotFoundException.class)
-                .hasMessage("Pricing not found: P1");
-        verify(repository, never()).save(any());
-        verify(auditService, never()).record(any(), any(), any(), any());
-    }
+    void assignChecksKindAndProductAndAuditsTheWorstCase() {
+        when(ruleRepository.findById("S")).thenReturn(Optional.of(silver));
+        when(ruleRepository.findById("C2")).thenReturn(Optional.of(standard));
+        when(assignmentRepository.findByTenantIdAndProduct("T1", PricingProduct.FLIGHT)).thenReturn(Optional.empty());
+        AgencyPricingAssignRequest req = new AgencyPricingAssignRequest();
+        req.setDiscountRuleId("S");
+        req.setCommissionRuleId("C2");
 
-    @Test
-    void resolveIgnoresFutureAndUnapprovedRows() {
-        Instant now = Instant.now();
-        AgencyPricing past = row("A", now.minus(2, ChronoUnit.DAYS), true);
-        when(repository.findByTenantIdAndProductOrderByEffectiveFromDesc(T, PricingProduct.FLIGHT)).thenReturn(List.of(
-                row("C", now.plus(1, ChronoUnit.DAYS), true), row("B", now.minus(1, ChronoUnit.DAYS), false), past));
-        assertThat(service.resolve(T, PricingProduct.FLIGHT, now)).containsSame(past);
-    }
+        // after the save the assignment is read back for the response
+        when(assignmentRepository.findByTenantIdAndProduct("T1", PricingProduct.FLIGHT)).thenReturn(Optional.empty(), Optional.of(
+                AgencyPricingAssignment.builder().tenantId("T1").product(PricingProduct.FLIGHT).discountRuleId("S").commissionRuleId("C2").build()));
+        AgencyPricingAssignmentResponse r = service.assign("T1", PricingProduct.FLIGHT, req);
 
-    @Test
-    void aLateApprovalDoesNotRepriceThePast() {
-        Instant now = Instant.now();
-        AgencyPricing older = row("A", now.minus(3, ChronoUnit.DAYS), true);
-        AgencyPricing late = row("B", now.minus(2, ChronoUnit.DAYS), true).toBuilder()
-                .approvedAt(now.minus(1, ChronoUnit.DAYS)).approvedBy("U2").build();
-        when(repository.findByTenantIdAndProductOrderByEffectiveFromDesc(T, PricingProduct.FLIGHT)).thenReturn(List.of(late, older));
-        assertThat(service.resolve(T, PricingProduct.FLIGHT, now.minus(36, ChronoUnit.HOURS))).containsSame(older);
-        assertThat(service.resolve(T, PricingProduct.FLIGHT, now)).containsSame(late);
-    }
+        assertThat(r.isAssigned()).isTrue();
+        assertThat(r.getDiscountRule().getName()).isEqualTo("Silver");
+        verify(auditService).record(eq(PlatformAuditAction.PRICING_ASSIGN), eq("AGENCY_PRICING"), eq("T1"), any());
 
-    @Test
-    void inForceIsPerProduct() {
-        Instant now = Instant.now();
-        AgencyPricing hotel = row("H", now.minus(1, ChronoUnit.DAYS), true).toBuilder().product(PricingProduct.HOTEL).build();
-        AgencyPricing hotelOld = row("H0", now.minus(5, ChronoUnit.DAYS), true).toBuilder().product(PricingProduct.HOTEL).build();
-        when(repository.findByTenantIdOrderByEffectiveFromDesc(T)).thenReturn(List.of(
-                hotel, row("F", now.minus(2, ChronoUnit.DAYS), true), hotelOld, row("F0", now.minus(6, ChronoUnit.DAYS), true)));
-        assertThat(service.history(T, null)).extracting(AgencyPricingResponse::isInForce)
-                .containsExactly(true, true, false, false);
-    }
-
-    @Test
-    void previewRefusesMoreThanTwoDecimals() {
-        assertThatThrownBy(() -> service.preview(T, PricingProduct.FLIGHT, new BigDecimal("3.004"), BigDecimal.ONE, false))
-                .isInstanceOf(IllegalArgumentException.class).hasMessage("Discount % must have at most 2 decimals");
-    }
-
-    @Test
-    void resolveIsEmptyWhenNothingIsConfigured() {
-        assertThat(service.resolve(T, PricingProduct.HOTEL, Instant.now())).isEmpty();
-    }
-
-    @Test
-    void historyMarksOnlyTheResolvedRowInForce() {
-        Instant now = Instant.now();
-        when(repository.findByTenantIdOrderByEffectiveFromDesc(T)).thenReturn(List.of(
-                row("C", now.plus(1, ChronoUnit.DAYS), true), row("B", now.minus(1, ChronoUnit.DAYS), false),
-                row("A", now.minus(2, ChronoUnit.DAYS), true), row("Z", now.minus(3, ChronoUnit.DAYS), true)));
-        List<AgencyPricingResponse> h = service.history(T, null);
-        assertThat(h).extracting(AgencyPricingResponse::getId).containsExactly("C", "B", "A", "Z");
-        assertThat(h).extracting(AgencyPricingResponse::isInForce).containsExactly(false, false, true, false);
-    }
-
-    @Test
-    void previewFlagsALossMakingRate() {
-        PricingPreviewResponse p = service.preview(T, PricingProduct.FLIGHT, new BigDecimal("3"), new BigDecimal("4"), false);
-        assertThat(p.getWorstCaseNetPer10k()).isEqualByComparingTo("-251.11");
-        assertThat(p.getBasketLines()).hasSize(3);
-        assertThat(p.getBasketLines().get(2).getVoyraNet()).isEqualByComparingTo("-1130.00");
-        assertThat(p.getBasketLines().get(2).getDisplayed()).isEqualByComparingTo("43650.00");
-    }
-
-    @Test
-    void requireInForceRefusesWhenNoRow() {
-        assertThatThrownBy(() -> service.requireInForce(T, PricingProduct.FLIGHT))
-                .isInstanceOf(com.voyra.crm.exception.PricingNotConfiguredException.class);
-    }
-
-    @Test
-    void requireInForceReturnsTheResolvedRow() {
-        when(repository.findByTenantIdAndProductOrderByEffectiveFromDesc(T, PricingProduct.FLIGHT))
-                .thenReturn(List.of(row("A", Instant.now().minus(1, ChronoUnit.DAYS), true)));
-        assertThat(service.requireInForce(T, PricingProduct.FLIGHT).getId()).isEqualTo("A");
-    }
-
-    @Test
-    void withdrawnRowIsNeverInForce() {
-        AgencyPricing r = row("A", Instant.now().minus(1, ChronoUnit.DAYS), true);
-        r.setWithdrawnAt(Instant.now());
-        when(repository.findByTenantIdAndProductOrderByEffectiveFromDesc(T, PricingProduct.FLIGHT)).thenReturn(List.of(r));
-        assertThat(service.resolve(T, PricingProduct.FLIGHT, Instant.now())).isEmpty();
-        assertThatThrownBy(() -> service.requireInForce(T, PricingProduct.FLIGHT))
-                .isInstanceOf(com.voyra.crm.exception.PricingNotConfiguredException.class);
-    }
-
-    @Test
-    void approvedRowCannotBeWithdrawn() {
-        when(repository.findByIdForUpdate("P1")).thenReturn(Optional.of(row("P1", Instant.now(), true)));
-        assertThatThrownBy(() -> service.withdraw(T, "P1"))
-                .isInstanceOf(IllegalStateException.class).hasMessage("An approved rate cannot be withdrawn");
-        verify(repository, never()).save(any());
-    }
-
-    @Test
-    void pendingRowIsWithdrawnAndAudited() {
-        when(repository.findByIdForUpdate("P1")).thenReturn(Optional.of(row("P1", Instant.now(), false)));
-        AgencyPricingResponse r = service.withdraw(T, "P1");
-        assertThat(r.getWithdrawnAt()).isNotNull();
-        verify(auditService).record(eq(PlatformAuditAction.PRICING_WITHDRAW), eq("AGENCY_PRICING"), eq("P1"), anyMap());
-    }
-
-    @Test
-    void withdrawnRowCannotBeApproved() {
-        AgencyPricing r = row("P1", Instant.now(), false);
-        r.setWithdrawnAt(Instant.now());
-        when(repository.findByIdForUpdate("P1")).thenReturn(Optional.of(r));
-        loginAs("U2");
-        assertThatThrownBy(() -> service.approve(T, "P1"))
-                .isInstanceOf(IllegalStateException.class).hasMessage("This rate was withdrawn");
-    }
-
-    /** Slice 4 minor 3: a HOTEL rate is previewed and guarded on the hotel basket, never the flight one. */
-    @Test
-    void hotelRatesAreGuardedOnTheHotelBasket() {
-        lenient().when(settings.referenceFareBasket(PricingProduct.HOTEL)).thenReturn(List.of(
-                new ReferenceFare("City 3*", new BigDecimal("4720"), new BigDecimal("4000"))));
-
-        var preview = service.preview(T, PricingProduct.HOTEL, new BigDecimal("2"), new BigDecimal("1"), false);
-        assertThat(preview.getBasketLines()).singleElement().satisfies(l -> assertThat(l.getLabel()).isEqualTo("City 3*"));
-
-        AgencyPricingCreateRequest r = request("2", "1", Instant.now());
-        r.setProduct(PricingProduct.HOTEL);
-        var created = service.create(T, r);
-        assertThat(created.getWorstCaseNetPer10k()).isEqualByComparingTo(preview.getWorstCaseNetPer10k());
-        verify(settings, never()).referenceFareBasket(PricingProduct.FLIGHT);
-    }
-
-    /** The independence chain is only for the live switch: pricing approval has no two-admin rule. */
-    @Test
-    void anAdminTheRequesterCreatedMayApproveTheRequestersRate() {
-        AgencyPricing pending = row("P1", Instant.now(), false);
-        when(repository.findByIdForUpdate("P1")).thenReturn(Optional.of(pending));
-        loginAs("U2");
-
-        assertThat(service.approve(T, "P1")).isNotNull();
-        assertThat(pending.getApprovedBy()).isEqualTo("U2");
-        verify(auditService).record(eq(PlatformAuditAction.PRICING_APPROVE), eq("AGENCY_PRICING"), eq("P1"), anyMap());
+        req.setDiscountRuleId("C2");  // a commission rule in the discount slot
+        assertThatThrownBy(() -> service.assign("T1", PricingProduct.FLIGHT, req)).isInstanceOf(IllegalArgumentException.class);
     }
 }

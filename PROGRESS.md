@@ -262,3 +262,8 @@ Design: `docs/superpowers/specs/2026-10-27-agency-home-and-plans-design.md`. Age
    `booking_traveller` table, and move `visa` to `member_id`. Deliberately deferred; see the
    known limitations above.
 8. Anything from the "explicitly out of scope" list above, if priorities change.
+
+## Pricing rules (2026-10-27)
+
+Owner ruling: shared, named discount and commission rules per product replace per-agency rates (design `docs/superpowers/specs/2026-10-27-pricing-rules-design.md`). Public migration **V33** adds `pricing_rule` and `agency_pricing_assignment`, seeds a Default 0 % discount and commission rule per product, and converts each agency's rate in force into named rules plus an assignment (no price change; scheduled or pending rows are not carried over; `agency_pricing` stays as history). Every agency without an assignment is on the Default rules, so an agency can always book (PRICING_NOT_CONFIGURED only if a Default rule were missing). Edits apply at once to all agencies on a rule; pct or allow-above changes bump `version`, which is part of the stamped `pricingId`, so a booking reviewed before an edit re-prices at confirm. A rule in use or a Default rule cannot be deleted (409 `RULE_IN_USE` / `DEFAULT_RULE`). Endpoints: `GET/POST /api/platform/pricing-rules`, `PUT/DELETE /api/platform/pricing-rules/{id}`, `GET /api/platform/pricing-rules/{id}/impact`, `GET /api/platform/agencies/{id}/pricing`, `PUT /api/platform/agencies/{id}/pricing/{product}`, `GET /api/platform/agencies/{id}/pricing/preview`. The old per-agency create / approve / withdraw / history routes are gone. Audit actions PRICING_RULE_CREATE, PRICING_RULE_UPDATE, PRICING_RULE_DELETE, PRICING_ASSIGN.
+

@@ -4,7 +4,7 @@ import lombok.Getter;
 
 import java.util.Map;
 
-/** A 409 the booking UI branches on by {@code code} (PRICE_CHANGED, REVIEW_EXPIRED, TEST_WALLET_REQUIRED, LIVE_WALLET_REQUIRED). */
+/** A 409 the UI branches on by {@code code} (PRICE_CHANGED, REVIEW_EXPIRED, TEST_WALLET_REQUIRED, LIVE_WALLET_REQUIRED; pricing rules: RULE_IN_USE, DEFAULT_RULE). */
 @Getter
 public class BookingConflictException extends RuntimeException {
 

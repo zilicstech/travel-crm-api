@@ -8,7 +8,7 @@ import com.voyra.crm.dto.PaxInput;
 import com.voyra.crm.dto.PlatformBookingConfirmRequest;
 import com.voyra.crm.dto.PlatformBookingReviewResponse;
 import com.voyra.crm.entity.Agent;
-import com.voyra.crm.entity.AgencyPricing;
+import com.voyra.crm.entity.PricingRule;
 import com.voyra.crm.entity.PlatformBooking;
 import com.voyra.crm.entity.PlatformBookingEvent;
 import com.voyra.crm.entity.PlatformSupplierCredential;
@@ -167,7 +167,7 @@ class PlatformBookingServiceTest {
         });
         lenient().when(walletRepository.findByTenantId(T)).thenAnswer(i -> Optional.of(wallet));
         lenient().when(tenantRepository.findById(T)).thenAnswer(i -> Optional.of(tenant));
-        lenient().when(pricingService.requireInForce(T, PricingProduct.FLIGHT)).thenReturn(AgencyPricing.builder().id("P1").build());
+        lenient().when(pricingService.requireInForce(T, PricingProduct.FLIGHT)).thenReturn(rules());
         lenient().when(provider.review(any(FlightReviewRequest.class)))
                 .thenReturn(new FareReview("rv-1", new BigDecimal("5000.00"), new BigDecimal("4250.00"), "INR",
                         "Refundable", Instant.now().plus(15, ChronoUnit.MINUTES), null));
@@ -997,7 +997,7 @@ class PlatformBookingServiceTest {
     private static final Instant FREE_UNTIL = Instant.parse("2026-11-29T00:00:00Z");
 
     private void hotelSupplierQuotes(String total) {
-        lenient().when(pricingService.requireInForce(T, PricingProduct.HOTEL)).thenReturn(AgencyPricing.builder().id("PH").build());
+        lenient().when(pricingService.requireInForce(T, PricingProduct.HOTEL)).thenReturn(rules());
         lenient().when(hotelProvider.review(eq("O1"), eq("H1"), any(), any(), anyList()))
                 .thenReturn(new FareReview("hrv-1", new BigDecimal(total), new BigDecimal("4250.00"), "INR", "Rate rules",
                         Instant.now().plus(15, ChronoUnit.MINUTES), null, "Free cancellation until 2026-11-29", FREE_UNTIL));
@@ -1445,5 +1445,10 @@ class PlatformBookingServiceTest {
         assertThat(rows.get(id).getStatus()).isEqualTo(PlatformBookingStatus.REVIEWING);
         verify(notificationService).platformAlert(org.mockito.ArgumentMatchers.contains(id), anyString());
         assertThat(savedEvents).filteredOn(e -> e.getType().equals("SUPPLIER_MISMATCH")).hasSize(1);
+    }
+
+    private static AgencyPricingService.EffectivePricing rules() {
+        return new AgencyPricingService.EffectivePricing(PricingRule.builder().id("D1").version(1).build(),
+                PricingRule.builder().id("C1").version(1).build());
     }
 }

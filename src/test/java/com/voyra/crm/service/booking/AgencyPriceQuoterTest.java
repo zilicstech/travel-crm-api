@@ -1,6 +1,7 @@
 package com.voyra.crm.service.booking;
 
-import com.voyra.crm.entity.AgencyPricing;
+import com.voyra.crm.entity.PricingRule;
+import com.voyra.crm.enums.PricingRuleKind;
 import com.voyra.crm.enums.DiscountBase;
 import com.voyra.crm.enums.PricingProduct;
 import com.voyra.crm.exception.PricingNotConfiguredException;
@@ -34,10 +35,11 @@ class AgencyPriceQuoterTest {
     private AgencyPriceQuoter quoter;
 
     private void rates(String discount, String commission, boolean aboveEarned, String earnedPct, String tdsPct) {
-        AgencyPricing row = AgencyPricing.builder().id("P1").tenantId("T").product(PricingProduct.FLIGHT)
-                .discountPct(new BigDecimal(discount)).commissionPct(new BigDecimal(commission))
-                .allowCommissionAboveEarned(aboveEarned).build();
-        when(pricingService.resolve(eq("T"), eq(PricingProduct.FLIGHT), any(Instant.class))).thenReturn(Optional.of(row));
+        PricingRule d = PricingRule.builder().id("D1").kind(PricingRuleKind.DISCOUNT).product(PricingProduct.FLIGHT)
+                .pct(new BigDecimal(discount)).version(1).build();
+        PricingRule c = PricingRule.builder().id("C1").kind(PricingRuleKind.COMMISSION).product(PricingProduct.FLIGHT)
+                .pct(new BigDecimal(commission)).allowAboveEarned(aboveEarned).version(2).build();
+        when(pricingService.resolve("T", PricingProduct.FLIGHT)).thenReturn(Optional.of(new AgencyPricingService.EffectivePricing(d, c)));
         lenient().when(settings.discountBase()).thenReturn(DiscountBase.GROSS);
         lenient().when(settings.commissionEstimatePct()).thenReturn(new BigDecimal(earnedPct));
         lenient().when(settings.tdsRate()).thenReturn(new BigDecimal(tdsPct));
@@ -52,7 +54,7 @@ class AgencyPriceQuoterTest {
         rates("10", "0", false, "5", "0");
         PriceQuote q = quote("5000", "4000");
         assertThat(q.displayed()).isEqualByComparingTo("4500.00");
-        assertThat(q.pricingId()).isEqualTo("P1");
+        assertThat(q.pricingId()).isEqualTo("D:D1:v1|C:C1:v2");  // a rule edit (new version) re-prices at confirm
         // earned 200 - discount 500 - commission 0
         assertThat(q.voyraNet()).isEqualByComparingTo("-300.00");
     }
@@ -83,8 +85,8 @@ class AgencyPriceQuoterTest {
     }
 
     @Test
-    void noPricingRowMeansNotBookable() {
-        when(pricingService.resolve(eq("T"), eq(PricingProduct.FLIGHT), any(Instant.class))).thenReturn(Optional.empty());
+    void noRulesResolvedMeansNotBookable() {
+        when(pricingService.resolve("T", PricingProduct.FLIGHT)).thenReturn(Optional.empty());
         assertThat(quoter.quoterFor("T", PricingProduct.FLIGHT)).isEmpty();
         assertThatThrownBy(() -> quote("5000", "4000")).isInstanceOf(PricingNotConfiguredException.class);
     }
