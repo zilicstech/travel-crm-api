@@ -31,6 +31,8 @@ class AgencyPriceQuoterTest {
     private AgencyPricingService pricingService;
     @Mock
     private PlatformSettingService settings;
+    @Mock
+    private com.voyra.crm.service.PlatformSupplierCredentialService suppliers;
     @InjectMocks
     private AgencyPriceQuoter quoter;
 
@@ -41,7 +43,7 @@ class AgencyPriceQuoterTest {
                 .pct(new BigDecimal(commission)).allowAboveEarned(aboveEarned).version(2).build();
         when(pricingService.resolve("T", PricingProduct.FLIGHT)).thenReturn(Optional.of(new AgencyPricingService.EffectivePricing(d, c)));
         lenient().when(settings.discountBase()).thenReturn(DiscountBase.GROSS);
-        lenient().when(settings.commissionEstimatePct()).thenReturn(new BigDecimal(earnedPct));
+        lenient().when(suppliers.commissionEstimatePct(PricingProduct.FLIGHT)).thenReturn(new BigDecimal(earnedPct));
         lenient().when(settings.tdsRate()).thenReturn(new BigDecimal(tdsPct));
     }
 

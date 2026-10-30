@@ -59,6 +59,7 @@ class PlatformAgencyPricingControllerTest {
     @MockBean private AgencyPricingAssignmentRepository assignmentRepository;
     @MockBean private TenantRepository tenantRepository;
     @MockBean private PlatformSettingService settings;
+    @MockBean private com.voyra.crm.service.PlatformSupplierCredentialService suppliers;
     @MockBean private PlatformAuditService auditService;
 
     private static PricingRule rule(String id, PricingRuleKind kind, String pct, boolean isDefault) {
@@ -69,7 +70,7 @@ class PlatformAgencyPricingControllerTest {
     private void seed() {
         given(tenantRepository.existsById("T1")).willReturn(true);
         given(settings.discountBase()).willReturn(DiscountBase.GROSS);
-        given(settings.commissionEstimatePct()).willReturn(new BigDecimal("5"));
+        given(suppliers.commissionEstimatePct(org.mockito.ArgumentMatchers.any())).willReturn(new BigDecimal("5"));
         given(settings.referenceFareBasket(PricingProduct.FLIGHT)).willReturn(List.of(
                 new ReferenceFare("Domestic LCC", new BigDecimal("5000"), new BigDecimal("3500")),
                 new ReferenceFare("Domestic FSC", new BigDecimal("9000"), new BigDecimal("6000")),

@@ -76,6 +76,11 @@ public class TripjackFlightSearchProvider implements FlightSearchProvider {
             log.warn("Tripjack flight search aborted - no active platform credential: {}", e.getMessage());
             throw e;
         }
+        return search(query, credential);
+    }
+
+    /** Searches with the given credential instead of the active one - the supplier page's Test connection tests the row it is on. */
+    public List<FlightOfferResponse> search(FlightSearchQuery query, ResolvedCredential credential) {
         if (credential != null) {
             String key = credential.apiKey() == null ? "" : credential.apiKey();
             log.info("Tripjack credential resolved: environment={}, baseUrl={}, apiKey=...{} (len {})",

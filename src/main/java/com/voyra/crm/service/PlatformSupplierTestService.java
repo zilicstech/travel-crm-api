@@ -3,7 +3,7 @@ package com.voyra.crm.service;
 import com.voyra.crm.dto.FlightSearchQuery;
 import com.voyra.crm.dto.SupplierTestResult;
 import com.voyra.crm.enums.PlatformAuditAction;
-import com.voyra.crm.enums.SupplierProvider;
+import com.voyra.crm.models.ResolvedCredential;
 import com.voyra.crm.service.tripjack.TripjackFlightSearchProvider;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -15,8 +15,8 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * A live test search with the platform credential: DEL to BOM a month out, one adult, through the real provider's
- * own client. Separate from {@link PlatformSupplierCredentialService} because the provider depends on that service.
+ * A live test search with one supplier row's own key (active or not): DEL to BOM a month out, one adult, through the
+ * real provider's client. Separate from {@link PlatformSupplierCredentialService} because the provider depends on that service.
  * No transaction - it makes an HTTP call.
  */
 @Service
@@ -27,9 +27,11 @@ public class PlatformSupplierTestService {
     static final String DISABLED = "Tripjack provider is disabled (FLIGHT_SUPPLIER=mock)";
 
     private final ObjectProvider<TripjackFlightSearchProvider> flightProvider;
+    private final PlatformSupplierCredentialService credentialService;
     private final PlatformAuditService platformAuditService;
 
-    public SupplierTestResult testCall(SupplierProvider provider) {
+    public SupplierTestResult testCall(String credentialId) {
+        ResolvedCredential credential = credentialService.resolve(credentialId);
         TripjackFlightSearchProvider tripjack = flightProvider.getIfAvailable();
         SupplierTestResult result;
         if (tripjack == null) {
@@ -37,7 +39,7 @@ public class PlatformSupplierTestService {
         } else {
             long startedAt = System.currentTimeMillis();
             try {
-                int offers = tripjack.search(query()).size();
+                int offers = tripjack.search(query(), credential).size();
                 result = new SupplierTestResult(true, "Tripjack answered with " + offers + " offers",
                         System.currentTimeMillis() - startedAt);
             } catch (RuntimeException e) {
@@ -46,12 +48,13 @@ public class PlatformSupplierTestService {
             }
         }
         Map<String, Object> detail = new LinkedHashMap<>();
-        detail.put("provider", provider.name());
+        detail.put("credentialId", credentialId);
+        detail.put("provider", credential.provider().name());
         detail.put("ok", result.isOk());
         detail.put("millis", result.getMillis());
         platformAuditService.record(PlatformAuditAction.CREDENTIAL_TEST, PlatformSupplierCredentialService.ENTITY_TYPE,
-                provider.name(), detail);
-        log.info("Platform supplier test call: provider={}, ok={}, millis={}", provider, result.isOk(), result.getMillis());
+                credentialId, detail);
+        log.info("Platform supplier test call: provider={}, ok={}, millis={}", credential.provider(), result.isOk(), result.getMillis());
         return result;
     }
 

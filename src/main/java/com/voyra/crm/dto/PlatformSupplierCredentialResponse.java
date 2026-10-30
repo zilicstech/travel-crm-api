@@ -9,6 +9,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.Instant;
+import java.util.List;
 
 @Data
 @Builder
@@ -20,20 +21,23 @@ public class PlatformSupplierCredentialResponse {
     @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String id;
 
-    @Schema(example = "TRIPJACK")
+    @Schema(example = "Tripjack")
+    private String name;
+
+    @Schema(description = "The integration this supplier runs on", example = "TRIPJACK")
     private SupplierProvider provider;
 
-    @Schema(example = "UAT")
+    @Schema(description = "Read-only: new suppliers are PROD", example = "PROD")
     private SupplierEnvironment environment;
-
-    @Schema(example = "https://apitest.tripjack.com")
-    private String baseUrl;
 
     @Schema(description = "Last four characters only", example = "••••••3f2a")
     private String maskedApiKey;
 
     @Schema(example = "true")
     private Boolean isActive;
+
+    @Schema(description = "Commission terms per product")
+    private List<SupplierProductTerms> products;
 
     @Schema(example = "2026-10-23T10:15:00Z")
     private Instant updatedAt;

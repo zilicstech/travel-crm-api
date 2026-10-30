@@ -53,6 +53,7 @@ class AgencyPricingServiceTest {
     @Mock private AgencyPricingAssignmentRepository assignmentRepository;
     @Mock private TenantRepository tenantRepository;
     @Mock private PlatformSettingService settings;
+    @Mock private PlatformSupplierCredentialService suppliers;
     @Mock private PlatformAuditService auditService;
     @InjectMocks private AgencyPricingService service;
 
@@ -71,7 +72,7 @@ class AgencyPricingServiceTest {
         SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
                 new CustomUserPrincipal("A1", "admin@voyra.test", UserType.SUPER_ADMIN, null), null, List.of()));
         lenient().when(settings.discountBase()).thenReturn(DiscountBase.GROSS);
-        lenient().when(settings.commissionEstimatePct()).thenReturn(new BigDecimal("5"));
+        lenient().when(suppliers.commissionEstimatePct(any())).thenReturn(new BigDecimal("5"));
         lenient().when(settings.referenceFareBasket(PricingProduct.FLIGHT)).thenReturn(List.of(
                 new ReferenceFare("Domestic LCC", new BigDecimal("5000"), new BigDecimal("3500")),
                 new ReferenceFare("International", new BigDecimal("45000"), new BigDecimal("22000"))));
