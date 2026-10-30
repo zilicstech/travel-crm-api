@@ -275,7 +275,6 @@ Owner ruling: nothing on the platform needs a second admin. The Tripjack live sw
 ## Agency vendors: no default seed, Voyra Platform locked (2026-10-30)
 
 Owner ruling: agencies add, activate and deactivate their own vendors; no default vendors are seeded any more (`VendorDefaults` removed; `TenantDefaultsSeeder` seeds settings only). Existing tenants keep every vendor they have. Tenant migration **V79** adds `vendor.is_system`, inserts Voyra Platform where no row of that name exists, flags one (active first, oldest) as the system vendor and keeps it active, with a partial unique index so there is only ever one. The CRM mirror of a platform booking finds the vendor by `is_system`, not by name. `VendorService` refuses a change to the system vendor's name, service types or status with 409 `SYSTEM_VENDOR`; its tax, bank and contact fields stay editable so the mirror's supplier bills can carry Voyra's GSTIN and state. `GET /api/vendors` lists the system vendor first and `VendorResponse` carries `isSystem`.
-||||||| d6d365f
 
 ## Platform suppliers (2026-10-30)
 
