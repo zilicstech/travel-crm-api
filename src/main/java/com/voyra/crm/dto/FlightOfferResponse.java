@@ -10,6 +10,7 @@ import lombok.NoArgsConstructor;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.util.List;
 
 @Data
 @Builder
@@ -96,6 +97,19 @@ public class FlightOfferResponse {
 
     @Schema(description = "False when the agency cannot book this fare with Voyra yet", example = "true")
     private boolean bookable;
+
+    @Schema(description = "ONWARD (also a one-way offer), RETURN (pair it with an onward offer) or COMBO (one fare for both ways)", example = "ONWARD")
+    private com.voyra.crm.enums.FlightDirection direction;
+
+    @Schema(description = "Each direction this offer flies; the top-level flight fields describe the first one")
+    private List<FlightLegResponse> legs;
+
+    @Schema(description = "Special-return fare id (Tripjack sri); null on an ordinary fare", example = "SR-6E-1")
+    private String specialReturnId;
+
+    @Schema(description = "Special-return ids this fare may be paired with (Tripjack msri); empty on an ordinary fare, "
+            + "which pairs with any ordinary fare")
+    private List<String> pairsWith;
 
     @Schema(description = "Why bookable is false, e.g. PRICING_NOT_CONFIGURED; null when bookable", example = "PRICING_NOT_CONFIGURED")
     private String notBookableReason;

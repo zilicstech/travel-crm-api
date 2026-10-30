@@ -1,8 +1,10 @@
 package com.voyra.crm.service;
 
+import com.voyra.crm.dto.FlightLegResponse;
 import com.voyra.crm.dto.FlightOfferResponse;
 import com.voyra.crm.dto.FlightSearchQuery;
 import com.voyra.crm.enums.FlightCabin;
+import com.voyra.crm.enums.FlightDirection;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
@@ -57,25 +59,42 @@ public class MockFlightSearchProvider implements FlightSearchProvider {
         log.warn("Flight search served by MOCK provider ({} -> {}); Tripjack was NOT called", query.getOrigin(), query.getDestination());
         FlightCabin cabin = query.getCabin() != null ? query.getCabin() : FlightCabin.ECONOMY;
 
-        // Like the real supplier: one row per fare, several fares per flight.
+        // Like the real supplier: one row per fare, several fares per flight; a round trip adds the way back as RETURN (never COMBO).
         List<FlightOfferResponse> offers = new java.util.ArrayList<>();
+        emit(offers, query, cabin, query.getOrigin(), query.getDestination(), query.getDepartDate(), FlightDirection.ONWARD);
+        if (query.getReturnDate() != null) {
+            emit(offers, query, cabin, query.getDestination(), query.getOrigin(), query.getReturnDate(), FlightDirection.RETURN);
+        }
+        return offers;
+    }
+
+    private void emit(List<FlightOfferResponse> offers, FlightSearchQuery query, FlightCabin cabin, String origin,
+                      String destination, java.time.LocalDate departDate, FlightDirection direction) {
         for (Template t : TEMPLATES) {
             LocalTime arrive = t.depart().plusMinutes(t.durationMinutes());
-            java.time.LocalDate departDate = query.getDepartDate();
             java.time.LocalDate arriveDate = departDate == null ? null
                     : departDate.atTime(t.depart()).plusMinutes(t.durationMinutes()).toLocalDate();
+            String flightNumber = t.flightNumberPrefix() + "-" + (200 + t.depart().getHour() + (direction == FlightDirection.RETURN ? 1 : 0));
+            FlightLegResponse leg = FlightLegResponse.builder()
+                    .airline(t.airline()).airlineCode(t.flightNumberPrefix()).flightNumber(flightNumber)
+                    .origin(origin).destination(destination)
+                    .departDate(departDate).departTime(t.depart()).arriveDate(arriveDate).arriveTime(arrive)
+                    .duration(formatDuration(t.durationMinutes())).stops(t.stops()).build();
             for (FareTier tier : FARE_TIERS) {
                 // The price is a function of the offer id alone, so the mock booking provider's review prices it the same.
-                String offerId = "mock-" + key(t) + "-" + t.depart() + "-" + tier.name() + "-" + cabin.name();
+                String offerId = "mock-" + key(t) + "-" + t.depart() + "-" + tier.name() + "-" + cabin.name()
+                        + (direction == FlightDirection.RETURN ? RETURN_SUFFIX : "");
                 BigDecimal adult = adultFare(offerId);
                 BigDecimal party = partyFare(adult, query.getAdults(), query.getChildren(), query.getInfants());
                 offers.add(FlightOfferResponse.builder()
                         .offerId(offerId)
+                        .direction(direction)
+                        .legs(List.of(leg))
                         .airline(t.airline())
                         .airlineCode(t.flightNumberPrefix())
-                        .flightNumber(t.flightNumberPrefix() + "-" + (200 + t.depart().getHour()))
-                        .origin(query.getOrigin())
-                        .destination(query.getDestination())
+                        .flightNumber(flightNumber)
+                        .origin(origin)
+                        .destination(destination)
                         .departTime(t.depart())
                         .arriveTime(arrive)
                         .departDate(departDate)
@@ -94,12 +113,15 @@ public class MockFlightSearchProvider implements FlightSearchProvider {
                         .build());
             }
         }
-        return offers;
     }
 
-    /** The mock fare per adult of an offer from its id alone ({@code mock-<airline>-<HH:mm>-<tier>-<cabin>}); null for any other id. */
+    /** Ends a mock RETURN offer id; the way back costs the same as the way out. */
+    public static final String RETURN_SUFFIX = "-R";
+
+    /** The mock fare per adult of an offer from its id alone ({@code mock-<airline>-<HH:mm>-<tier>-<cabin>[-R]}); null for any other id. */
     public static BigDecimal adultFare(String offerId) {
-        String[] p = offerId == null ? new String[0] : offerId.split("-");
+        String[] parts = offerId == null ? new String[0] : offerId.split("-");
+        String[] p = parts.length == 6 && "R".equals(parts[5]) ? java.util.Arrays.copyOf(parts, 5) : parts;
         if (p.length != 5 || !"mock".equals(p[0])) {
             return null;
         }

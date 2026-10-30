@@ -48,6 +48,12 @@ public class FlightGroupResponse {
     @Schema(description = "0 = non-stop")
     private int stops;
 
+    @Schema(description = "ONWARD, RETURN or COMBO")
+    private com.voyra.crm.enums.FlightDirection direction;
+
+    @Schema(description = "Each direction this flight flies; one leg except on a COMBO round trip")
+    private List<FlightLegResponse> legs;
+
     @Schema(description = "Lowest fare among the (filtered) options")
     private BigDecimal cheapestPrice;
 

@@ -78,4 +78,33 @@ public class FlightReviewRequest {
     @Size(max = 8)
     @Schema(description = "Display hint: arrival time; only the mock supplier uses it to draw a route", example = "08:10")
     private String arriveTime;
+
+    @Size(max = 200)
+    @Schema(description = "Round trip: the return offer id from returnFlights, reviewed and booked with offerId as one booking; "
+            + "omit for one-way and COMBO", example = "mock-indigo-06:15-PUBLISHED-ECONOMY-R")
+    private String returnOfferId;
+
+    @Size(max = 60)
+    @Schema(description = "Display hint for the return leg: airline name; only the mock supplier uses it", example = "IndiGo")
+    private String returnAirline;
+
+    @Size(max = 3)
+    @Schema(description = "Display hint for the return leg: airline code; only the mock supplier uses it", example = "6E")
+    private String returnAirlineCode;
+
+    @Size(max = 8)
+    @Schema(description = "Display hint for the return leg: flight number; only the mock supplier uses it", example = "6E-206")
+    private String returnFlightNumber;
+
+    @Size(max = 10)
+    @Schema(description = "Display hint for the return leg: departure date; only the mock supplier uses it", example = "2026-12-04")
+    private String returnDepartDate;
+
+    @Size(max = 8)
+    @Schema(description = "Display hint for the return leg: departure time; only the mock supplier uses it", example = "18:00")
+    private String returnDepartTime;
+
+    @Size(max = 8)
+    @Schema(description = "Display hint for the return leg: arrival time; only the mock supplier uses it", example = "20:10")
+    private String returnArriveTime;
 }

@@ -50,12 +50,14 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
     private final RestClient.Builder restClientBuilder;
 
     @Override
-    public FareReview review(String offerId, int adults, int children, int infants) {
-        JsonNode res = post("/fms/v1/review", Map.of("priceIds", List.of(offerId)), "review");
+    public FareReview review(List<String> offerIds, int adults, int children, int infants) {
+        // a split round trip is one review of both price ids, so it is one supplier booking
+        JsonNode res = post("/fms/v1/review", Map.of("priceIds", offerIds), "review");
         if (!succeeded(res)) {
             // the agency sees a fixed sentence; the supplier's own text stays in the log
-            log.warn("Tripjack review refused offer {}: {}", offerId, message(res, "no message"));
-            throw new FareUnavailableException(AgencySupplierMessage.NOT_CONFIRMED_FLIGHT);
+            log.warn("Tripjack review refused offers {}: {}", offerIds, message(res, "no message"));
+            throw new FareUnavailableException(offerIds.size() > 1 ? AgencySupplierMessage.NOT_CONFIRMED_PAIR
+                    : AgencySupplierMessage.NOT_CONFIRMED_FLIGHT);
         }
         JsonNode fare = res.path("totalPriceInfo").path("totalFareDetail").path("fC");
         String reviewId = text(res.path("bookingId"));
@@ -103,12 +105,15 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
             case "CANCELLED" -> SupplierBookingStatus.CANCELLED; // how an accepted amendment is confirmed
             default -> SupplierBookingStatus.PENDING;
         };
-        String pnr = null;
+        // pnrDetails maps each sector ("DEL-BOM") to its PNR; a split round trip can have one per direction, so keep every distinct one
+        java.util.Set<String> pnrs = new java.util.LinkedHashSet<>();
         List<String> tickets = new ArrayList<>();
         for (JsonNode traveller : res.path("itemInfos").path("AIR").path("travellerInfos")) {
-            if (pnr == null) {
-                pnr = firstValue(traveller.path("pnrDetails"));
-            }
+            traveller.path("pnrDetails").elements().forEachRemaining(v -> {
+                if (!v.asText("").isBlank()) {
+                    pnrs.add(v.asText().trim());
+                }
+            });
             traveller.path("ticketNumberDetails").fields().forEachRemaining(e -> {
                 if (!e.getValue().asText("").isBlank()) {
                     tickets.add(e.getValue().asText());
@@ -116,6 +121,7 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
             });
         }
         // shortcut: the charged amount is not parsed (field unknown until the slice 0 spike), so no variance is detected here
+        String pnr = pnrs.isEmpty() ? null : String.join(" / ", pnrs); // platform_booking.pnr is 40: room for several 6-character PNRs
         return new BookResult(supplierBookingId, status, pnr, tickets, orderStatus.isEmpty() ? null : orderStatus, null);
     }
 
@@ -204,11 +210,6 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
 
     private static BigDecimal refundOf(JsonNode res) {
         return res == null ? null : decimal(res.path("totalRefundAmount"));
-    }
-
-    private static String firstValue(JsonNode map) {
-        var it = map.elements();
-        return it.hasNext() ? text(it.next()) : null;
     }
 
     private JsonNode post(String path, Object body, String what) {

@@ -1,0 +1,314 @@
+{
+  "_note": "Built from Tripjack's documented shape, NOT a live response: the 2026-10-30 probe (.claude/run/tripjack-probe.java) got HTTP 403 Access Denied (this machine's IP is not whitelisted). Shape to be corrected by slice 0.",
+  "status": {
+    "success": true,
+    "httpStatus": 200
+  },
+  "searchResult": {
+    "tripInfos": {
+      "ONWARD": [
+        {
+          "sI": [
+            {
+              "id": "2031DEL",
+              "fD": {
+                "aI": {
+                  "code": "6E",
+                  "name": "IndiGo",
+                  "isLcc": true
+                },
+                "fN": "2031",
+                "eT": "320"
+              },
+              "stops": 0,
+              "duration": 130,
+              "da": {
+                "code": "DEL",
+                "city": "DEL",
+                "terminal": "1"
+              },
+              "aa": {
+                "code": "BOM",
+                "city": "BOM",
+                "terminal": "1"
+              },
+              "dt": "2026-11-29T06:15",
+              "at": "2026-11-29T08:25",
+              "sN": 0
+            }
+          ],
+          "totalPriceList": [
+            {
+              "id": "ON-6E2031-PUB",
+              "fareIdentifier": "PUBLISHED",
+              "fd": {
+                "ADULT": {
+                  "fC": {
+                    "BF": 4500.0,
+                    "TF": 5400.0,
+                    "TAF": 900.0
+                  },
+                  "sR": 9,
+                  "bI": {
+                    "iB": "15 Kg",
+                    "cB": "7 Kg"
+                  },
+                  "rT": "NON_REFUNDABLE",
+                  "cc": "ECONOMY",
+                  "cB": "S",
+                  "fB": "SAVER"
+                }
+              }
+            },
+            {
+              "id": "ON-6E2031-SR",
+              "fareIdentifier": "SPECIAL_RETURN",
+              "fd": {
+                "ADULT": {
+                  "fC": {
+                    "BF": 4000.0,
+                    "TF": 4800.0,
+                    "TAF": 800.0
+                  },
+                  "sR": 9,
+                  "bI": {
+                    "iB": "15 Kg",
+                    "cB": "7 Kg"
+                  },
+                  "rT": "NON_REFUNDABLE",
+                  "cc": "ECONOMY",
+                  "cB": "S",
+                  "fB": "SAVER"
+                }
+              },
+              "sri": "6E-SR-1",
+              "msri": [
+                "6E-SR-1"
+              ]
+            }
+          ]
+        },
+        {
+          "sI": [
+            {
+              "id": "UK-955DEL",
+              "fD": {
+                "aI": {
+                  "code": "UK",
+                  "name": "Vistara",
+                  "isLcc": false
+                },
+                "fN": "UK-955",
+                "eT": "320"
+              },
+              "stops": 0,
+              "duration": 130,
+              "da": {
+                "code": "DEL",
+                "city": "DEL",
+                "terminal": "1"
+              },
+              "aa": {
+                "code": "BOM",
+                "city": "BOM",
+                "terminal": "1"
+              },
+              "dt": "2026-11-29T09:00",
+              "at": "2026-11-29T11:10",
+              "sN": 0
+            }
+          ],
+          "totalPriceList": [
+            {
+              "id": "ON-UK955-PUB",
+              "fareIdentifier": "PUBLISHED",
+              "fd": {
+                "ADULT": {
+                  "fC": {
+                    "BF": 5100.0,
+                    "TF": 6100.0,
+                    "TAF": 1000.0
+                  },
+                  "sR": 9,
+                  "bI": {
+                    "iB": "15 Kg",
+                    "cB": "7 Kg"
+                  },
+                  "rT": "REFUNDABLE",
+                  "cc": "ECONOMY",
+                  "cB": "S",
+                  "fB": "SAVER"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "RETURN": [
+        {
+          "sI": [
+            {
+              "id": "2032BOM",
+              "fD": {
+                "aI": {
+                  "code": "6E",
+                  "name": "IndiGo",
+                  "isLcc": true
+                },
+                "fN": "2032",
+                "eT": "320"
+              },
+              "stops": 0,
+              "duration": 130,
+              "da": {
+                "code": "BOM",
+                "city": "BOM",
+                "terminal": "1"
+              },
+              "aa": {
+                "code": "DEL",
+                "city": "DEL",
+                "terminal": "1"
+              },
+              "dt": "2026-12-02T18:00",
+              "at": "2026-12-02T20:10",
+              "sN": 0
+            }
+          ],
+          "totalPriceList": [
+            {
+              "id": "RT-6E2032-PUB",
+              "fareIdentifier": "PUBLISHED",
+              "fd": {
+                "ADULT": {
+                  "fC": {
+                    "BF": 4400.0,
+                    "TF": 5300.0,
+                    "TAF": 900.0
+                  },
+                  "sR": 9,
+                  "bI": {
+                    "iB": "15 Kg",
+                    "cB": "7 Kg"
+                  },
+                  "rT": "NON_REFUNDABLE",
+                  "cc": "ECONOMY",
+                  "cB": "S",
+                  "fB": "SAVER"
+                }
+              }
+            },
+            {
+              "id": "RT-6E2032-SR",
+              "fareIdentifier": "SPECIAL_RETURN",
+              "fd": {
+                "ADULT": {
+                  "fC": {
+                    "BF": 3900.0,
+                    "TF": 4700.0,
+                    "TAF": 800.0
+                  },
+                  "sR": 9,
+                  "bI": {
+                    "iB": "15 Kg",
+                    "cB": "7 Kg"
+                  },
+                  "rT": "NON_REFUNDABLE",
+                  "cc": "ECONOMY",
+                  "cB": "S",
+                  "fB": "SAVER"
+                }
+              },
+              "sri": "6E-SR-1",
+              "msri": [
+                "6E-SR-1"
+              ]
+            }
+          ]
+        },
+        {
+          "sI": [
+            {
+              "id": "AI-806BOM",
+              "fD": {
+                "aI": {
+                  "code": "AI",
+                  "name": "Air India",
+                  "isLcc": false
+                },
+                "fN": "AI-806",
+                "eT": "320"
+              },
+              "stops": 0,
+              "duration": 90,
+              "da": {
+                "code": "BOM",
+                "city": "BOM",
+                "terminal": "1"
+              },
+              "aa": {
+                "code": "NAG",
+                "city": "NAG",
+                "terminal": "1"
+              },
+              "dt": "2026-12-02T07:00",
+              "at": "2026-12-02T08:30",
+              "sN": 0
+            },
+            {
+              "id": "AI-627NAG",
+              "fD": {
+                "aI": {
+                  "code": "AI",
+                  "name": "Air India",
+                  "isLcc": false
+                },
+                "fN": "AI-627",
+                "eT": "320"
+              },
+              "stops": 0,
+              "duration": 105,
+              "da": {
+                "code": "NAG",
+                "city": "NAG",
+                "terminal": "1"
+              },
+              "aa": {
+                "code": "DEL",
+                "city": "DEL",
+                "terminal": "1"
+              },
+              "dt": "2026-12-02T09:45",
+              "at": "2026-12-02T11:30",
+              "sN": 1
+            }
+          ],
+          "totalPriceList": [
+            {
+              "id": "RT-AI806-PUB",
+              "fareIdentifier": "PUBLISHED",
+              "fd": {
+                "ADULT": {
+                  "fC": {
+                    "BF": 4950.0,
+                    "TF": 5900.0,
+                    "TAF": 950.0
+                  },
+                  "sR": 9,
+                  "bI": {
+                    "iB": "15 Kg",
+                    "cB": "7 Kg"
+                  },
+                  "rT": "REFUNDABLE",
+                  "cc": "ECONOMY",
+                  "cB": "S",
+                  "fB": "SAVER"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

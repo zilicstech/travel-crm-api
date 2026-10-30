@@ -47,22 +47,39 @@ public class MockFlightBookingProvider implements FlightBookingProvider {
 
     @Override
     public FareReview review(FlightReviewRequest r) {
-        FareReview base = review(r.getOfferId(), r.getAdults(), r.getChildren(), r.getInfants());
+        FareReview base = review(FlightBookingProvider.offerIds(r), r.getAdults(), r.getChildren(), r.getInfants());
         // always a complete itinerary, like Tripjack (mirror, purge and the age check read it); shape mirrors its sI segments.
         // shortcut: a request without the display hints gets DEL-BOM 30 days out - mock data only, never a real supplier
         String date = blank(r.getDepartDate()) ? java.time.LocalDate.now().plusDays(30).toString() : r.getDepartDate();
+        String origin = blank(r.getOrigin()) ? "DEL" : r.getOrigin();
+        String destination = blank(r.getDestination()) ? "BOM" : r.getDestination();
+        ObjectNode itinerary = JSON.createObjectNode();
+        var sI = itinerary.putArray("sI");
+        sI.add(segment(r.getAirline(), r.getAirlineCode(), r.getFlightNumber(), origin, destination, date,
+                r.getDepartTime(), r.getArriveTime(), "06:00", "08:10"));
+        if (!blank(r.getReturnOfferId())) {
+            // the way back: the same route swapped, on the return hints (3 days later when they are missing)
+            String back = blank(r.getReturnDepartDate()) ? java.time.LocalDate.parse(date).plusDays(3).toString() : r.getReturnDepartDate();
+            sI.add(segment(blank(r.getReturnAirline()) ? r.getAirline() : r.getReturnAirline(),
+                    blank(r.getReturnAirlineCode()) ? r.getAirlineCode() : r.getReturnAirlineCode(),
+                    blank(r.getReturnFlightNumber()) ? "102" : r.getReturnFlightNumber(), destination, origin, back,
+                    r.getReturnDepartTime(), r.getReturnArriveTime(), "18:00", "20:10"));
+        }
+        return new FareReview(base.reviewId(), base.totalFare(), base.baseFare(), base.currency(), base.fareRules(), base.expiresAt(), itinerary);
+    }
+
+    private static ObjectNode segment(String airline, String airlineCode, String flightNumber, String origin, String destination,
+                                      String date, String departTime, String arriveTime, String defaultDepart, String defaultArrive) {
         ObjectNode seg = JSON.createObjectNode();
         ObjectNode fD = seg.putObject("fD");
-        fD.put("fN", blank(r.getFlightNumber()) ? "101" : r.getFlightNumber());
-        fD.putObject("aI").put("code", blank(r.getAirlineCode()) ? "MK" : r.getAirlineCode())
-                .put("name", blank(r.getAirline()) ? "Mock Air" : r.getAirline());
-        seg.putObject("da").put("code", blank(r.getOrigin()) ? "DEL" : r.getOrigin());
-        seg.putObject("aa").put("code", blank(r.getDestination()) ? "BOM" : r.getDestination());
-        seg.put("dt", date + "T" + (blank(r.getDepartTime()) ? "06:00" : r.getDepartTime()));
-        seg.put("at", date + "T" + (blank(r.getArriveTime()) ? "08:10" : r.getArriveTime()));
-        ObjectNode itinerary = JSON.createObjectNode();
-        itinerary.putArray("sI").add(seg);
-        return new FareReview(base.reviewId(), base.totalFare(), base.baseFare(), base.currency(), base.fareRules(), base.expiresAt(), itinerary);
+        fD.put("fN", blank(flightNumber) ? "101" : flightNumber);
+        fD.putObject("aI").put("code", blank(airlineCode) ? "MK" : airlineCode)
+                .put("name", blank(airline) ? "Mock Air" : airline);
+        seg.putObject("da").put("code", origin);
+        seg.putObject("aa").put("code", destination);
+        seg.put("dt", date + "T" + (blank(departTime) ? defaultDepart : departTime));
+        seg.put("at", date + "T" + (blank(arriveTime) ? defaultArrive : arriveTime));
+        return seg;
     }
 
     private static boolean blank(String s) {
@@ -70,17 +87,21 @@ public class MockFlightBookingProvider implements FlightBookingProvider {
     }
 
     @Override
-    public FareReview review(String offerId, int adults, int children, int infants) {
+    public FareReview review(List<String> offerIds, int adults, int children, int infants) {
         var mock = config.getMock();
         if (mock.isFareExpired()) {
             throw new FareUnavailableException("The selected fare is no longer available");
         }
-        // a mock search offer is priced exactly as the search showed it; any other id gets a fare from its hash
-        BigDecimal perAdult = MockFlightSearchProvider.adultFare(offerId);
-        if (perAdult == null) {
-            perAdult = BigDecimal.valueOf(3000 + Math.floorMod(offerId.hashCode(), 5000));
+        // a mock search offer is priced exactly as the search showed it (a round trip is the sum of both ways); any other id gets a fare from its hash
+        BigDecimal total = BigDecimal.ZERO;
+        for (String offerId : offerIds) {
+            BigDecimal perAdult = MockFlightSearchProvider.adultFare(offerId);
+            if (perAdult == null) {
+                perAdult = BigDecimal.valueOf(3000 + Math.floorMod(offerId.hashCode(), 5000));
+            }
+            total = total.add(MockFlightSearchProvider.partyFare(perAdult, adults, children, infants));
         }
-        BigDecimal total = MockFlightSearchProvider.partyFare(perAdult, adults, children, infants);
+        String offerId = offerIds.get(0); // the review id names the onward offer only, so it stays under supplier_review_id's 120
         total = total.multiply(BigDecimal.ONE.add(mock.getRepricePct().movePointLeft(2))).setScale(2, RoundingMode.HALF_UP);
         BigDecimal base = total.multiply(BASE_SHARE).setScale(2, RoundingMode.HALF_UP);
         // a fresh id per review, like Tripjack: platform_booking.supplier_review_id is UNIQUE

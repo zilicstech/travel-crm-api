@@ -56,7 +56,8 @@ Jakarta body, `components/ui` primitives):
    code and airport under it), swap button, To, Departure (day and month large, weekday under),
    Travellers and class. Hotels: City, Check-in, Check-out, Rooms and guests. One-way only for
    flights, because the supplier search is one-way; no round-trip or multi-city toggle is shown
-   until it works.
+   until it works. (Superseded 2026-10-30: a One way / Round trip toggle and a Return date were
+   added, see `2026-10-30-platform-feedback-round-design.md` Phase E. Multi-city is still not offered.)
 4. Search button: a wide pill overlapping the card's bottom edge. It opens the existing results
    screen (`/agency/flights` or `/agency/hotels`) with the query in the URL and runs the search
    at once, so results, filters, Book with Voyra and markup stay exactly as they are.

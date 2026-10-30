@@ -13,6 +13,8 @@ import java.util.Locale;
 final class AgencySupplierMessage {
 
     static final String NOT_CONFIRMED_FLIGHT = "The airline could not confirm this fare";
+    /** A split round trip the supplier refused: the pair may not combine (special-return fares) or one side is gone. */
+    static final String NOT_CONFIRMED_PAIR = "The airline could not confirm this onward and return pair - pick another pair";
     static final String NOT_CONFIRMED_HOTEL = "The hotel could not confirm this rate";
     static final String FAILED = "Booking failed at the supplier";
     static final String CONFIRMING = "We're confirming with the supplier";

@@ -219,4 +219,74 @@ class TripjackFlightSearchProviderTest {
         assertThat(offers.get(0).getBaseFare()).isNotNull();
         assertThat(offers.get(1).getBaseFare()).isNull();
     }
+
+    private FlightSearchQuery roundTrip(String destination) {
+        FlightSearchQuery q = new FlightSearchQuery();
+        q.setOrigin("DEL");
+        q.setDestination(destination);
+        q.setDepartDate(LocalDate.of(2026, 11, 29));
+        q.setReturnDate(LocalDate.of(2026, 12, 2));
+        q.setCabin(FlightCabin.ECONOMY);
+        q.setAdults(1);
+        return q;
+    }
+
+    /** Fixture built from Tripjack's documented shape (the probe got 403), to be corrected by slice 0. */
+    @Test
+    void search_domesticRoundTripSendsTwoRoutesAndMapsOnwardAndReturnWithSpecialReturnMarkers() throws Exception {
+        when(platformSupplierCredentialService.resolveActive(SupplierProvider.TRIPJACK)).thenReturn(credential());
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo("https://apitest.tripjack.com/fms/v1/air-search-all"))
+                .andExpect(jsonPath("$.searchQuery.routeInfos.length()").value(2))
+                .andExpect(jsonPath("$.searchQuery.routeInfos[1].fromCityOrAirport.code").value("BOM"))
+                .andExpect(jsonPath("$.searchQuery.routeInfos[1].toCityOrAirport.code").value("DEL"))
+                .andExpect(jsonPath("$.searchQuery.routeInfos[1].travelDate").value("2026-12-02"))
+                .andRespond(withSuccess(fixture("tripjack/flight-search-roundtrip-domestic.json"), MediaType.APPLICATION_JSON));
+
+        List<FlightOfferResponse> offers = new TripjackFlightSearchProvider(platformSupplierCredentialService, builder).search(roundTrip("BOM"));
+
+        server.verify();
+        assertThat(offers).extracting(FlightOfferResponse::getDirection).containsOnly(
+                com.voyra.crm.enums.FlightDirection.ONWARD, com.voyra.crm.enums.FlightDirection.RETURN);
+        assertThat(offers).filteredOn(o -> o.getDirection() == com.voyra.crm.enums.FlightDirection.ONWARD).hasSize(3)
+                .allMatch(o -> o.getOrigin().equals("DEL") && o.getLegs().size() == 1);
+        FlightOfferResponse special = offers.stream().filter(o -> o.getOfferId().equals("RT-6E2032-SR")).findFirst().orElseThrow();
+        assertThat(special.getSpecialReturnId()).isEqualTo("6E-SR-1");
+        assertThat(special.getPairsWith()).containsExactly("6E-SR-1");
+        assertThat(special.getFareType()).isEqualTo("SPECIAL_RETURN");
+        FlightOfferResponse ordinary = offers.stream().filter(o -> o.getOfferId().equals("RT-6E2032-PUB")).findFirst().orElseThrow();
+        assertThat(ordinary.getSpecialReturnId()).isNull();
+        assertThat(ordinary.getPairsWith()).isEmpty();
+        FlightOfferResponse connecting = offers.stream().filter(o -> o.getOfferId().equals("RT-AI806-PUB")).findFirst().orElseThrow();
+        assertThat(connecting.getOrigin()).isEqualTo("BOM");
+        assertThat(connecting.getDestination()).isEqualTo("DEL");
+        assertThat(connecting.getStops()).isEqualTo(1);
+        assertThat(connecting.getDuration()).isEqualTo("270"); // 90 + 75 layover + 105
+        assertThat(connecting.getDepartDate()).isEqualTo(LocalDate.of(2026, 12, 2));
+    }
+
+    @Test
+    void search_comboRoundTripSplitsTheReturnLegByIsRs() throws Exception {
+        when(platformSupplierCredentialService.resolveActive(SupplierProvider.TRIPJACK)).thenReturn(credential());
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo("https://apitest.tripjack.com/fms/v1/air-search-all"))
+                .andRespond(withSuccess(fixture("tripjack/flight-search-roundtrip-combo.json"), MediaType.APPLICATION_JSON));
+
+        List<FlightOfferResponse> offers = new TripjackFlightSearchProvider(platformSupplierCredentialService, builder).search(roundTrip("DXB"));
+
+        assertThat(offers).hasSize(3).allMatch(o -> o.getDirection() == com.voyra.crm.enums.FlightDirection.COMBO && o.getLegs().size() == 2);
+        FlightOfferResponse emirates = offers.stream().filter(o -> o.getOfferId().equals("CB-EK511-PUB")).findFirst().orElseThrow();
+        // top-level fields describe the way out only
+        assertThat(emirates.getDestination()).isEqualTo("DXB");
+        assertThat(emirates.getStops()).isZero();
+        var back = emirates.getLegs().get(1);
+        assertThat(back.getOrigin()).isEqualTo("DXB");
+        assertThat(back.getDestination()).isEqualTo("DEL");
+        assertThat(back.getStops()).isEqualTo(1);
+        assertThat(back.getDepartDate()).isEqualTo(LocalDate.of(2026, 12, 2));
+        assertThat(back.getDepartTime().toString()).isEqualTo("09:00");
+        assertThat(emirates.getPrice()).isEqualByComparingTo("33200");
+    }
 }

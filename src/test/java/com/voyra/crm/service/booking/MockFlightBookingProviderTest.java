@@ -195,4 +195,34 @@ class MockFlightBookingProviderTest {
         config.getMock().setCancelFail(false);
         assertThat(provider.cancel(id).accepted()).isTrue();
     }
+
+    @Test
+    void aRoundTripReviewSumsBothWaysAndBuildsTwoSegmentsWithAShortId() {
+        String onward = "mock-airindia-09:30-FLEXI_PLUS-PREMIUM_ECONOMY";
+        String back = onward + "-R";
+        com.voyra.crm.dto.FlightReviewRequest r = new com.voyra.crm.dto.FlightReviewRequest();
+        r.setOfferId(onward);
+        r.setReturnOfferId(back);
+        r.setAdults(2);
+        r.setOrigin("DEL");
+        r.setDestination("BOM");
+        r.setDepartDate("2026-12-01");
+        r.setReturnFlightNumber("AI-210");
+        r.setReturnDepartDate("2026-12-04");
+        r.setReturnDepartTime("18:00");
+        r.setReturnArriveTime("20:10");
+
+        FareReview review = provider.review(r);
+
+        assertThat(review.totalFare()).isEqualByComparingTo(provider.review(onward, 2, 0, 0).totalFare()
+                .add(provider.review(back, 2, 0, 0).totalFare()));
+        assertThat(review.reviewId()).startsWith("mock-rv-" + onward + "-").doesNotContain("-R-").hasSizeLessThan(120);
+        var sI = review.itinerary().path("sI");
+        assertThat(sI).hasSize(2);
+        assertThat(sI.get(0).path("da").path("code").asText()).isEqualTo("DEL");
+        assertThat(sI.get(1).path("da").path("code").asText()).isEqualTo("BOM");
+        assertThat(sI.get(1).path("aa").path("code").asText()).isEqualTo("DEL");
+        assertThat(sI.get(1).path("dt").asText()).isEqualTo("2026-12-04T18:00");
+        assertThat(sI.get(1).path("fD").path("fN").asText()).isEqualTo("AI-210");
+    }
 }

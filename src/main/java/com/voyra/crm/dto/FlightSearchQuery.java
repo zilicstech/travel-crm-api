@@ -2,6 +2,8 @@ package com.voyra.crm.dto;
 
 import com.voyra.crm.enums.FlightCabin;
 import io.swagger.v3.oas.annotations.media.Schema;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.FutureOrPresent;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
@@ -27,8 +29,14 @@ public class FlightSearchQuery {
     @Schema(example = "2026-10-09")
     private LocalDate departDate;
 
-    @Schema(description = "Omit for a one-way search", example = "2026-10-25")
+    @Schema(description = "Omit for a one-way search; on or after departDate", example = "2026-10-25")
     private LocalDate returnDate;
+
+    @JsonIgnore
+    @AssertTrue(message = "Return can't be before departure")
+    public boolean isReturnOnOrAfterDeparture() {
+        return returnDate == null || departDate == null || !returnDate.isBefore(departDate);
+    }
 
     @Schema(example = "ECONOMY")
     private FlightCabin cabin;
