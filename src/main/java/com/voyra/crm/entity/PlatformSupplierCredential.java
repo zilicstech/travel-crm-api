@@ -19,8 +19,8 @@ import lombok.Setter;
 import java.time.Instant;
 
 /**
- * Voyra's own account with an external supplier (public schema) - one active row per provider, enforced by a
- * partial unique index. Every agency's searches run on it. The encrypted columns never leave the service:
+ * Voyra's own account with an external supplier (public schema) - one row per provider (unique since V34), with
+ * its commission terms per product in {@link PlatformSupplierProduct}. Every agency's searches run on it. The encrypted columns never leave the service:
  * responses carry a masked key and nothing reveals the plaintext.
  */
 @Entity
@@ -35,6 +35,9 @@ public class PlatformSupplierCredential {
     @Id
     @Column(name = "id", length = 36)
     private String id;
+
+    @Column(name = "name", nullable = false, length = 80)
+    private String name;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "provider", nullable = false, length = 30)

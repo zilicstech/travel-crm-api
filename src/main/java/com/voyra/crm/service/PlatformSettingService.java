@@ -35,6 +35,7 @@ public class PlatformSettingService {
 
     static final String DISCOUNT_BASE = "discount_base";
     static final String TDS_RATE = "tds_rate";
+    /** Not read since V34 (pricing uses the supplier's per-product terms); kept so the old row stays valid during a rolling deploy. */
     static final String COMMISSION_ESTIMATE_PCT = "commission_estimate_pct";
     static final String VOYRA_CANCEL_FEE = "voyra_cancel_fee";
     static final String REFERENCE_FARE_BASKET = "reference_fare_basket";
@@ -98,11 +99,6 @@ public class PlatformSettingService {
     @Transactional(readOnly = true)
     public BigDecimal tdsRate() {
         return new BigDecimal(raw(TDS_RATE));
-    }
-
-    @Transactional(readOnly = true)
-    public BigDecimal commissionEstimatePct() {
-        return new BigDecimal(raw(COMMISSION_ESTIMATE_PCT));
     }
 
     /** The sample fares the pricing guard tests a rate against: hotel rooms for HOTEL, flights otherwise. */

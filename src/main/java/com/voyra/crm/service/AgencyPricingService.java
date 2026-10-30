@@ -57,6 +57,7 @@ public class AgencyPricingService {
     private final AgencyPricingAssignmentRepository assignmentRepository;
     private final TenantRepository tenantRepository;
     private final PlatformSettingService settings;
+    private final PlatformSupplierCredentialService suppliers;
     private final PlatformAuditService auditService;
 
     /** The discount and commission rule a booking is priced with. {@link #pricingId()} changes on any edit or reassignment. */
@@ -208,7 +209,7 @@ public class AgencyPricingService {
         requireAgency(tenantId);
         PricingRule discount = ruleOf(discountRuleId, PricingRuleKind.DISCOUNT, product);
         PricingRule commission = ruleOf(commissionRuleId, PricingRuleKind.COMMISSION, product);
-        BigDecimal earned = settings.commissionEstimatePct();
+        BigDecimal earned = suppliers.commissionEstimatePct(product);
         DiscountBase db = settings.discountBase();
         List<ReferenceFare> basket = settings.referenceFareBasket(product);
         BigDecimal d = discount.getPct();
@@ -304,7 +305,7 @@ public class AgencyPricingService {
 
     private BigDecimal worst(PricingProduct product, BigDecimal discountPct, BigDecimal commissionPct, boolean above) {
         return PricingMath.worstCaseNetPer10k(settings.referenceFareBasket(product), discountPct, commissionPct,
-                settings.commissionEstimatePct(), settings.discountBase(), above);
+                suppliers.commissionEstimatePct(product), settings.discountBase(), above);
     }
 
     private AgencyPricingAssignmentResponse toAssignmentResponse(String tenantId, PricingProduct product, AgencyPricingAssignment row) {

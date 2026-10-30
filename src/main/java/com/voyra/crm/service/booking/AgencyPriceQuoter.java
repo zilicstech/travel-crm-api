@@ -5,6 +5,7 @@ import com.voyra.crm.enums.PricingProduct;
 import com.voyra.crm.exception.PricingNotConfiguredException;
 import com.voyra.crm.service.AgencyPricingService;
 import com.voyra.crm.service.PlatformSettingService;
+import com.voyra.crm.service.PlatformSupplierCredentialService;
 import com.voyra.crm.util.PricingMath;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -23,16 +24,17 @@ public class AgencyPriceQuoter {
 
     private final AgencyPricingService pricingService;
     private final PlatformSettingService settings;
+    private final PlatformSupplierCredentialService suppliers;
 
     public PriceQuote quote(String tenantId, PricingProduct product, BigDecimal gross, BigDecimal base) {
         return quoterFor(tenantId, product).orElseThrow(PricingNotConfiguredException::new).apply(gross, base);
     }
 
-    /** Resolves the agency's rules and settings once so a whole result list is priced without a query per fare; empty only if a Default rule is missing. */
+    /** Resolves the agency's rules, settings and supplier terms once so a whole result list is priced without a query per fare; empty only if a Default rule is missing. */
     public Optional<BiFunction<BigDecimal, BigDecimal, PriceQuote>> quoterFor(String tenantId, PricingProduct product) {
         return pricingService.resolve(tenantId, product).map(rules -> {
             DiscountBase db = settings.discountBase();
-            BigDecimal earnedPct = settings.commissionEstimatePct();
+            BigDecimal earnedPct = suppliers.commissionEstimatePct(product);
             BigDecimal tdsPct = settings.tdsRate();
             return (gross, base) -> price(rules, db, earnedPct, tdsPct, gross, base);
         });

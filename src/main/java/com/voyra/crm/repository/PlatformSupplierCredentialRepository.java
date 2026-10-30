@@ -13,5 +13,7 @@ public interface PlatformSupplierCredentialRepository extends JpaRepository<Plat
 
     Optional<PlatformSupplierCredential> findByProviderAndIsActiveTrue(SupplierProvider provider);
 
-    List<PlatformSupplierCredential> findByProviderOrderByUpdatedAtDesc(SupplierProvider provider);
+    boolean existsByProvider(SupplierProvider provider);
+
+    List<PlatformSupplierCredential> findAllByOrderByNameAsc();
 }
