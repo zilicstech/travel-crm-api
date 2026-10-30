@@ -18,6 +18,12 @@ public class FlightSearchPageResponse {
 
     @Schema(description = "This page of flights")
     private List<FlightGroupResponse> flights;
+    @Schema(description = "ONE_WAY, ROUND_TRIP_SPLIT (flights are onward, returnFlights the return) or ROUND_TRIP_COMBO (each flight covers both ways)")
+    private com.voyra.crm.enums.FlightSearchTripType tripType;
+
+    @Schema(description = "Return flights of a ROUND_TRIP_SPLIT search, filtered and sorted like flights but not paged; empty otherwise")
+    private List<FlightGroupResponse> returnFlights;
+
     @Schema(description = "1-based page number")
     private int page;
     @Schema(description = "Flights per page")

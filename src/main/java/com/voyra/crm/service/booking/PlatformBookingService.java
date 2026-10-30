@@ -215,7 +215,12 @@ public class PlatformBookingService {
         return booking;
     }
 
-    /** Re-prices the offer with the supplier and stamps a REVIEWING row; every refusal happens before the supplier call. */
+    private static final BigDecimal PRICE_CHANGE_TOLERANCE = new BigDecimal("0.02");
+
+    /**
+     * Re-prices the offer (a split round trip: onward and return together, as one booking) with the supplier and stamps a
+     * REVIEWING row; every refusal happens before the supplier call.
+     */
     public PlatformBookingReviewResponse review(FlightReviewRequest request) {
         CustomUserPrincipal principal = requireBooker(PricingProduct.FLIGHT);
         ReviewEnv env = admit(principal, PricingProduct.FLIGHT, request.getClientId(), request.getIssuedByAgentId(),
@@ -325,7 +330,8 @@ public class PlatformBookingService {
             events.record(booking.getId(), "REVIEWED", Map.of("displayed", booking.getDisplayed(), "pricingId", quote.pricingId()));
         });
 
-        boolean changed = searched != null && searched.compareTo(booking.getDisplayed()) != 0;
+        // a round trip's searched fare is two separately rounded legs, so 2 paise either way is not a price change
+        boolean changed = searched != null && searched.subtract(booking.getDisplayed()).abs().compareTo(PRICE_CHANGE_TOLERANCE) > 0;
         return PlatformBookingReviewResponse.builder()
                 .bookingId(booking.getId())
                 .displayedFare(booking.getDisplayed())

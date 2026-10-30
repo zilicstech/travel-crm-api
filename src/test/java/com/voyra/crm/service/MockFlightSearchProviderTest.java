@@ -51,4 +51,28 @@ class MockFlightSearchProviderTest {
         // 2 adults + 1 child at 75% of the adult fare.
         assertThat(group.getTotalPrice()).isEqualByComparingTo(solo.getPrice().multiply(new java.math.BigDecimal("2.75")));
     }
+
+    @Test
+    void aRoundTripAddsReturnOffersTheWayBackPricedFromTheirOwnId() {
+        FlightSearchQuery query = new FlightSearchQuery();
+        query.setOrigin("DEL");
+        query.setDestination("BOM");
+        query.setDepartDate(LocalDate.of(2026, 11, 26));
+        query.setReturnDate(LocalDate.of(2026, 11, 29));
+
+        var offers = new MockFlightSearchProvider().search(query);
+        var onward = offers.stream().filter(o -> o.getDirection() == com.voyra.crm.enums.FlightDirection.ONWARD).toList();
+        var back = offers.stream().filter(o -> o.getDirection() == com.voyra.crm.enums.FlightDirection.RETURN).toList();
+
+        assertThat(onward).hasSize(back.size()).isNotEmpty();
+        assertThat(offers).noneMatch(o -> o.getDirection() == com.voyra.crm.enums.FlightDirection.COMBO);
+        FlightOfferResponse r = back.get(0);
+        assertThat(r.getOfferId()).endsWith("-R");
+        assertThat(r.getOrigin()).isEqualTo("BOM");
+        assertThat(r.getDestination()).isEqualTo("DEL");
+        assertThat(r.getDepartDate()).isEqualTo(LocalDate.of(2026, 11, 29));
+        assertThat(r.getLegs()).singleElement().satisfies(l -> assertThat(l.getOrigin()).isEqualTo("BOM"));
+        assertThat(MockFlightSearchProvider.adultFare(r.getOfferId())).isEqualByComparingTo(r.getPrice());
+        assertThat(MockFlightSearchProvider.adultFare("mock-indigo-06:15-PUBLISHED-ECONOMY-X")).isNull();
+    }
 }

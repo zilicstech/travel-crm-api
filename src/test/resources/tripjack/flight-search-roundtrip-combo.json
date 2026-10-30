@@ -1,0 +1,231 @@
+{
+  "_note": "Built from Tripjack's documented shape, NOT a live response: the 2026-10-30 probe (.claude/run/tripjack-probe.java) got HTTP 403 Access Denied (this machine's IP is not whitelisted). Shape to be corrected by slice 0.",
+  "status": {
+    "success": true,
+    "httpStatus": 200
+  },
+  "searchResult": {
+    "tripInfos": {
+      "COMBO": [
+        {
+          "sI": [
+            {
+              "id": "1451DEL",
+              "fD": {
+                "aI": {
+                  "code": "6E",
+                  "name": "IndiGo",
+                  "isLcc": true
+                },
+                "fN": "1451",
+                "eT": "320"
+              },
+              "stops": 0,
+              "duration": 225,
+              "da": {
+                "code": "DEL",
+                "city": "DEL",
+                "terminal": "1"
+              },
+              "aa": {
+                "code": "DXB",
+                "city": "DXB",
+                "terminal": "1"
+              },
+              "dt": "2026-11-29T10:05",
+              "at": "2026-11-29T12:20",
+              "sN": 0,
+              "isRs": false
+            },
+            {
+              "id": "1452DXB",
+              "fD": {
+                "aI": {
+                  "code": "6E",
+                  "name": "IndiGo",
+                  "isLcc": true
+                },
+                "fN": "1452",
+                "eT": "320"
+              },
+              "stops": 0,
+              "duration": 205,
+              "da": {
+                "code": "DXB",
+                "city": "DXB",
+                "terminal": "1"
+              },
+              "aa": {
+                "code": "DEL",
+                "city": "DEL",
+                "terminal": "1"
+              },
+              "dt": "2026-12-02T13:50",
+              "at": "2026-12-02T18:45",
+              "sN": 0,
+              "isRs": true
+            }
+          ],
+          "totalPriceList": [
+            {
+              "id": "CB-6E1451-PUB",
+              "fareIdentifier": "PUBLISHED",
+              "fd": {
+                "ADULT": {
+                  "fC": {
+                    "BF": 15400.0,
+                    "TF": 21800.0,
+                    "TAF": 6400.0
+                  },
+                  "sR": 9,
+                  "bI": {
+                    "iB": "30 Kg",
+                    "cB": "7 Kg"
+                  },
+                  "rT": "NON_REFUNDABLE",
+                  "cc": "ECONOMY",
+                  "cB": "S",
+                  "fB": "SAVER"
+                }
+              }
+            },
+            {
+              "id": "CB-6E1451-FLX",
+              "fareIdentifier": "FLEXI",
+              "fd": {
+                "ADULT": {
+                  "fC": {
+                    "BF": 18000.0,
+                    "TF": 24600.0,
+                    "TAF": 6600.0
+                  },
+                  "sR": 9,
+                  "bI": {
+                    "iB": "30 Kg",
+                    "cB": "7 Kg"
+                  },
+                  "rT": "REFUNDABLE",
+                  "cc": "ECONOMY",
+                  "cB": "S",
+                  "fB": "SAVER"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "sI": [
+            {
+              "id": "EK-511DEL",
+              "fD": {
+                "aI": {
+                  "code": "EK",
+                  "name": "Emirates",
+                  "isLcc": false
+                },
+                "fN": "EK-511",
+                "eT": "320"
+              },
+              "stops": 0,
+              "duration": 230,
+              "da": {
+                "code": "DEL",
+                "city": "DEL",
+                "terminal": "1"
+              },
+              "aa": {
+                "code": "DXB",
+                "city": "DXB",
+                "terminal": "1"
+              },
+              "dt": "2026-11-29T04:35",
+              "at": "2026-11-29T06:55",
+              "sN": 0,
+              "isRs": false
+            },
+            {
+              "id": "EK-512DXB",
+              "fD": {
+                "aI": {
+                  "code": "EK",
+                  "name": "Emirates",
+                  "isLcc": false
+                },
+                "fN": "EK-512",
+                "eT": "320"
+              },
+              "stops": 0,
+              "duration": 185,
+              "da": {
+                "code": "DXB",
+                "city": "DXB",
+                "terminal": "1"
+              },
+              "aa": {
+                "code": "BOM",
+                "city": "BOM",
+                "terminal": "1"
+              },
+              "dt": "2026-12-02T09:00",
+              "at": "2026-12-02T13:35",
+              "sN": 0,
+              "isRs": true
+            },
+            {
+              "id": "AI-865BOM",
+              "fD": {
+                "aI": {
+                  "code": "EK",
+                  "name": "Emirates",
+                  "isLcc": false
+                },
+                "fN": "AI-865",
+                "eT": "320"
+              },
+              "stops": 0,
+              "duration": 130,
+              "da": {
+                "code": "BOM",
+                "city": "BOM",
+                "terminal": "1"
+              },
+              "aa": {
+                "code": "DEL",
+                "city": "DEL",
+                "terminal": "1"
+              },
+              "dt": "2026-12-02T15:30",
+              "at": "2026-12-02T17:40",
+              "sN": 1,
+              "isRs": true
+            }
+          ],
+          "totalPriceList": [
+            {
+              "id": "CB-EK511-PUB",
+              "fareIdentifier": "PUBLISHED",
+              "fd": {
+                "ADULT": {
+                  "fC": {
+                    "BF": 24100.0,
+                    "TF": 33200.0,
+                    "TAF": 9100.0
+                  },
+                  "sR": 9,
+                  "bI": {
+                    "iB": "35 Kg",
+                    "cB": "7 Kg"
+                  },
+                  "rT": "REFUNDABLE",
+                  "cc": "ECONOMY",
+                  "cB": "S",
+                  "fB": "SAVER"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

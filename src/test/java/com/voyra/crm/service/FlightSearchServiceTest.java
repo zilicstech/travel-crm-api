@@ -273,4 +273,60 @@ class FlightSearchServiceTest {
         loginAsTenant("t2");
         assertThat(firstFare(svc.searchPage(request(1))).getDisplayedFare()).isEqualByComparingTo("170");
     }
+
+    @Test
+    void roundTripSplitPagesOnwardAndListsEveryReturnWithTheSameFiltersAndSort() {
+        // the mock answers a round trip as ONWARD + RETURN (5 flights x 4 fares each way)
+        FlightSearchService svc = new FlightSearchService(new MockFlightSearchProvider(), quoter);
+        loginAsTenant("t1");
+        FlightSearchPageRequest req = request(1);
+        req.getQuery().setReturnDate(LocalDate.of(2026, 11, 28));
+        req.setPageSize(2);
+        req.setStops(0);
+
+        FlightSearchPageResponse p = svc.searchPage(req);
+
+        assertThat(p.getTripType()).isEqualTo(com.voyra.crm.enums.FlightSearchTripType.ROUND_TRIP_SPLIT);
+        assertThat(p.getFlights()).hasSize(2).allMatch(g -> g.getDirection() == com.voyra.crm.enums.FlightDirection.ONWARD);
+        assertThat(p.getTotalFlights()).isEqualTo(4); // SpiceJet's one-stop flight is filtered out
+        assertThat(p.getReturnFlights()).hasSize(4).allMatch(g -> g.getDirection() == com.voyra.crm.enums.FlightDirection.RETURN
+                && g.getOrigin().equals("GOI") && g.getStops() == 0);
+        assertThat(p.getReturnFlights()).extracting(g -> g.getCheapestPrice()).isSorted();
+        // the same physical template flies both ways, but the two groups never merge
+        assertThat(p.getReturnFlights()).extracting(g -> g.getKey()).doesNotContainAnyElementsOf(
+                p.getFlights().stream().map(g -> g.getKey()).toList());
+    }
+
+    @Test
+    void comboFaresAreOneListAndOneWayHasNoReturns() {
+        FlightOfferResponse combo = FlightOfferResponse.builder().offerId("c1").airline("IndiGo").flightNumber("6E-1")
+                .departTime(LocalTime.of(10, 0)).arriveTime(LocalTime.of(12, 0)).price(new BigDecimal("20000"))
+                .direction(com.voyra.crm.enums.FlightDirection.COMBO)
+                .legs(List.of(com.voyra.crm.dto.FlightLegResponse.builder().flightNumber("6E-1").build(),
+                        com.voyra.crm.dto.FlightLegResponse.builder().flightNumber("6E-2").departTime(LocalTime.of(9, 0)).build()))
+                .build();
+        FlightSearchService svc = new FlightSearchService(q -> new ArrayList<>(List.of(combo)), quoter);
+        loginAsTenant("t1");
+        FlightSearchPageRequest req = request(1);
+        req.getQuery().setReturnDate(LocalDate.of(2026, 11, 28));
+
+        FlightSearchPageResponse p = svc.searchPage(req);
+        assertThat(p.getTripType()).isEqualTo(com.voyra.crm.enums.FlightSearchTripType.ROUND_TRIP_COMBO);
+        assertThat(p.getFlights()).singleElement().satisfies(g -> assertThat(g.getLegs()).hasSize(2));
+        assertThat(p.getReturnFlights()).isEmpty();
+
+        FlightSearchPageResponse oneWay = service.searchPage(request(1));
+        assertThat(oneWay.getTripType()).isEqualTo(com.voyra.crm.enums.FlightSearchTripType.ONE_WAY);
+        assertThat(oneWay.getReturnFlights()).isEmpty();
+    }
+
+    @Test
+    void returnBeforeDepartureIsRefused() {
+        FlightSearchQuery q = request(1).getQuery();
+        q.setReturnDate(q.getDepartDate().minusDays(1));
+        var validator = jakarta.validation.Validation.buildDefaultValidatorFactory().getValidator();
+        assertThat(validator.validate(q)).extracting(v -> v.getMessage()).contains("Return can't be before departure");
+        q.setReturnDate(q.getDepartDate());
+        assertThat(validator.validate(q)).extracting(v -> v.getMessage()).doesNotContain("Return can't be before departure");
+    }
 }

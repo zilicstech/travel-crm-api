@@ -214,4 +214,46 @@ class TripjackFlightBookingProviderTest {
         assertThat(c.refund()).isEqualByComparingTo("7200");
         server.verify();
     }
+
+    private static String fixture(String path) throws java.io.IOException {
+        try (var in = TripjackFlightBookingProviderTest.class.getClassLoader().getResourceAsStream(path)) {
+            return new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        }
+    }
+
+    /** Fixture built from Tripjack's documented shape (the probe got 403), to be corrected by slice 0. */
+    @Test
+    void roundTripReviewSendsBothPriceIdsAsOneReview() throws Exception {
+        server.expect(requestTo(BASE + "/fms/v1/review"))
+                .andExpect(jsonPath("$.priceIds.length()").value(2))
+                .andExpect(jsonPath("$.priceIds[0]").value("ON-6E2031-PUB"))
+                .andExpect(jsonPath("$.priceIds[1]").value("RT-6E2032-PUB"))
+                .andRespond(withSuccess(fixture("tripjack/flight-review-roundtrip.json"), MediaType.APPLICATION_JSON));
+        server.expect(requestTo(BASE + "/fms/v2/farerule")).andRespond(withSuccess(OK + "}", MediaType.APPLICATION_JSON));
+
+        FareReview r = provider.review(List.of("ON-6E2031-PUB", "RT-6E2032-PUB"), 1, 0, 0);
+
+        server.verify();
+        assertThat(r.reviewId()).isEqualTo("TJS101900012345");
+        assertThat(r.totalFare()).isEqualByComparingTo("10700");
+        assertThat(r.itinerary().findValues("sI")).hasSize(2);
+    }
+
+    @Test
+    void aRefusedPairGetsItsOwnMessage() {
+        server.expect(requestTo(BASE + "/fms/v1/review")).andRespond(withSuccess(
+                "{\"status\":{\"success\":false},\"errors\":[{\"message\":\"Invalid combination\"}]}", MediaType.APPLICATION_JSON));
+        assertThatThrownBy(() -> provider.review(List.of("a", "b"), 1, 0, 0))
+                .isInstanceOf(FareUnavailableException.class).hasMessage(AgencySupplierMessage.NOT_CONFIRMED_PAIR);
+    }
+
+    @Test
+    void bookingDetails_keepsEveryDistinctSectorPnr() {
+        server.expect(requestTo(BASE + "/oms/v1/booking-details")).andRespond(withSuccess(
+                OK + ",\"order\":{\"status\":\"SUCCESS\"},\"itemInfos\":{\"AIR\":{\"travellerInfos\":["
+                        + "{\"pnrDetails\":{\"DEL-BOM\":\"ABC123\",\"BOM-DEL\":\"XYZ789\"}},"
+                        + "{\"pnrDetails\":{\"DEL-BOM\":\"ABC123\",\"BOM-DEL\":\"XYZ789\"}}]}}}",
+                MediaType.APPLICATION_JSON));
+        assertThat(provider.bookingDetails("TJS1").pnr()).isEqualTo("ABC123 / XYZ789");
+    }
 }

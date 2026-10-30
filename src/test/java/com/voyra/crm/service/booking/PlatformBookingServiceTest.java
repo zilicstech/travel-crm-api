@@ -278,6 +278,35 @@ class PlatformBookingServiceTest {
     }
 
     @Test
+    void aRoundTripIsOneReviewOfBothOffersDatedByTheFirstDeparture() {
+        when(provider.review(any(FlightReviewRequest.class))).thenReturn(new FareReview("rv-rt", new BigDecimal("10000.00"),
+                new BigDecimal("8500.00"), "INR", null, null, objectMapper.valueToTree(Map.of("sI", List.of(
+                        Map.of("dt", "2026-12-01T06:00", "da", Map.of("code", "DEL"), "aa", Map.of("code", "BOM")),
+                        Map.of("dt", "2026-12-04T18:00", "da", Map.of("code", "BOM"), "aa", Map.of("code", "DEL")))))));
+        FlightReviewRequest req = reviewRequest();
+        req.setReturnOfferId("offer-1-R");
+
+        PlatformBooking b = rows.get(service.review(req).getBookingId());
+
+        verify(provider).review(argThat((FlightReviewRequest r) -> "offer-1-R".equals(r.getReturnOfferId())));
+        assertThat(b.getSupplierReviewId()).isEqualTo("rv-rt");
+        assertThat(b.getGross()).isEqualByComparingTo("10000.00");
+        assertThat(objectMapper.valueToTree(b.getItinerary()).path("sI")).hasSize(2);
+        assertThat(b.getPricingSnapshot()).containsEntry("travelDate", "2026-12-01").containsKey("paxMix");
+    }
+
+    @Test
+    void twoPaiseOfRoundingIsNotAPriceChange() {
+        FlightReviewRequest req = reviewRequest();
+        req.setSearchDisplayedFare(new BigDecimal("4500.02"));
+        assertThat(service.review(req).isPriceChanged()).isFalse();
+        req.setSearchDisplayedFare(new BigDecimal("4499.98"));
+        assertThat(service.review(req).isPriceChanged()).isFalse();
+        req.setSearchDisplayedFare(new BigDecimal("4500.03"));
+        assertThat(service.review(req).isPriceChanged()).isTrue();
+    }
+
+    @Test
     void reviewStampsTheActiveCredentialEnvironment() {
         config.setProvider("tripjack");
         when(credentialRepository.findByProviderAndIsActiveTrue(SupplierProvider.TRIPJACK)).thenReturn(Optional.of(

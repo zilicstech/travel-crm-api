@@ -4,6 +4,9 @@ import com.voyra.crm.dto.FlightGroupResponse;
 import com.voyra.crm.dto.FlightOfferResponse;
 import com.voyra.crm.dto.FlightSearchPageRequest;
 import com.voyra.crm.dto.FlightSearchPageResponse;
+import com.voyra.crm.dto.FlightLegResponse;
+import com.voyra.crm.enums.FlightDirection;
+import com.voyra.crm.enums.FlightSearchTripType;
 import com.voyra.crm.enums.FlightSortOrder;
 
 import java.math.BigDecimal;
@@ -30,13 +33,23 @@ public final class FlightResultPaging {
     private FlightResultPaging() {
     }
 
-    /** One group per flight (airline, number, departure, arrival), fares sorted cheapest first. */
+    /** One group per flight (direction, airline, number, departure, arrival; a COMBO adds its return leg), fares sorted cheapest first. */
     static List<FlightGroupResponse> group(List<FlightOfferResponse> offers) {
         Map<String, FlightGroupResponse> byKey = new LinkedHashMap<>();
         for (FlightOfferResponse o : offers) {
+            FlightDirection direction = direction(o);
             String key = o.getAirline() + "|" + o.getFlightNumber() + "|" + o.getDepartTime() + "|" + o.getArriveTime();
+            if (direction != FlightDirection.ONWARD) {
+                key += "|" + direction;
+            }
+            if (o.getLegs() != null && o.getLegs().size() > 1) {
+                FlightLegResponse back = o.getLegs().get(1);
+                key += "|" + back.getFlightNumber() + "|" + back.getDepartDate() + "|" + back.getDepartTime();
+            }
             FlightGroupResponse g = byKey.computeIfAbsent(key, k -> FlightGroupResponse.builder()
                     .key(k)
+                    .direction(direction)
+                    .legs(o.getLegs())
                     .airline(o.getAirline())
                     .airlineCode(o.getAirlineCode())
                     .flightNumber(o.getFlightNumber())
@@ -60,6 +73,10 @@ public final class FlightResultPaging {
         return groups;
     }
 
+    private static FlightDirection direction(FlightOfferResponse o) {
+        return o.getDirection() == null ? FlightDirection.ONWARD : o.getDirection();
+    }
+
     static FlightSearchPageResponse page(List<FlightGroupResponse> all, FlightSearchPageRequest req) {
         Set<String> airlines = new TreeSet<>();
         Map<String, String> airlineCodes = new LinkedHashMap<>();
@@ -70,34 +87,16 @@ public final class FlightResultPaging {
             }
         }
 
-        List<FlightGroupResponse> filtered = new ArrayList<>();
+        List<FlightGroupResponse> main = new ArrayList<>();
+        List<FlightGroupResponse> returns = new ArrayList<>();
         for (FlightGroupResponse g : all) {
-            // 0 and 1 are exact ("1 stop" must not also list non-stop flights); 2 means two or more.
-            if (req.getStops() != null && (req.getStops() >= 2 ? g.getStops() < 2 : g.getStops() != req.getStops())) {
-                continue;
-            }
-            if (req.getAirlines() != null && !req.getAirlines().isEmpty() && !req.getAirlines().contains(g.getAirline())) {
-                continue;
-            }
-            if (req.isRefundableOnly()) {
-                List<FlightOfferResponse> kept = g.getFares().stream().filter(FlightOfferResponse::isRefundable).toList();
-                if (kept.isEmpty()) {
-                    continue;
-                }
-                // A copy: the cached group must keep every fare for the next, different filter.
-                filtered.add(FlightGroupResponse.builder()
-                        .key(g.getKey()).airline(g.getAirline()).airlineCode(g.getAirlineCode()).flightNumber(g.getFlightNumber())
-                        .origin(g.getOrigin()).destination(g.getDestination())
-                        .departTime(g.getDepartTime()).arriveTime(g.getArriveTime())
-                        .departDate(g.getDepartDate()).arriveDate(g.getArriveDate())
-                        .duration(g.getDuration()).stops(g.getStops())
-                        .cheapestPrice(kept.get(0).getPrice()).fares(kept).build());
-                continue;
-            }
-            filtered.add(g);
+            (g.getDirection() == FlightDirection.RETURN ? returns : main).add(g);
         }
-
-        filtered.sort(comparator(req.getSort()));
+        FlightSearchTripType tripType = main.stream().anyMatch(g -> g.getDirection() == FlightDirection.COMBO)
+                ? FlightSearchTripType.ROUND_TRIP_COMBO
+                : req.getQuery() != null && req.getQuery().getReturnDate() != null ? FlightSearchTripType.ROUND_TRIP_SPLIT
+                : FlightSearchTripType.ONE_WAY;
+        List<FlightGroupResponse> filtered = filterAndSort(main, req);
 
         String cheapestKey = filtered.stream().min(Comparator.comparing(FlightGroupResponse::getCheapestPrice))
                 .map(FlightGroupResponse::getKey).orElse(null);
@@ -121,7 +120,43 @@ public final class FlightResultPaging {
                 .airlineCodes(airlineCodes)
                 .cheapestKey(cheapestKey)
                 .fastestKey(fastestKey)
+                .tripType(tripType)
+                // shortcut: the return list is not paged (filters and sort apply); page it too if a busy route makes the payload heavy
+                .returnFlights(tripType == FlightSearchTripType.ROUND_TRIP_SPLIT ? filterAndSort(returns, req) : List.of())
                 .build();
+    }
+
+    /** The filters and sort of the request over one list; never mutates a cached group. */
+    private static List<FlightGroupResponse> filterAndSort(List<FlightGroupResponse> groups, FlightSearchPageRequest req) {
+        List<FlightGroupResponse> filtered = new ArrayList<>();
+        for (FlightGroupResponse g : groups) {
+            // 0 and 1 are exact ("1 stop" must not also list non-stop flights); 2 means two or more.
+            if (req.getStops() != null && (req.getStops() >= 2 ? g.getStops() < 2 : g.getStops() != req.getStops())) {
+                continue;
+            }
+            if (req.getAirlines() != null && !req.getAirlines().isEmpty() && !req.getAirlines().contains(g.getAirline())) {
+                continue;
+            }
+            if (req.isRefundableOnly()) {
+                List<FlightOfferResponse> kept = g.getFares().stream().filter(FlightOfferResponse::isRefundable).toList();
+                if (kept.isEmpty()) {
+                    continue;
+                }
+                // A copy: the cached group must keep every fare for the next, different filter.
+                filtered.add(FlightGroupResponse.builder()
+                        .key(g.getKey()).airline(g.getAirline()).airlineCode(g.getAirlineCode()).flightNumber(g.getFlightNumber())
+                        .origin(g.getOrigin()).destination(g.getDestination())
+                        .departTime(g.getDepartTime()).arriveTime(g.getArriveTime())
+                        .departDate(g.getDepartDate()).arriveDate(g.getArriveDate())
+                        .duration(g.getDuration()).stops(g.getStops()).direction(g.getDirection()).legs(g.getLegs())
+                        .cheapestPrice(kept.get(0).getPrice()).fares(kept).build());
+                continue;
+            }
+            filtered.add(g);
+        }
+
+        filtered.sort(comparator(req.getSort()));
+        return filtered;
     }
 
     private static Comparator<FlightGroupResponse> comparator(FlightSortOrder sort) {

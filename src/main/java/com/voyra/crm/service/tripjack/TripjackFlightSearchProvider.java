@@ -4,9 +4,11 @@ import com.voyra.crm.service.FlightResultPaging;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.voyra.crm.dto.FlightLegResponse;
 import com.voyra.crm.dto.FlightOfferResponse;
 import com.voyra.crm.dto.FlightSearchQuery;
 import com.voyra.crm.models.ResolvedCredential;
+import com.voyra.crm.enums.FlightDirection;
 import com.voyra.crm.enums.SupplierProvider;
 import com.voyra.crm.exception.SupplierException;
 import com.voyra.crm.service.FlightSearchProvider;
@@ -108,10 +110,20 @@ public class TripjackFlightSearchProvider implements FlightSearchProvider {
         route.put("toCityOrAirport", Map.of("code", destinationCode));
         route.put("travelDate", query.getDepartDate().toString());
 
+        List<Map<String, Object>> routes = new ArrayList<>(List.of(route));
+        if (query.getReturnDate() != null) {
+            // a round trip is a second route back; Tripjack answers ONWARD + RETURN (domestic) or COMBO (international)
+            Map<String, Object> back = new LinkedHashMap<>();
+            back.put("fromCityOrAirport", Map.of("code", destinationCode));
+            back.put("toCityOrAirport", Map.of("code", originCode));
+            back.put("travelDate", query.getReturnDate().toString());
+            routes.add(back);
+        }
+
         Map<String, Object> searchQuery = new LinkedHashMap<>();
         searchQuery.put("cabinClass", query.getCabin() != null ? query.getCabin().name() : "ECONOMY");
         searchQuery.put("paxInfo", paxInfo);
-        searchQuery.put("routeInfos", List.of(route));
+        searchQuery.put("routeInfos", routes);
 
         return Map.of("searchQuery", searchQuery);
     }
@@ -181,75 +193,108 @@ public class TripjackFlightSearchProvider implements FlightSearchProvider {
         }
     }
 
+    /**
+     * One offer per fare of every trip under {@code tripInfos}: ONWARD (also one-way), RETURN (domestic round trip, paired by the agency)
+     * and COMBO (international round trip, both ways in one fare; the way back is the segments flagged {@code isRs}).
+     * Shapes are from Tripjack's documentation, to be corrected by the slice 0 spike (the probe got 403 from this machine).
+     */
     private List<FlightOfferResponse> toOffers(JsonNode response, String originCode, String destinationCode,
                                              FlightSearchQuery query) {
-        java.time.LocalDate searchDate = query.getDepartDate();
         List<FlightOfferResponse> offers = new ArrayList<>();
-        for (JsonNode trip : response.path("searchResult").path("tripInfos").path("ONWARD")) {
-            JsonNode segments = trip.path("sI");
-            if (!segments.isArray() || segments.isEmpty()) {
-                continue;
-            }
-            JsonNode firstSegment = segments.get(0);
-            JsonNode lastSegment = segments.get(segments.size() - 1);
-
-            String airline = firstSegment.path("fD").path("aI").path("name").asText("");
-            String airlineCode = firstSegment.path("fD").path("aI").path("code").asText("");
-            String flightNumber = firstSegment.path("fD").path("fN").asText("");
-            int stops = segments.size() - 1;
-            int journeyMinutes = 0;
-            for (int i = 0; i < segments.size(); i++) {
-                JsonNode seg = segments.get(i);
-                stops += seg.path("stops").asInt(0); // technical stops within one leg
-                int legMinutes = FlightResultPaging.durationMinutes(seg.path("duration").asText(""));
-                journeyMinutes = legMinutes == Integer.MAX_VALUE || journeyMinutes < 0 ? -1 : journeyMinutes + legMinutes;
-                if (i > 0 && journeyMinutes >= 0) {
-                    // Layover: both times are local to the same connecting airport, so the gap is time-zone safe.
-                    Long layover = minutesBetween(segments.get(i - 1).path("at").asText(""), seg.path("dt").asText(""));
-                    journeyMinutes = layover == null ? -1 : journeyMinutes + layover.intValue();
+        JsonNode tripInfos = response.path("searchResult").path("tripInfos");
+        for (FlightDirection direction : FlightDirection.values()) {
+            boolean back = direction == FlightDirection.RETURN;
+            java.time.LocalDate searchDate = back ? query.getReturnDate() : query.getDepartDate();
+            for (JsonNode trip : tripInfos.path(direction.name())) {
+                JsonNode segments = trip.path("sI");
+                if (!segments.isArray() || segments.isEmpty()) {
+                    continue;
                 }
-            }
-            String duration = journeyMinutes >= 0 ? String.valueOf(journeyMinutes) : firstSegment.path("duration").asText("");
-            LocalTime departTime = parseFlightTime(firstSegment.path("dt").asText(""));
-            LocalTime arriveTime = parseFlightTime(lastSegment.path("at").asText(""));
-            java.time.LocalDate departDate = parseFlightDate(firstSegment.path("dt").asText(""), searchDate);
-            java.time.LocalDate arriveDate = parseFlightDate(lastSegment.path("at").asText(""),
-                    departDate == null ? null : arriveTime.isBefore(departTime) ? departDate.plusDays(1) : departDate);
-            String origin = firstSegment.path("da").path("code").asText(originCode);
-            String destination = lastSegment.path("aa").path("code").asText(destinationCode);
+                List<JsonNode> out = new ArrayList<>();
+                List<JsonNode> ret = new ArrayList<>();
+                segments.forEach(seg -> (direction == FlightDirection.COMBO && seg.path("isRs").asBoolean(false) ? ret : out).add(seg));
+                List<FlightLegResponse> legs = new ArrayList<>();
+                legs.add(leg(out, back ? destinationCode : originCode, back ? originCode : destinationCode, searchDate));
+                if (!ret.isEmpty()) {
+                    legs.add(leg(ret, destinationCode, originCode, query.getReturnDate()));
+                }
+                FlightLegResponse first = legs.get(0);
 
-            for (JsonNode fare : trip.path("totalPriceList")) {
-                JsonNode adultFare = fare.path("fd").path("ADULT");
-                // fd.<TYPE>.fC.TF is the fare for ONE passenger of that type, not the party.
-                BigDecimal adultPrice = new BigDecimal(adultFare.path("fC").path("TF").asText("0"));
-                offers.add(FlightOfferResponse.builder()
-                        .offerId(fare.path("id").asText())
-                        .airline(airline)
-                        .airlineCode(airlineCode)
-                        .flightNumber(flightNumber)
-                        .origin(origin)
-                        .destination(destination)
-                        .departTime(departTime)
-                        .arriveTime(arriveTime)
-                        .departDate(departDate)
-                        .arriveDate(arriveDate)
-                        .duration(duration)
-                        .stops(stops)
-                        .supplier("Tripjack")
-                        .price(adultPrice)
-                        .totalPrice(FlightSearchProvider.partyTotal(query, adultPrice,
-                                paxFare(fare, "CHILD"), paxFare(fare, "INFANT")))
-                        .baseFare(baseFare(fare, "ADULT") == null ? null : FlightSearchProvider.partyTotal(query,
-                                baseFare(fare, "ADULT"), baseFare(fare, "CHILD"), baseFare(fare, "INFANT")))
-                        .passengers(FlightSearchProvider.passengers(query))
-                        .currency("INR")
-                        .refundable("REFUNDABLE".equalsIgnoreCase(adultFare.path("rT").asText("")))
-                        .baggage(adultFare.path("bI").path("iB").asText(""))
-                        .fareType(fare.path("fareIdentifier").asText("Standard"))
-                        .build());
+                for (JsonNode fare : trip.path("totalPriceList")) {
+                    JsonNode adultFare = fare.path("fd").path("ADULT");
+                    // fd.<TYPE>.fC.TF is the fare for ONE passenger of that type, not the party.
+                    BigDecimal adultPrice = new BigDecimal(adultFare.path("fC").path("TF").asText("0"));
+                    List<String> pairsWith = new ArrayList<>();
+                    fare.path("msri").forEach(id -> pairsWith.add(id.asText()));
+                    offers.add(FlightOfferResponse.builder()
+                            .offerId(fare.path("id").asText())
+                            .direction(direction)
+                            .legs(legs)
+                            .airline(first.getAirline())
+                            .airlineCode(first.getAirlineCode())
+                            .flightNumber(first.getFlightNumber())
+                            .origin(first.getOrigin())
+                            .destination(first.getDestination())
+                            .departTime(first.getDepartTime())
+                            .arriveTime(first.getArriveTime())
+                            .departDate(first.getDepartDate())
+                            .arriveDate(first.getArriveDate())
+                            .duration(first.getDuration())
+                            .stops(first.getStops())
+                            .supplier("Tripjack")
+                            .price(adultPrice)
+                            .totalPrice(FlightSearchProvider.partyTotal(query, adultPrice,
+                                    paxFare(fare, "CHILD"), paxFare(fare, "INFANT")))
+                            .baseFare(baseFare(fare, "ADULT") == null ? null : FlightSearchProvider.partyTotal(query,
+                                    baseFare(fare, "ADULT"), baseFare(fare, "CHILD"), baseFare(fare, "INFANT")))
+                            .passengers(FlightSearchProvider.passengers(query))
+                            .currency("INR")
+                            .refundable("REFUNDABLE".equalsIgnoreCase(adultFare.path("rT").asText("")))
+                            .baggage(adultFare.path("bI").path("iB").asText(""))
+                            .fareType(fare.path("fareIdentifier").asText("Standard"))
+                            .specialReturnId(fare.path("sri").isMissingNode() || fare.path("sri").asText().isBlank() ? null : fare.path("sri").asText())
+                            .pairsWith(pairsWith)
+                            .build());
+                }
             }
         }
         return offers;
+    }
+
+    /** One direction from its segments: first segment's carrier and departure, last segment's arrival, stops and journey time across them. */
+    private FlightLegResponse leg(List<JsonNode> segments, String originCode, String destinationCode, java.time.LocalDate searchDate) {
+        JsonNode firstSegment = segments.get(0);
+        JsonNode lastSegment = segments.get(segments.size() - 1);
+        int stops = segments.size() - 1;
+        int journeyMinutes = 0;
+        for (int i = 0; i < segments.size(); i++) {
+            JsonNode seg = segments.get(i);
+            stops += seg.path("stops").asInt(0); // technical stops within one leg
+            int legMinutes = FlightResultPaging.durationMinutes(seg.path("duration").asText(""));
+            journeyMinutes = legMinutes == Integer.MAX_VALUE || journeyMinutes < 0 ? -1 : journeyMinutes + legMinutes;
+            if (i > 0 && journeyMinutes >= 0) {
+                // Layover: both times are local to the same connecting airport, so the gap is time-zone safe.
+                Long layover = minutesBetween(segments.get(i - 1).path("at").asText(""), seg.path("dt").asText(""));
+                journeyMinutes = layover == null ? -1 : journeyMinutes + layover.intValue();
+            }
+        }
+        LocalTime departTime = parseFlightTime(firstSegment.path("dt").asText(""));
+        LocalTime arriveTime = parseFlightTime(lastSegment.path("at").asText(""));
+        java.time.LocalDate departDate = parseFlightDate(firstSegment.path("dt").asText(""), searchDate);
+        return FlightLegResponse.builder()
+                .airline(firstSegment.path("fD").path("aI").path("name").asText(""))
+                .airlineCode(firstSegment.path("fD").path("aI").path("code").asText(""))
+                .flightNumber(firstSegment.path("fD").path("fN").asText(""))
+                .origin(firstSegment.path("da").path("code").asText(originCode))
+                .destination(lastSegment.path("aa").path("code").asText(destinationCode))
+                .departTime(departTime)
+                .arriveTime(arriveTime)
+                .departDate(departDate)
+                .arriveDate(parseFlightDate(lastSegment.path("at").asText(""),
+                        departDate == null ? null : arriveTime.isBefore(departTime) ? departDate.plusDays(1) : departDate))
+                .duration(journeyMinutes >= 0 ? String.valueOf(journeyMinutes) : firstSegment.path("duration").asText(""))
+                .stops(stops)
+                .build();
     }
 
     /** fd.<TYPE>.fC.BF: the commissionable base for ONE passenger; a missing BF is null, so an offer without an adult BF has no base and is not bookable. */
