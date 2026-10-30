@@ -92,4 +92,20 @@ class AgencyApplicationPurgeJobTest {
         verify(fileStorageService, never()).delete(anyString());
         verify(kycDocumentRepository, never()).deleteAll(any());
     }
+
+    @Test
+    void aFailedPurgeIsLoggedAndTheNextApplicationStillPurged() {
+        AgencyApplication broken = AgencyApplication.builder().id("app-0").status(ApplicationStatus.REJECTED).build();
+        AgencyApplication app = AgencyApplication.builder().id("app-1").status(ApplicationStatus.REJECTED).build();
+        when(applicationRepository.findByStatusAndUpdatedAtBefore(eq(ApplicationStatus.REJECTED), any())).thenReturn(List.of(broken, app));
+        when(kycDocumentRepository.findByApplicationIdOrderByCreatedAt("app-0")).thenThrow(new IllegalStateException("db down"));
+        when(kycDocumentRepository.findByApplicationIdOrderByCreatedAt("app-1")).thenReturn(List.of(doc("d1")));
+
+        job.run();
+
+        verify(fileStorageService).delete("tenant_platform/kyc/app-1/d1");
+        verify(applicationRepository).save(app);
+        verify(applicationRepository, never()).save(broken);
+        assertThat(app.getReviewNote()).isEqualTo("documents purged");
+    }
 }
