@@ -206,9 +206,9 @@ class EntitlementServiceTest {
         assertThat(TenantCache.entitlements("T1")).get().extracting(Entitlements::skus).isEqualTo(Set.of());
     }
 
-    /** Rolling-deploy window: a tenant with no row yet gets a 14-day Suite trial, never a lockout. */
+    /** Rolling-deploy window: a tenant with no row yet gets Voyra Basic, as every new agency does, never a lockout. */
     @Test
-    void missingRowStartsAFourteenDaySuiteTrial() {
+    void missingRowStartsOnBasic() {
         when(subscriptionRepository.findByTenantId("T1")).thenReturn(Optional.empty());
         when(subscriptionRepository.saveAndFlush(any(Subscription.class))).thenAnswer(i -> i.getArgument(0));
 
@@ -217,10 +217,10 @@ class EntitlementServiceTest {
         ArgumentCaptor<Subscription> saved = ArgumentCaptor.forClass(Subscription.class);
         verify(subscriptionRepository).saveAndFlush(saved.capture());
         assertThat(saved.getValue().getTenantId()).isEqualTo("T1");
-        assertThat(saved.getValue().getPlan()).isEqualTo(SubscriptionPlan.SUITE);
-        assertThat(saved.getValue().getStatus()).isEqualTo(SubscriptionStatus.TRIAL);
-        assertThat(Duration.between(Instant.now(), saved.getValue().getTrialEndsAt()).toDays()).isEqualTo(13);
-        assertThat(e.skus()).isEqualTo(ALL);
+        assertThat(saved.getValue().getPlan()).isEqualTo(SubscriptionPlan.STARTER);
+        assertThat(saved.getValue().getStatus()).isEqualTo(SubscriptionStatus.ACTIVE);
+        assertThat(saved.getValue().getTrialEndsAt()).isNull();
+        assertThat(e.skus()).isEmpty();
         assertThat(e.readOnly()).isFalse();
         assertThat(TenantCache.entitlements("T1")).contains(e);
     }

@@ -3,6 +3,7 @@ package com.voyra.crm.service;
 import com.voyra.crm.dto.SubscriptionPaymentResponse;
 import com.voyra.crm.entity.GatewayOrder;
 import com.voyra.crm.entity.SubscriptionInvoice;
+import com.voyra.crm.enums.SubscriptionPlan;
 import com.voyra.crm.entity.Wallet;
 import com.voyra.crm.enums.GatewayOrderPurpose;
 import com.voyra.crm.enums.GatewayOrderStatus;
@@ -143,6 +144,30 @@ class SubscriptionPaymentServiceTest {
         given(gateway.simulateEnabled()).willReturn(false);
         wallet(true);
         inv.setGatewayOrderId("order_stub_1");
+
+        assertThatThrownBy(() -> service.simulate("T1", "I1")).isInstanceOf(NotFoundException.class);
+        verifyNoInteractions(webhookService);
+    }
+
+    /** Owner ruling 2026-10-30: no gateway yet, so an upgrade invoice is paid through the demo checkout on any wallet. */
+    @Test
+    void anUpgradeInvoicePaysThroughTheDemoCheckoutWhileTheStubRuns() {
+        given(gateway.name()).willReturn("stub");
+        lenient().when(gateway.simulateEnabled()).thenReturn(false);
+        wallet(false);
+        inv.setTargetPlan(SubscriptionPlan.LITE);
+
+        assertThat(service.pay("T1", "I1").getProvider()).isEqualTo("stub");
+        service.simulate("T1", "I1");
+
+        verify(webhookService).handle(contains("\"order_id\":\"order_9\""), isNull());
+    }
+
+    @Test
+    void theDemoCheckoutEndsWhenARealGatewayIsConfigured() {
+        given(gateway.simulateEnabled()).willReturn(false);
+        inv.setTargetPlan(SubscriptionPlan.LITE);
+        inv.setGatewayOrderId("order_9");
 
         assertThatThrownBy(() -> service.simulate("T1", "I1")).isInstanceOf(NotFoundException.class);
         verifyNoInteractions(webhookService);

@@ -38,6 +38,7 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -298,14 +299,14 @@ class SubscriptionServiceTest {
     }
 
     @Test
-    void aTenantWithoutARowGetsTheTrialInsteadOf404() {
-        Subscription trial = EntitlementService.newTrial("S9", "T9", Instant.now());
+    void aTenantWithoutARowGetsBasicInsteadOf404() {
+        Subscription basic = EntitlementService.newBasic("S9", "T9", Instant.now());
         when(subscriptionRepository.findByTenantId("T9")).thenReturn(Optional.empty());
         when(tenantRepository.existsById("T9")).thenReturn(true);
-        when(entitlementService.startMissingTrial("T9")).thenReturn(trial);
-        when(entitlementService.resolve("T9")).thenReturn(new Entitlements(SubscriptionPlan.SUITE, SubscriptionStatus.TRIAL,
-                EnumSet.allOf(Sku.class), 5, false, null));
-        assertThat(service.adminView("T9").getStatus()).isEqualTo(SubscriptionStatus.TRIAL);
+        when(entitlementService.startMissingTrial("T9")).thenReturn(basic);
+        when(entitlementService.resolve("T9")).thenReturn(new Entitlements(SubscriptionPlan.STARTER, SubscriptionStatus.ACTIVE,
+                Set.of(), 0, false, null));
+        assertThat(service.adminView("T9").getPlan()).isEqualTo(SubscriptionPlan.STARTER);
     }
 
     @Test

@@ -48,8 +48,9 @@ public class SubscriptionPaymentService {
         if (!SubscriptionBillingService.ISSUED.equals(inv.getStatus())) {
             throw new IllegalStateException("This invoice is already " + inv.getStatus().toLowerCase(Locale.ROOT));
         }
-        // Same rule as top-ups: prod runs the stub until Razorpay keys exist; only test wallets (which can simulate) may use it.
-        if (stub() && !testWallet(tenantId)) {
+        // Same rule as top-ups: prod runs the stub until Razorpay keys exist; only test wallets (which can simulate) may use it,
+        // except a plan upgrade, which goes through the demo checkout until a gateway is configured.
+        if (stub() && !testWallet(tenantId) && !demoUpgrade(inv)) {
             throw new IllegalStateException("Online payment is not available yet - pay by bank transfer");
         }
         GatewayOrder order = inv.getGatewayOrderId() == null ? null : orderRepository.findByGatewayOrderId(inv.getGatewayOrderId())
@@ -73,15 +74,15 @@ public class SubscriptionPaymentService {
      * payment.captured event through the real webhook handler. Not transactional, so the handler commits before the re-read.
      */
     public SubscriptionInvoiceResponse simulate(String tenantId, String invoiceId) {
-        if (!gateway.simulateEnabled()) {
-            throw new NotFoundException("Invoice not found");
-        }
         SubscriptionInvoice inv = invoiceRepository.findById(invoiceId).filter(i -> i.getTenantId().equals(tenantId))
                 .orElseThrow(() -> new NotFoundException("Invoice not found"));
+        if (!gateway.simulateEnabled() && !demoUpgrade(inv)) {
+            throw new NotFoundException("Invoice not found");
+        }
         if (inv.getGatewayOrderId() == null) {
             throw new IllegalStateException("Start the payment first");
         }
-        if (!testWallet(tenantId)) {
+        if (!testWallet(tenantId) && !demoUpgrade(inv)) {
             throw new IllegalStateException("Simulated payments only work on a test wallet");
         }
         // Fixed payment id per invoice, so a second simulate is a duplicate delivery, not a second payment.
@@ -90,6 +91,15 @@ public class SubscriptionPaymentService {
                 inv.getId(), inv.getGatewayOrderId(), RazorpayPaymentGateway.toPaise(inv.getTotal()));
         webhookService.handle(body, null);
         return SubscriptionBillingService.toResponse(invoiceRepository.findById(invoiceId).orElseThrow());
+    }
+
+    /**
+     * Owner ruling 2026-10-30: with no payment gateway yet, a plan upgrade is paid through a demo checkout so the upgrade
+     * can be shown to clients. Only upgrade invoices, and only while the stub gateway is in use; a real gateway ends it.
+     * shortcut: upgrades are free while the stub runs; remove this once Razorpay keys are set.
+     */
+    private boolean demoUpgrade(SubscriptionInvoice inv) {
+        return stub() && inv.getTargetPlan() != null;
     }
 
     private boolean stub() {

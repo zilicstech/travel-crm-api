@@ -128,9 +128,9 @@ public class AgencyService {
                 .createdAt(Instant.now())
                 .build());
         Instant now = Instant.now();
-        Subscription trial = EntitlementService.newTrial(
+        Subscription basic = EntitlementService.newBasic(
                 UniqueIdResolver.resolve(subscriptionRepository::existsById), tenant.getId(), now);
-        subscriptionRepository.save(trial);
+        subscriptionRepository.save(basic);
         tenantFlywayMigrator.migrate(tenant.getId());
         seedDefaultsForTenant(tenant.getId());
         seedChartOfAccountsFor(tenant.getId());
@@ -139,7 +139,7 @@ public class AgencyService {
         TenantStatus status = tenant.getStatus();
         afterCommit(() -> {
             TenantCache.put(tenantId, name, status);
-            TenantCache.putEntitlements(tenantId, EntitlementService.compute(trial, now));
+            TenantCache.putEntitlements(tenantId, EntitlementService.compute(basic, now));
         });
     }
 

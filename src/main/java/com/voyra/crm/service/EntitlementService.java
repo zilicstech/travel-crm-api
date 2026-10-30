@@ -103,18 +103,16 @@ public class EntitlementService {
         return e;
     }
 
-    /** The 14-day Suite trial every new agency starts on (spec §5.2). */
-    public static Subscription newTrial(String id, String tenantId, Instant now) {
+    /** Every new agency starts on Voyra Basic (owner ruling 2026-10-30: no free Premium trial); it upgrades from Plan & Billing. */
+    public static Subscription newBasic(String id, String tenantId, Instant now) {
         return Subscription.builder()
                 .id(id)
                 .tenantId(tenantId)
-                .plan(SubscriptionPlan.SUITE)
-                .skus(Arrays.stream(Sku.values()).map(Enum::name).toList())
+                .plan(SubscriptionPlan.STARTER)
+                .skus(List.of())
                 .seats(0)
-                .status(SubscriptionStatus.TRIAL)
+                .status(SubscriptionStatus.ACTIVE)
                 .periodStart(now)
-                .periodEnd(now.plus(TRIAL_LENGTH))
-                .trialEndsAt(now.plus(TRIAL_LENGTH))
                 .billingCycle(BillingCycle.MONTHLY)
                 .updatedAt(now)
                 .build();
@@ -122,13 +120,13 @@ public class EntitlementService {
 
     /**
      * Rolling-deploy window: a tenant created before its subscription row existed must never be locked
-     * out, so it starts a trial. A concurrent request creating the same row wins (tenant_id is unique).
+     * out, so it gets Voyra Basic, as a new agency does. A concurrent request creating the same row wins (tenant_id is unique).
      */
     public Subscription startMissingTrial(String tenantId) {
-        log.warn("Tenant {} has no subscription row - starting a {}-day Suite trial", tenantId, TRIAL_LENGTH.toDays());
+        log.warn("Tenant {} has no subscription row - starting it on Voyra Basic", tenantId);
         try {
             return newTransaction.execute(tx -> subscriptionRepository.saveAndFlush(
-                    newTrial(UniqueIdResolver.resolve(subscriptionRepository::existsById), tenantId, Instant.now())));
+                    newBasic(UniqueIdResolver.resolve(subscriptionRepository::existsById), tenantId, Instant.now())));
         } catch (DataAccessException e) {
             // A concurrent create wins; anything else is a real failure, never a silent Starter downgrade.
             return subscriptionRepository.findByTenantId(tenantId).orElseThrow(() -> e);
