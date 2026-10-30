@@ -655,6 +655,20 @@ class PlatformBookingServiceTest {
         verify(walletService, never()).debitHeld(any(), any(), any(), any(), any());
     }
 
+    /** Confirm waits briefly for the ticket, so an accepted booking that tickets seconds later is answered by confirm itself. */
+    @Test
+    void confirmWaitsForAnAcceptedBookingToTicket() {
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "confirmWaitSeconds", 10L);
+        String id = reviewed();
+        when(provider.book(any())).thenReturn(new BookResult("SB-1", SupplierBookingStatus.PENDING, null, List.of(), null, null));
+        when(provider.bookingDetails("SB-1")).thenReturn(new BookResult("SB-1", SupplierBookingStatus.TICKETED, "PNR1", List.of("T1"), null, null));
+
+        PlatformBooking b = service.confirm(id, confirmRequest("key-00000001", "4500.00"));
+
+        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
+        assertThat(b.getPnr()).isEqualTo("PNR1");
+    }
+
     @Test
     void timeoutLeavesBooking() {
         String id = reviewed();

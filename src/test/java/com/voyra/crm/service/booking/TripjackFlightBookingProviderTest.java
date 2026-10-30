@@ -125,6 +125,21 @@ class TripjackFlightBookingProviderTest {
         assertThatThrownBy(() -> provider.book(request())).isInstanceOf(SupplierException.class);
     }
 
+    /** Live 2026-10-30: a 400 on book left no order at Tripjack, so it is a clean failure that releases the hold at once. */
+    @Test
+    void a4xxOnBookIsAFailureWithTheSuppliersCodeAndA5xxStaysUnknown() {
+        server.expect(requestTo(BASE + "/oms/v1/air/book")).andRespond(withStatus(org.springframework.http.HttpStatus.BAD_REQUEST)
+                .contentType(MediaType.APPLICATION_JSON).body("{\"status\":{\"success\":false},\"errors\":[{\"errCode\":\"1024\",\"message\":\"Invalid title\"}]}"));
+        server.expect(requestTo(BASE + "/oms/v1/air/book")).andRespond(withStatus(org.springframework.http.HttpStatus.BAD_REQUEST));
+        server.expect(requestTo(BASE + "/oms/v1/air/book")).andRespond(withStatus(org.springframework.http.HttpStatus.BAD_GATEWAY));
+
+        BookResult refused = provider.book(request());
+        assertThat(refused.status()).isEqualTo(SupplierBookingStatus.FAILED);
+        assertThat(refused.message()).contains("1024").contains("Invalid title");
+        assertThat(provider.book(request()).status()).isEqualTo(SupplierBookingStatus.FAILED);
+        assertThatThrownBy(() -> provider.book(request())).isInstanceOf(SupplierException.class);
+    }
+
     @Test
     void emptyOkBodyOnCancelIsUnknownNotRefused() {
         server.expect(requestTo(BASE + "/oms/v1/air/amendment/submit-amendment")).andRespond(withSuccess("", MediaType.APPLICATION_JSON));

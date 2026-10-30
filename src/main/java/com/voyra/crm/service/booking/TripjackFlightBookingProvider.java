@@ -80,7 +80,16 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
         delivery.put("contacts", r.phone() == null ? List.of() : List.of(r.phone()));
         body.put("deliveryInfo", delivery);
 
-        JsonNode res = post("/oms/v1/air/book", body, "book", false);
+        JsonNode res;
+        try {
+            res = post("/oms/v1/air/book", body, "book", false);
+        } catch (SupplierException e) {
+            String refusal = SupplierRefusal.of(e, log);
+            if (refusal == null) {
+                throw e; // timeout, 5xx or no answer: the supplier may have booked, so the caller treats it as unknown
+            }
+            return new BookResult(r.reviewId(), SupplierBookingStatus.FAILED, null, List.of(), refusal, null);
+        }
         if (explicitlyFailed(res)) {
             return new BookResult(r.reviewId(), SupplierBookingStatus.FAILED, null, List.of(), message(res, "Booking failed"), null);
         }

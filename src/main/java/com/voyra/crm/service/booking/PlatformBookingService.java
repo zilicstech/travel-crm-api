@@ -106,6 +106,10 @@ public class PlatformBookingService {
     private final PlatformSettingService settings;
     private final PlatformBookingMirrorService mirrorService;
 
+    /** How long confirm waits for the supplier to ticket an accepted booking before the poller takes over; 0 in unit tests. */
+    @org.springframework.beans.factory.annotation.Value("${app.platform-booking.confirm-wait-seconds:30}")
+    private long confirmWaitSeconds;
+
     public PlatformBookingService(PlatformBookingRepository bookingRepository, BookingProviderRegistry providers,
                                   AgencyPriceQuoter quoter,
                                   AgencyPricingService pricingService, WalletService walletService,
@@ -377,7 +381,29 @@ public class PlatformBookingService {
             tx.executeWithoutResult(s -> events.record(bookingId, "BOOK_NO_ANSWER", Map.of("error", e.getClass().getSimpleName())));
             return bookingRepository.findById(bookingId).orElse(booking);
         }
-        return applySupplierResult(bookingId, result);
+        return awaitOutcome(bookingId, applySupplierResult(bookingId, result));
+    }
+
+    /**
+     * Tripjack accepts a booking and tickets it moments later. Asks for the outcome for a short while, so the agency usually
+     * learns ticketed or failed from confirm itself; a booking still pending after that is left to {@link PlatformBookingPoller}.
+     */
+    private PlatformBooking awaitOutcome(String bookingId, PlatformBooking booking) {
+        long until = System.currentTimeMillis() + confirmWaitSeconds * 1000;
+        while (booking.getStatus() == PlatformBookingStatus.BOOKING && System.currentTimeMillis() < until) {
+            try {
+                Thread.sleep(3000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+            try {
+                booking = applySupplierResult(bookingId, providers.supplierFor(booking).bookingDetails(supplierId(booking)));
+            } catch (RuntimeException e) {
+                log.warn("Booking details for platform booking {} not available yet: {}", bookingId, e.getClass().getSimpleName());
+            }
+        }
+        return booking;
     }
 
     /**
