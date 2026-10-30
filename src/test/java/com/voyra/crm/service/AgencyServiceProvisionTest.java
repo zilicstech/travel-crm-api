@@ -138,7 +138,7 @@ class AgencyServiceProvisionTest {
     }
 
     @Test
-    void provisioningStartsAFourteenDaySuiteTrialAndCachesItsEntitlements() {
+    void provisioningStartsOnVoyraBasicAndCachesItsEntitlements() {
         AgencyCreateRequest request = new AgencyCreateRequest();
         request.setAgencyName("Trial Travels");
         request.setOwnerName("Tara");
@@ -152,21 +152,21 @@ class AgencyServiceProvisionTest {
         ArgumentCaptor<com.voyra.crm.entity.Subscription> saved = ArgumentCaptor.forClass(com.voyra.crm.entity.Subscription.class);
         verify(subscriptionRepository).save(saved.capture());
         com.voyra.crm.entity.Subscription sub = saved.getValue();
-        Instant inFourteenDays = Instant.now().plus(java.time.Duration.ofDays(14));
         assertThat(sub.getTenantId()).isEqualTo(response.getId());
         assertThat(sub.getId()).hasSize(36);
-        assertThat(sub.getPlan()).isEqualTo(com.voyra.crm.enums.SubscriptionPlan.SUITE);
-        assertThat(sub.getStatus()).isEqualTo(com.voyra.crm.enums.SubscriptionStatus.TRIAL);
+        // owner ruling 2026-10-30: no free Premium trial, a new agency starts on Voyra Basic
+        assertThat(sub.getPlan()).isEqualTo(com.voyra.crm.enums.SubscriptionPlan.STARTER);
+        assertThat(sub.getStatus()).isEqualTo(com.voyra.crm.enums.SubscriptionStatus.ACTIVE);
         assertThat(sub.getWaivedReason()).isNull();
         assertThat(sub.getSeats()).isZero();
-        assertThat(sub.getSkus()).containsExactlyInAnyOrder("CRM_CORE", "STAFF_SEATS", "ACCOUNTS_GST", "REPORTS", "VISA");
-        assertThat(sub.getTrialEndsAt()).isCloseTo(inFourteenDays, within(1, java.time.temporal.ChronoUnit.MINUTES));
-        assertThat(sub.getPeriodEnd()).isEqualTo(sub.getTrialEndsAt());
+        assertThat(sub.getSkus()).isEmpty();
+        assertThat(sub.getTrialEndsAt()).isNull();
+        assertThat(sub.getPeriodEnd()).isNull();
         assertThat(sub.getBillingCycle()).isEqualTo(com.voyra.crm.enums.BillingCycle.MONTHLY);
         assertThat(TenantCache.entitlements(response.getId())).get().satisfies(e -> {
-            assertThat(e.status()).isEqualTo(com.voyra.crm.enums.SubscriptionStatus.TRIAL);
+            assertThat(e.plan()).isEqualTo(com.voyra.crm.enums.SubscriptionPlan.STARTER);
             assertThat(e.readOnly()).isFalse();
-            assertThat(e.seats()).isEqualTo(5);
+            assertThat(e.seats()).isZero();
         });
     }
 }

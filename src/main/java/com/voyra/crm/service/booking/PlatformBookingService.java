@@ -229,6 +229,9 @@ public class PlatformBookingService {
         CustomUserPrincipal principal = requireBooker(PricingProduct.FLIGHT);
         ReviewEnv env = admit(principal, PricingProduct.FLIGHT, request.getClientId(), request.getIssuedByAgentId(),
                 request.getServiceId(), request.getLeadId());
+        log.info("Flight review start: tenant={}, offerId={}, returnOfferId={}, pax={}/{}/{}, environment={}, searchedFare={}",
+                principal.tenantId(), request.getOfferId(), request.getReturnOfferId(), request.getAdults(), request.getChildren(),
+                request.getInfants(), env.environment(), request.getSearchDisplayedFare());
         FareReview fare = providers.flights().review(request);
         Map<String, Object> itinerary = itineraryMap(fare.itinerary());
         java.time.LocalDate travelDate = firstDeparture(itinerary);
@@ -361,10 +364,14 @@ public class PlatformBookingService {
                 "confirm must not run inside a transaction - the supplier book call would hold a connection and the row lock");
         CustomUserPrincipal principal = requireBooker();
         String issuedBy = resolveIssuer(principal, request.getIssuedByAgentId());
+        log.info("Platform booking {} confirm start: tenant={}, by={}, acceptedFare={}", bookingId, principal.tenantId(), principal.userId(),
+                request.getAcceptedDisplayedFare());
         Held held = tx.execute(s -> hold(bookingId, principal, request, issuedBy));
         if (held.refusal() != null) {
+            log.info("Platform booking {} confirm refused before the hold: {}", bookingId, held.refusal().getMessage());
             throw held.refusal();
         }
+        log.info("Platform booking {} held: status={}, sendBook={}", bookingId, held.booking().getStatus(), held.sendBook());
         if (!held.sendBook()) {
             return held.booking();
         }
@@ -373,6 +380,8 @@ public class PlatformBookingService {
             return booking;
         }
         BookResult result;
+        log.info("Platform booking {} sending book: product={}, environment={}, displayed={}, gross={}, pax={}", bookingId,
+                booking.getProduct(), booking.getEnvironment(), booking.getDisplayed(), booking.getGross(), request.getPassengers().size());
         try {
             result = providers.supplierFor(booking).book(bookRequest(booking, request));
         } catch (RuntimeException e) {
@@ -381,7 +390,10 @@ public class PlatformBookingService {
             tx.executeWithoutResult(s -> events.record(bookingId, "BOOK_NO_ANSWER", Map.of("error", e.getClass().getSimpleName())));
             return bookingRepository.findById(bookingId).orElse(booking);
         }
-        return awaitOutcome(bookingId, applySupplierResult(bookingId, result));
+        log.info("Platform booking {} book answer: {} {}", bookingId, result.status(), result.message() == null ? "" : result.message());
+        PlatformBooking out = awaitOutcome(bookingId, applySupplierResult(bookingId, result));
+        log.info("Platform booking {} confirm returns {} (pnr {})", bookingId, out.getStatus(), out.getPnr());
+        return out;
     }
 
     /**
@@ -815,6 +827,7 @@ public class PlatformBookingService {
 
     private PlatformBooking applyLocked(String bookingId, BookResult result) {
         PlatformBooking b = bookingRepository.findByIdForUpdate(bookingId).orElseThrow(() -> new NotFoundException("Booking not found"));
+        log.info("Platform booking {} applying supplier result {} to status {}", bookingId, result.status(), b.getStatus());
         if (result.supplierBookingId() != null && b.getSupplierBookingId() == null) {
             b.setSupplierBookingId(result.supplierBookingId());
         }

@@ -7,8 +7,8 @@ import org.slf4j.Logger;
 import org.springframework.web.client.RestClientResponseException;
 
 /**
- * A book call the supplier answered with a 4xx was rejected before anything was booked (Tripjack then reports "No order
- * found"), so it is a clean failure, not an unknown outcome. 408 is left out: a request timeout may still have been processed.
+ * A review or book call the supplier answered with a 4xx was rejected before anything was booked (Tripjack then reports "No
+ * order found"), so it is a clean refusal, not an unknown outcome. 408 is left out: a request timeout may still have been processed.
  */
 final class SupplierRefusal {
 
@@ -32,7 +32,7 @@ final class SupplierRefusal {
         } catch (Exception ignored) {
             // an empty or non-JSON body still means the request was refused
         }
-        String refusal = "Supplier refused the booking (HTTP " + http.getStatusCode().value() + ")"
+        String refusal = "Supplier refused (HTTP " + http.getStatusCode().value() + ")"
                 + (code.isBlank() ? "" : " " + code) + (message.isBlank() ? "" : ": " + message);
         String logged = refusal.length() > 300 ? refusal.substring(0, 300) : refusal;
         log.warn("{}", logged);

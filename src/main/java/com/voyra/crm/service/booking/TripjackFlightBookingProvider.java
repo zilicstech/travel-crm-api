@@ -52,7 +52,18 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
     @Override
     public FareReview review(List<String> offerIds, int adults, int children, int infants) {
         // a split round trip is one review of both price ids, so it is one supplier booking
-        JsonNode res = post("/fms/v1/review", Map.of("priceIds", offerIds), "review");
+        JsonNode res;
+        try {
+            res = post("/fms/v1/review", Map.of("priceIds", offerIds), "review");
+        } catch (SupplierException e) {
+            // Tripjack refuses a fare it can no longer sell with HTTP 400 (errCode 1000 "Requested flight is no longer available",
+            // live 2026-10-30): that is an unavailable fare the agent can replace, not an unreachable supplier
+            if (SupplierRefusal.of(e, log) == null) {
+                throw e;
+            }
+            throw new FareUnavailableException(offerIds.size() > 1 ? AgencySupplierMessage.NOT_CONFIRMED_PAIR
+                    : AgencySupplierMessage.NOT_CONFIRMED_FLIGHT + " - it may have sold out. Search again and pick another fare");
+        }
         if (!succeeded(res)) {
             // the agency sees a fixed sentence; the supplier's own text stays in the log
             log.warn("Tripjack review refused offers {}: {}", offerIds, message(res, "no message"));
@@ -65,6 +76,8 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
         if (reviewId == null || reviewId.isBlank() || total == null) {
             throw new SupplierException("Tripjack review response is missing the review id or total fare", null);
         }
+        log.info("Tripjack review ok: priceIds={}, bookingId={}, total={}, base={}, conditions={}", offerIds, reviewId, total,
+                decimal(fare.path("BF")), res.path("conditions").isMissingNode() ? "-" : res.path("conditions").toString());
         return new FareReview(reviewId, total, decimal(fare.path("BF")), "INR",
                 fareRules(reviewId), null, res.path("tripInfos").isMissingNode() ? null : res.path("tripInfos"));
     }
@@ -80,6 +93,11 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
         delivery.put("contacts", r.phone() == null ? List.of() : List.of(r.phone()));
         body.put("deliveryInfo", delivery);
 
+        // shape only, never names, passport numbers, email or phone (DPDP): enough to see what Tripjack is objecting to
+        log.info("Tripjack book request: bookingId={}, amount={}, travellers={}, email={}, phoneDigits={}", r.reviewId(), r.totalFare(),
+                r.passengers().stream().map(p -> p.type() + "/" + p.title() + (p.dateOfBirth() != null ? "/dob" : "")
+                        + (p.passportNumber() != null ? "/passport" : "") + (p.nationality() != null ? "/" + p.nationality() : "")).toList(),
+                r.email() != null && !r.email().isBlank(), r.phone() == null ? 0 : r.phone().replaceAll("\\D", "").length());
         JsonNode res;
         try {
             res = post("/oms/v1/air/book", body, "book", false);
@@ -91,13 +109,17 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
             return new BookResult(r.reviewId(), SupplierBookingStatus.FAILED, null, List.of(), refusal, null);
         }
         if (explicitlyFailed(res)) {
+            log.warn("Tripjack book refused (200): bookingId={}, errCode={}, message={}", r.reviewId(),
+                    res.path("errors").path(0).path("errCode").asText(""), message(res, "Booking failed"));
             return new BookResult(r.reviewId(), SupplierBookingStatus.FAILED, null, List.of(), message(res, "Booking failed"), null);
         }
         if (!succeeded(res)) {
             // Empty or unexpected answer: the supplier may have booked, so this is unknown, not failed.
+            log.warn("Tripjack book ambiguous answer: bookingId={}, empty={}", r.reviewId(), res == null);
             throw new SupplierException("Tripjack book returned an ambiguous response", null);
         }
         // Accepted is not ticketed: the ticket arrives asynchronously, so the caller polls bookingDetails.
+        log.info("Tripjack book accepted: bookingId={}, status={}", r.reviewId(), res.path("status").toString());
         return new BookResult(r.reviewId(), SupplierBookingStatus.PENDING, null, List.of(), null, null);
     }
 
@@ -105,6 +127,7 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
     public BookResult bookingDetails(String supplierBookingId) {
         JsonNode res = post("/oms/v1/booking-details", Map.of("bookingId", supplierBookingId), "booking-details");
         if (!succeeded(res)) {
+            log.warn("Tripjack booking-details not successful: bookingId={}, message={}", supplierBookingId, message(res, "-"));
             return new BookResult(supplierBookingId, SupplierBookingStatus.PENDING, null, List.of(), message(res, null), null);
         }
         String orderStatus = res.path("order").path("status").asText("").toUpperCase();
@@ -131,6 +154,8 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
         }
         // shortcut: the charged amount is not parsed (field unknown until the slice 0 spike), so no variance is detected here
         String pnr = pnrs.isEmpty() ? null : String.join(" / ", pnrs); // platform_booking.pnr is 40: room for several 6-character PNRs
+        log.info("Tripjack booking-details: bookingId={}, orderStatus={}, mapped={}, pnr={}, tickets={}, amount={}", supplierBookingId,
+                orderStatus, status, pnr, tickets.size(), res.path("order").path("amount").asText("-"));
         return new BookResult(supplierBookingId, status, pnr, tickets, orderStatus.isEmpty() ? null : orderStatus, null);
     }
 
@@ -233,18 +258,25 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
                 .defaultHeader("apikey", credential.apiKey())
                 .build();
         String raw;
+        long started = System.currentTimeMillis();
         try {
             raw = client.post().uri(path).body(body).retrieve().body(String.class);
+            log.info("Tripjack {} answered in {} ms", what, System.currentTimeMillis() - started);
         } catch (RestClientResponseException e) {
             String text = logBody ? e.getResponseBodyAsString() : "";
-            log.error("Tripjack {} HTTP {}: {}", what, e.getStatusCode().value(), text.length() > 200 ? text.substring(0, 200) : text);
+            log.error("Tripjack {} HTTP {} after {} ms: {}", what, e.getStatusCode().value(), System.currentTimeMillis() - started,
+                    text.length() > 200 ? text.substring(0, 200) : text);
             throw new SupplierException("Tripjack " + what + " call failed (HTTP " + e.getStatusCode().value() + ")", e);
-        } catch (ResourceAccessException e) {
-            if (e.getCause() instanceof SocketTimeoutException) {
+        } catch (RestClientException e) {
+            // a read timeout can arrive wrapped in a body-extraction error, not only as ResourceAccessException
+            boolean timeout = false;
+            for (Throwable c = e; c != null && !timeout; c = c.getCause()) {
+                timeout = c instanceof SocketTimeoutException;
+            }
+            log.error("Tripjack {} {} after {} ms: {}", what, timeout ? "timed out" : "failed", System.currentTimeMillis() - started, e.getMessage());
+            if (timeout) {
                 throw new SupplierTimeoutException("Tripjack " + what + " timed out", e);
             }
-            throw new SupplierException("Tripjack " + what + " call failed", e);
-        } catch (RestClientException e) {
             throw new SupplierException("Tripjack " + what + " call failed", e);
         }
         try {

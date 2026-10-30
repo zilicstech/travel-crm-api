@@ -125,6 +125,16 @@ class TripjackFlightBookingProviderTest {
         assertThatThrownBy(() -> provider.book(request())).isInstanceOf(SupplierException.class);
     }
 
+    /** Live 2026-10-30: Tripjack answers a sold-out fare's review with HTTP 400 errCode 1000; the agent gets "pick another fare", not a 502. */
+    @Test
+    void a4xxOnReviewIsAnUnavailableFareNotAnUnreachableSupplier() {
+        server.expect(requestTo(BASE + "/fms/v1/review")).andRespond(withStatus(org.springframework.http.HttpStatus.BAD_REQUEST)
+                .contentType(MediaType.APPLICATION_JSON).body("{\"status\":{\"success\":false,\"httpStatus\":400},\"errors\":[{\"errCode\":\"1000\","
+                        + "\"message\":\"Requested flight is no longer available. Please try different flight\"}]}"));
+        assertThatThrownBy(() -> provider.review(List.of("P1"), 1, 0, 0)).isInstanceOf(FareUnavailableException.class)
+                .hasMessageContaining("pick another fare");
+    }
+
     /** Live 2026-10-30: a 400 on book left no order at Tripjack, so it is a clean failure that releases the hold at once. */
     @Test
     void a4xxOnBookIsAFailureWithTheSuppliersCodeAndA5xxStaysUnknown() {
