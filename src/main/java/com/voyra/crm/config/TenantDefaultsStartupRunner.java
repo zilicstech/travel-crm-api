@@ -14,7 +14,7 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 
 /**
- * Backfills default settings and vendors for any tenant that has none - an agency created before
+ * Backfills default settings for any tenant that has none - an agency created before
  * creation-time seeding existed, or one whose creation-time seed failed. Runs after tenant schema
  * migrations (order 100) and before demo business data (order 200). Replaces the separate
  * AgencySettingSeedRunner / VendorSeedRunner, which seeded without a lock or transaction.

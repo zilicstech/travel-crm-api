@@ -81,6 +81,11 @@ public class Vendor {
     @Builder.Default
     private Integer sortOrder = 0;
 
+    /** Voyra Platform (V79): set only by migration; VendorService refuses name, service and status changes. */
+    @Column(name = "is_system", nullable = false, updatable = false)
+    @Builder.Default
+    private Boolean isSystem = false;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 

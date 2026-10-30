@@ -9,6 +9,7 @@ import com.voyra.crm.entity.Vendor;
 import com.voyra.crm.enums.AgencySettingKind;
 import com.voyra.crm.enums.AuditEntityType;
 import com.voyra.crm.enums.ServiceType;
+import com.voyra.crm.exception.BookingConflictException;
 import com.voyra.crm.repository.BookingRepository;
 import com.voyra.crm.repository.LeadProposalRepository;
 import com.voyra.crm.repository.SupplierInvoiceRepository;
@@ -22,6 +23,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 
@@ -106,7 +109,9 @@ public class VendorService {
                     : vendorRepository.findAllByOrderBySortOrderAscNameAsc();
         }
         boolean includeFinancials = includeFinancials();
-        return vendors.stream().map(v -> toResponse(v, includeFinancials)).toList();
+        return vendors.stream()
+                .sorted(Comparator.comparing((Vendor v) -> !Boolean.TRUE.equals(v.getIsSystem())))
+                .map(v -> toResponse(v, includeFinancials)).toList();
     }
 
     @Transactional(readOnly = true)
@@ -117,6 +122,12 @@ public class VendorService {
     @Transactional
     public VendorResponse update(String id, VendorUpdateRequest request) {
         Vendor vendor = findVendor(id);
+        if (isSystem(vendor)
+                && ((request.getName() != null && !request.getName().trim().equals(vendor.getName()))
+                    || (request.getServiceTypes() != null
+                        && !new HashSet<>(request.getServiceTypes()).equals(new HashSet<>(vendor.getServiceTypes()))))) {
+            throw systemVendorLocked();
+        }
         Map<String, String> before = AuditSnapshot.of(vendor, AUDITED);
         String oldName = vendor.getName();
 
@@ -169,6 +180,9 @@ public class VendorService {
     @Transactional
     public VendorResponse updateStatus(String id, boolean active) {
         Vendor vendor = findVendor(id);
+        if (isSystem(vendor) && active != Boolean.TRUE.equals(vendor.getIsActive())) {
+            throw systemVendorLocked();
+        }
         Map<String, String> before = AuditSnapshot.of(vendor, AUDITED);
         vendor.setIsActive(active);
         touch(vendor);
@@ -215,6 +229,16 @@ public class VendorService {
                 .orElseThrow(() -> new IllegalArgumentException("Vendor not found: " + id));
     }
 
+    private static boolean isSystem(Vendor vendor) {
+        return Boolean.TRUE.equals(vendor.getIsSystem());
+    }
+
+    /** Tax, bank and contact fields stay editable, so the supplier bills the mirror posts can carry Voyra's GSTIN. */
+    private static BookingConflictException systemVendorLocked() {
+        return new BookingConflictException("SYSTEM_VENDOR",
+                "Voyra Platform is managed by Voyra: its name, services and status can't be changed", Map.of());
+    }
+
     private int nextSortOrder() {
         return vendorRepository.findAllByOrderBySortOrderAscNameAsc().stream()
                 .mapToInt(Vendor::getSortOrder).max().orElse(-1) + 1;
@@ -237,7 +261,7 @@ public class VendorService {
                 .contactPerson(v.getContactPerson()).phone(v.getPhone()).email(v.getEmail())
                 .address(v.getAddress()).gstNumber(v.getGstNumber()).notes(v.getNotes())
                 .defaultRateNote(v.getDefaultRateNote()).isActive(v.getIsActive())
-                .sortOrder(v.getSortOrder()).createdAt(v.getCreatedAt()).updatedAt(v.getUpdatedAt())
+                .sortOrder(v.getSortOrder()).isSystem(v.getIsSystem()).createdAt(v.getCreatedAt()).updatedAt(v.getUpdatedAt())
                 .stateCode(v.getStateCode()).isPrepaid(v.getIsPrepaid())
                 .paymentTermsDays(v.getPaymentTermsDays());
         if (includeFinancials) {

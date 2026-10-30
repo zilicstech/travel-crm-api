@@ -73,7 +73,6 @@ import java.util.stream.Stream;
 @RequiredArgsConstructor
 public class PlatformBookingMirrorTenantService {
 
-    static final String VOYRA_VENDOR = "Voyra Platform";
     private static final String INR = "INR";
     private static final java.util.Set<BookingDocumentType> MIRROR_VOUCHERS = java.util.EnumSet.of(BookingDocumentType.E_TICKET, BookingDocumentType.HOTEL_VOUCHER);
 
@@ -181,9 +180,8 @@ public class PlatformBookingMirrorTenantService {
      */
     private String mirror(PlatformBooking pb, BookingCreateRequest request, ServiceType product, BookingDocumentType docType,
                           Consumer<BookingDocument> describe) {
-        // an agency may keep an old, deactivated vendor of the same name next to the seeded one
-        Vendor vendor = vendorRepository.findAllByNameIgnoreCase(VOYRA_VENDOR).stream().filter(v -> Boolean.TRUE.equals(v.getIsActive()))
-                .findFirst().orElseThrow(() -> new IllegalStateException("This agency has no active " + VOYRA_VENDOR + " vendor"));
+        Vendor vendor = vendorRepository.findByIsSystemTrueAndIsActiveTrue()
+                .orElseThrow(() -> new IllegalStateException("This agency has no active Voyra Platform vendor"));
         String base = baseCurrency.code();
         // bought in rupees; a non-INR agency needs today's rate, and a missing one fails the mirror, never the booking
         BigDecimal rate = exchangeRateProvider.resolve(INR, base, LocalDate.now()).rate();

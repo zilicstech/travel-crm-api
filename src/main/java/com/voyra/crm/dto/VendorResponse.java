@@ -54,6 +54,9 @@ public class VendorResponse {
     @Schema(example = "0")
     private Integer sortOrder;
 
+    @Schema(description = "Voyra Platform: managed by Voyra, its name, services and status can't be changed", example = "false")
+    private Boolean isSystem;
+
     @Schema(example = "2026-01-10T09:00:00")
     private LocalDateTime createdAt;
 

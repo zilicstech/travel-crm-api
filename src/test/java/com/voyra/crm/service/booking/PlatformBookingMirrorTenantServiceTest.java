@@ -93,8 +93,8 @@ class PlatformBookingMirrorTenantServiceTest {
 
     @BeforeEach
     void setUp() {
-        when(vendorRepository.findAllByNameIgnoreCase("Voyra Platform"))
-                .thenReturn(List.of(Vendor.builder().id("V-VOYRA").name("Voyra Platform").isActive(true).build()));
+        when(vendorRepository.findByIsSystemTrueAndIsActiveTrue())
+                .thenReturn(Optional.of(Vendor.builder().id("V-VOYRA").name("Voyra Platform").isActive(true).isSystem(true).build()));
         when(exchangeRateProvider.resolve(eq("INR"), eq("INR"), any()))
                 .thenReturn(new ResolvedExchangeRate(BigDecimal.ONE, FxRateSource.INR_IDENTITY, LocalDate.now()));
         when(markupDefaultRepository.findById(ServiceType.FLIGHT)).thenReturn(Optional.of(MarkupDefault.builder()
@@ -183,29 +183,9 @@ class PlatformBookingMirrorTenantServiceTest {
         verify(supplierPaymentService, never()).pay(any());
     }
 
-    /** An agency that deactivated an old "Voyra Platform" and has the seeded one: the mirror uses the active one. */
-    @Test
-    void aDuplicateVoyraVendorResolvesToTheActiveOne() {
-        when(vendorRepository.findByNameIgnoreCase("Voyra Platform"))
-                .thenThrow(new org.springframework.dao.IncorrectResultSizeDataAccessException(1, 2));
-        when(vendorRepository.findAllByNameIgnoreCase("Voyra Platform")).thenReturn(List.of(
-                Vendor.builder().id("V-OLD").name("Voyra Platform").isActive(false).build(),
-                Vendor.builder().id("V-VOYRA").name("voyra platform").isActive(true).build()));
-
-        service.create(platformBooking(), roundTrip(), pax());
-
-        ArgumentCaptor<BookingCreateRequest> request = ArgumentCaptor.forClass(BookingCreateRequest.class);
-        verify(bookingService).logBooking(request.capture(), anyString(), any(), any(), any(), any(), any(), any());
-        assertThat(request.getValue().getVendorId()).isEqualTo("V-VOYRA");
-    }
-
     @Test
     void withNoActiveVoyraVendorTheMirrorFailsClearly() {
-        when(vendorRepository.findByNameIgnoreCase("Voyra Platform"))
-                .thenThrow(new org.springframework.dao.IncorrectResultSizeDataAccessException(1, 2));
-        when(vendorRepository.findAllByNameIgnoreCase("Voyra Platform")).thenReturn(List.of(
-                Vendor.builder().id("V-OLD").name("Voyra Platform").isActive(false).build(),
-                Vendor.builder().id("V-OLD2").name("Voyra Platform").isActive(false).build()));
+        when(vendorRepository.findByIsSystemTrueAndIsActiveTrue()).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.create(platformBooking(), roundTrip(), pax()))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("no active Voyra Platform vendor");
