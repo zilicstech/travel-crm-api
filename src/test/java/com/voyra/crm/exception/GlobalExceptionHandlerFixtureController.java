@@ -41,7 +41,7 @@ public class GlobalExceptionHandlerFixtureController {
 
     @GetMapping("/test/issuing-agent")
     public String issuingAgent() {
-        throw new BookingRequestException("ISSUING_AGENT_REQUIRED", "Choose the agent this booking is issued by");
+        throw new BookingRequestException("PAX_MIX_CHANGED", "The fare was reviewed for other travellers");
     }
 
     @GetMapping("/test/price-changed")

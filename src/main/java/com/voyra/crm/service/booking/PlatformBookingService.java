@@ -227,7 +227,7 @@ public class PlatformBookingService {
      */
     public PlatformBookingReviewResponse review(FlightReviewRequest request) {
         CustomUserPrincipal principal = requireBooker(PricingProduct.FLIGHT);
-        ReviewEnv env = admit(principal, PricingProduct.FLIGHT, request.getClientId(), request.getIssuedByAgentId(),
+        ReviewEnv env = admit(principal, PricingProduct.FLIGHT, request.getClientId(),
                 request.getServiceId(), request.getLeadId());
         log.info("Flight review start: tenant={}, offerId={}, returnOfferId={}, pax={}/{}/{}, environment={}, searchedFare={}",
                 principal.tenantId(), request.getOfferId(), request.getReturnOfferId(), request.getAdults(), request.getChildren(),
@@ -254,7 +254,7 @@ public class PlatformBookingService {
         if (request.getCheckIn().isBefore(com.voyra.crm.util.FinancialYear.today())) { // India's today, not the server's
             throw new IllegalArgumentException("Check-in can't be in the past");
         }
-        ReviewEnv env = admit(principal, PricingProduct.HOTEL, request.getClientId(), request.getIssuedByAgentId(),
+        ReviewEnv env = admit(principal, PricingProduct.HOTEL, request.getClientId(),
                 request.getServiceId(), request.getLeadId());
         FareReview fare = providers.hotels().review(request.getOptionId(), request.getHotelId(), request.getCheckIn(),
                 request.getCheckOut(), request.getRooms());
@@ -268,7 +268,7 @@ public class PlatformBookingService {
     }
 
     /** Every refusal a review makes before the supplier is asked; returns the environment the booking runs in. */
-    private ReviewEnv admit(CustomUserPrincipal principal, PricingProduct product, String clientId, String issuedByAgentId,
+    private ReviewEnv admit(CustomUserPrincipal principal, PricingProduct product, String clientId,
                            String serviceId, String leadId) {
         String tenantId = principal.tenantId();
         pricingService.requireInForce(tenantId, product);
@@ -283,7 +283,6 @@ public class PlatformBookingService {
             throw new ReceivableDueException();
         }
         mirrorService.requireLinks(clientId, leadId, serviceId);
-        requireIssuingAgent(principal, clientId, resolveIssuer(principal, issuedByAgentId), serviceId, leadId);
         if (providers.isMock(product)) {
             return new ReviewEnv(SupplierEnvironment.MOCK, null);
         }
@@ -363,10 +362,9 @@ public class PlatformBookingService {
         Assert.state(!TransactionSynchronizationManager.isActualTransactionActive(),
                 "confirm must not run inside a transaction - the supplier book call would hold a connection and the row lock");
         CustomUserPrincipal principal = requireBooker();
-        String issuedBy = resolveIssuer(principal, request.getIssuedByAgentId());
         log.info("Platform booking {} confirm start: tenant={}, by={}, acceptedFare={}", bookingId, principal.tenantId(), principal.userId(),
                 request.getAcceptedDisplayedFare());
-        Held held = tx.execute(s -> hold(bookingId, principal, request, issuedBy));
+        Held held = tx.execute(s -> hold(bookingId, principal, request));
         if (held.refusal() != null) {
             log.info("Platform booking {} confirm refused before the hold: {}", bookingId, held.refusal().getMessage());
             throw held.refusal();
@@ -748,7 +746,7 @@ public class PlatformBookingService {
     private record Held(PlatformBooking booking, RuntimeException refusal, boolean sendBook) {
     }
 
-    private Held hold(String bookingId, CustomUserPrincipal principal, PlatformBookingConfirmRequest request, String issuedBy) {
+    private Held hold(String bookingId, CustomUserPrincipal principal, PlatformBookingConfirmRequest request) {
         String tenantId = principal.tenantId();
         PlatformBooking b = actedOn(principal, bookingRepository.findByIdForUpdate(bookingId));
         String payloadHash = paxCodec.hash(List.of(request.getPassengers(), request.getContactEmail(), request.getContactPhone()));
@@ -773,7 +771,6 @@ public class PlatformBookingService {
         if (bookingRepository.findByIdempotencyKey(request.getIdempotencyKey()).isPresent()) {
             throw new IllegalStateException("This confirmation key was already used for another booking");
         }
-        requireIssuingAgent(principal, b.getClientId(), issuedBy, b.getServiceId(), b.getLeadId());
         if (b.getProduct() == PricingProduct.HOTEL) {
             requireGuestsPerRoom(b, request.getPassengers());
         } else if (request.getPassengers().size() != b.getPaxCount()) {
@@ -805,7 +802,6 @@ public class PlatformBookingService {
         b.setHoldEntryId(hold.getId());
         b.setIdempotencyKey(request.getIdempotencyKey());
         b.setConfirmPayloadHash(payloadHash);
-        b.setIssuedByAgentId(issuedBy);
         b.setPaxEnc(paxEnc);
         b.setStatus(PlatformBookingStatus.HELD);
         bookingRepository.save(b);
@@ -992,26 +988,6 @@ public class PlatformBookingService {
         PlatformBooking b = row.filter(x -> actsOn(p, x)).orElseThrow(() -> new NotFoundException("Booking not found"));
         requireHandles(p, b.getProduct());
         return b;
-    }
-
-    private String resolveIssuer(CustomUserPrincipal p, String requested) {
-        if (p.isAgent() || requested == null || requested.isBlank()) {
-            return p.isAgent() ? p.userId() : null;
-        }
-        return agentRepository.findByIdAndTenantId(requested, p.tenantId()).map(Agent::getId)
-                .orElseThrow(() -> new IllegalArgumentException("Agent not found in this agency: " + requested));
-    }
-
-    /**
-     * A booking for a CRM client gets a CRM mirror, and a CRM booking needs its agent (spec 6): the booking agent, the
-     * issuing agent the owner picked, or the lead's agent. Refused before the supplier and before any hold.
-     */
-    private void requireIssuingAgent(CustomUserPrincipal p, String clientId, String issuedBy, String serviceId, String leadId) {
-        if (clientId == null || clientId.isBlank() || p.isAgent() || issuedBy != null
-                || mirrorService.hasLeadAgent(p.tenantId(), serviceId, leadId)) {
-            return;
-        }
-        throw new BookingRequestException("ISSUING_AGENT_REQUIRED", "Choose the agent this booking is issued by");
     }
 
     /** Kill switch: with tripjack_live_ready off no new live booking is reviewed or confirmed; rows already sent keep settling. */

@@ -57,6 +57,7 @@ public class PlatformBooking {
     @Column(name = "service_id", length = 36)
     private String serviceId;
 
+    // history: no longer written
     @Column(name = "issued_by_agent_id", length = 36)
     private String issuedByAgentId;
 

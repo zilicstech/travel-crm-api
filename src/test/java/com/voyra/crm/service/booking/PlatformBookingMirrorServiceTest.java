@@ -101,6 +101,19 @@ class PlatformBookingMirrorServiceTest {
         return b;
     }
 
+    /** An owner booking for a client (no lead, no agents in the agency) still mirrors: the owner is its agent. */
+    @Test
+    void ownerBookingMirrorsUnderOwner() {
+        PlatformBooking crm = ticketed("C1");
+        crm.setBookedBy(crm.getTenantId());
+        when(tenantService.create(any(), anyList(), anyList())).thenReturn("B1");
+
+        service.sync("PB1");
+
+        verify(tenantService).create(eq(crm), anyList(), anyList());
+        assertThat(crm.getMirrorStatus()).isEqualTo(MirrorStatus.DONE);
+    }
+
     @Test
     void mirrorCreatedOnlyWithAClient() {
         PlatformBooking starter = ticketed(null);
@@ -246,14 +259,6 @@ class PlatformBookingMirrorServiceTest {
         verifyNoInteractions(tenantService);
     }
 
-    @Test
-    void anAgentResolvesFromTheLeadsServiceOrTheLead() {
-        when(tenantService.leadAgent("T1", "S1", "L1")).thenReturn(Optional.of("A9"));
-
-        assertThat(service.hasLeadAgent("T1", "S1", "L1")).isTrue();
-        assertThat(service.hasLeadAgent("T1", null, null)).isFalse();
-    }
-
     /** A hotel booking for a client is mirrored from its stay (a HOTEL_VOUCHER), never from flight legs. */
     @Test
     void aHotelBookingIsMirroredFromItsStay() {
@@ -385,13 +390,6 @@ class PlatformBookingMirrorServiceTest {
         service.sync("PB1");
         verify(notificationService, org.mockito.Mockito.times(2)).platformAlert(anyString(), body.capture());
         assertThat(body.getValue()).contains("IllegalStateException: null)");
-    }
-
-    @Test
-    void aLeadWithoutAnAgentGivesNone() {
-        when(tenantService.leadAgent("T1", null, "L1")).thenReturn(Optional.empty());
-
-        assertThat(service.hasLeadAgent("T1", null, "L1")).isFalse();
     }
 
     @Test

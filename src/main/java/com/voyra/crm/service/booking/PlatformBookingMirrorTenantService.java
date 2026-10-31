@@ -28,10 +28,8 @@ import com.voyra.crm.enums.PaymentMode;
 import com.voyra.crm.enums.ServiceType;
 import com.voyra.crm.enums.SupplierInvoiceStatus;
 import com.voyra.crm.exception.NotFoundException;
-import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.BookingDocumentRepository;
 import com.voyra.crm.repository.BookingRepository;
-import com.voyra.crm.repository.LeadRepository;
 import com.voyra.crm.repository.LeadServiceRepository;
 import com.voyra.crm.repository.MarkupDefaultRepository;
 import com.voyra.crm.repository.VendorRepository;
@@ -57,7 +55,6 @@ import java.time.LocalDate;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
@@ -83,9 +80,7 @@ public class PlatformBookingMirrorTenantService {
     private final SupplierInvoiceService supplierInvoiceService;
     private final SupplierPaymentService supplierPaymentService;
     private final VendorRepository vendorRepository;
-    private final AgentRepository agentRepository;
     private final LeadServiceRepository leadServiceRepository;
-    private final LeadRepository leadRepository;
     private final MarkupDefaultRepository markupDefaultRepository;
     private final ExchangeRateProvider exchangeRateProvider;
     private final BaseCurrency baseCurrency;
@@ -306,25 +301,9 @@ public class PlatformBookingMirrorTenantService {
         }
     }
 
-    /** The lead's agent in the current tenant: the service's assigned agent, else the lead's creator when an agent. */
-    @Transactional(readOnly = true)
-    public Optional<String> leadAgent(String tenantId, String serviceId, String leadId) {
-        String serviceAgent = serviceId == null ? null
-                : leadServiceRepository.findById(serviceId).map(LeadService::getAssignedAgentId).orElse(null);
-        String leadCreator = leadId == null ? null : leadRepository.findById(leadId).map(Lead::getCreatedBy).orElse(null);
-        return firstAgent(tenantId, Stream.of(serviceAgent, leadCreator));
-    }
-
-    /** Booking user if an agent, else the agent picked as issuer, else the lead's agent (spec 6). */
+    /** Whoever booked owns the CRM booking: an agent, or the owner (tenant id), which the booking service resolves. */
     private String agentFor(PlatformBooking pb) {
-        return firstAgent(pb.getTenantId(), Stream.of(pb.getBookedBy(), pb.getIssuedByAgentId()))
-                .or(() -> leadAgent(pb.getTenantId(), pb.getServiceId(), pb.getLeadId()))
-                .orElseThrow(() -> new IllegalStateException("No agent to own the CRM booking of platform booking " + pb.getId()
-                        + " - it needs an issuing agent"));
-    }
-
-    private Optional<String> firstAgent(String tenantId, Stream<String> ids) {
-        return ids.filter(Objects::nonNull).filter(id -> agentRepository.findByIdAndTenantId(id, tenantId).isPresent()).findFirst();
+        return pb.getBookedBy();
     }
 
     /** The fare's base/tax split carried onto the ticket: the tax as quoted, the agency's discount off the basic. */

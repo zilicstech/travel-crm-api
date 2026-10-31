@@ -39,7 +39,4 @@ public class PlatformBookingConfirmRequest {
     @Size(max = 20)
     @Schema(description = "Contact phone sent to the airline", example = "9876543210")
     private String contactPhone;
-
-    @Schema(description = "Owner only: the agent the booking is issued for; an agent always books as themselves", example = "a1d2e3f4-0000-0000-0000-000000000001")
-    private String issuedByAgentId;
 }

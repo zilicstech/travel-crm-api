@@ -545,7 +545,6 @@ class PlatformBookingServiceTest {
     /** The mirror is written after the debit committed, and only marked PENDING when the booking names a CRM client. */
     @Test
     void ticketedWithAClientMarksTheMirrorPendingAndMirrorsAfterTheDebit() {
-        when(mirrorService.hasLeadAgent(T, null, null)).thenReturn(true);
         FlightReviewRequest request = reviewRequest();
         request.setClientId("C1");
         String id = service.review(request).getBookingId();
@@ -556,29 +555,6 @@ class PlatformBookingServiceTest {
         org.mockito.InOrder order = inOrder(walletService, mirrorService);
         order.verify(walletService).debitHeld(anyString(), any(), anyString(), anyString(), anyString());
         order.verify(mirrorService).sync(id);
-    }
-
-    /** A CRM-client booking needs an agent to own its mirror: refused before the supplier and before any hold. */
-    @Test
-    void aClientBookingWithNoIssuingAgentIsRefusedAtReviewAndConfirm() {
-        FlightReviewRequest request = reviewRequest();
-        request.setClientId("C1");
-
-        assertThatThrownBy(() -> service.review(request))
-                .isInstanceOf(com.voyra.crm.exception.BookingRequestException.class)
-                .hasMessage("Choose the agent this booking is issued by")
-                .extracting("code").isEqualTo("ISSUING_AGENT_REQUIRED");
-        verify(provider, never()).review(any(FlightReviewRequest.class));
-
-        // named at review, then dropped at confirm
-        when(agentRepository.findByIdAndTenantId("A1", T)).thenReturn(Optional.of(Agent.builder().id("A1").build()));
-        request.setIssuedByAgentId("A1");
-        String id = service.review(request).getBookingId();
-        assertThatThrownBy(() -> service.confirm(id, confirmRequest("key-00000001", "4500.00")))
-                .isInstanceOf(com.voyra.crm.exception.BookingRequestException.class)
-                .extracting("code").isEqualTo("ISSUING_AGENT_REQUIRED");
-        verify(walletService, never()).hold(any(), any(), any(), any(), any());
-        verify(provider, never()).book(any());
     }
 
     @Test
@@ -817,7 +793,6 @@ class PlatformBookingServiceTest {
         PlatformBooking b = service.confirm(id, confirmRequest("key-00000001", "4500.00"));
 
         assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
-        assertThat(b.getIssuedByAgentId()).isEqualTo("AG1");
         assertThat(b.getBookedBy()).isEqualTo("AG1");
     }
 
@@ -1166,9 +1141,7 @@ class PlatformBookingServiceTest {
         hotelSupplierQuotes("5000.00");
         String id = service.reviewHotel(hotelReviewRequest()).getBookingId();
         rows.get(id).setClientId("C1"); // a CRM client: the hotel gets its CRM mirror like a flight
-        when(agentRepository.findByIdAndTenantId("AG1", T)).thenReturn(Optional.of(Agent.builder().id("AG1").build()));
         PlatformBookingConfirmRequest req = hotelConfirmRequest("key-00000001", "4500.00");
-        req.setIssuedByAgentId("AG1");
 
         PlatformBooking b = service.confirm(id, req);
 
@@ -1560,11 +1533,6 @@ class PlatformBookingServiceTest {
                 .hasMessage("This agency is suspended or deactivated - bookings are not allowed");
 
         tenant.setStatus(TenantStatus.ACTIVE);
-        FlightReviewRequest unknownIssuer = reviewRequest();
-        unknownIssuer.setIssuedByAgentId("NOPE");
-        assertThatThrownBy(() -> service.review(unknownIssuer)).isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Agent not found in this agency: NOPE");
-
         config.setProvider("tripjack");
         assertThatThrownBy(() -> service.review(reviewRequest())).isInstanceOf(IllegalStateException.class)
                 .hasMessage("Tripjack is not configured on the platform");
@@ -1803,24 +1771,16 @@ class PlatformBookingServiceTest {
     }
 
     @Test
-    void anOwnersBlankIssuerIsNoIssuerAndABlankClientNeedsNone() {
-        FlightReviewRequest blankIssuer = reviewRequest();
-        blankIssuer.setIssuedByAgentId(" ");
-        blankIssuer.setClientId(" ");
-
-        assertThat(rows.get(service.review(blankIssuer).getBookingId()).getIssuedByAgentId()).isNull();
-        verify(agentRepository, never()).findByIdAndTenantId(anyString(), anyString());
-    }
-
-    @Test
-    void anOwnersClientBookingWithALeadAgentNeedsNoIssuer() {
+    void ownerClientBookingNeedsNoIssuer() {
         FlightReviewRequest r = reviewRequest();
         r.setClientId("C1");
         r.setLeadId("L1");
-        when(mirrorService.hasLeadAgent(T, null, "L1")).thenReturn(true);
 
-        assertThat(service.review(r).getBookingId()).isNotNull();
+        String id = service.review(r).getBookingId();
+        PlatformBooking b = service.confirm(id, confirmRequest("key-00000001", "4500.00"));
+
         verify(mirrorService).requireLinks("C1", "L1", null);
+        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
     }
 
     @Test
@@ -1857,7 +1817,7 @@ class PlatformBookingServiceTest {
     }
 
     @Test
-    void anAgentsOwnClientBookingNeedsNoIssuer() {
+    void anAgentsOwnClientBookingIsBookedByTheAgent() {
         loginAs(UserType.AGENT, "AG1");
         when(agentRepository.findById("AG1")).thenReturn(Optional.of(Agent.builder().id("AG1").manageableServices(List.of(ServiceType.FLIGHT)).build()));
         FlightReviewRequest r = reviewRequest();
@@ -1866,6 +1826,5 @@ class PlatformBookingServiceTest {
         PlatformBooking b = rows.get(service.review(r).getBookingId());
 
         assertThat(b.getBookedBy()).isEqualTo("AG1");
-        verify(mirrorService, never()).hasLeadAgent(any(), any(), any());
     }
 }

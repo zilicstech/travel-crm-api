@@ -52,9 +52,6 @@ public class HotelReviewRequest {
     @Schema(description = "Optional displayed price the agency saw on the hotel detail; when the review differs, priceChanged is true", example = "12500.00")
     private BigDecimal searchDisplayedFare;
 
-    @Schema(description = "Owner booking for a CRM client: the agent the booking is issued by (owns the CRM copy)", example = "a1b2c3")
-    private String issuedByAgentId;
-
     @Size(max = 200)
     @Schema(description = "Display hint: hotel name, shown on the booking", example = "Sea Breeze Resort")
     private String hotelName;

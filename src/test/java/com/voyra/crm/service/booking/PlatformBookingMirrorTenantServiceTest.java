@@ -26,10 +26,8 @@ import com.voyra.crm.enums.PlatformBookingStatus;
 import com.voyra.crm.enums.ServiceType;
 import com.voyra.crm.enums.SupplierInvoiceStatus;
 import com.voyra.crm.models.ResolvedExchangeRate;
-import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.BookingDocumentRepository;
 import com.voyra.crm.repository.BookingRepository;
-import com.voyra.crm.repository.LeadRepository;
 import com.voyra.crm.repository.LeadServiceRepository;
 import com.voyra.crm.repository.MarkupDefaultRepository;
 import com.voyra.crm.repository.VendorRepository;
@@ -77,9 +75,7 @@ class PlatformBookingMirrorTenantServiceTest {
     @Mock private SupplierInvoiceService supplierInvoiceService;
     @Mock private SupplierPaymentService supplierPaymentService;
     @Mock private VendorRepository vendorRepository;
-    @Mock private AgentRepository agentRepository;
     @Mock private LeadServiceRepository leadServiceRepository;
-    @Mock private LeadRepository leadRepository;
     @Mock private MarkupDefaultRepository markupDefaultRepository;
     @Mock private ExchangeRateProvider exchangeRateProvider;
     @Spy private BaseCurrency baseCurrency = new BaseCurrency(null);
@@ -110,11 +106,10 @@ class PlatformBookingMirrorTenantServiceTest {
         when(bookingRepository.findByPlatformBookingId(anyString())).thenReturn(Optional.empty());
         when(supplierInvoiceService.approveForBooking(eq("SI1"), anyString())).thenReturn(SupplierInvoiceResponse.builder()
                 .id("SI1").status(SupplierInvoiceStatus.APPROVED).balanceDue(new BigDecimal("5400.00")).build());
-        when(agentRepository.findByIdAndTenantId("A1", "T1")).thenReturn(Optional.of(Agent.builder().id("A1").build()));
     }
 
     private static PlatformBooking platformBooking() {
-        return PlatformBooking.builder().id("PB1").tenantId("T1").clientId("C1").bookedBy("T1").issuedByAgentId("A1")
+        return PlatformBooking.builder().id("PB1").tenantId("T1").clientId("C1").bookedBy("A1")
                 .status(PlatformBookingStatus.TICKETED).pnr("ABC123").ticketNumbers(List.of("0981", "0982"))
                 .displayed(new BigDecimal("5400.00")).gross(new BigDecimal("5500.00")).base(new BigDecimal("4500.00"))
                 .build();
@@ -191,16 +186,6 @@ class PlatformBookingMirrorTenantServiceTest {
         assertThatThrownBy(() -> service.create(platformBooking(), roundTrip(), pax()))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("no active Voyra Platform vendor");
         verify(bookingService, never()).logBooking(any(), anyString(), any(), any(), any(), any(), any(), any());
-    }
-
-    @Test
-    void withNoAgentToOwnItTheMirrorFails() {
-        PlatformBooking pb = platformBooking();
-        pb.setIssuedByAgentId(null);
-
-        assertThatThrownBy(() -> service.create(pb, roundTrip(), pax()))
-                .isInstanceOf(IllegalStateException.class).hasMessageContaining("agent");
-        verify(supplierPaymentService, never()).pay(any());
     }
 
     @Test
@@ -609,29 +594,33 @@ class PlatformBookingMirrorTenantServiceTest {
         verify(cancellationService, never()).recordVoyraWalletRefund(anyString(), any());
     }
 
+    /** Whoever booked owns the CRM booking: the owner's id is the tenant id, which BookingService resolves to the owner. */
     @Test
-    void theLeadsAgentIsTheServicesAssigneeElseTheLeadsCreator() {
-        when(leadServiceRepository.findById("S1")).thenReturn(Optional.of(com.voyra.crm.entity.LeadService.builder().id("S1").build()));
-        when(leadRepository.findById("L1")).thenReturn(Optional.of(com.voyra.crm.entity.Lead.builder().id("L1").createdBy("A1").build()));
-        when(leadServiceRepository.findById("S9")).thenReturn(Optional.empty());
-        when(leadRepository.findById("L9")).thenReturn(Optional.empty());
-
-        assertThat(service.leadAgent("T1", "S1", "L1")).contains("A1");
-        assertThat(service.leadAgent("T1", "S9", "L9")).isEmpty();
-        assertThat(service.leadAgent("T1", null, null)).isEmpty();
-    }
-
-    @Test
-    void aMirrorWithoutABookerOrIssuerFallsBackToTheLeadsAgent() {
+    void ownerBookingMirrorsUnderOwner() {
         PlatformBooking pb = platformBooking();
-        pb.setBookedBy(null);
-        pb.setIssuedByAgentId(null);
-        pb.setLeadId("L1");
-        when(leadRepository.findById("L1")).thenReturn(Optional.of(com.voyra.crm.entity.Lead.builder().id("L1").createdBy("A1").build()));
+        pb.setBookedBy("T1");
 
         service.create(pb, roundTrip(), pax());
 
+        assertThat(loggedRequest().getAgentId()).isEqualTo("T1");
+    }
+
+    /** A lead with its own agent does not change who owns the CRM booking: whoever booked. */
+    @Test
+    void theBookerOwnsTheMirrorEvenInSomeoneElsesLead() {
+        PlatformBooking pb = platformBooking();
+        pb.setLeadId("L1");
+        service.create(pb, roundTrip(), pax());
         assertThat(loggedRequest().getAgentId()).isEqualTo("A1");
+    }
+
+    @Test
+    void theOwnerOwnsTheMirrorInAnAgentsLead() {
+        PlatformBooking pb = platformBooking();
+        pb.setLeadId("L1");
+        pb.setBookedBy("T1");
+        service.create(pb, roundTrip(), pax());
+        assertThat(loggedRequest().getAgentId()).isEqualTo("T1");
     }
 
     @Test

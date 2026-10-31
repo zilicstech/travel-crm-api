@@ -89,11 +89,6 @@ public class PlatformBookingMirrorService {
         }
     }
 
-    /** Whether the booking's lead (or lead service) gives its CRM mirror an agent, in the caller's tenant. */
-    public boolean hasLeadAgent(String tenantId, String serviceId, String leadId) {
-        return (serviceId != null || leadId != null) && tenantService.leadAgent(tenantId, serviceId, leadId).isPresent();
-    }
-
     /** The CRM client, lead and service a review names exist in the caller's tenant and the caller may reach them. */
     public void requireLinks(String clientId, String leadId, String serviceId) {
         tenantService.requireLinks(clientId, leadId, serviceId);

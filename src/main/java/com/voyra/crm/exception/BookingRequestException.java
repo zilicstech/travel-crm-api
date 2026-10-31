@@ -2,7 +2,7 @@ package com.voyra.crm.exception;
 
 import lombok.Getter;
 
-/** A 400 the booking UI branches on by {@code code} (ISSUING_AGENT_REQUIRED). */
+/** A 400 the booking UI branches on by {@code code} (PAX_MIX_CHANGED, ...). */
 @Getter
 public class BookingRequestException extends IllegalArgumentException {
 
