@@ -558,8 +558,9 @@ class PlatformBookingServiceTest {
     }
 
     @Test
-    void aStarterBookingWithNoClientHasNoMirror() {
+    void anOldBookingWithNoClientHasNoMirror() {
         String id = reviewed();
+        rows.get(id).setClientId(null); // rows from before a client was required
 
         PlatformBooking b = service.confirm(id, confirmRequest("key-00000001", "4500.00"));
 

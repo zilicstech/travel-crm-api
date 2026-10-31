@@ -32,7 +32,8 @@ public class FlightReviewRequest {
     @Schema(description = "Infants (under 2)", example = "0")
     private int infants;
 
-    @Schema(description = "Optional CRM client the booking is for", example = "c1d2e3f4-0000-0000-0000-000000000001")
+    @NotBlank(message = "Client is required")
+    @Schema(description = "CRM client the booking is for", example = "c1d2e3f4-0000-0000-0000-000000000001")
     private String clientId;
 
     @Schema(description = "Optional CRM lead the booking belongs to", example = "l1d2e3f4-0000-0000-0000-000000000001")

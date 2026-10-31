@@ -75,15 +75,31 @@ class PlatformBookingControllerTest {
                 .displayedFare(new BigDecimal("4500.00")).build());
         for (UserType type : List.of(UserType.AGENCY_OWNER, UserType.AGENT)) {
             mockMvc.perform(post("/api/platform-bookings/flights/review").with(as(type))
-                            .contentType(MediaType.APPLICATION_JSON).content("{\"offerId\":\"o1\",\"adults\":1}"))
+                            .contentType(MediaType.APPLICATION_JSON).content("{\"offerId\":\"o1\",\"adults\":1,\"clientId\":\"C1\"}"))
                     .andExpect(status().isOk()).andExpect(jsonPath("$.bookingId").value("B1"));
         }
     }
 
     @Test
+    void flightReviewWithoutAClientIs400() throws Exception {
+        mockMvc.perform(post("/api/platform-bookings/flights/review").with(as(UserType.AGENT))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"offerId\":\"o1\",\"adults\":1}"))
+                .andExpect(status().isBadRequest()).andExpect(content().string(org.hamcrest.Matchers.containsString("Client is required")));
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void hotelReviewWithoutAClientIs400() throws Exception {
+        mockMvc.perform(post("/api/platform-bookings/hotels/review").with(as(UserType.AGENT))
+                        .contentType(MediaType.APPLICATION_JSON).content(HOTEL_REVIEW.replace(",\"clientId\":\"C1\"", "")))
+                .andExpect(status().isBadRequest()).andExpect(content().string(org.hamcrest.Matchers.containsString("Client is required")));
+        verifyNoInteractions(service);
+    }
+
+    @Test
     void accountantMayOnlyRead() throws Exception {
         mockMvc.perform(post("/api/platform-bookings/flights/review").with(as(UserType.ACCOUNTANT))
-                .contentType(MediaType.APPLICATION_JSON).content("{\"offerId\":\"o1\",\"adults\":1}")).andExpect(status().isForbidden());
+                .contentType(MediaType.APPLICATION_JSON).content("{\"offerId\":\"o1\",\"adults\":1,\"clientId\":\"C1\"}")).andExpect(status().isForbidden());
         mockMvc.perform(post("/api/platform-bookings/B1/confirm").with(as(UserType.ACCOUNTANT))
                 .contentType(MediaType.APPLICATION_JSON).content(CONFIRM)).andExpect(status().isForbidden());
         mockMvc.perform(post("/api/platform-bookings/B1/abort").with(as(UserType.ACCOUNTANT))).andExpect(status().isForbidden());
@@ -197,7 +213,7 @@ class PlatformBookingControllerTest {
     }
 
     private static final String HOTEL_REVIEW = "{\"hotelId\":\"H1\",\"optionId\":\"O1\",\"checkIn\":\"2026-12-01\",\"checkOut\":\"2026-12-03\","
-            + "\"rooms\":[{\"adults\":2,\"childAges\":[6]}],\"hotelName\":\"Sea Breeze Resort\"}";
+            + "\"rooms\":[{\"adults\":2,\"childAges\":[6]}],\"hotelName\":\"Sea Breeze Resort\",\"clientId\":\"C1\"}";
 
     @Test
     void hotelReviewReturnsTheReviewWithItsPolicy() throws Exception {
