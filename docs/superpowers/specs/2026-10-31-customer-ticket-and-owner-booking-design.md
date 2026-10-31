@@ -181,8 +181,13 @@ agency. A booking the owner makes is the owner's: their name on it and in report
   PENDING once by the migration, so the repair job now writes them.
 - Effect on Voyra Basic: an owner with no agents can book for a client.
 - Regression: the flight, hotel and round-trip e2e specs that pick "Issued by" are updated; PB/PH matrix rows updated.
-- Not in this round: an owner creating a CRM booking by hand still picks the agent it belongs to (`BookingService`
-  "agentId is required when an Owner creates a booking"). The same rule could apply there later.
+- Owner CRM bookings made by hand (owner ruling 2026-10-31: the owner books for themselves, no agent to pick):
+  `BookingService.resolveOwningAgent` returns the owner (tenant id, `tenant.ownerName`) for an owner caller, and the
+  "agentId is required when an Owner creates a booking" error goes. The standalone-type check
+  (`assertAgentHandlesStandaloneType`) does not apply to the owner, who handles every product. The agent picker leaves
+  the owner's Quick book flight and hotel dialogs (`QuickBookFlightModal`, `QuickBookHotelModal`), the booking form
+  (`BookingFormModal`) and any other booking-create screen that shows it to the owner; the request's `agentId` field is
+  removed if nothing else reads it. Agents are unchanged (their own login owns their booking).
 
 ## Constraints
 
@@ -214,4 +219,4 @@ booking without the dropdown.
    agent filter, but not on the Agents management page.
 10. Airline logos copied into the backend, guarded by a test.
 11. Flights only for the ticket; hotel vouchers later.
-12. Owner manual CRM bookings keep the agent picker (out of scope).
+12. Owner CRM bookings made by hand also belong to the owner; no agent picker anywhere for the owner.
