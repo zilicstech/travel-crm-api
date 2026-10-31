@@ -271,4 +271,78 @@ class TaxEngineTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("No default GST rate configured");
     }
+
+    // ---- remaining branches
+
+    private TaxRateConfig tcs(String threshold) {
+        return TaxRateConfig.builder().id("TCSX").taxKind(TaxKind.TCS).label("Overseas TCS")
+                .supplyNature(SupplyNature.OVERSEAS_PACKAGE).ratePercent(new BigDecimal("5.000"))
+                .thresholdAmount(threshold == null ? null : new BigDecimal(threshold)).tcsSection("206C(1G)")
+                .effectiveFrom(LocalDate.now()).isDefault(true).isActive(true).build();
+    }
+
+    @Test
+    void withNoThresholdOrAZeroOneTcsTakesTheWholeAmountAndWithNoTcsRuleNone() {
+        when(clientService.findAccessibleClient("K1")).thenReturn(
+                Client.builder().id("K1").name("Traveller").stateCode(" ").isOverseas(false).build());
+        when(taxRateConfigRepository.findByTaxKindAndSupplyNatureAndIsDefaultTrueAndIsActiveTrue(TaxKind.GST, SupplyNature.OVERSEAS_PACKAGE))
+                .thenReturn(Optional.of(gstConfig(SupplyNature.OVERSEAS_PACKAGE, "5.000")));
+        when(taxRateConfigRepository.findByTaxKindAndSupplyNatureAndIsDefaultTrueAndIsActiveTrue(TaxKind.TCS, SupplyNature.OVERSEAS_PACKAGE))
+                .thenReturn(Optional.of(tcs(null)), Optional.of(tcs("0")), Optional.empty());
+        TaxComputationRequest r = new TaxComputationRequest("K1", new BigDecimal("100000.00"), SupplyNature.OVERSEAS_PACKAGE, " ", false, null);
+
+        TaxComputationResult noThreshold = taxEngine.compute(r);
+        TaxComputationResult zeroThreshold = taxEngine.compute(r);
+        TaxComputationResult noRule = taxEngine.compute(r);
+
+        // blank override and blank client state fall back to the agency's own state: intra-state
+        assertThat(noThreshold.placeOfSupplyCode()).isEqualTo("27");
+        assertThat(noThreshold.cgstAmount()).isEqualByComparingTo("2500.00");
+        assertThat(noThreshold.tcsBaseAmount()).isEqualByComparingTo("100000.00");
+        assertThat(noThreshold.tcsAmount()).isEqualByComparingTo("5000.00");
+        assertThat(zeroThreshold.tcsAmount()).isEqualByComparingTo("5000.00");
+        assertThat(noRule.tcsAmount()).isEqualByComparingTo("0");
+        assertThat(noRule.tcsSection()).isNull();
+        assertThat(noRule.grandTotal()).isEqualByComparingTo("105000.00");
+        org.mockito.Mockito.verifyNoInteractions(invoiceRepository);
+    }
+
+    @Test
+    void anAgencyWithNoBaseCurrencyOrStateNeedsAStateToComputeGst() {
+        Tenant t = Tenant.builder().id("T1").stateCode(null).build();
+        t.setBaseCurrencyCode(null);
+        when(tenantRepository.findById("T1")).thenReturn(Optional.of(t));
+        when(clientService.findAccessibleClient("K1")).thenReturn(
+                Client.builder().id("K1").name("Traveller").stateCode("29").isOverseas(true).build());
+
+        assertThatThrownBy(() -> taxEngine.compute(new TaxComputationRequest(
+                "K1", new BigDecimal("100"), SupplyNature.DOMESTIC_PACKAGE, null, false, "USD")))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("agency's GST state");
+
+        when(clientService.findAccessibleClient("K2")).thenReturn(
+                Client.builder().id("K2").name("Traveller").stateCode(null).isOverseas(false).build());
+        assertThatThrownBy(() -> taxEngine.compute(new TaxComputationRequest(
+                "K2", new BigDecimal("100"), SupplyNature.DOMESTIC_PACKAGE, null, true, "USD")))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("place of supply are required");
+    }
+
+    @Test
+    void treatmentAndPlaceOfSupplyCanBeResolvedOnTheirOwn() {
+        when(clientService.findAccessibleClient("K1")).thenReturn(
+                Client.builder().id("K1").name("Traveller").stateCode("29").isOverseas(true).build());
+
+        assertThat(taxEngine.resolveTreatment("K1", null, true, "USD")).isEqualTo(TaxTreatment.EXPORT_OF_SERVICE);
+        assertThat(taxEngine.resolveTreatment("K1", "27", false, "INR")).isEqualTo(TaxTreatment.INTRA_STATE);
+        assertThat(taxEngine.resolveTreatment("K1", null, false, "INR")).isEqualTo(TaxTreatment.INTER_STATE);
+        assertThat(taxEngine.resolvePlaceOfSupplyCode("K1", null)).isEqualTo("29");
+        assertThat(taxEngine.resolvePlaceOfSupplyCode("K1", "07")).isEqualTo("07");
+    }
+
+    @Test
+    void anUnknownAgencyIsRefused() {
+        when(tenantRepository.findById("T1")).thenReturn(Optional.empty());
+        when(clientService.findAccessibleClient("K1")).thenReturn(Client.builder().id("K1").build());
+        assertThatThrownBy(() -> taxEngine.resolvePlaceOfSupplyCode("K1", null))
+                .isInstanceOf(IllegalStateException.class).hasMessage("Agency not found: T1");
+    }
 }
