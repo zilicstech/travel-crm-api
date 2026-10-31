@@ -27,41 +27,37 @@ public final class ReceiptVoucherRenderer {
     public static byte[] write(PaymentReceipt receipt, String invoiceNumber, String base) {
         Document document = new Document(PageSize.A5, 32, 32, 36, 36);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
-        try {
-            PdfWriter.getInstance(document, out);
-            document.open();
+        // no finally: closing a document with nothing on it throws "The document has no pages" and would hide the real error
+        PdfWriter.getInstance(document, out);
+        document.open();
 
-            Font titleFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 14);
-            Font labelFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 9);
-            Font bodyFont = FontFactory.getFont(FontFactory.HELVETICA, 9);
+        Font titleFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 14);
+        Font labelFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 9);
+        Font bodyFont = FontFactory.getFont(FontFactory.HELVETICA, 9);
 
-            String title = receipt.getDirection() == ReceiptDirection.REFUND ? "REFUND VOUCHER" : "PAYMENT RECEIPT";
-            document.add(new Paragraph(title, titleFont));
-            document.add(new Paragraph(" "));
+        String title = receipt.getDirection() == ReceiptDirection.REFUND ? "REFUND VOUCHER" : "PAYMENT RECEIPT";
+        document.add(new Paragraph(title, titleFont));
+        document.add(new Paragraph(" "));
 
-            PdfPTable table = new PdfPTable(2);
-            table.setWidthPercentage(100);
-            row(table, "Receipt No.", InvoicePdfRenderer.valueOr(receipt.getReceiptNumber()), labelFont, bodyFont);
-            row(table, "Date", InvoicePdfRenderer.str(receipt.getReceivedOn()), labelFont, bodyFont);
-            row(table, "Against Invoice", InvoicePdfRenderer.valueOr(invoiceNumber), labelFont, bodyFont);
-            row(table, "Amount", InvoicePdfRenderer.money(receipt.getAmount()) + " " + receipt.getCurrencyCode(), labelFont, bodyFont);
-            if (!base.equals(receipt.getCurrencyCode())) {
-                row(table, "Amount (" + base + ")", InvoicePdfRenderer.money(receipt.getAmountInr()), labelFont, bodyFont);
-            }
-            row(table, "Payment Mode", String.valueOf(receipt.getPaymentMode()), labelFont, bodyFont);
-            row(table, "Reference", InvoicePdfRenderer.valueOr(receipt.getInstrumentRef()), labelFont, bodyFont);
-            if (receipt.getReversesReceiptId() != null) {
-                row(table, "Reverses", receipt.getReversesReceiptId(), labelFont, bodyFont);
-            }
-            if (receipt.getNotes() != null && !receipt.getNotes().isBlank()) {
-                row(table, "Notes", receipt.getNotes(), labelFont, bodyFont);
-            }
-            document.add(table);
-        } finally {
-            if (document.isOpen()) {
-                document.close();
-            }
+        PdfPTable table = new PdfPTable(2);
+        table.setWidthPercentage(100);
+        row(table, "Receipt No.", InvoicePdfRenderer.valueOr(receipt.getReceiptNumber()), labelFont, bodyFont);
+        row(table, "Date", InvoicePdfRenderer.str(receipt.getReceivedOn()), labelFont, bodyFont);
+        row(table, "Against Invoice", InvoicePdfRenderer.valueOr(invoiceNumber), labelFont, bodyFont);
+        row(table, "Amount", InvoicePdfRenderer.money(receipt.getAmount()) + " " + receipt.getCurrencyCode(), labelFont, bodyFont);
+        if (!base.equals(receipt.getCurrencyCode())) {
+            row(table, "Amount (" + base + ")", InvoicePdfRenderer.money(receipt.getAmountInr()), labelFont, bodyFont);
         }
+        row(table, "Payment Mode", String.valueOf(receipt.getPaymentMode()), labelFont, bodyFont);
+        row(table, "Reference", InvoicePdfRenderer.valueOr(receipt.getInstrumentRef()), labelFont, bodyFont);
+        if (receipt.getReversesReceiptId() != null) {
+            row(table, "Reverses", receipt.getReversesReceiptId(), labelFont, bodyFont);
+        }
+        if (receipt.getNotes() != null && !receipt.getNotes().isBlank()) {
+            row(table, "Notes", receipt.getNotes(), labelFont, bodyFont);
+        }
+        document.add(table);
+        document.close();
         return out.toByteArray();
     }
 

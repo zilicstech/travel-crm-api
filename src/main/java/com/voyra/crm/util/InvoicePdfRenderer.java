@@ -72,78 +72,74 @@ public final class InvoicePdfRenderer {
                                 List<String> voucherRefs, List<String> bookingRefs) {
         Document document = new Document(PageSize.A4, 32, 32, 36, 36);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
-        try {
-            PdfWriter.getInstance(document, out);
-            document.open();
+        // no finally: closing a document with nothing on it throws "The document has no pages" and would hide the real error
+        PdfWriter.getInstance(document, out);
+        document.open();
 
-            Font titleFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 16);
-            Font subtitleFont = FontFactory.getFont(FontFactory.HELVETICA_BOLDOBLIQUE, 10);
-            Font labelFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 9);
-            Font bodyFont = FontFactory.getFont(FontFactory.HELVETICA, 9);
-            Font smallFont = FontFactory.getFont(FontFactory.HELVETICA, 8);
+        Font titleFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 16);
+        Font subtitleFont = FontFactory.getFont(FontFactory.HELVETICA_BOLDOBLIQUE, 10);
+        Font labelFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 9);
+        Font bodyFont = FontFactory.getFont(FontFactory.HELVETICA, 9);
+        Font smallFont = FontFactory.getFont(FontFactory.HELVETICA, 8);
 
-            document.add(new Paragraph(docTitle(invoice), titleFont));
-            String reference = voucherRefs.isEmpty() ? keyReference(invoice.getServiceCategory(), booking)
-                    : referenceLabel(invoice.getServiceCategory()) + ": " + String.join(", ", voucherRefs);
-            if (reference != null) {
-                document.add(new Paragraph(reference, subtitleFont));
-            }
-            if (bookingRefs.size() > 1) {
-                document.add(new Paragraph("Bookings: " + String.join(", ", bookingRefs), bodyFont));
-            }
-            document.add(new Paragraph(" "));
-
-            PdfPTable header = new PdfPTable(2);
-            header.setWidthPercentage(100);
-            header.setWidths(new float[]{1f, 1f});
-            header.addCell(borderless(supplierBlock(invoice, labelFont, bodyFont)));
-            header.addCell(borderless(documentMetaBlock(invoice, base(agency), labelFont, bodyFont)));
-            document.add(header);
-            document.add(new Paragraph(" "));
-
-            document.add(billToBlock(invoice, labelFont, bodyFont));
-            document.add(new Paragraph(" "));
-
-            document.add(lineItemsTable(lines, labelFont, smallFont));
-            document.add(new Paragraph(" "));
-
-            if (invoice.getBillingModel() == InvoiceBillingModel.COMMISSION_AGENT) {
-                document.add(passThroughBlock(invoice, costComponents, labelFont, bodyFont, smallFont));
-                document.add(new Paragraph(" "));
-            }
-
-            document.add(totalsTable(invoice, taxes, base(agency), labelFont, bodyFont));
-            document.add(new Paragraph(" "));
-            document.add(new Paragraph(
-                    AmountInWords.forAmount(invoice.getGrandTotal(), invoice.getCurrencyCode()) + " Only",
-                    FontFactory.getFont(FontFactory.HELVETICA_BOLD, 9)));
-
-            PdfPTable bank = bankBlock(agency, labelFont, bodyFont);
-            if (bank != null) {
-                document.add(new Paragraph(" "));
-                PdfPTable bankRow = new PdfPTable(2);
-                bankRow.setWidthPercentage(100);
-                bankRow.setWidths(new float[]{2.4f, 1f});
-                bankRow.addCell(borderless(bank));
-                PdfPCell qrCell = new PdfPCell(qrBlock(agency, invoice, labelFont, smallFont));
-                qrCell.setBorder(0);
-                qrCell.setHorizontalAlignment(Element.ALIGN_CENTER);
-                bankRow.addCell(qrCell);
-                document.add(bankRow);
-            }
-
-            if (invoice.getNotes() != null && !invoice.getNotes().isBlank()) {
-                document.add(new Paragraph(" "));
-                document.add(new Paragraph("Notes: " + invoice.getNotes(), smallFont));
-            }
-            if (invoice.getTerms() != null && !invoice.getTerms().isBlank()) {
-                document.add(new Paragraph("Terms: " + invoice.getTerms(), smallFont));
-            }
-        } finally {
-            if (document.isOpen()) {
-                document.close();
-            }
+        document.add(new Paragraph(docTitle(invoice), titleFont));
+        String reference = voucherRefs.isEmpty() ? keyReference(invoice.getServiceCategory(), booking)
+                : referenceLabel(invoice.getServiceCategory()) + ": " + String.join(", ", voucherRefs);
+        if (reference != null) {
+            document.add(new Paragraph(reference, subtitleFont));
         }
+        if (bookingRefs.size() > 1) {
+            document.add(new Paragraph("Bookings: " + String.join(", ", bookingRefs), bodyFont));
+        }
+        document.add(new Paragraph(" "));
+
+        PdfPTable header = new PdfPTable(2);
+        header.setWidthPercentage(100);
+        header.setWidths(new float[]{1f, 1f});
+        header.addCell(borderless(supplierBlock(invoice, labelFont, bodyFont)));
+        header.addCell(borderless(documentMetaBlock(invoice, base(agency), labelFont, bodyFont)));
+        document.add(header);
+        document.add(new Paragraph(" "));
+
+        document.add(billToBlock(invoice, labelFont, bodyFont));
+        document.add(new Paragraph(" "));
+
+        document.add(lineItemsTable(lines, labelFont, smallFont));
+        document.add(new Paragraph(" "));
+
+        if (invoice.getBillingModel() == InvoiceBillingModel.COMMISSION_AGENT) {
+            document.add(passThroughBlock(invoice, costComponents, labelFont, bodyFont, smallFont));
+            document.add(new Paragraph(" "));
+        }
+
+        document.add(totalsTable(invoice, taxes, base(agency), labelFont, bodyFont));
+        document.add(new Paragraph(" "));
+        document.add(new Paragraph(
+                AmountInWords.forAmount(invoice.getGrandTotal(), invoice.getCurrencyCode()) + " Only",
+                FontFactory.getFont(FontFactory.HELVETICA_BOLD, 9)));
+
+        PdfPTable bank = bankBlock(agency, labelFont, bodyFont);
+        if (bank != null) {
+            document.add(new Paragraph(" "));
+            PdfPTable bankRow = new PdfPTable(2);
+            bankRow.setWidthPercentage(100);
+            bankRow.setWidths(new float[]{2.4f, 1f});
+            bankRow.addCell(borderless(bank));
+            PdfPCell qrCell = new PdfPCell(qrBlock(agency, invoice, labelFont, smallFont));
+            qrCell.setBorder(0);
+            qrCell.setHorizontalAlignment(Element.ALIGN_CENTER);
+            bankRow.addCell(qrCell);
+            document.add(bankRow);
+        }
+
+        if (invoice.getNotes() != null && !invoice.getNotes().isBlank()) {
+            document.add(new Paragraph(" "));
+            document.add(new Paragraph("Notes: " + invoice.getNotes(), smallFont));
+        }
+        if (invoice.getTerms() != null && !invoice.getTerms().isBlank()) {
+            document.add(new Paragraph("Terms: " + invoice.getTerms(), smallFont));
+        }
+        document.close();
         return out.toByteArray();
     }
 

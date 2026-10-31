@@ -101,29 +101,25 @@ public final class AirInvoicePdfRenderer {
         Font title = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 10);
         Font pnr = FontFactory.getFont(FontFactory.HELVETICA_BOLDOBLIQUE, 9);
         String base = InvoicePdfRenderer.base(agency);
-        try {
-            PdfWriter.getInstance(document, out);
-            document.open();
+        // no finally: closing a document with nothing on it throws "The document has no pages" and would hide the real error
+        PdfWriter.getInstance(document, out);
+        document.open();
 
-            document.add(header(invoice, agency, logo, name, body));
-            List<String> refs = lines.stream().map(l -> references.get(l.getBookingDocumentId()))
-                    .filter(r -> r != null && !r.isBlank()).distinct().toList();
-            document.add(billTo(invoice, referenceLabel, refs, bold, body, title, pnr));
-            if (aboveTable != null) {
-                document.add(single(aboveTable, bold, 0));
-            }
-            document.add(table.apply(body));
-            document.add(spacer(28));
-
-            BigDecimal gross = lines.stream().map(l -> nz(l.getTaxableValue())).reduce(BigDecimal.ZERO, BigDecimal::add);
-            document.add(totals(invoice, taxes, gross, base, agency, reimbursement, bold, body));
-            document.add(terms(invoice, agency, bold, small, body));
-            document.add(footer(invoice, preparedBy, body, small));
-        } finally {
-            if (document.isOpen()) {
-                document.close();
-            }
+        document.add(header(invoice, agency, logo, name, body));
+        List<String> refs = lines.stream().map(l -> references.get(l.getBookingDocumentId()))
+                .filter(r -> r != null && !r.isBlank()).distinct().toList();
+        document.add(billTo(invoice, referenceLabel, refs, bold, body, title, pnr));
+        if (aboveTable != null) {
+            document.add(single(aboveTable, bold, 0));
         }
+        document.add(table.apply(body));
+        document.add(spacer(28));
+
+        BigDecimal gross = lines.stream().map(l -> nz(l.getTaxableValue())).reduce(BigDecimal.ZERO, BigDecimal::add);
+        document.add(totals(invoice, taxes, gross, base, agency, reimbursement, bold, body));
+        document.add(terms(invoice, agency, bold, small, body));
+        document.add(footer(invoice, preparedBy, body, small));
+        document.close();
         return out.toByteArray();
     }
 
@@ -243,7 +239,7 @@ public final class AirInvoicePdfRenderer {
 
         PdfPTable left = new PdfPTable(1);
         String legalName = invoice.getAgencyLegalName() != null ? invoice.getAgencyLegalName()
-                : agency != null ? agency.getAgencyName() : "-";
+                : agency != null ? java.util.Objects.requireNonNullElse(agency.getAgencyName(), "") : "-";
         plain(left, legalName.toUpperCase(), name);
         if (invoice.getAgencyAddress() != null) plain(left, invoice.getAgencyAddress(), body);
         plain(left, stateLine(invoice.getAgencyStateCode()), body);
@@ -398,7 +394,7 @@ public final class AirInvoicePdfRenderer {
         text.setPaddingBottom(6);
         t.addCell(text);
         String legalName = invoice.getAgencyLegalName() != null ? invoice.getAgencyLegalName()
-                : agency != null ? agency.getAgencyName() : "";
+                : agency != null ? java.util.Objects.requireNonNullElse(agency.getAgencyName(), "") : "";
         PdfPCell forAgency = new PdfPCell(new Phrase("for " + legalName.toUpperCase(), bold));
         forAgency.setColspan(2);
         forAgency.setBorder(0);
