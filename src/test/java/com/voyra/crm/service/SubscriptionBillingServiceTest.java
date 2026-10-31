@@ -894,4 +894,17 @@ class SubscriptionBillingServiceTest {
         assertThat(s.getPeriodEnd()).isEqualTo(inv.getPeriodEnd());
         assertThat(inv.getPaidRef()).isEqualTo("UTR123");
     }
+
+    @Test
+    void payingTheNextPeriodMovesTheSubscriptionOntoIt() {
+        SubscriptionInvoice inv = issued("ISSUED");
+        Subscription s = suite(0, BillingCycle.MONTHLY).toBuilder().periodStart(Instant.parse("2026-10-01T00:00:00Z"))
+                .periodEnd(Instant.parse("2026-11-01T00:00:00Z")).build();
+        given(subscriptionRepository.findByTenantIdForUpdate("T1")).willReturn(Optional.of(s));
+
+        service.markPaid("I1", "pay_9");
+
+        assertThat(s.getPeriodStart()).isEqualTo(inv.getPeriodStart());
+        assertThat(s.getPeriodEnd()).isEqualTo(Instant.parse("2026-12-01T00:00:00Z"));
+    }
 }
