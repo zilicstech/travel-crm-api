@@ -23,11 +23,11 @@ class ETicketPdfRendererTest {
     private static final Segment SEG = new Segment("6E", "IndiGo", "6E-123", "DEL", "Delhi", "3", "Indira Gandhi",
             "BOM", "Mumbai", "2", "Chhatrapati Shivaji", "2026-11-05T06:15", "2026-11-05T08:25", 130);
     private static final Segment BARE = new Segment("MK", null, null, null, null, null, null, null, null, null, null, null, null, null);
-    private static final Direction OUT = new Direction("DEL-BOM", List.of(SEG), "Saver", "ECONOMY", false, "15 KG", "7 KG");
+    private static final Direction OUT = new Direction("DEL-BOM", List.of(SEG), "PUBLISHED", "ECONOMY", false, "15 KG", "7 KG");
     private static final Direction BACK = new Direction("BOM-DEL", List.of(BARE), null, null, null, null, null);
 
     private static ETicketData data(List<PaxRow> pax, byte[] logo, boolean cancelled, boolean test, TicketFacts facts) {
-        return new ETicketData("Sky Travels", "a@sky.in", "999", "1 Main Rd", logo, "PB-1", Instant.parse("2026-10-31T05:00:00Z"),
+        return new ETicketData("Sky Travels", "a@sky.in", "999", "1 Main Rd", logo, "3f2b9c1e-7a4d-4e0b-9c2f-1d5e8a6b7c90", Instant.parse("2026-10-31T05:00:00Z"),
                 "Confirmed", cancelled, test, facts, pax,
                 List.of(new FareLine("Base fare", new BigDecimal("4000")), new FareLine("Taxes, fees and charges", new BigDecimal("700.5"))),
                 new BigDecimal("4700.5"));
@@ -48,8 +48,8 @@ class ETicketPdfRendererTest {
         byte[] pdf = ETicketPdfRenderer.render(data(pax(), null, false, false, facts()));
         String t = PdfText.of(pdf);
         String f = PdfText.flat(t);
-        assertThat(t).contains("SKY TRAVELS", "a@sky.in", "PB-1", "Confirmed", "IndiGo", "PNR1", "Mr A One");
-        assertThat(f).contains(PdfText.flat("Saver"), PdfText.flat("Non-refundable"), "T-111", "15KG", "INR4000.00",
+        assertThat(t).contains("SKY TRAVELS", "a@sky.in", "Booking: 3f2b9c1e-7a4d-4e0b-9c2f-1d5e8a6b7c90", "Confirmed", "IndiGo", "PNR1", "Mr A One");
+        assertThat(f).contains("Published", PdfText.flat("Non-refundable"), "T-111", "15KG", "INR4000.00",
                 "INR4700.50", "Totalfare", "2h10m", "05Nov2026,06:15", "DEL,DelhiT3");
         // the second passenger takes the baggage of its own direction (none known here) and the first PNR of its own
         assertThat(f).contains("DEL-BOM", "BOM-DEL");
@@ -119,6 +119,25 @@ class ETicketPdfRendererTest {
         String t = PdfText.flat(PdfText.of(ETicketPdfRenderer.render(data(pax(), null, false, false,
                 new TicketFacts(List.of(raw), Map.of(), List.of(new Direction("A-B", List.of(raw, none), null, null, null, null, null)))))));
         assertThat(t).contains("05Nov2026,06:15", "soon", "AI101").doesNotContain("6E6E-123");
+    }
+
+    /** Fare types read as words, a whole booking UUID stays on one line, and month names are English whatever the server locale. */
+    @Test
+    void customerFacingTextIsReadable() throws Exception {
+        String uuid = "3f2b9c1e-7a4d-4e0b-9c2f-1d5e8a6b7c90";
+        ETicketData d = data(pax(), null, false, false, new TicketFacts(List.of(SEG), Map.of(), List.of(
+                new Direction("DEL-BOM", List.of(SEG), "PUBLISHED", null, false, null, null),
+                new Direction("BOM-DEL", List.of(SEG), "SME", null, null, null, null),
+                new Direction("A-B", List.of(SEG), "SPECIAL_RETURN", null, null, null, null))));
+        String t = PdfText.of(ETicketPdfRenderer.render(new ETicketData(d.agencyName(), d.email(), d.phone(), d.address(), null, uuid,
+                d.issuedAt(), d.statusText(), false, false, d.facts(), d.passengers(), d.fare(), d.total())));
+        assertThat(t).contains("Booking: " + uuid, "Published", "SME").doesNotContain("PUBLISHED");
+        assertThat(PdfText.flat(t)).contains("SpecialReturn");
+        for (String f : List.of("ISSUED", "WHEN", "DAY")) {
+            java.lang.reflect.Field field = ETicketPdfRenderer.class.getDeclaredField(f);
+            field.setAccessible(true);
+            assertThat(((java.time.format.DateTimeFormatter) field.get(null)).getLocale()).isEqualTo(java.util.Locale.ENGLISH);
+        }
     }
 
     @Test

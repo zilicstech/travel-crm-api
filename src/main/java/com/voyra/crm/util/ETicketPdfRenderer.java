@@ -29,8 +29,11 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
+import java.util.stream.Collectors;
 
 /**
  * The customer's e-ticket for a platform flight: the agency's header, the flights of each direction with their PNR,
@@ -49,10 +52,10 @@ public final class ETicketPdfRenderer {
             "Airline check-in counters close before departure; web check-in is done with the airline.",
             "Baggage allowance and rules are those of the airline.",
             "For changes, cancellations or refunds, contact your travel agency.");
-    private static final DateTimeFormatter ISSUED = DateTimeFormatter.ofPattern("dd MMM yyyy, HH:mm")
+    private static final DateTimeFormatter ISSUED = DateTimeFormatter.ofPattern("dd MMM yyyy, HH:mm", Locale.ENGLISH)
             .withZone(ZoneId.of("Asia/Kolkata"));
-    private static final DateTimeFormatter WHEN = DateTimeFormatter.ofPattern("dd MMM yyyy, HH:mm");
-    private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("dd MMM yyyy");
+    private static final DateTimeFormatter WHEN = DateTimeFormatter.ofPattern("dd MMM yyyy, HH:mm", Locale.ENGLISH);
+    private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.ENGLISH);
     private static final Color BAND = new Color(0xD9, 0xD9, 0xD9);
 
     public record ETicketData(String agencyName, String email, String phone, String address, byte[] agencyLogo,
@@ -146,17 +149,17 @@ public final class ETicketPdfRenderer {
     }
 
     private static PdfPTable bookingLine(ETicketData d, Font bold, Font body) {
-        PdfPTable t = new PdfPTable(3);
+        PdfPTable t = new PdfPTable(new float[]{2.2f, 1.4f, 1.4f}); // wide enough for a whole booking UUID on one line
         t.setWidthPercentage(100);
         t.setSpacingBefore(8);
-        t.addCell(cell("E-TICKET   Booking: " + dash(d.bookingId()), bold, false));
+        t.addCell(cell("E-TICKET\nBooking: " + dash(d.bookingId()), bold, false));
         t.addCell(cell("Issued on: " + (d.issuedAt() == null ? "-" : ISSUED.format(d.issuedAt())), body, false));
         t.addCell(cell("Status: " + dash(d.statusText()), body, false));
         return t;
     }
 
     private static PdfPTable flights(Direction dir, Font bold, Font small) {
-        PdfPTable t = new PdfPTable(new float[]{0.9f, 1.8f, 1f, 1f, 1f, 2.8f, 2.8f, 0.9f});
+        PdfPTable t = new PdfPTable(new float[]{0.9f, 1.8f, 1.3f, 1f, 1.4f, 2.5f, 2.5f, 0.9f});
         t.setWidthPercentage(100);
         for (String h : List.of("Airline", "Flight", "Fare type", "Cabin", "Refund", "Departure", "Arrival", "Duration")) {
             PdfPCell c = cell(h, bold, false);
@@ -170,7 +173,7 @@ public final class ETicketPdfRenderer {
             logoCell.setBorder(0);
             t.addCell(logoCell);
             t.addCell(cell(dash(s.airlineName()) + "\n" + flightNo(s), small, false));
-            t.addCell(cell(dash(dir.fareType()), small, false));
+            t.addCell(cell(fareType(dir.fareType()), small, false));
             t.addCell(cell(dash(dir.cabinClass()), small, false));
             t.addCell(cell(refundable, small, false));
             t.addCell(cell(place(s.departs(), s.fromCode(), s.fromCity(), s.fromTerminal(), s.fromAirport()), small, false));
@@ -178,6 +181,14 @@ public final class ETicketPdfRenderer {
             t.addCell(cell(duration(s.durationMinutes()), small, false));
         }
         return t;
+    }
+
+    /** Supplier codes for the customer: "PUBLISHED" as "Published", "SPECIAL_RETURN" as "Special Return"; short ones ("SME") are acronyms. */
+    private static String fareType(String code) {
+        if (blank(code)) return "-";
+        return Arrays.stream(code.trim().split("[_\\s]+"))
+                .map(w -> w.length() <= 3 ? w : w.substring(0, 1).toUpperCase(Locale.ENGLISH) + w.substring(1).toLowerCase(Locale.ENGLISH))
+                .collect(Collectors.joining(" "));
     }
 
     private static String flightNo(Segment s) {
