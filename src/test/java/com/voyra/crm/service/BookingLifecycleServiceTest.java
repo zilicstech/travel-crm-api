@@ -342,6 +342,16 @@ class BookingLifecycleServiceTest {
     }
 
     @Test
+    void aTicketedVoyraBookingTakesPayments() {
+        Booking b = booking(BookingStatus.CONFIRMED);
+        b.setPlatformBookingId("PB1");
+        stubBooking(b);
+
+        service.recordPayment("B1", payment("4000"));
+        verify(paymentReceiptService).record(any());
+    }
+
+    @Test
     void noRecordPaymentActionWhileVoyraIsBooking() {
         Booking b = booking(BookingStatus.PENDING);
         b.setPlatformBookingId("PB1");
