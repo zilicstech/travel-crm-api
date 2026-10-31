@@ -67,6 +67,16 @@ public class TripjackFlightSearchProvider implements FlightSearchProvider {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
+    /** The client {@link #outboundIp()} asks; tests swap it for a mock so they never reach the network. */
+    RestClient ipLookup = timeoutBoundClient();
+
+    private static RestClient timeoutBoundClient() {
+        var factory = new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(3_000);
+        factory.setReadTimeout(3_000);
+        return RestClient.builder().requestFactory(factory).build();
+    }
+
     @Override
     public List<FlightOfferResponse> search(FlightSearchQuery query) {
         // The platform credential is resolved fresh per call, so a key change applies to the next search.
@@ -185,13 +195,9 @@ public class TripjackFlightSearchProvider implements FlightSearchProvider {
 
     /** Best-effort lookup of this server's public egress IP, called only on a failure so the
      *  value to whitelist is in the log. Never throws and never carries a credential. */
-    private String outboundIp() {
+    String outboundIp() {
         try {
-            var factory = new org.springframework.http.client.SimpleClientHttpRequestFactory();
-            factory.setConnectTimeout(3_000);
-            factory.setReadTimeout(3_000);
-            String ip = RestClient.builder().requestFactory(factory).build()
-                    .get().uri("https://api.ipify.org").retrieve().body(String.class);
+            String ip = ipLookup.get().uri("https://api.ipify.org").retrieve().body(String.class);
             return ip == null ? "unknown" : ip.trim();
         } catch (RuntimeException e) {
             return "unknown (lookup failed: " + e.getClass().getSimpleName() + ")";
@@ -340,7 +346,7 @@ public class TripjackFlightSearchProvider implements FlightSearchProvider {
     }
 
     private LocalTime parseFlightTime(String raw) {
-        if (raw == null || raw.isBlank()) {
+        if (raw.isBlank()) {
             throw new SupplierException("Tripjack flight response is missing a departure/arrival time", null);
         }
         try {

@@ -37,77 +37,73 @@ public final class SubscriptionInvoicePdfRenderer {
         Map<String, Object> buyer = party(inv, "buyer");
         Document document = new Document(PageSize.A4, 32, 32, 36, 36);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
-        try {
-            PdfWriter.getInstance(document, out);
-            document.open();
+        // no finally: closing a document with nothing on it throws "The document has no pages" and would hide the real error
+        PdfWriter.getInstance(document, out);
+        document.open();
 
-            Font titleFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 16);
-            Font labelFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 9);
-            Font bodyFont = FontFactory.getFont(FontFactory.HELVETICA, 9);
+        Font titleFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 16);
+        Font labelFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 9);
+        Font bodyFont = FontFactory.getFont(FontFactory.HELVETICA, 9);
 
-            document.add(new Paragraph("TAX INVOICE", titleFont));
-            document.add(new Paragraph(" "));
+        document.add(new Paragraph("TAX INVOICE", titleFont));
+        document.add(new Paragraph(" "));
 
-            PdfPTable parties = new PdfPTable(2);
-            parties.setWidthPercentage(100);
-            parties.addCell(block("Supplier", text(seller.get("legalName"), "Voyra"), seller, labelFont, bodyFont));
-            parties.addCell(block("Billed To", text(buyer.get("name"), inv.getTenantId()), buyer, labelFont, bodyFont));
-            document.add(parties);
-            document.add(new Paragraph(" "));
+        PdfPTable parties = new PdfPTable(2);
+        parties.setWidthPercentage(100);
+        parties.addCell(block("Supplier", text(seller.get("legalName"), "Voyra"), seller, labelFont, bodyFont));
+        parties.addCell(block("Billed To", text(buyer.get("name"), inv.getTenantId()), buyer, labelFont, bodyFont));
+        document.add(parties);
+        document.add(new Paragraph(" "));
 
-            PdfPTable meta = new PdfPTable(2);
-            meta.setWidthPercentage(100);
-            row(meta, "Invoice No.", InvoicePdfRenderer.valueOr(inv.getNumber()), labelFont, bodyFont);
-            row(meta, "Invoice Date", date(inv.getCreatedAt()), labelFont, bodyFont);
-            row(meta, "Period", date(inv.getPeriodStart()) + " - " + date(inv.getPeriodEnd()), labelFont, bodyFont);
-            row(meta, "Due Date", date(inv.getDueAt()), labelFont, bodyFont);
-            row(meta, "Place of Supply", text(buyer.get("stateCode"), "-"), labelFont, bodyFont);
-            row(meta, "SAC", InvoicePdfRenderer.valueOr(inv.getSacCode()), labelFont, bodyFont);
-            if ("PAID".equals(inv.getStatus())) {
-                row(meta, "Status", "Paid on " + date(inv.getPaidAt()), labelFont, bodyFont);
-            } else if ("VOID".equals(inv.getStatus())) {
-                row(meta, "Status", "Void", labelFont, bodyFont);
-            }
-            document.add(meta);
-            document.add(new Paragraph(" "));
-
-            PdfPTable items = new PdfPTable(new float[]{4f, 1f, 1.5f, 1f, 1.5f});
-            items.setWidthPercentage(100);
-            for (String h : new String[]{"Description", "Qty", "Monthly Price", "Months", "Amount"}) {
-                PdfPCell cell = new PdfPCell(new Phrase(h, labelFont));
-                cell.setGrayFill(0.9f);
-                items.addCell(cell);
-            }
-            for (Map<String, Object> line : inv.getLines()) {
-                items.addCell(new Phrase(String.valueOf(line.get("description")), bodyFont));
-                items.addCell(right(String.valueOf(line.get("quantity")), bodyFont));
-                items.addCell(right(money(line.get("unitPrice")), bodyFont));
-                items.addCell(right(String.valueOf(line.get("months")), bodyFont));
-                items.addCell(right(money(line.get("amount")), bodyFont));
-            }
-            document.add(items);
-            document.add(new Paragraph(" "));
-
-            PdfPTable totals = new PdfPTable(new float[]{3f, 1.5f});
-            totals.setWidthPercentage(50);
-            totals.setHorizontalAlignment(Element.ALIGN_RIGHT);
-            total(totals, "Taxable Value", InvoicePdfRenderer.money(inv.getAmount()), bodyFont);
-            if (inv.getCgst() != null && inv.getCgst().signum() > 0) {
-                total(totals, "CGST @ 9%", InvoicePdfRenderer.money(inv.getCgst()), bodyFont);
-                total(totals, "SGST @ 9%", InvoicePdfRenderer.money(inv.getSgst()), bodyFont);
-            } else {
-                total(totals, "IGST @ 18%", InvoicePdfRenderer.money(inv.getIgst() != null && inv.getIgst().signum() > 0
-                        ? inv.getIgst() : inv.getGst()), bodyFont);
-            }
-            total(totals, "Total (INR)", InvoicePdfRenderer.money(inv.getTotal()), labelFont);
-            document.add(totals);
-            document.add(new Paragraph(" "));
-            document.add(new Paragraph(AmountInWords.forAmount(inv.getTotal(), "INR") + " Only", labelFont));
-        } finally {
-            if (document.isOpen()) {
-                document.close();
-            }
+        PdfPTable meta = new PdfPTable(2);
+        meta.setWidthPercentage(100);
+        row(meta, "Invoice No.", InvoicePdfRenderer.valueOr(inv.getNumber()), labelFont, bodyFont);
+        row(meta, "Invoice Date", date(inv.getCreatedAt()), labelFont, bodyFont);
+        row(meta, "Period", date(inv.getPeriodStart()) + " - " + date(inv.getPeriodEnd()), labelFont, bodyFont);
+        row(meta, "Due Date", date(inv.getDueAt()), labelFont, bodyFont);
+        row(meta, "Place of Supply", text(buyer.get("stateCode"), "-"), labelFont, bodyFont);
+        row(meta, "SAC", InvoicePdfRenderer.valueOr(inv.getSacCode()), labelFont, bodyFont);
+        if ("PAID".equals(inv.getStatus())) {
+            row(meta, "Status", "Paid on " + date(inv.getPaidAt()), labelFont, bodyFont);
+        } else if ("VOID".equals(inv.getStatus())) {
+            row(meta, "Status", "Void", labelFont, bodyFont);
         }
+        document.add(meta);
+        document.add(new Paragraph(" "));
+
+        PdfPTable items = new PdfPTable(new float[]{4f, 1f, 1.5f, 1f, 1.5f});
+        items.setWidthPercentage(100);
+        for (String h : new String[]{"Description", "Qty", "Monthly Price", "Months", "Amount"}) {
+            PdfPCell cell = new PdfPCell(new Phrase(h, labelFont));
+            cell.setGrayFill(0.9f);
+            items.addCell(cell);
+        }
+        for (Map<String, Object> line : inv.getLines()) {
+            items.addCell(new Phrase(String.valueOf(line.get("description")), bodyFont));
+            items.addCell(right(String.valueOf(line.get("quantity")), bodyFont));
+            items.addCell(right(money(line.get("unitPrice")), bodyFont));
+            items.addCell(right(String.valueOf(line.get("months")), bodyFont));
+            items.addCell(right(money(line.get("amount")), bodyFont));
+        }
+        document.add(items);
+        document.add(new Paragraph(" "));
+
+        PdfPTable totals = new PdfPTable(new float[]{3f, 1.5f});
+        totals.setWidthPercentage(50);
+        totals.setHorizontalAlignment(Element.ALIGN_RIGHT);
+        total(totals, "Taxable Value", InvoicePdfRenderer.money(inv.getAmount()), bodyFont);
+        if (inv.getCgst() != null && inv.getCgst().signum() > 0) {
+            total(totals, "CGST @ 9%", InvoicePdfRenderer.money(inv.getCgst()), bodyFont);
+            total(totals, "SGST @ 9%", InvoicePdfRenderer.money(inv.getSgst()), bodyFont);
+        } else {
+            total(totals, "IGST @ 18%", InvoicePdfRenderer.money(inv.getIgst() != null && inv.getIgst().signum() > 0
+                    ? inv.getIgst() : inv.getGst()), bodyFont);
+        }
+        total(totals, "Total (INR)", InvoicePdfRenderer.money(inv.getTotal()), labelFont);
+        document.add(totals);
+        document.add(new Paragraph(" "));
+        document.add(new Paragraph(AmountInWords.forAmount(inv.getTotal(), "INR") + " Only", labelFont));
+        document.close();
         return out.toByteArray();
     }
 

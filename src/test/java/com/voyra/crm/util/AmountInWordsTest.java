@@ -41,6 +41,11 @@ class AmountInWordsTest {
     }
 
     @Test
+    void aMissingCurrencyPrintsTheAmountWithoutACurrencyName() {
+        assertThat(AmountInWords.forAmount(new BigDecimal("100.50"), null)).isEqualTo("One Hundred  & Fifty Cents");
+    }
+
+    @Test
     void nullAmountIsTreatedAsZero() {
         assertThat(AmountInWords.forAmount(null, "INR")).isEqualTo("Zero Rupees");
     }

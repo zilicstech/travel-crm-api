@@ -38,47 +38,43 @@ public final class PaymentAdvicePdfRenderer {
                                 List<SupplierPayment> invoicePayments, Vendor vendor, Tenant agency) {
         Document document = new Document(PageSize.A4, 32, 32, 36, 36);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
-        try {
-            PdfWriter.getInstance(document, out);
-            document.open();
+        // no finally: closing a document with nothing on it throws "The document has no pages" and would hide the real error
+        PdfWriter.getInstance(document, out);
+        document.open();
 
-            Font titleFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 16);
-            Font labelFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 9);
-            Font bodyFont = FontFactory.getFont(FontFactory.HELVETICA, 9);
-            Font smallFont = FontFactory.getFont(FontFactory.HELVETICA, 8);
+        Font titleFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 16);
+        Font labelFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 9);
+        Font bodyFont = FontFactory.getFont(FontFactory.HELVETICA, 9);
+        Font smallFont = FontFactory.getFont(FontFactory.HELVETICA, 8);
 
-            document.add(new Paragraph("PAYMENT ADVICE", titleFont));
+        document.add(new Paragraph("PAYMENT ADVICE", titleFont));
+        document.add(new Paragraph(" "));
+
+        PdfPTable header = new PdfPTable(2);
+        header.setWidthPercentage(100);
+        header.setWidths(new float[]{1f, 1f});
+        header.addCell(borderless(vendorBlock(vendor, labelFont, bodyFont)));
+        header.addCell(borderless(metaBlock(payment, InvoicePdfRenderer.base(agency), labelFont, bodyFont)));
+        document.add(header);
+        document.add(new Paragraph(" "));
+
+        document.add(settlementTable(payment, invoice, invoicePayments, labelFont, bodyFont));
+        document.add(new Paragraph(" "));
+        document.add(new Paragraph(
+                AmountInWords.forAmount(payment.getAmount().abs(), payment.getCurrencyCode()) + " Only",
+                FontFactory.getFont(FontFactory.HELVETICA_BOLD, 9)));
+
+        PdfPTable bank = agencyBankBlock(agency, labelFont, bodyFont);
+        if (bank != null) {
             document.add(new Paragraph(" "));
-
-            PdfPTable header = new PdfPTable(2);
-            header.setWidthPercentage(100);
-            header.setWidths(new float[]{1f, 1f});
-            header.addCell(borderless(vendorBlock(vendor, labelFont, bodyFont)));
-            header.addCell(borderless(metaBlock(payment, InvoicePdfRenderer.base(agency), labelFont, bodyFont)));
-            document.add(header);
-            document.add(new Paragraph(" "));
-
-            document.add(settlementTable(payment, invoice, invoicePayments, labelFont, bodyFont));
-            document.add(new Paragraph(" "));
-            document.add(new Paragraph(
-                    AmountInWords.forAmount(payment.getAmount().abs(), payment.getCurrencyCode()) + " Only",
-                    FontFactory.getFont(FontFactory.HELVETICA_BOLD, 9)));
-
-            PdfPTable bank = agencyBankBlock(agency, labelFont, bodyFont);
-            if (bank != null) {
-                document.add(new Paragraph(" "));
-                document.add(bank);
-            }
-
-            if (payment.getNotes() != null && !payment.getNotes().isBlank()) {
-                document.add(new Paragraph(" "));
-                document.add(new Paragraph("Notes: " + payment.getNotes(), smallFont));
-            }
-        } finally {
-            if (document.isOpen()) {
-                document.close();
-            }
+            document.add(bank);
         }
+
+        if (payment.getNotes() != null && !payment.getNotes().isBlank()) {
+            document.add(new Paragraph(" "));
+            document.add(new Paragraph("Notes: " + payment.getNotes(), smallFont));
+        }
+        document.close();
         return out.toByteArray();
     }
 

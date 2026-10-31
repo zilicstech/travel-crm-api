@@ -95,7 +95,7 @@ public class TripjackHotelBookingProvider implements HotelBookingProvider {
         boolean refundable = cancellation.path("isRefundable").asBoolean(false);
         String notes = text(option.path("bookingNotes"));
         return new FareReview(reviewId, total, TripjackHotelSearchProvider.baseRate(pricing), pricing.path("currency").asText("INR"),
-                notes == null || notes.isBlank() ? null : notes, null, option.isMissingNode() ? null : option,
+                notes == null || notes.isBlank() ? null : notes, null, option, // a missing option has no total, refused above
                 TripjackHotelSearchProvider.cancellationPolicy(cancellation, refundable), refundable ? freeUntil(cancellation) : null);
     }
 

@@ -14,7 +14,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
+import org.springframework.test.web.client.ResponseCreator;
 
+import java.io.IOException;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.List;
@@ -25,6 +27,8 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withException;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withServerError;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 /** Request defaults, odd bodies and the segment shapes the fixture tests leave out, with inline made-up responses. */
@@ -182,6 +186,45 @@ class TripjackFlightSearchProviderCoverageTest {
 
         assertThatThrownBy(() -> new TripjackFlightSearchProvider(credentials, RestClient.builder()).search(q, credential("k")))
                 .isInstanceOf(IllegalArgumentException.class);
+        verifyNoInteractions(credentials);
+    }
+
+    /** A provider whose IP lookup answers from {@code ipAnswer} instead of the network; the server is returned for verify. */
+    private static MockRestServiceServer ipLookup(TripjackFlightSearchProvider provider, ResponseCreator ipAnswer) {
+        RestClient.Builder ipBuilder = RestClient.builder();
+        MockRestServiceServer ipServer = MockRestServiceServer.bindTo(ipBuilder).build();
+        ipServer.expect(requestTo("https://api.ipify.org")).andRespond(ipAnswer);
+        provider.ipLookup = ipBuilder.build();
+        return ipServer;
+    }
+
+    @Test
+    void anUnreachableSupplierIsASupplierErrorAndAsksForThisServersIp() {
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo(URL)).andRespond(withException(new IOException("connection refused")));
+        TripjackFlightSearchProvider provider = new TripjackFlightSearchProvider(credentials, builder);
+        MockRestServiceServer ipServer = ipLookup(provider, withSuccess("203.0.113.7", MediaType.TEXT_PLAIN));
+
+        assertThatThrownBy(() -> provider.search(query(), credential("long-test-key")))
+                .isInstanceOf(SupplierException.class).hasMessage("Tripjack flight search call failed")
+                .hasCauseInstanceOf(org.springframework.web.client.ResourceAccessException.class);
+        server.verify();
+        ipServer.verify();
+    }
+
+    @Test
+    void theOutboundIpIsTrimmedUnknownWhenEmptyAndNamesTheFailureWhenTheLookupFails() {
+        TripjackFlightSearchProvider provider = new TripjackFlightSearchProvider(credentials, RestClient.builder());
+
+        ipLookup(provider, withSuccess(" 203.0.113.7\n", MediaType.TEXT_PLAIN));
+        assertThat(provider.outboundIp()).isEqualTo("203.0.113.7");
+
+        ipLookup(provider, withSuccess());
+        assertThat(provider.outboundIp()).isEqualTo("unknown");
+
+        ipLookup(provider, withServerError());
+        assertThat(provider.outboundIp()).isEqualTo("unknown (lookup failed: InternalServerError)");
         verifyNoInteractions(credentials);
     }
 }

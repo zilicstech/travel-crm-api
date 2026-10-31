@@ -60,8 +60,9 @@ public final class AmountInWords {
         int minorUnits = scaled.subtract(BigDecimal.valueOf(whole)).movePointRight(2)
                 .setScale(0, RoundingMode.HALF_UP).intValue();
 
-        CurrencyWords words = CURRENCIES.getOrDefault(currencyCode,
-                new CurrencyWords(currencyCode == null ? "" : currencyCode, "Cents"));
+        // the map refuses a null key, so a missing currency is handled before the lookup
+        CurrencyWords words = currencyCode == null ? new CurrencyWords("", "Cents")
+                : CURRENCIES.getOrDefault(currencyCode, new CurrencyWords(currencyCode, "Cents"));
         boolean indian = "INR".equals(currencyCode);
 
         StringBuilder sb = new StringBuilder();
@@ -76,7 +77,6 @@ public final class AmountInWords {
     // ---------------------------------------------------------------- Indian grouping (Lakh/Crore)
 
     private static String spellIndian(long n) {
-        if (n == 0) return "Zero";
         StringBuilder sb = new StringBuilder();
         long crore = n / 10_000_000; n %= 10_000_000;
         long lakh = n / 100_000; n %= 100_000;
@@ -93,7 +93,6 @@ public final class AmountInWords {
     // ---------------------------------------------------------------- International grouping
 
     private static String spellInternational(long n) {
-        if (n == 0) return "Zero";
         StringBuilder sb = new StringBuilder();
         long billion = n / 1_000_000_000; n %= 1_000_000_000;
         long million = n / 1_000_000; n %= 1_000_000;

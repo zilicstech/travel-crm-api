@@ -19,35 +19,41 @@ public final class XlsxWriter {
     }
 
     public static byte[] write(String sheetName, ReportTable table) {
-        try (XSSFWorkbook workbook = new XSSFWorkbook()) {
-            Sheet sheet = workbook.createSheet(sheetName);
+        XSSFWorkbook workbook = new XSSFWorkbook();
+        Sheet sheet = workbook.createSheet(sheetName);
 
-            CellStyle headerStyle = workbook.createCellStyle();
-            Font headerFont = workbook.createFont();
-            headerFont.setBold(true);
-            headerStyle.setFont(headerFont);
+        CellStyle headerStyle = workbook.createCellStyle();
+        Font headerFont = workbook.createFont();
+        headerFont.setBold(true);
+        headerStyle.setFont(headerFont);
 
-            Row headerRow = sheet.createRow(0);
-            List<String> header = table.header();
-            for (int c = 0; c < header.size(); c++) {
-                Cell cell = headerRow.createCell(c);
-                cell.setCellValue(header.get(c));
-                cell.setCellStyle(headerStyle);
+        Row headerRow = sheet.createRow(0);
+        List<String> header = table.header();
+        for (int c = 0; c < header.size(); c++) {
+            Cell cell = headerRow.createCell(c);
+            cell.setCellValue(header.get(c));
+            cell.setCellStyle(headerStyle);
+        }
+
+        List<List<String>> rows = table.rows();
+        for (int r = 0; r < rows.size(); r++) {
+            Row row = sheet.createRow(r + 1);
+            List<String> values = rows.get(r);
+            for (int c = 0; c < values.size(); c++) {
+                row.createCell(c).setCellValue(values.get(c) != null ? values.get(c) : "");
             }
+        }
 
-            List<List<String>> rows = table.rows();
-            for (int r = 0; r < rows.size(); r++) {
-                Row row = sheet.createRow(r + 1);
-                List<String> values = rows.get(r);
-                for (int c = 0; c < values.size(); c++) {
-                    row.createCell(c).setCellValue(values.get(c) != null ? values.get(c) : "");
-                }
-            }
+        for (int c = 0; c < header.size(); c++) {
+            sheet.autoSizeColumn(c);
+        }
+        return toBytes(workbook);
+    }
 
-            for (int c = 0; c < header.size(); c++) {
-                sheet.autoSizeColumn(c);
-            }
-
+    /** Writes and closes the workbook; writing to memory cannot raise the IOException the compiler forces. */
+    @ExcludeFromJacocoGenerated
+    private static byte[] toBytes(XSSFWorkbook workbook) {
+        try (workbook) {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             workbook.write(out);
             return out.toByteArray();

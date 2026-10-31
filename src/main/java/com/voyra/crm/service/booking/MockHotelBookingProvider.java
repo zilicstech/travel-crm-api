@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
+import com.voyra.crm.util.ExcludeFromJacocoGenerated;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
@@ -115,10 +116,16 @@ public class MockHotelBookingProvider implements HotelBookingProvider {
 
     /** {@code mock-hbk-<12 hex>-<check-in yyyyMMdd or none>-<total>}: short, stable per review, refund-ready. */
     static String bookingId(String reviewId, BigDecimal total) {
+        byte[] digest = sha256().digest(reviewId.getBytes(StandardCharsets.UTF_8));
+        String day = reviewId.startsWith(REVIEW_PREFIX) ? reviewId.substring(REVIEW_PREFIX.length(), REVIEW_PREFIX.length() + 8) : "none";
+        return BOOKING_PREFIX + HexFormat.of().formatHex(digest).substring(0, 12) + "-" + day + "-" + total.toPlainString();
+    }
+
+    /** Every JRE ships SHA-256, so the catch the compiler forces cannot run. */
+    @ExcludeFromJacocoGenerated
+    private static MessageDigest sha256() {
         try {
-            byte[] digest = MessageDigest.getInstance("SHA-256").digest(reviewId.getBytes(StandardCharsets.UTF_8));
-            String day = reviewId.startsWith(REVIEW_PREFIX) ? reviewId.substring(REVIEW_PREFIX.length(), REVIEW_PREFIX.length() + 8) : "none";
-            return BOOKING_PREFIX + HexFormat.of().formatHex(digest).substring(0, 12) + "-" + day + "-" + total.toPlainString();
+            return MessageDigest.getInstance("SHA-256");
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 unavailable", e);
         }

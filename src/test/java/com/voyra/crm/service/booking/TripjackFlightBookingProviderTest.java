@@ -338,6 +338,19 @@ class TripjackFlightBookingProviderTest {
     }
 
     @Test
+    void anEmptyFareRuleAnswerLeavesTheReviewWithoutRules() {
+        server.expect(requestTo(BASE + "/fms/v1/review")).andRespond(withSuccess(
+                OK + ",\"bookingId\":\"TJS4\",\"totalPriceInfo\":{\"totalFareDetail\":{\"fC\":{\"TF\":100}}}}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(BASE + "/fms/v2/farerule")).andRespond(withSuccess());
+
+        FareReview r = provider.review("off-1", 1, 0, 0);
+
+        assertThat(r.reviewId()).isEqualTo("TJS4");
+        assertThat(r.fareRules()).isNull();
+        server.verify();
+    }
+
+    @Test
     void aReviewWithANullBookingIdIsIncomplete() {
         server.expect(requestTo(BASE + "/fms/v1/review")).andRespond(withSuccess(
                 OK + ",\"bookingId\":null,\"totalPriceInfo\":{\"totalFareDetail\":{\"fC\":{\"TF\":100}}}}", MediaType.APPLICATION_JSON));

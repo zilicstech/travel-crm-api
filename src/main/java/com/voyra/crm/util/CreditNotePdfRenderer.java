@@ -27,52 +27,48 @@ public final class CreditNotePdfRenderer {
     public static byte[] write(CreditNote note) {
         Document document = new Document(PageSize.A4, 32, 32, 36, 36);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
-        try {
-            PdfWriter.getInstance(document, out);
-            document.open();
+        // no finally: closing a document with nothing on it throws "The document has no pages" and would hide the real error
+        PdfWriter.getInstance(document, out);
+        document.open();
 
-            Font titleFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 16);
-            Font labelFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 9);
-            Font bodyFont = FontFactory.getFont(FontFactory.HELVETICA, 9);
+        Font titleFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 16);
+        Font labelFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 9);
+        Font bodyFont = FontFactory.getFont(FontFactory.HELVETICA, 9);
 
-            document.add(new Paragraph("CREDIT NOTE", titleFont));
-            document.add(new Paragraph(" "));
+        document.add(new Paragraph("CREDIT NOTE", titleFont));
+        document.add(new Paragraph(" "));
 
-            PdfPTable meta = new PdfPTable(2);
-            meta.setWidthPercentage(100);
-            addRow(meta, "Credit Note No.", InvoicePdfRenderer.valueOr(note.getCreditNoteNumber()), labelFont, bodyFont);
-            addRow(meta, "Date", InvoicePdfRenderer.str(note.getNoteDate()), labelFont, bodyFont);
-            addRow(meta, "Against Invoice", InvoicePdfRenderer.valueOr(note.getInvoiceNumber()), labelFont, bodyFont);
-            addRow(meta, "Client", note.getClientName(), labelFont, bodyFont);
-            addRow(meta, "Reason", note.getReason() + (note.getReasonNote() != null ? " - " + note.getReasonNote() : ""), labelFont, bodyFont);
-            document.add(meta);
-            document.add(new Paragraph(" "));
+        PdfPTable meta = new PdfPTable(2);
+        meta.setWidthPercentage(100);
+        addRow(meta, "Credit Note No.", InvoicePdfRenderer.valueOr(note.getCreditNoteNumber()), labelFont, bodyFont);
+        addRow(meta, "Date", InvoicePdfRenderer.str(note.getNoteDate()), labelFont, bodyFont);
+        addRow(meta, "Against Invoice", InvoicePdfRenderer.valueOr(note.getInvoiceNumber()), labelFont, bodyFont);
+        addRow(meta, "Client", note.getClientName(), labelFont, bodyFont);
+        addRow(meta, "Reason", note.getReason() + (note.getReasonNote() != null ? " - " + note.getReasonNote() : ""), labelFont, bodyFont);
+        document.add(meta);
+        document.add(new Paragraph(" "));
 
-            PdfPTable totals = new PdfPTable(new float[]{3f, 1.5f});
-            totals.setWidthPercentage(50);
-            totals.setHorizontalAlignment(Element.ALIGN_RIGHT);
-            totalRow(totals, "Taxable Value Reversed", InvoicePdfRenderer.money(note.getTaxableValue()), bodyFont);
-            if (note.getIgstAmount().compareTo(BigDecimal.ZERO) > 0) {
-                totalRow(totals, "IGST Reversed", InvoicePdfRenderer.money(note.getIgstAmount()), bodyFont);
-            } else {
-                totalRow(totals, "CGST Reversed", InvoicePdfRenderer.money(note.getCgstAmount()), bodyFont);
-                totalRow(totals, "SGST Reversed", InvoicePdfRenderer.money(note.getSgstAmount()), bodyFont);
-            }
-            if (note.getTcsAmount().compareTo(BigDecimal.ZERO) > 0) {
-                totalRow(totals, "TCS Reversed", InvoicePdfRenderer.money(note.getTcsAmount()), bodyFont);
-            }
-            if (note.getCancellationFee().compareTo(BigDecimal.ZERO) > 0) {
-                totalRow(totals, "Retained (still taxable)", InvoicePdfRenderer.money(note.getCancellationFee()), bodyFont);
-            }
-            totalRow(totals, "Total Amount", InvoicePdfRenderer.money(note.getTotalAmount()) + " " + note.getCurrencyCode(), labelFont);
-            totalRow(totals, "Refundable", InvoicePdfRenderer.money(note.getRefundableAmount()), bodyFont);
-            totalRow(totals, "Refunded So Far", InvoicePdfRenderer.money(note.getRefundedAmount()), bodyFont);
-            document.add(totals);
-        } finally {
-            if (document.isOpen()) {
-                document.close();
-            }
+        PdfPTable totals = new PdfPTable(new float[]{3f, 1.5f});
+        totals.setWidthPercentage(50);
+        totals.setHorizontalAlignment(Element.ALIGN_RIGHT);
+        totalRow(totals, "Taxable Value Reversed", InvoicePdfRenderer.money(note.getTaxableValue()), bodyFont);
+        if (note.getIgstAmount().compareTo(BigDecimal.ZERO) > 0) {
+            totalRow(totals, "IGST Reversed", InvoicePdfRenderer.money(note.getIgstAmount()), bodyFont);
+        } else {
+            totalRow(totals, "CGST Reversed", InvoicePdfRenderer.money(note.getCgstAmount()), bodyFont);
+            totalRow(totals, "SGST Reversed", InvoicePdfRenderer.money(note.getSgstAmount()), bodyFont);
         }
+        if (note.getTcsAmount().compareTo(BigDecimal.ZERO) > 0) {
+            totalRow(totals, "TCS Reversed", InvoicePdfRenderer.money(note.getTcsAmount()), bodyFont);
+        }
+        if (note.getCancellationFee().compareTo(BigDecimal.ZERO) > 0) {
+            totalRow(totals, "Retained (still taxable)", InvoicePdfRenderer.money(note.getCancellationFee()), bodyFont);
+        }
+        totalRow(totals, "Total Amount", InvoicePdfRenderer.money(note.getTotalAmount()) + " " + note.getCurrencyCode(), labelFont);
+        totalRow(totals, "Refundable", InvoicePdfRenderer.money(note.getRefundableAmount()), bodyFont);
+        totalRow(totals, "Refunded So Far", InvoicePdfRenderer.money(note.getRefundedAmount()), bodyFont);
+        document.add(totals);
+        document.close();
         return out.toByteArray();
     }
 

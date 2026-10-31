@@ -96,12 +96,15 @@ class ConfigBeansTest {
         PlatformSupplierCredentialService credentials = mock(PlatformSupplierCredentialService.class);
         when(credentials.hasActive(SupplierProvider.TRIPJACK)).thenReturn(true);
         supplierLogger.withBean(PlatformSupplierCredentialService.class, () -> credentials)
+                // without the OS environment, so the answer does not depend on the machine running the test
+                .withInitializer(c -> c.getEnvironment().getPropertySources()
+                        .remove(org.springframework.core.env.StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME))
                 .withPropertyValues("app.flight-supplier.provider=MOCK", "app.hotel-supplier.provider=tripjack")
                 .run(ctx -> {
                     try (LogCapture log = new LogCapture(SupplierStartupLogger.class)) {
                         ctx.getBean(SupplierStartupLogger.class).logSupplierConfig();
                         assertThat(log.lines()).hasSize(3);
-                        assertThat(log.lines().get(0)).startsWith("INFO Supplier config at startup: flightProvider=MOCK, hotelProvider=tripjack, FLIGHT_SUPPLIER env present=");
+                        assertThat(log.lines().get(0)).isEqualTo("INFO Supplier config at startup: flightProvider=MOCK, hotelProvider=tripjack, FLIGHT_SUPPLIER env present=false");
                         assertThat(log.lines().get(1)).startsWith("WARN Flight search is using the MOCK provider");
                         assertThat(log.lines().get(2)).isEqualTo("INFO Platform Tripjack credential active=true");
                     }
@@ -113,11 +116,12 @@ class ConfigBeansTest {
         PlatformSupplierCredentialService credentials = mock(PlatformSupplierCredentialService.class);
         when(credentials.hasActive(SupplierProvider.TRIPJACK)).thenThrow(new IllegalStateException("no key"));
         supplierLogger.withBean(PlatformSupplierCredentialService.class, () -> credentials)
-                .withPropertyValues("app.flight-supplier.provider=tripjack")
+                .withPropertyValues("app.flight-supplier.provider=tripjack", "FLIGHT_SUPPLIER=tripjack")
                 .run(ctx -> {
                     try (LogCapture log = new LogCapture(SupplierStartupLogger.class)) {
                         ctx.getBean(SupplierStartupLogger.class).logSupplierConfig();
                         assertThat(log.lines()).hasSize(2);
+                        assertThat(log.lines().get(0)).endsWith("FLIGHT_SUPPLIER env present=true");
                         assertThat(log.lines().get(1)).isEqualTo("WARN Could not read the platform Tripjack credential at startup: no key");
                     }
                 });

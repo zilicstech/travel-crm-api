@@ -55,7 +55,7 @@ public class PaxCodec {
     /** Converts {@code value} to a JSON-shaped map with API keys dropped and passport numbers masked to the last 3. */
     @SuppressWarnings("unchecked")
     public Map<String, Object> redact(Object value) {
-        return (Map<String, Object>) redactNode(objectMapper.convertValue(value, Object.class), null);
+        return (Map<String, Object>) redactNode(objectMapper.convertValue(value, Object.class), ""); // "" names the top level
     }
 
     private static Object redactNode(Object node, String key) {
@@ -72,7 +72,7 @@ public class PaxCodec {
         if (node instanceof List<?> list) {
             return list.stream().map(v -> redactNode(v, key)).toList();
         }
-        if (node instanceof String s && key != null && isPassportNumber(key)) {
+        if (node instanceof String s && isPassportNumber(key)) {
             return s.length() <= 3 ? "***" : "*".repeat(s.length() - 3) + s.substring(s.length() - 3);
         }
         return node;
