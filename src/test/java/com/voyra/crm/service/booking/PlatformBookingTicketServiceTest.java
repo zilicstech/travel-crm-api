@@ -126,7 +126,7 @@ class PlatformBookingTicketServiceTest {
     /** Wires the repositories for one visible booking whose downloads are kept in {@link #saved}. */
     private void stored(PlatformBooking b) {
         given(bookings.findByIdAndTenantId("B1", "T1")).willReturn(Optional.of(b));
-        given(bookings.findByIdForUpdate("B1")).willReturn(Optional.of(b));
+        given(bookings.findByIdAndTenantIdForUpdate("B1", "T1")).willReturn(Optional.of(b));
         given(tickets.maxSeq("B1")).willAnswer(i -> saved.size());
         given(tickets.save(any())).willAnswer(i -> {
             saved.add(i.getArgument(0));
@@ -187,7 +187,7 @@ class PlatformBookingTicketServiceTest {
         PlatformBooking b = booking("T1");
         b.setStatus(PlatformBookingStatus.CANCELLED);
         given(bookings.findByIdAndTenantId("B1", "T1")).willReturn(Optional.of(b));
-        given(bookings.findByIdForUpdate("B1")).willReturn(Optional.of(b));
+        given(bookings.findByIdAndTenantIdForUpdate("B1", "T1")).willReturn(Optional.of(b));
 
         assertThatThrownBy(() -> service.create("B1", null)).isInstanceOfSatisfying(BookingConflictException.class,
                 e -> assertThat(e.getCode()).isEqualTo("TICKET_NOT_AVAILABLE"));
@@ -200,7 +200,7 @@ class PlatformBookingTicketServiceTest {
         PlatformBooking b = booking("T1");
         b.setProduct(PricingProduct.HOTEL);
         given(bookings.findByIdAndTenantId("B1", "T1")).willReturn(Optional.of(b));
-        given(bookings.findByIdForUpdate("B1")).willReturn(Optional.of(b));
+        given(bookings.findByIdAndTenantIdForUpdate("B1", "T1")).willReturn(Optional.of(b));
 
         assertThatThrownBy(() -> service.create("B1", null)).isInstanceOfSatisfying(BookingConflictException.class,
                 e -> assertThat(e.getCode()).isEqualTo("TICKET_NOT_AVAILABLE"));
@@ -214,7 +214,7 @@ class PlatformBookingTicketServiceTest {
         b.setPaxEnc(null);
         b.setPaxPurgedAt(Instant.parse("2027-03-01T00:00:00Z"));
         given(bookings.findByIdAndTenantId("B1", "T1")).willReturn(Optional.of(b));
-        given(bookings.findByIdForUpdate("B1")).willReturn(Optional.of(b));
+        given(bookings.findByIdAndTenantIdForUpdate("B1", "T1")).willReturn(Optional.of(b));
 
         assertThatThrownBy(() -> service.create("B1", null)).isInstanceOfSatisfying(BookingConflictException.class, e -> {
             assertThat(e.getCode()).isEqualTo("PASSENGERS_PURGED");
@@ -241,7 +241,7 @@ class PlatformBookingTicketServiceTest {
         PlatformBooking b = booking("T1");
         b.setGross(null);
         given(bookings.findByIdAndTenantId("B1", "T1")).willReturn(Optional.of(b));
-        given(bookings.findByIdForUpdate("B1")).willReturn(Optional.of(b));
+        given(bookings.findByIdAndTenantIdForUpdate("B1", "T1")).willReturn(Optional.of(b));
 
         assertThatThrownBy(() -> service.create("B1", new BigDecimal("10"))).isInstanceOfSatisfying(BookingConflictException.class,
                 e -> assertThat(e.getCode()).isEqualTo("TICKET_NOT_AVAILABLE"));
@@ -255,9 +255,9 @@ class PlatformBookingTicketServiceTest {
         b.getItinerary().put("totalPriceList", List.of(Map.of("fd", Map.of("ADULT", Map.of("afC", Map.of("TAF", Map.of("YQ", 500, "K3", 200)))))));
         b.setPricingSnapshot(Map.of("paxMix", Map.of("adults", 1, "children", 0, "infants", 0)));
         stored(b);
-        service.create("B1", new BigDecimal("500"));
+        service.create("B1", BigDecimal.ZERO); // no markup, so the supplier's named taxes are printed
         List<FareLine> frozen = List.of(new FareLine("Base fare", new BigDecimal("4250.00")), new FareLine("K3", new BigDecimal("200.00")),
-                new FareLine("YQ", new BigDecimal("500.00")), new FareLine("Other charges", new BigDecimal("550.00")));
+                new FareLine("YQ", new BigDecimal("500.00")), new FareLine("Other charges", new BigDecimal("50.00")));
 
         b.setItinerary(Map.of("sI", List.of(seg("DEL", "BOM", false))));
         b.setPricingSnapshot(null);
@@ -266,7 +266,7 @@ class PlatformBookingTicketServiceTest {
         ETicketPdfRenderer.ETicketData d = rendered(() -> service.pdf("B1", t.getId()));
 
         assertThat(d.fare()).isEqualTo(frozen);
-        assertThat(d.total()).isEqualByComparingTo("5500.00");
+        assertThat(d.total()).isEqualByComparingTo("5000.00");
     }
 
     @Test
@@ -351,9 +351,20 @@ class PlatformBookingTicketServiceTest {
     @Test
     void anUnknownBookingIs404() {
         login("T1", UserType.AGENCY_OWNER);
-        given(bookings.findByIdForUpdate("NOPE")).willReturn(Optional.empty());
+        given(bookings.findByIdAndTenantIdForUpdate("NOPE", "T1")).willReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.create("NOPE", null)).isInstanceOf(NotFoundException.class).hasMessage("Booking not found");
+        verifyNoInteractions(tickets);
+    }
+
+    @Test
+    void anotherAgencysBookingIsNeverLocked() {
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+                new CustomUserPrincipal("T2", "o@t2.test", UserType.AGENCY_OWNER, "T2"), null));
+
+        assertThatThrownBy(() -> service.create("B1", null)).isInstanceOf(NotFoundException.class).hasMessage("Booking not found");
+        verify(bookings).findByIdAndTenantIdForUpdate("B1", "T2");
+        verify(bookings, never()).findByIdForUpdate(any());
         verifyNoInteractions(tickets);
     }
 
@@ -440,7 +451,7 @@ class PlatformBookingTicketServiceTest {
         assertThatThrownBy(() -> service.pdf("B1", "K1")).isInstanceOf(NotFoundException.class);
         assertThatThrownBy(() -> service.list("B1")).isInstanceOf(NotFoundException.class);
         // lock-first: the colleague's row is locked until the refused transaction rolls back, and no ticket is touched
-        given(bookings.findByIdForUpdate("B1")).willReturn(Optional.of(booking("A1")));
+        given(bookings.findByIdAndTenantIdForUpdate("B1", "T1")).willReturn(Optional.of(booking("A1")));
         assertThatThrownBy(() -> service.create("B1", null)).isInstanceOf(NotFoundException.class);
         verifyNoInteractions(tickets, authorResolver);
     }

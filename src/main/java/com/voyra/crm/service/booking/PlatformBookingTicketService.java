@@ -22,6 +22,7 @@ import com.voyra.crm.service.booking.ticket.Direction;
 import com.voyra.crm.service.booking.ticket.FareLine;
 import com.voyra.crm.service.booking.ticket.TicketFacts;
 import com.voyra.crm.service.booking.ticket.TicketFare;
+import com.voyra.crm.security.SecurityContextUtil;
 import com.voyra.crm.util.ETicketPdfRenderer;
 import com.voyra.crm.util.UniqueIdResolver;
 import lombok.RequiredArgsConstructor;
@@ -68,8 +69,8 @@ public class PlatformBookingTicketService {
     @Transactional
     public TicketDownloadResponse create(String bookingId, BigDecimal markup) {
         // lock first so two clicks get seq 1 and 2 and the checks below read the row as locked; visible() then returns
-        // that same locked instance or 404s (an unseen id is only locked until this transaction rolls back)
-        bookingRepository.findByIdForUpdate(bookingId).orElseThrow(() -> new NotFoundException("Booking not found"));
+        // that same locked instance or 404s (only the caller's own agency's rows are ever locked)
+        bookingRepository.findByIdAndTenantIdForUpdate(bookingId, SecurityContextUtil.getCurrentUserOrThrow().tenantId()).orElseThrow(() -> new NotFoundException("Booking not found"));
         PlatformBooking b = queryService.visible(bookingId);
         if (b.getProduct() != PricingProduct.FLIGHT || b.getStatus() != PlatformBookingStatus.TICKETED) {
             throw new BookingConflictException("TICKET_NOT_AVAILABLE", "A ticket can be downloaded only for a ticketed flight", Map.of());

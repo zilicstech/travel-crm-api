@@ -27,6 +27,11 @@ public interface PlatformBookingRepository extends JpaRepository<PlatformBooking
     @Query("SELECT b FROM PlatformBooking b WHERE b.id = :id")
     Optional<PlatformBooking> findByIdForUpdate(@Param("id") String id);
 
+    /** {@link #findByIdForUpdate} limited to one agency, so a caller never locks another agency's row. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT b FROM PlatformBooking b WHERE b.id = :id AND b.tenantId = :tenantId")
+    Optional<PlatformBooking> findByIdAndTenantIdForUpdate(@Param("id") String id, @Param("tenantId") String tenantId);
+
     Optional<PlatformBooking> findBySupplierReviewId(String supplierReviewId);
 
     /** Ids only, so the statement import never holds an unlocked copy of a row it will lock and change. */
