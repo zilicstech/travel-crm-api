@@ -138,6 +138,11 @@ public class BookingService {
 
     @Transactional
     public BookingResponse createBooking(BookingCreateRequest request) {
+        return toResponse(insertBooking(request, true));
+    }
+
+    /** @param announce false for a Voyra mirror: no credit check (already paid), no "booking logged" line, no service sync */
+    private Booking insertBooking(BookingCreateRequest request, boolean announce) {
         // A pending booking is saved before it is booked with the supplier - the fare comes later.
         if (request.getNetCost() == null) request.setNetCost(BigDecimal.ZERO);
         if (request.getSellingPrice() == null) request.setSellingPrice(BigDecimal.ZERO);
@@ -148,8 +153,10 @@ public class BookingService {
                 && !owner.id().equals(SecurityContextUtil.getCurrentUserOrThrow().tenantId())) {
             assertAgentHandlesStandaloneType(request.getType(), owner.id());
         }
-        clientCreditService.assertWithinLimit(request.getClientId(), request.getSellingPrice(),
-                Boolean.TRUE.equals(request.getOverrideCreditLimit()));
+        if (announce) {
+            clientCreditService.assertWithinLimit(request.getClientId(), request.getSellingPrice(),
+                    Boolean.TRUE.equals(request.getOverrideCreditLimit()));
+        }
         Client client = clientRepository.findById(request.getClientId())
                 .orElseThrow(() -> new IllegalArgumentException("Client not found: " + request.getClientId()));
 
@@ -257,20 +264,139 @@ public class BookingService {
         }
         auditService.recordCreate(AuditEntityType.BOOKING, booking.getId(), labelFor(booking));
 
-        if (service != null) {
-            leadTimelineService.record(service.getLeadId(), service.getId(), LeadTimelineEventType.BOOKING_LOGGED,
-                    labelOrType(booking) + " booking logged" + (booking.getPnr() != null ? " (" + booking.getPnr() + ")" : ""));
-            serviceBookingStatusSync.onBookingLogged(service.getId(), owner.id(), owner.name());
-            // logging on an unassigned service gives it to the booking's agent: the snapshot follows (same managed entity)
-            if (booking.getServiceAgentId() == null && service.getAssignedAgentId() != null) {
-                booking.setServiceAgentId(service.getAssignedAgentId());
-                booking.setServiceAgentName(service.getAssignedAgentName());
-                bookingRepository.save(booking);
-            }
+        if (service != null && announce) {
+            announceLogged(booking, service);
         }
 
         log.info("Booking created: bookingId={}, agentId={}, serviceId={}", booking.getId(), owner.id(), request.getServiceId());
-        return toResponse(booking);
+        return booking;
+    }
+
+    /** The lead hears a booking was logged on its service, and the service is marked booked by the booking's agent. */
+    private void announceLogged(Booking booking, LeadService service) {
+        leadTimelineService.record(service.getLeadId(), service.getId(), LeadTimelineEventType.BOOKING_LOGGED,
+                labelOrType(booking) + " booking logged" + (booking.getPnr() != null ? " (" + booking.getPnr() + ")" : ""));
+        serviceBookingStatusSync.onBookingLogged(service.getId(), booking.getAgentId(), booking.getAgentName());
+        // logging on an unassigned service gives it to the booking's agent: the snapshot follows (same managed entity)
+        if (booking.getServiceAgentId() == null && service.getAssignedAgentId() != null) {
+            booking.setServiceAgentId(service.getAssignedAgentId());
+            booking.setServiceAgentName(service.getAssignedAgentName());
+            bookingRepository.save(booking);
+        }
+    }
+
+    static final String VOYRA_FAIL_REASON = "Voyra could not complete this booking; nothing was charged";
+    private static final java.util.Set<BookingDocumentType> VOYRA_VOUCHERS =
+            java.util.EnumSet.of(BookingDocumentType.E_TICKET, BookingDocumentType.HOTEL_VOUCHER);
+
+    private static void assertPlatform() {
+        org.springframework.util.Assert.state(com.voyra.crm.security.SystemActor.isActive(),
+                "Voyra bookings are written by the platform only");
+    }
+
+    private Booking lockVoyra(String bookingId) {
+        assertPlatform();
+        return bookingRepository.findByIdForUpdate(bookingId)
+                .orElseThrow(() -> new com.voyra.crm.exception.NotFoundException("Booking not found: " + bookingId));
+    }
+
+    /**
+     * The CRM mirror of a Voyra booking still being booked: PENDING, priced from {@code voucher} (cost plus a flat
+     * markup), with no reference, no supplier bill and no word to the lead or its service until it is ticketed.
+     */
+    @Transactional
+    public String createVoyraPending(BookingCreateRequest request, BookingDocument voucher, String platformBookingId) {
+        assertPlatform();
+        BigDecimal cost = nzMoney(voucher.getNetCost());
+        BigDecimal price = com.voyra.crm.util.MarkupMath.sellingPrice(cost, MarkupMode.FLAT, voucher.getMarkupValue());
+        request.setNetCost(cost);
+        request.setSellingPrice(price);
+        request.setMarkupMode(MarkupMode.FLAT);
+        request.setMarkupValue(voucher.getMarkupValue());
+        Booking booking = insertBooking(request, false);
+        booking.setPlatformBookingId(platformBookingId);
+        bookingRepository.save(booking);
+        voucher.setBookingId(booking.getId());
+        voucher.setReferenceNumber(null);
+        voucher.setMarkupMode(MarkupMode.FLAT);
+        voucher.setSellingPrice(price);
+        voucher.setVendorId(request.getVendorId());
+        bookingDocumentRepository.save(voucher);
+        return booking.getId();
+    }
+
+    /**
+     * Voyra ticketed it: the booking takes its reference, its voucher is described and drafts its supplier bill, the
+     * lead's service is marked booked and the booking is CONFIRMED (a fail-cancelled one is revived first). Any row
+     * already past PENDING is left as it is (a later sync of a confirmed or really cancelled mirror).
+     * @return the voucher's supplier bill id
+     */
+    @Transactional
+    public String confirmVoyraTicket(String bookingId, String reference, String ticketNo,
+                                     java.util.function.Consumer<BookingDocument> describe) {
+        Booking booking = lockVoyra(bookingId);
+        BookingDocument voucher = bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc(bookingId).stream()
+                .filter(d -> VOYRA_VOUCHERS.contains(d.getDocType())).findFirst()
+                .orElseThrow(() -> new IllegalStateException("This Voyra booking has no ticket or voucher"));
+        boolean revive = isFailCancelled(booking);
+        if (booking.getBookingStatus() != BookingStatus.PENDING && !revive) {
+            return voucher.getSupplierInvoiceId();
+        }
+        Map<String, String> before = AuditSnapshot.of(booking, AUDITED);
+        setReference(booking, reference);
+        booking.setTicketNo(ticketNo);
+        voucher.setReferenceNumber(referenceOf(booking)); // as cut to the column by setReference
+        describe.accept(voucher);
+        voucher.setSupplierInvoiceId(draftVoucherBill(booking, voucher, voucher.getVendorId(), nzMoney(voucher.getNetCost())));
+        if (revive) {
+            booking.setCancelReason(null);
+            booking.setCancelledAt(null);
+            booking.setCancelledBy(null);
+            booking.setRefundState(RefundState.NOT_APPLICABLE);
+        }
+        booking.setBookingStatus(BookingStatus.CONFIRMED);
+        touch(booking);
+        bookingRepository.save(booking);
+        bookingDocumentRepository.save(voucher);
+        auditService.recordUpdate(AuditEntityType.BOOKING, booking.getId(), labelFor(booking),
+                AuditSnapshot.diff(before, AuditSnapshot.of(booking, AUDITED)));
+        if (booking.getServiceId() != null) {
+            leadServiceRepository.findById(booking.getServiceId()).ifPresent(service -> announceLogged(booking, service));
+        }
+        if (revive && booking.getLeadId() != null) {
+            leadTimelineService.record(booking.getLeadId(), booking.getServiceId(), LeadTimelineEventType.BOOKING_LOGGED,
+                    "Voyra ticketed this booking after all");
+        }
+        return voucher.getSupplierInvoiceId();
+    }
+
+    /** Voyra could not book it: CANCELLED with the fixed reason and no money; the lead's service was never booked, so it is left alone. */
+    @Transactional
+    public void failVoyraBooking(String bookingId) {
+        Booking booking = lockVoyra(bookingId);
+        if (booking.getBookingStatus() == BookingStatus.CANCELLED) {
+            return;
+        }
+        Map<String, String> before = AuditSnapshot.of(booking, AUDITED);
+        booking.setBookingStatus(BookingStatus.CANCELLED);
+        booking.setCancelReason(VOYRA_FAIL_REASON);
+        booking.setCancelledAt(LocalDateTime.now());
+        booking.setCancelledBy(com.voyra.crm.security.SystemActor.USER_ID);
+        booking.setRefundState(RefundState.NOT_APPLICABLE);
+        touch(booking);
+        bookingRepository.save(booking);
+        auditService.recordUpdate(AuditEntityType.BOOKING, booking.getId(), labelFor(booking),
+                AuditSnapshot.diff(before, AuditSnapshot.of(booking, AUDITED)));
+        if (booking.getLeadId() != null) {
+            leadTimelineService.record(booking.getLeadId(), booking.getServiceId(), LeadTimelineEventType.BOOKING_REMOVED,
+                    labelOrType(booking) + " booking cancelled: " + VOYRA_FAIL_REASON);
+        }
+    }
+
+    /** Cancelled by {@link #failVoyraBooking} (never by its reason text): the platform did it and no cancellation money was set. */
+    static boolean isFailCancelled(Booking b) {
+        return b.getBookingStatus() == BookingStatus.CANCELLED && b.getPlatformBookingId() != null
+                && com.voyra.crm.security.SystemActor.USER_ID.equals(b.getCancelledBy()) && b.getCancellationType() == null;
     }
 
     /**
@@ -895,10 +1021,7 @@ public class BookingService {
             booking.setBookingStatus(BookingStatus.CONFIRMED);
         }
         if (cost.signum() > 0) {
-            // The bill is in what the supplier charged: the voucher's purchase currency at its rate, else base.
-            voucher.setSupplierInvoiceId(supplierInvoiceService.draftForVoucher(booking, vendorId, voucher.getReferenceNumber(),
-                    voucher.getPurchaseCurrency(), voucher.getPurchaseCurrency() != null ? voucher.getPurchasePrice() : cost,
-                    voucher.getPurchaseRate(), voucher.getCommission(), voucher.getSupplierTds()).getId());
+            voucher.setSupplierInvoiceId(draftVoucherBill(booking, voucher, vendorId, cost));
         }
         List<AuditChange> changes = AuditSnapshot.diff(before, AuditSnapshot.of(booking, AUDITED));
         touch(booking);
@@ -908,6 +1031,13 @@ public class BookingService {
             raiseChangeAlerts(booking, changes);
         }
         syncPaymentIfInvoiced(booking);
+    }
+
+    /** The bill is in what the supplier charged: the voucher's purchase currency at its rate, else base. @return its id */
+    private String draftVoucherBill(Booking booking, BookingDocument voucher, String vendorId, BigDecimal cost) {
+        return supplierInvoiceService.draftForVoucher(booking, vendorId, voucher.getReferenceNumber(),
+                voucher.getPurchaseCurrency(), voucher.getPurchaseCurrency() != null ? voucher.getPurchasePrice() : cost,
+                voucher.getPurchaseRate(), voucher.getCommission(), voucher.getSupplierTds()).getId();
     }
 
     /** Once invoiced, a voucher added or taken off changes what is still to collect - and so the payment status. */
