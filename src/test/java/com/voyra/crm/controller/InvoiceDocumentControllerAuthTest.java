@@ -112,6 +112,27 @@ class InvoiceDocumentControllerAuthTest {
     }
 
     @Test
+    void creatingOrIssuingAnInvoiceOnABookingVoyraIsStillBookingIs409() throws Exception {
+        com.voyra.crm.exception.BookingConflictException waiting = new com.voyra.crm.exception.BookingConflictException(
+                "WAITING_FOR_VOYRA", "Voyra is still booking this; bill and collect once it is confirmed", java.util.Map.of());
+        when(invoiceDocumentService.createDraft(any())).thenThrow(waiting);
+        when(invoicePurchaseService.issue(org.mockito.ArgumentMatchers.eq("I1"), any())).thenThrow(waiting);
+        InvoiceDraftRequest draft = new InvoiceDraftRequest();
+        draft.setBookingId("B1");
+
+        mockMvc.perform(post("/api/accounts/invoices")
+                        .with(SecurityMockMvcRequestPostProcessors.user("accountant1").roles("ACCOUNTANT"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(draft)))
+                .andExpect(status().isConflict())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.code").value("WAITING_FOR_VOYRA"));
+        mockMvc.perform(post("/api/accounts/invoices/I1/issue")
+                        .with(SecurityMockMvcRequestPostProcessors.user("accountant1").roles("ACCOUNTANT")))
+                .andExpect(status().isConflict())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.code").value("WAITING_FOR_VOYRA"));
+    }
+
+    @Test
     void agentCanListButNotIssueOrCancel() throws Exception {
         when(invoiceDocumentService.list(any(), any(), any(), any(), any(), any())).thenReturn(java.util.List.of());
 

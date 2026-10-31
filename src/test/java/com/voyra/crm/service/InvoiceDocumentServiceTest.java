@@ -282,6 +282,20 @@ class InvoiceDocumentServiceTest {
     }
 
     @Test
+    void createDraftRefusesAVoyraBookingVoyraIsStillBooking() {
+        Booking pending = booking().toBuilder().bookingStatus(BookingStatus.PENDING).platformBookingId("PB1").build();
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(pending));
+
+        InvoiceDraftRequest request = new InvoiceDraftRequest();
+        request.setBookingId("B1");
+
+        assertThatThrownBy(() -> invoiceDocumentService.createDraft(request))
+                .isInstanceOf(com.voyra.crm.exception.BookingConflictException.class)
+                .hasMessage("Voyra is still booking this; bill and collect once it is confirmed")
+                .extracting("code").isEqualTo("WAITING_FOR_VOYRA");
+    }
+
+    @Test
     void createDraftRejectsASecondDraftOnTheSameBooking() {
         when(bookingRepository.findById("B1")).thenReturn(Optional.of(booking()));
         when(invoiceRepository.existsByBookingIdAndDocumentTypeAndStatus(
@@ -470,6 +484,27 @@ class InvoiceDocumentServiceTest {
         BigDecimal debitTotal = posting.lines().stream().map(com.voyra.crm.models.JournalLinePosting::debitAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal creditTotal = posting.lines().stream().map(com.voyra.crm.models.JournalLinePosting::creditAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
         assertThat(debitTotal).isEqualByComparingTo(creditTotal);
+    }
+
+    @Test
+    void issuingRefusesWhenABookingItCoversIsStillWithVoyra() {
+        Invoice draft = Invoice.builder().id("I1").status(InvoiceLifecycle.DRAFT).bookingId("B1")
+                .supplyNature(SupplyNature.DOMESTIC_PACKAGE).build();
+        when(invoiceRepository.findById("I1")).thenReturn(Optional.of(draft));
+        when(invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc("I1"))
+                .thenReturn(List.of(InvoiceLineItem.builder().id("L1").invoiceId("I1").description("x").build()));
+        when(invoiceLineItemRepository.findBookingIdsByInvoiceId("I1")).thenReturn(List.of("B2"));
+        Booking voyraPending = booking().toBuilder().id("B2").bookingStatus(BookingStatus.PENDING).platformBookingId("PB1").build();
+        // A Voyra booking that is confirmed is billable; only the pending one blocks.
+        Booking voyraConfirmed = booking().toBuilder().platformBookingId("PB0").build();
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(voyraConfirmed));
+        when(bookingRepository.findById("B2")).thenReturn(Optional.of(voyraPending));
+
+        assertThatThrownBy(() -> invoiceDocumentService.issue("I1"))
+                .isInstanceOf(com.voyra.crm.exception.BookingConflictException.class)
+                .hasMessage("Voyra is still booking this; bill and collect once it is confirmed")
+                .extracting("code").isEqualTo("WAITING_FOR_VOYRA");
+        org.mockito.Mockito.verify(documentNumberService, org.mockito.Mockito.never()).next(any(), any());
     }
 
     @Test

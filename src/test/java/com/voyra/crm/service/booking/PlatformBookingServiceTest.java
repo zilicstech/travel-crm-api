@@ -708,6 +708,7 @@ class PlatformBookingServiceTest {
     void setMarkupRepricesTheCrmBookingAndReturnsTheRow() {
         String id = ticketedWithCrmRow();
         crmPlan(true);
+        when(tenantRepository.findById("OWNER1")).thenReturn(Optional.of(com.voyra.crm.entity.Tenant.builder().id("OWNER1").ownerName("Asha Rao").build()));
 
         PlatformBooking b = service.setMarkup(id, new BigDecimal("250.5"));
 
@@ -716,7 +717,25 @@ class PlatformBookingServiceTest {
         order.verify(entitlementService).assertWritable(T);
         order.verify(mirrorService).setMarkup(b, new BigDecimal("250.50"));
         assertThat(savedEvents).filteredOn(e -> e.getType().equals("MARKUP_SET")).singleElement()
-                .satisfies(e -> assertThat(e.getPayload()).containsEntry("markup", "250.50"));
+                .satisfies(e -> assertThat(e.getPayload()).containsEntry("markup", "250.50")
+                        .containsEntry("by", "OWNER1").containsEntry("byName", "Asha Rao"));
+    }
+
+    /** The CRM reprice runs as the system, so the event names who set the markup. */
+    @Test
+    void anAgentsSetMarkupNamesTheAgentOnTheEvent() {
+        String id = reviewedByAgent("AG1");
+        service.confirm(id, confirmRequest("key-00000001", "4500.00"));
+        rows.get(id).setTenantBookingId("CRM1");
+        lenient().when(bookingRepository.findByIdAndTenantId(id, T)).thenAnswer(i -> Optional.ofNullable(rows.get(id)));
+        crmPlan(true);
+        when(agentRepository.findById("AG1")).thenReturn(Optional.of(
+                Agent.builder().id("AG1").name("Liam").manageableServices(List.of(ServiceType.FLIGHT)).build()));
+
+        service.setMarkup(id, BigDecimal.TEN);
+
+        assertThat(savedEvents).filteredOn(e -> e.getType().equals("MARKUP_SET")).singleElement()
+                .satisfies(e -> assertThat(e.getPayload()).containsEntry("by", "AG1").containsEntry("byName", "Liam"));
     }
 
     /** A refused CRM reprice leaves no MARKUP_SET, so the current markup (and the next download's prefill) stays as it was. */

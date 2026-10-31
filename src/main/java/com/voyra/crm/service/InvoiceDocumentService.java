@@ -253,6 +253,7 @@ public class InvoiceDocumentService {
         if (booking.getBookingStatus() == BookingStatus.CANCELLED) {
             throw new IllegalStateException("Cannot invoice a cancelled booking");
         }
+        assertNotWaitingForVoyra(booking);
         // Several tax invoices are legal against one booking now (advance + balance) - the
         // invariant that actually needs enforcing is "never two editable drafts competing for
         // the same booking", matching the DB's idx_invoice_booking_draft partial unique index.
@@ -619,6 +620,7 @@ public class InvoiceDocumentService {
         if (lines.isEmpty()) {
             throw new IllegalStateException("At least one line is required to issue an invoice");
         }
+        invoiceLineSource.bookingIdsOf(invoice).forEach(b -> bookingRepository.findById(b).ifPresent(InvoiceDocumentService::assertNotWaitingForVoyra));
 
         if (invoice.getSupplyNature() == null) {
             // Without it the invoice has no GST slab or place of supply - it would go out tax-free by accident.
@@ -795,6 +797,14 @@ public class InvoiceDocumentService {
     // ---------------------------------------------------------------- internals
 
     /** Every booking the invoice bills gets its invoiced / received figures worked out again. */
+    /** No client money before Voyra tickets: a pending Voyra booking is neither drafted nor issued. */
+    private static void assertNotWaitingForVoyra(Booking booking) {
+        if (BookingService.waitingForVoyra(booking)) {
+            throw new com.voyra.crm.exception.BookingConflictException("WAITING_FOR_VOYRA",
+                    "Voyra is still booking this; bill and collect once it is confirmed", Map.of());
+        }
+    }
+
     private void syncBookings(Invoice invoice) {
         invoiceLineSource.bookingIdsOf(invoice).forEach(bookingAccountingSync::syncPayment);
     }

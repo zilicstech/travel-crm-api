@@ -459,8 +459,15 @@ public class PlatformBookingService {
         }
         entitlementService.assertWritable(b.getTenantId());
         mirrorService.setMarkup(b, m);
+        // the CRM reprice ran as the system, so the event names who set it
+        String byName = principal.isStaffUser()
+                ? agentRepository.findById(principal.userId()).map(Agent::getName).orElse(principal.username())
+                : tenantRepository.findById(principal.userId()).map(Tenant::getOwnerName).orElse(principal.username());
         // the current markup the next ticket download opens with (PlatformBookingQueryService#currentMarkup)
-        tx.executeWithoutResult(s -> events.record(bookingId, PlatformBookingQueryService.MARKUP_SET, Map.of("markup", m.toPlainString())));
+        // shortcut: recorded in its own transaction after the CRM reprice committed, so a crash between them leaves the
+        // CRM price set but the next download prefilled with the old markup; record it in one transaction if that bites
+        tx.executeWithoutResult(s -> events.record(bookingId, PlatformBookingQueryService.MARKUP_SET,
+                Map.of("markup", m.toPlainString(), "by", principal.userId(), "byName", byName)));
         log.info("Platform booking {} CRM markup set: markup={}", bookingId, m);
         return b;
     }
