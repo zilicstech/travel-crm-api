@@ -1731,4 +1731,141 @@ class PlatformBookingServiceTest {
                 .hasMessage("Enter at most 3 guests in room 1, as reviewed");
         verify(walletService, never()).hold(any(), any(), any(), any(), any());
     }
+
+    @Test
+    void resolvingTicketedWithoutAPnrIsRefused() {
+        String id = reviewed();
+        loginAsPlatformAdmin();
+
+        assertThatThrownBy(() -> service.resolve(id, PlatformBookingStatus.TICKETED, null, List.of(), "note"))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("The PNR is required to resolve a booking as ticketed");
+    }
+
+    @Test
+    void aBookingAbortedForAnotherReasonOrAlreadyConfirmedCannotBeConfirmed() {
+        String id = reviewed();
+        rows.get(id).setStatus(PlatformBookingStatus.ABORTED);
+        rows.get(id).setAbortReason("Aborted by the agency");
+
+        assertThatThrownBy(() -> service.confirm(id, confirmRequest("key-00000001", "4500.00")))
+                .isInstanceOf(IllegalStateException.class).hasMessage("This booking was already confirmed");
+    }
+
+    @Test
+    void aReviewWithoutAnExpiryAndWithAnEarlierLaterLegUsesTheEarliestDeparture() {
+        String id = reviewed();
+        PlatformBooking b = rows.get(id);
+        b.setReviewExpiresAt(null);
+        b.getPricingSnapshot().remove("travelDate");
+        b.setItinerary(Map.of("tripInfos", List.of(Map.of("sI", List.of(Map.of("dt", "2030-01-05T10:00"), Map.of("dt", "2030-01-01T10:00"),
+                Map.of("dt", "bad"))))));
+
+        PlatformBooking out = service.confirm(id, confirmRequest("key-00000001", "4500.00"));
+
+        assertThat(out.getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
+    }
+
+    @Test
+    void aRowDeletedAfterItsHoldIsNotFoundWhenMarkedBooking() {
+        String id = reviewed();
+        lenient().when(eventRepository.save(any())).thenAnswer(i -> {
+            PlatformBookingEvent e = i.getArgument(0);
+            savedEvents.add(e);
+            if ("HELD".equals(e.getType())) {
+                rows.remove(id);
+            }
+            return e;
+        });
+
+        assertThatThrownBy(() -> service.confirm(id, confirmRequest("key-00000001", "4500.00")))
+                .isInstanceOf(NotFoundException.class).hasMessage("Booking not found");
+        verify(provider, never()).book(any());
+    }
+
+    @Test
+    void aLateTicketOnACancelledBookingIsNotDebited() {
+        String id = reviewed();
+        rows.get(id).setStatus(PlatformBookingStatus.CANCELLED);
+
+        PlatformBooking b = service.applySupplierResult(id, ticketed(null));
+
+        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
+        verify(walletService, never()).debitHeld(any(), any(), any(), any(), any());
+        verify(walletService, never()).debitOrReceivable(any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void anAgentWithoutAnAgentRecordCannotBook() {
+        loginAs(UserType.AGENT, "AG-GONE");
+
+        assertThatThrownBy(() -> service.review(reviewRequest())).isInstanceOf(org.springframework.security.access.AccessDeniedException.class)
+                .hasMessage("Only the owner or an agent who handles flights can book flights");
+    }
+
+    @Test
+    void anOwnersBlankIssuerIsNoIssuerAndABlankClientNeedsNone() {
+        FlightReviewRequest blankIssuer = reviewRequest();
+        blankIssuer.setIssuedByAgentId(" ");
+        blankIssuer.setClientId(" ");
+
+        assertThat(rows.get(service.review(blankIssuer).getBookingId()).getIssuedByAgentId()).isNull();
+        verify(agentRepository, never()).findByIdAndTenantId(anyString(), anyString());
+    }
+
+    @Test
+    void anOwnersClientBookingWithALeadAgentNeedsNoIssuer() {
+        FlightReviewRequest r = reviewRequest();
+        r.setClientId("C1");
+        r.setLeadId("L1");
+        when(mirrorService.hasLeadAgent(T, null, "L1")).thenReturn(true);
+
+        assertThat(service.review(r).getBookingId()).isNotNull();
+        verify(mirrorService).requireLinks("C1", "L1", null);
+    }
+
+    @Test
+    void aSupplierItineraryOfJsonNullIsStoredAsNone() {
+        when(provider.review(any(FlightReviewRequest.class))).thenReturn(new FareReview("rv-2", new BigDecimal("5000.00"),
+                new BigDecimal("4250.00"), "INR", null, Instant.now().plus(15, ChronoUnit.MINUTES),
+                com.fasterxml.jackson.databind.node.NullNode.getInstance()));
+
+        assertThat(rows.get(reviewed()).getItinerary()).isNull();
+    }
+
+    @Test
+    void aRoomLeadWithABlankTitleOrPanAndRoomsWithoutAnAdultCount() {
+        hotelSupplierQuotes("5000.00");
+        String id = service.reviewHotel(hotelReviewRequest()).getBookingId();
+        PlatformBookingConfirmRequest blankTitle = hotelConfirmRequest("key-00000001", "4500.00");
+        List<PaxInput> given = blankTitle.getPassengers();
+        given.get(0).setTitle(" ");
+        assertThatThrownBy(() -> service.confirm(id, blankTitle)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Enter the title of the lead guest of room 1");
+
+        rows.get(id).setItinerary(new java.util.LinkedHashMap<>(Map.of("rooms", List.of(Map.of("adults", "two"), "odd"))));
+        PlatformBookingConfirmRequest blankPan = hotelConfirmRequest("key-00000002", "4500.00");
+        List<PaxInput> pax = blankPan.getPassengers();
+        pax.get(0).setPan(" ");
+        pax.get(1).setPan("PQRSX6789K");
+
+        PlatformBooking b = service.confirm(id, blankPan);
+
+        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
+        org.mockito.ArgumentCaptor<BookRequest> sent = org.mockito.ArgumentCaptor.forClass(BookRequest.class);
+        verify(hotelProvider).book(sent.capture());
+        assertThat(sent.getValue().leadPan()).isEqualTo("PQRSX6789K");
+    }
+
+    @Test
+    void anAgentsOwnClientBookingNeedsNoIssuer() {
+        loginAs(UserType.AGENT, "AG1");
+        when(agentRepository.findById("AG1")).thenReturn(Optional.of(Agent.builder().id("AG1").manageableServices(List.of(ServiceType.FLIGHT)).build()));
+        FlightReviewRequest r = reviewRequest();
+        r.setClientId("C1");
+
+        PlatformBooking b = rows.get(service.review(r).getBookingId());
+
+        assertThat(b.getBookedBy()).isEqualTo("AG1");
+        verify(mirrorService, never()).hasLeadAgent(any(), any(), any());
+    }
 }
