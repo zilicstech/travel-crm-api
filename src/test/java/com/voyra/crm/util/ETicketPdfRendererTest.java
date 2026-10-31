@@ -50,10 +50,10 @@ class ETicketPdfRendererTest {
         String f = PdfText.flat(t);
         assertThat(t).contains("SKY TRAVELS", "a@sky.in", "PB-1", "Confirmed", "IndiGo", "PNR1", "Mr A One");
         assertThat(f).contains(PdfText.flat("Saver"), PdfText.flat("Non-refundable"), "T-111", "15KG", "INR4000.00",
-                "INR4700.50", "Totalfare", "2h10m", "2026-11-0506:15", "DEL,DelhiT3");
+                "INR4700.50", "Totalfare", "2h10m", "05Nov2026,06:15", "DEL,DelhiT3");
         // the second passenger takes the baggage of its own direction (none known here) and the first PNR of its own
         assertThat(f).contains("DEL-BOM", "BOM-DEL");
-        Path out = Path.of("/private/tmp/claude-502/-Users-shivanshsrivastava-Projects-Voyra-global/be7b21c3-ee6b-4618-836d-faafc551df86/scratchpad/eticket-sample.pdf");
+        Path out = Path.of("target/eticket-sample.pdf");
         Files.createDirectories(out.getParent());
         Files.write(out, pdf);
     }
@@ -109,6 +109,16 @@ class ETicketPdfRendererTest {
     @Test
     void noVoyraName() {
         assertThat(PdfText.of(ETicketPdfRenderer.render(data(pax(), null, true, true, facts()))).toLowerCase()).doesNotContain("voyra");
+    }
+
+    @Test
+    void timesAndFlightNumbers() {
+        Segment raw = new Segment("AI", "Air India", "101", "A", null, null, null, "B", null, null, null,
+                "2026-11-05T06:15:30", "soon", null);
+        Segment none = new Segment(null, null, null, "A", null, null, null, "B", null, null, null, null, null, null);
+        String t = PdfText.flat(PdfText.of(ETicketPdfRenderer.render(data(pax(), null, false, false,
+                new TicketFacts(List.of(raw), Map.of(), List.of(new Direction("A-B", List.of(raw, none), null, null, null, null, null)))))));
+        assertThat(t).contains("05Nov2026,06:15", "soon", "AI101").doesNotContain("6E6E-123");
     }
 
     @Test

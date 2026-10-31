@@ -51,6 +51,7 @@ public final class ETicketPdfRenderer {
             "For changes, cancellations or refunds, contact your travel agency.");
     private static final DateTimeFormatter ISSUED = DateTimeFormatter.ofPattern("dd MMM yyyy, HH:mm")
             .withZone(ZoneId.of("Asia/Kolkata"));
+    private static final DateTimeFormatter WHEN = DateTimeFormatter.ofPattern("dd MMM yyyy, HH:mm");
     private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("dd MMM yyyy");
     private static final Color BAND = new Color(0xD9, 0xD9, 0xD9);
 
@@ -157,7 +158,7 @@ public final class ETicketPdfRenderer {
     private static PdfPTable flights(Direction dir, Font bold, Font small) {
         PdfPTable t = new PdfPTable(new float[]{0.9f, 1.8f, 1f, 1f, 1f, 2.8f, 2.8f, 0.9f});
         t.setWidthPercentage(100);
-        for (String h : List.of("Airline", "Flight", "Fare type", "Cabin", "Refundable", "Departure", "Arrival", "Duration")) {
+        for (String h : List.of("Airline", "Flight", "Fare type", "Cabin", "Refund", "Departure", "Arrival", "Duration")) {
             PdfPCell c = cell(h, bold, false);
             c.setBackgroundColor(BAND);
             t.addCell(c);
@@ -168,7 +169,7 @@ public final class ETicketPdfRenderer {
             PdfPCell logoCell = logo == null ? cell("", small, false) : new PdfPCell(logo, true);
             logoCell.setBorder(0);
             t.addCell(logoCell);
-            t.addCell(cell(dash(s.airlineName()) + "\n" + dash(s.airlineCode()) + " " + dash(s.flightNumber()), small, false));
+            t.addCell(cell(dash(s.airlineName()) + "\n" + flightNo(s), small, false));
             t.addCell(cell(dash(dir.fareType()), small, false));
             t.addCell(cell(dash(dir.cabinClass()), small, false));
             t.addCell(cell(refundable, small, false));
@@ -179,9 +180,24 @@ public final class ETicketPdfRenderer {
         return t;
     }
 
+    private static String flightNo(Segment s) {
+        String code = s.airlineCode(), no = s.flightNumber();
+        if (blank(no)) return dash(code);
+        return blank(code) || no.startsWith(code) ? no : code + " " + no;
+    }
+
     private static String place(String when, String code, String city, String terminal, String airport) {
         String where = dash(code) + (blank(city) ? "" : ", " + city) + (blank(terminal) ? "" : " T" + terminal);
-        return dash(when == null ? null : when.replace('T', ' ')) + "\n" + where + (blank(airport) ? "" : "\n" + airport);
+        return when(when) + "\n" + where + (blank(airport) ? "" : "\n" + airport);
+    }
+
+    /** "2026-11-05T06:15[:ss]" as "05 Nov 2026, 06:15", no zone shift; anything else as given. */
+    private static String when(String iso) {
+        try {
+            return WHEN.format(java.time.LocalDateTime.parse(iso));
+        } catch (RuntimeException e) { // null or not ISO
+            return dash(iso);
+        }
     }
 
     private static String duration(Integer minutes) {
@@ -278,13 +294,14 @@ public final class ETicketPdfRenderer {
 
     private static Image airlineLogo(String code) {
         if (blank(code) || !code.matches("[A-Za-z0-9]{2,3}")) return null;
-        return image(logoBytes("/airlines/" + code.toUpperCase() + ".png"));
+        InputStream in = ETicketPdfRenderer.class.getResourceAsStream("/airlines/" + code.toUpperCase() + ".png");
+        return in == null ? null : image(readAll(in));
     }
 
     @ExcludeFromJacocoGenerated // readAllBytes declares IOException; a classpath stream cannot fail in a test
-    private static byte[] logoBytes(String path) {
-        try (InputStream in = ETicketPdfRenderer.class.getResourceAsStream(path)) {
-            return in == null ? null : in.readAllBytes();
+    private static byte[] readAll(InputStream in) {
+        try (in) {
+            return in.readAllBytes();
         } catch (java.io.IOException e) {
             return null;
         }
