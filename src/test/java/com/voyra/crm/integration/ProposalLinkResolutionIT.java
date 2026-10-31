@@ -9,10 +9,13 @@ import com.voyra.crm.entity.Lead;
 import com.voyra.crm.enums.ClientType;
 import com.voyra.crm.enums.LeadPriority;
 import com.voyra.crm.enums.LeadStatus;
+import com.voyra.crm.enums.SubscriptionPlan;
 import com.voyra.crm.enums.UserType;
 import com.voyra.crm.repository.LeadRepository;
+import com.voyra.crm.repository.SubscriptionRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.service.AgencyService;
+import com.voyra.crm.service.EntitlementService;
 import com.voyra.crm.service.ProposalLinkService;
 import com.voyra.crm.service.PublicProposalService;
 import com.voyra.crm.util.IdGenerator;
@@ -46,6 +49,10 @@ class ProposalLinkResolutionIT extends AbstractIntegrationTest {
     private ProposalLinkService proposalLinkService;
     @Autowired
     private PublicProposalService publicProposalService;
+    @Autowired
+    private SubscriptionRepository subscriptionRepository;
+    @Autowired
+    private EntitlementService entitlementService;
 
     private String provisionTenant(String agencyName, String ownerEmail) {
         AgencyCreateRequest request = new AgencyCreateRequest();
@@ -54,6 +61,12 @@ class ProposalLinkResolutionIT extends AbstractIntegrationTest {
         request.setOwnerEmail(ownerEmail);
         request.setOwnerPassword("TestPass123!");
         AgencyCreateResponse response = agencyService.createAgency(request);
+        // a new agency starts on Voyra Basic, and public proposal links need CRM Core
+        subscriptionRepository.findByTenantId(response.getId()).ifPresent(sub -> {
+            sub.setPlan(SubscriptionPlan.SUITE);
+            subscriptionRepository.save(sub);
+        });
+        entitlementService.refresh(response.getId());
         return response.getId();
     }
 
