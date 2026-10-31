@@ -36,4 +36,25 @@ class LedgerAccountResolverTest {
         assertThatThrownBy(() -> resolver.voyraWalletCode())
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("Voyra Wallet");
     }
+
+    @Test
+    void salesAndPurchaseAccountsResolveByTheirCategoryCode() {
+        com.voyra.crm.entity.LedgerAccount sales = LedgerAccount.builder().code("4010").name("Sales").build();
+        com.voyra.crm.entity.LedgerAccount purchase = LedgerAccount.builder().code("5010").name("Purchase").build();
+        when(repository.findByCode(com.voyra.crm.enums.SystemAccount.salesCode(com.voyra.crm.enums.InvoiceServiceCategory.AIR_INTERNATIONAL)))
+                .thenReturn(Optional.of(sales));
+        when(repository.findByCode(com.voyra.crm.enums.SystemAccount.purchaseCode(com.voyra.crm.enums.InvoiceServiceCategory.AIR_INTERNATIONAL)))
+                .thenReturn(Optional.of(purchase));
+
+        assertThat(resolver.resolveSales(com.voyra.crm.enums.InvoiceServiceCategory.AIR_INTERNATIONAL)).isSameAs(sales);
+        assertThat(resolver.resolvePurchase(com.voyra.crm.enums.InvoiceServiceCategory.AIR_INTERNATIONAL)).isSameAs(purchase);
+    }
+
+    @Test
+    void aMissingAccountNamesItsCode() {
+        when(repository.findByCode("1310")).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> resolver.resolve(com.voyra.crm.enums.SystemAccount.VOYRA_WALLET_ADVANCE))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Chart of accounts is missing code 1310 for this tenant - the seed runner may not have run yet");
+    }
 }
