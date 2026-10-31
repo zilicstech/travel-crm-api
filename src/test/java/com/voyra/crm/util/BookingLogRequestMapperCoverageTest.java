@@ -136,7 +136,7 @@ class BookingLogRequestMapperCoverageTest {
         assertThat(req.getTripType()).isEqualTo("One Way");
         assertThat(req.getReturnDate()).isNull();
         assertThat(req.getFlightCabin()).isEqualTo("Economy");
-        assertThat(req.getAgentId()).isEqualTo("AG-REQ");
+        assertThat(req.getAgentId()).isNull(); // the caller owns a service booking, set by BookingService
         assertThat(req.getPassengers().get(0).getSectors()).singleElement()
                 .satisfies(sec -> {
                     assertThat(sec.getSectorFrom()).isEqualTo("AAA");

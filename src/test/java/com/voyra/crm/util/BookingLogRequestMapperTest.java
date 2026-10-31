@@ -56,7 +56,7 @@ class BookingLogRequestMapperTest {
         assertThat(req.getClientId()).isEqualTo("C1");
         assertThat(req.getLeadId()).isEqualTo("L1");
         assertThat(req.getServiceId()).isEqualTo("S1");
-        assertThat(req.getAgentId()).isEqualTo("AG1");
+        assertThat(req.getAgentId()).as("the booking's agent is the caller, set by BookingService").isNull();
         assertThat(req.getType()).isEqualTo(BookingType.FLIGHT);
         assertThat(req.getDestination()).isEqualTo("DEL");
         assertThat(req.getFlightFrom()).isEqualTo("BOM");
@@ -101,7 +101,7 @@ class BookingLogRequestMapperTest {
     }
 
     @Test
-    void hotelReferenceGoesToConfirmationNumberAndUnassignedServiceUsesRequestedAgent() {
+    void hotelReferenceGoesToConfirmationNumberAndARequestedAgentIsNotCopied() {
         LeadService hotel = LeadService.builder().id("S2").leadId("L1").clientId("C1").type(ServiceType.HOTEL)
                 .hotelCity("Dubai").hotelCheckIn(LocalDate.of(2026, 11, 12)).hotelCheckOut(LocalDate.of(2026, 11, 15))
                 .hotelRooms(2).build();
@@ -116,7 +116,7 @@ class BookingLogRequestMapperTest {
         assertThat(req.getHotelRooms()).isEqualTo(2);
         assertThat(req.getJourneyDate()).isEqualTo(LocalDate.of(2026, 11, 12));
         assertThat(req.getReturnDate()).isEqualTo(LocalDate.of(2026, 11, 15));
-        assertThat(req.getAgentId()).isEqualTo("AG9");
+        assertThat(req.getAgentId()).isNull();
         assertThat(req.getPassengers()).isNull();
     }
 

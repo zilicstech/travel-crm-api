@@ -66,7 +66,6 @@ public final class BookingLogRequestMapper {
             req.setClientId(service.getClientId());
             req.setLeadId(service.getLeadId());
             req.setServiceId(service.getId());
-            req.setAgentId(service.getAssignedAgentId() != null ? service.getAssignedAgentId() : log.getAgentId());
             req.setType(type);
             req.setDestination(destinationFor(service));
             fillFromService(req, service, log);
