@@ -13,6 +13,7 @@ import com.voyra.crm.exception.SupplierException;
 import com.voyra.crm.service.HotelSearchProvider;
 import com.voyra.crm.service.PlatformSupplierCredentialService;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -22,6 +23,7 @@ import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 
 import java.math.BigDecimal;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -87,6 +89,7 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
     private final RestClient.Builder restClientBuilder;
     private final String uatBaseUrl;
     private final String prodBaseUrl;
+    private final Clock clock;
 
     private final Map<String, StaticData> staticData = new ConcurrentHashMap<>();
     private final Set<String> loading = ConcurrentHashMap.newKeySet();
@@ -102,14 +105,22 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
     });
     private final java.util.concurrent.atomic.AtomicBoolean shapeLogged = new java.util.concurrent.atomic.AtomicBoolean();
 
+    @Autowired
     public TripjackHotelSearchProvider(PlatformSupplierCredentialService platformSupplierCredentialService,
                                        @Qualifier("tripjackRestClientBuilder") RestClient.Builder restClientBuilder,
                                        @Value("${app.hotel-supplier.tripjack.uat-base-url:https://apitest-hms.tripjack.com}") String uatBaseUrl,
                                        @Value("${app.hotel-supplier.tripjack.prod-base-url:https://hms-search.tripjack.com}") String prodBaseUrl) {
+        this(platformSupplierCredentialService, restClientBuilder, uatBaseUrl, prodBaseUrl, Clock.systemUTC());
+    }
+
+    /** With the clock the caches' ages are read from, so a test can age them. */
+    TripjackHotelSearchProvider(PlatformSupplierCredentialService platformSupplierCredentialService, RestClient.Builder restClientBuilder,
+                                String uatBaseUrl, String prodBaseUrl, Clock clock) {
         this.platformSupplierCredentialService = platformSupplierCredentialService;
         this.restClientBuilder = restClientBuilder;
         this.uatBaseUrl = uatBaseUrl;
         this.prodBaseUrl = prodBaseUrl;
+        this.clock = clock;
     }
 
     @Override
@@ -279,8 +290,8 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
         for (String key : List.of("heroImage", "hero_image", "image", "img", "imageUrl", "thumbnail", "thumbnailUrl")) {
             JsonNode v = hotel.path(key);
             String url = v.isObject() ? link(v.path("links").isObject() ? v.path("links") : v, false) : v.asText("");
-            if (url == null && v.isObject()) url = v.path("href").asText(v.path("url").asText(""));
-            if (url != null && url.startsWith("http")) return url;
+            if (url == null) url = v.path("href").asText(v.path("url").asText(""));
+            if (url.startsWith("http")) return url;
         }
         return null;
     }
@@ -451,10 +462,10 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
 
     private JsonNode staticDetail(RestClient client, String host, String hotelId) {
         Cached<JsonNode> c = statics.get(host + "|" + hotelId);
-        if (c != null && c.at().plus(STATIC_DETAIL_TTL).isAfter(Instant.now())) return c.value();
+        if (c != null && c.at().plus(STATIC_DETAIL_TTL).isAfter(clock.instant())) return c.value();
         try {
             JsonNode res = call(client, "POST", "/hms/v3/hotel/static-detail", Map.of("hid", hotelId));
-            statics.put(host + "|" + hotelId, new Cached<>(res, Instant.now()));
+            statics.put(host + "|" + hotelId, new Cached<>(res, clock.instant()));
             return res;
         } catch (SupplierException e) {
             log.warn("Tripjack hotel static detail failed for {}, showing the options without it: {}", hotelId, e.getMessage());
@@ -588,7 +599,7 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
     public void refreshStaticData() {
         Conn conn = connect();
         StaticData current = staticData.get(conn.host());
-        if (current != null && current.builtAt().plus(STATIC_DATA_TTL).isAfter(Instant.now())) return;
+        if (current != null && current.builtAt().plus(STATIC_DATA_TTL).isAfter(clock.instant())) return;
         if (!loading.add(conn.host())) return;
         load(conn);
     }
@@ -615,7 +626,7 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
             Map<String, String> nationalities = new HashMap<>();
             call(conn.client(), "GET", "/hms/v3/nationality-info", null).path("nationalityInfos")
                     .forEach(n -> nationalities.put(n.path("code").asText("").toUpperCase(Locale.ROOT), n.path("countryId").asText()));
-            staticData.put(conn.host(), new StaticData(cities, nationalities, Instant.now()));
+            staticData.put(conn.host(), new StaticData(cities, nationalities, clock.instant()));
             log.info("Tripjack hotel static data loaded: {} cities from {} pages, {} nationalities in {} ms ({})",
                     cities.size(), pages, nationalities.size(), System.currentTimeMillis() - startedAt, conn.host());
         } finally {
@@ -626,7 +637,7 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
     private List<String> hotelIdsFor(RestClient client, String host, List<String> regionIds) {
         String key = host + "|" + String.join(",", regionIds.stream().sorted().toList());
         Cached<List<String>> cached = hotelIds.get(key);
-        if (cached != null && cached.at().plus(HOTEL_IDS_TTL).isAfter(Instant.now())) {
+        if (cached != null && cached.at().plus(HOTEL_IDS_TTL).isAfter(clock.instant())) {
             return cached.value();
         }
         Map<String, Object> body = new LinkedHashMap<>();
@@ -636,7 +647,7 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
         List<String> ids = new ArrayList<>();
         call(client, "POST", "/hms/v3/content/fetch-hotel-mapping", body).path("hotels")
                 .forEach(h -> { String id = h.path("tjHotelId").asText(""); if (!id.isBlank()) ids.add(id); });
-        hotelIds.put(key, new Cached<>(ids, Instant.now()));
+        hotelIds.put(key, new Cached<>(ids, clock.instant()));
         return ids;
     }
 
@@ -655,7 +666,7 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
         for (String hid : hids) {
             if (hid == null || hid.isBlank()) continue;
             Cached<JsonNode> c = content.get(host + "|" + hid);
-            if (c != null && c.at().plus(STATIC_DATA_TTL).isAfter(Instant.now())) out.put(hid, c.value()); else missing.add(hid);
+            if (c != null && c.at().plus(STATIC_DATA_TTL).isAfter(clock.instant())) out.put(hid, c.value()); else missing.add(hid);
         }
         List<java.util.concurrent.CompletableFuture<Void>> calls = new ArrayList<>();
         for (int i = 0; i < missing.size(); i += CONTENT_BATCH) {
@@ -667,7 +678,7 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
                         String hid = hotelIdOf(h);
                         if (hid.isBlank()) continue;
                         out.put(hid, h);
-                        content.put(host + "|" + hid, new Cached<>(h, Instant.now()));
+                        content.put(host + "|" + hid, new Cached<>(h, clock.instant()));
                     }
                 } catch (SupplierException e) {
                     log.warn("Tripjack hotel content failed, listing without stars/address/photos: {}", e.getMessage());
@@ -748,7 +759,7 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
 
     private static String messageOf(String raw) {
         try {
-            JsonNode j = OBJECT_MAPPER.readTree(raw == null ? "" : raw);
+            JsonNode j = OBJECT_MAPPER.readTree(raw);
             String m = j.path("error").path("message").asText(j.path("errors").path(0).path("message").asText(""));
             return m.isBlank() ? "" : ": " + m;
         } catch (Exception e) {

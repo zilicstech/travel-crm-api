@@ -179,9 +179,15 @@ class TripjackFlightSearchProviderTest {
                 .andRespond(withStatus(org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR));
 
         TripjackFlightSearchProvider provider = new TripjackFlightSearchProvider(platformSupplierCredentialService, builder);
+        RestClient.Builder ipBuilder = RestClient.builder();
+        MockRestServiceServer ipServer = MockRestServiceServer.bindTo(ipBuilder).build();
+        ipServer.expect(requestTo("https://api.ipify.org")).andRespond(withSuccess("203.0.113.7", MediaType.TEXT_PLAIN));
+        provider.ipLookup = ipBuilder.build(); // the failure log asks for this server's IP: never the real network in a test
 
         assertThatThrownBy(() -> provider.search(query()))
-                .isInstanceOf(SupplierException.class);
+                .isInstanceOf(SupplierException.class)
+                .hasMessage("Tripjack flight search call failed (HTTP 500)");
+        ipServer.verify();
     }
 
     /**

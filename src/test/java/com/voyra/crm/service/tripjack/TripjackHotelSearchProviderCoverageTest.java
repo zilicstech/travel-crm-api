@@ -21,7 +21,12 @@ import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 
 import java.io.IOException;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -48,13 +53,38 @@ class TripjackHotelSearchProviderCoverageTest {
 
     private MockRestServiceServer server;
     private TripjackHotelSearchProvider provider;
+    private final MovableClock clock = new MovableClock();
+
+    /** A clock a test moves forward to age the caches. */
+    private static final class MovableClock extends Clock {
+        private Instant now = Instant.parse("2026-10-01T00:00:00Z");
+
+        void advance(Duration d) {
+            now = now.plus(d);
+        }
+
+        @Override
+        public Instant instant() {
+            return now;
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return ZoneOffset.UTC;
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone) {
+            return this;
+        }
+    }
 
     private void setUp(SupplierEnvironment env, boolean ordered) {
         when(credentials.resolveActive(SupplierProvider.TRIPJACK))
                 .thenReturn(new ResolvedCredential(SupplierProvider.TRIPJACK, env, "https://unused.example.test", "test-key", null));
         RestClient.Builder builder = RestClient.builder();
         server = MockRestServiceServer.bindTo(builder).ignoreExpectOrder(!ordered).build();
-        provider = new TripjackHotelSearchProvider(credentials, builder, UAT, PROD);
+        provider = new TripjackHotelSearchProvider(credentials, builder, UAT, PROD, clock);
     }
 
     private void json(String host, String path, String body) {
@@ -350,5 +380,80 @@ class TripjackHotelSearchProviderCoverageTest {
 
         assertThatThrownBy(provider::refreshStaticData)
                 .hasMessage("Tripjack hotel search failed (/hms/v3/content/fetch-city-regionIds, HTTP 403)");
+    }
+
+    @Test
+    void theCityListIsReloadedOnceItIsAWeekOld() {
+        setUp(SupplierEnvironment.UAT, true);
+        expectUatStaticData();
+        expectUatStaticData();
+
+        provider.refreshStaticData();
+        clock.advance(Duration.ofDays(7).minusSeconds(1));
+        provider.refreshStaticData(); // still under a week: no call
+        clock.advance(Duration.ofSeconds(1));
+        provider.refreshStaticData();
+
+        server.verify();
+    }
+
+    @Test
+    void theHotelIdsOfACityAreFetchedAgainAfterADay() {
+        setUp(SupplierEnvironment.UAT, true);
+        expectUatStaticData();
+        String listing = "{\"hotels\":[{\"tjHotelId\":\"5\",\"name\":\"H\",\"options\":[" + option("O5", 100) + "]}]}";
+        json(UAT, "/hms/v3/content/fetch-hotel-mapping", "{\"hotels\":[{\"tjHotelId\":\"5\"}]}");
+        json(UAT, "/hms/v3/hotel/listing", listing);
+        json(UAT, "/hms/v3/content/fetch-hotel-mapping", "{\"hotels\":[{\"tjHotelId\":\"5\"}]}");
+        json(UAT, "/hms/v3/hotel/listing", listing);
+        provider.refreshStaticData();
+
+        provider.search(query("Goa", "IN"));
+        clock.advance(Duration.ofDays(1));
+        assertThat(provider.search(query("Goa", "IN"))).extracting(HotelOfferResponse::getOfferId).containsExactly("O5");
+
+        server.verify();
+    }
+
+    @Test
+    void hotelContentIsKeptAWeekThenFetchedAgain() {
+        setUp(SupplierEnvironment.PROD, true);
+        json(PROD, "/hms/v3/content/fetch-hotel-content", "{\"hotels\":[{\"tjHotelId\":\"1\",\"star_rating\":2}]}");
+        json(PROD, "/hms/v3/content/fetch-hotel-content", "{\"hotels\":[{\"tjHotelId\":\"1\",\"star_rating\":4}]}");
+
+        assertThat(provider.thumbnails(List.of("1"))).singleElement().satisfies(t -> assertThat(t.getStarRating()).isEqualTo(2));
+        clock.advance(Duration.ofDays(7).minusSeconds(1));
+        assertThat(provider.thumbnails(List.of("1"))).singleElement().satisfies(t -> assertThat(t.getStarRating()).isEqualTo(2));
+        clock.advance(Duration.ofSeconds(1));
+        assertThat(provider.thumbnails(List.of("1"))).singleElement().satisfies(t -> assertThat(t.getStarRating()).isEqualTo(4));
+
+        server.verify();
+    }
+
+    @Test
+    void theStaticDetailIsKeptADayThenFetchedAgain() {
+        setUp(SupplierEnvironment.UAT, true);
+        expectUatStaticData();
+        String pricing = "{\"hotelName\":\"Priced Hotel\",\"options\":[" + option("O1", 700) + "]}";
+        json(UAT, "/hms/v3/hotel/pricing", pricing);
+        json(UAT, "/hms/v3/hotel/static-detail", "{\"star_rating\":5}");
+        json(UAT, "/hms/v3/hotel/pricing", pricing);
+        json(UAT, "/hms/v3/hotel/static-detail", "{\"star_rating\":3}");
+        provider.refreshStaticData();
+
+        assertThat(provider.detail("H1", query("Goa", "IN")).getStarRating()).isEqualTo(5);
+        clock.advance(Duration.ofDays(1));
+        assertThat(provider.detail("H1", query("Goa", "IN")).getStarRating()).isEqualTo(3);
+
+        server.verify();
+    }
+
+    @Test
+    void anEmptyContentAnswerListsNoThumbnails() {
+        setUp(SupplierEnvironment.PROD, true);
+        server.expect(requestTo(PROD + "/hms/v3/content/fetch-hotel-content")).andRespond(withSuccess());
+
+        assertThat(provider.thumbnails(List.of("1"))).isEmpty();
+        server.verify();
     }
 }
