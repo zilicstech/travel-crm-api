@@ -233,6 +233,10 @@ public class PaymentReceiptService {
             if (!client.getId().equals(booking.getClientId())) {
                 throw new IllegalArgumentException("This booking belongs to another client");
             }
+            if (BookingService.waitingForVoyra(booking)) {
+                throw new com.voyra.crm.exception.BookingConflictException("WAITING_FOR_VOYRA",
+                        "Voyra is still booking this; bill and collect once it is confirmed", java.util.Map.of());
+            }
         }
 
         LocalDate receivedOn = request.getReceivedOn();

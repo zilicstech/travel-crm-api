@@ -338,6 +338,25 @@ class PaymentReceiptServiceTest {
     }
 
     @Test
+    void aDepositForAPendingVoyraBookingIs409() {
+        when(clientService.findAccessibleClient("K1")).thenReturn(Client.builder().id("K1").name("Rakesh Verma").build());
+        when(bookingRepository.findById("B1")).thenReturn(java.util.Optional.of(com.voyra.crm.entity.Booking.builder()
+                .id("B1").clientId("K1").platformBookingId("PB1").bookingStatus(com.voyra.crm.enums.BookingStatus.PENDING).build()));
+
+        PaymentReceiptRequest deposit = new PaymentReceiptRequest();
+        deposit.setClientId("K1");
+        deposit.setBookingId("B1");
+        deposit.setAmount(new BigDecimal("500.00"));
+        deposit.setPaymentMode(PaymentMode.BANK_TRANSFER);
+        deposit.setReceivedOn(LocalDate.of(2026, 9, 19));
+
+        assertThatThrownBy(() -> paymentReceiptService.record(deposit))
+                .isInstanceOf(com.voyra.crm.exception.BookingConflictException.class)
+                .hasMessage("Voyra is still booking this; bill and collect once it is confirmed");
+        org.mockito.Mockito.verify(paymentReceiptRepository, org.mockito.Mockito.never()).save(any());
+    }
+
+    @Test
     void aDepositWithNoInvoiceIsRecordedAsAnAdvanceOnTheClient() {
         when(clientService.findAccessibleClient("K1")).thenReturn(Client.builder().id("K1").name("Rakesh Verma").build());
         when(paymentReceiptRepository.existsById(any())).thenReturn(false);
