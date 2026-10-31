@@ -48,6 +48,7 @@ public class AgencyService {
     private final AesPasswordEncoder passwordEncoder;
     private final TenantFlywayMigrator tenantFlywayMigrator;
     private final TenantScopedReadService tenantScopedReadService;
+    private final OwnerNameSyncService ownerNameSyncService;
     private final TenantDefaultsSeeder tenantDefaultsSeeder;
     private final ChartOfAccountsSeedService chartOfAccountsSeedService;
     private final LoginEmailService loginEmailService;
@@ -195,11 +196,14 @@ public class AgencyService {
     @Transactional
     public AgencyResponse updateAgency(String id, AgencyUpdateRequest request) {
         Tenant tenant = findById(id);
+        boolean ownerRenamed = false;
         if (request.getAgencyName() != null && !request.getAgencyName().isBlank()) {
             tenant.setAgencyName(request.getAgencyName().trim());
         }
         if (request.getOwnerName() != null && !request.getOwnerName().isBlank()) {
-            tenant.setOwnerName(request.getOwnerName().trim());
+            String newOwnerName = request.getOwnerName().trim();
+            ownerRenamed = !newOwnerName.equals(tenant.getOwnerName());
+            tenant.setOwnerName(newOwnerName);
         }
         if (request.getOwnerEmail() != null && !request.getOwnerEmail().isBlank()) {
             String trimmedEmail = request.getOwnerEmail().trim();
@@ -209,6 +213,9 @@ public class AgencyService {
             }
         }
         tenantRepository.save(tenant);
+        if (ownerRenamed) {
+            ownerNameSyncService.resync(id, tenant.getOwnerName());
+        }
         String name = tenant.getAgencyName();
         TenantStatus status = tenant.getStatus();
         afterCommit(() -> TenantCache.put(id, name, status));

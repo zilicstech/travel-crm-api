@@ -219,6 +219,9 @@ public class InvoiceService {
         if (requestedAgentId == null || requestedAgentId.isBlank()) {
             throw new IllegalArgumentException("agentId is required when an Owner creates a client invoice");
         }
+        if (requestedAgentId.equals(principal.tenantId())) {
+            return requestedAgentId;
+        }
         Agent agent = agentRepository.findByIdAndTenantId(requestedAgentId, principal.tenantId())
                 .orElseThrow(() -> new IllegalArgumentException("Agent not found in this agency: " + requestedAgentId));
         return agent.getId();

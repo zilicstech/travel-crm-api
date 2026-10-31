@@ -183,9 +183,9 @@ class BookingServiceTest {
     @Test
     void aBookingOnAnUnassignedServiceSnapshotsTheAgentTheServiceIsGivenTo() {
         SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
-                new CustomUserPrincipal("O1", "dana", UserType.AGENCY_OWNER, "T1"), null, java.util.List.of()));
+                new CustomUserPrincipal("A2", "vikram", UserType.AGENT, "T1"), null, java.util.List.of()));
         com.voyra.crm.entity.Agent vikram = com.voyra.crm.entity.Agent.builder().id("A2").name("Vikram Rao").build();
-        when(agentRepository.findByIdAndTenantId("A2", "T1")).thenReturn(Optional.of(vikram));
+        when(agentRepository.findById("A2")).thenReturn(Optional.of(vikram));
         when(clientRepository.findById("C1")).thenReturn(Optional.of(com.voyra.crm.entity.Client.builder().id("C1").name("Asha").build()));
         com.voyra.crm.entity.LeadService service = com.voyra.crm.entity.LeadService.builder().id("S1").leadId("L1")
                 .type(com.voyra.crm.enums.ServiceType.FLIGHT).build();
@@ -208,25 +208,6 @@ class BookingServiceTest {
         Booking last = saved.getValue();
         assertThat(last.getServiceAgentId()).isEqualTo("A2");
         assertThat(last.getServiceAgentName()).isEqualTo("Vikram Rao");
-    }
-
-    /** An owner booking "for" an agent must name one who handles the type, as assigning a service does. */
-    @Test
-    void anOwnerCannotPutAFlightOnAnAgentWhoDoesNotHandleFlights() {
-        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
-                new CustomUserPrincipal("O1", "dana", UserType.AGENCY_OWNER, "T1"), null, java.util.List.of()));
-        com.voyra.crm.entity.Agent priya = com.voyra.crm.entity.Agent.builder().id("A1").name("Priya")
-                .manageableServices(java.util.List.of(com.voyra.crm.enums.ServiceType.VISA)).build();
-        when(agentRepository.findByIdAndTenantId("A1", "T1")).thenReturn(Optional.of(priya));
-        when(agentRepository.findById("A1")).thenReturn(Optional.of(priya));
-        com.voyra.crm.dto.BookingCreateRequest request = new com.voyra.crm.dto.BookingCreateRequest();
-        request.setClientId("C1");
-        request.setAgentId("A1");
-        request.setType(com.voyra.crm.enums.BookingType.FLIGHT);
-
-        assertThatThrownBy(() -> bookingService.createBooking(request))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Priya doesn't handle FLIGHT");
     }
 
     /** A CRM booking mirrored from a platform booking is changed only by the platform (spec 6). */

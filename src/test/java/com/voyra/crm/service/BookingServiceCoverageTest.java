@@ -183,8 +183,10 @@ class BookingServiceCoverageTest {
         return Agent.builder().id(id).name(name).manageableServices(handles).build();
     }
 
+    /** The booking belongs to this agent: they are the caller (an owner's booking is the owner's own). */
     private void ownerPicks(Agent a) {
-        when(agentRepository.findByIdAndTenantId(a.getId(), "T1")).thenReturn(Optional.of(a));
+        as(a.getId(), UserType.AGENT);
+        when(agentRepository.findById(a.getId())).thenReturn(Optional.of(a));
     }
 
     private void clientFound() {
@@ -202,7 +204,7 @@ class BookingServiceCoverageTest {
         assertThatThrownBy(() -> bookingService.createBooking(r))
                 .isInstanceOf(IllegalArgumentException.class).hasMessage("Client not found: C9");
         verify(clientCreditService).assertWithinLimit("C9", BigDecimal.ZERO, false);
-        verify(agentRepository, never()).findById(any());
+        verify(agentRepository, times(1)).findById("A1");
         verify(bookingRepository, never()).save(any());
     }
 
@@ -215,7 +217,7 @@ class BookingServiceCoverageTest {
 
         assertThatThrownBy(() -> bookingService.createBooking(r))
                 .isInstanceOf(IllegalArgumentException.class).hasMessage("Service not found: S9");
-        verify(agentRepository, never()).findById(any());
+        verify(agentRepository, times(1)).findById("A1");
     }
 
     @Test
@@ -313,7 +315,9 @@ class BookingServiceCoverageTest {
 
     @Test
     void thePlatformMirrorMayBookATypeTheNamedAgentDoesNotHandle() {
-        ownerPicks(agent("A1", "Priya", List.of(ServiceType.VISA)));
+        Agent priya = agent("A1", "Priya", List.of(ServiceType.VISA));
+        when(agentRepository.findByIdAndTenantId("A1", "T1")).thenReturn(Optional.of(priya));
+        when(agentRepository.findById("A1")).thenReturn(Optional.of(priya));
         clientFound();
         org.mockito.Mockito.doReturn("INR").when(baseCurrency).code();
 
@@ -371,36 +375,114 @@ class BookingServiceCoverageTest {
                 .isInstanceOf(IllegalStateException.class).hasMessage("Agent not found: A1");
     }
 
-    @Test
-    void anOwnerMustNameTheAgentABookingBelongsTo() {
-        BookingCreateRequest r = request(BookingType.FLIGHT);
-        r.setAgentId(" ");
-        assertThatThrownBy(() -> bookingService.createBooking(r))
-                .isInstanceOf(IllegalArgumentException.class).hasMessage("agentId is required when an Owner creates a booking");
-        r.setAgentId(null);
-        assertThatThrownBy(() -> bookingService.createBooking(r))
-                .isInstanceOf(IllegalArgumentException.class).hasMessage("agentId is required when an Owner creates a booking");
+    private void ownerOfTenant() {
+        when(tenantRepository.findById("T1")).thenReturn(Optional.of(Tenant.builder().id("T1").ownerName("Owner Test").build()));
     }
 
     @Test
-    void anOwnerCannotNameAnAgentOfAnotherAgency() {
+    void ownerBookingBelongsToOwner() {
+        ownerOfTenant();
+        clientFound();
+        org.mockito.Mockito.doReturn("INR").when(baseCurrency).code();
+        BookingCreateRequest r = request(BookingType.FLIGHT);
+        r.setAgentId(null);
+
+        bookingService.createBooking(r);
+
+        ArgumentCaptor<Booking> saved = ArgumentCaptor.forClass(Booking.class);
+        verify(bookingRepository).save(saved.capture());
+        assertThat(saved.getValue().getAgentId()).isEqualTo("T1");
+        assertThat(saved.getValue().getAgentName()).isEqualTo("Owner Test");
+    }
+
+    @Test
+    void ownerBookingIgnoresRequestedAgent() {
+        ownerOfTenant();
+        clientFound();
+        org.mockito.Mockito.doReturn("INR").when(baseCurrency).code();
+
+        bookingService.createBooking(request(BookingType.FLIGHT)); // names agent A1
+
+        ArgumentCaptor<Booking> saved = ArgumentCaptor.forClass(Booking.class);
+        verify(bookingRepository).save(saved.capture());
+        assertThat(saved.getValue().getAgentId()).isEqualTo("T1");
+        verify(agentRepository, never()).findByIdAndTenantId(any(), any());
+    }
+
+    @Test
+    void ownerSkipsStandaloneTypeCheck() {
+        ownerOfTenant();
+        clientFound();
+        org.mockito.Mockito.doReturn("INR").when(baseCurrency).code();
+
+        assertThat(bookingService.createBooking(request(BookingType.HOTEL)).getType()).isEqualTo(BookingType.HOTEL);
+    }
+
+    @Test
+    void anOwnerWhoseAgencyIsMissingIsRefused() {
+        assertThatThrownBy(() -> bookingService.createBooking(request(BookingType.FLIGHT)))
+                .isInstanceOf(IllegalStateException.class).hasMessage("Agency not found: T1");
+    }
+
+    @Test
+    void systemActorWithTenantIdResolvesOwner() {
+        ownerOfTenant();
+        clientFound();
+        org.mockito.Mockito.doReturn("INR").when(baseCurrency).code();
+        BookingCreateRequest r = request(BookingType.FLIGHT);
+        r.setAgentId("T1");
+
+        SystemActor.call("T1", () -> bookingService.createBooking(r));
+
+        ArgumentCaptor<Booking> saved = ArgumentCaptor.forClass(Booking.class);
+        verify(bookingRepository).save(saved.capture());
+        assertThat(saved.getValue().getAgentId()).isEqualTo("T1");
+        assertThat(saved.getValue().getAgentName()).isEqualTo("Owner Test");
+    }
+
+    @Test
+    void systemActorWithoutAnAgentResolvesOwner() {
+        ownerOfTenant();
+        clientFound();
+        org.mockito.Mockito.doReturn("INR").when(baseCurrency).code();
+        BookingCreateRequest r = request(BookingType.FLIGHT);
+        r.setAgentId(" ");
+
+        SystemActor.call("T1", () -> bookingService.createBooking(r));
+
+        verify(agentRepository, never()).findByIdAndTenantId(any(), any());
+    }
+
+    @Test
+    void systemActorWithAgentIdResolvesAgent() {
+        Agent priya = agent("A1", "Priya", List.of());
+        when(agentRepository.findByIdAndTenantId("A1", "T1")).thenReturn(Optional.of(priya));
+        when(agentRepository.findById("A1")).thenReturn(Optional.of(priya));
+        clientFound();
+        org.mockito.Mockito.doReturn("INR").when(baseCurrency).code();
+
+        SystemActor.call("T1", () -> bookingService.createBooking(request(BookingType.FLIGHT)));
+
+        ArgumentCaptor<Booking> saved = ArgumentCaptor.forClass(Booking.class);
+        verify(bookingRepository).save(saved.capture());
+        assertThat(saved.getValue().getAgentId()).isEqualTo("A1");
+    }
+
+    @Test
+    void theSystemActorCannotNameAnAgentOfAnotherAgency() {
         BookingCreateRequest r = request(BookingType.FLIGHT);
         r.setAgentId("A9");
-        assertThatThrownBy(() -> bookingService.createBooking(r))
+        assertThatThrownBy(() -> SystemActor.call("T1", () -> bookingService.createBooking(r)))
                 .isInstanceOf(IllegalArgumentException.class).hasMessage("Agent not found in this agency: A9");
     }
 
     @Test
     void anAgentWithNoRecordedServicesHandlesNoType() {
         ownerPicks(agent("A1", "Priya", null));
-        when(agentRepository.findById("A1")).thenReturn(Optional.empty(), Optional.of(agent("A1", "Priya", null)));
 
         assertThatThrownBy(() -> bookingService.createBooking(request(BookingType.HOTEL)))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("That agent doesn't handle HOTEL - pick an agent who does");
-        assertThatThrownBy(() -> bookingService.createBooking(request(BookingType.HOTEL)))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Priya doesn't handle HOTEL - pick an agent who does");
+                .isInstanceOf(AccessDeniedException.class)
+                .hasMessage("You don't handle HOTEL - only agents who do can create a HOTEL booking");
         verifyNoInteractions(clientCreditService);
     }
 
@@ -436,7 +518,7 @@ class BookingServiceCoverageTest {
         assertThat(voucher.getValue().getMarkupMode()).isEqualTo(MarkupMode.FLAT);
         assertThat(voucher.getValue().getMarkupValue()).isEqualByComparingTo("200");
         assertThat(voucher.getValue().getSupplierInvoiceId()).isEqualTo("SI1");
-        assertThat(voucher.getValue().getCreatedBy()).isEqualTo("O1");
+        assertThat(voucher.getValue().getCreatedBy()).isEqualTo("A1");
         assertThat(voucher.getValue().getPurchaseCurrency()).isNull();
         verify(clientCreditService).assertWithinLimit("C1", new BigDecimal("1200"), false);
     }

@@ -116,6 +116,16 @@ class InvoiceServiceCoverageTest {
     }
 
     @Test
+    void ownerMayNameThemselvesAsInvoiceAgent() {
+        client();
+        ClientInvoiceCreateRequest r = request();
+        r.setAgentId("T1");
+
+        assertThat(service.createClientInvoice(r).getAgentId()).isEqualTo("T1");
+        verify(agentRepository, org.mockito.Mockito.never()).findByIdAndTenantId(any(), any());
+    }
+
+    @Test
     void anInvoiceNeedsAKnownClient() {
         agentInAgency();
         assertThatThrownBy(() -> service.createClientInvoice(request()))

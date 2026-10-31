@@ -61,6 +61,7 @@ class AgencyServiceCoverageTest {
     @Mock private AgencyApplicationRepository agencyApplicationRepository;
     @Mock private WalletRepository walletRepository;
     @Mock private SubscriptionRepository subscriptionRepository;
+    @Mock private OwnerNameSyncService ownerNameSyncService;
     @InjectMocks private AgencyService service;
 
     private final List<String> cached = new ArrayList<>();
@@ -139,6 +140,17 @@ class AgencyServiceCoverageTest {
     }
 
     @Test
+    void ownerRenameResyncsSnapshotsOnlyWhenTheNameChanged() {
+        tenant("T1");
+        AgencyUpdateRequest same = new AgencyUpdateRequest();
+        same.setOwnerName(" Owner ");
+
+        service.updateAgency("T1", same);
+
+        verifyNoInteractions(ownerNameSyncService);
+    }
+
+    @Test
     void anEditTrimsNamesAndChecksANewEmailOnly() {
         Tenant t = tenant("T1");
         AgencyUpdateRequest r = new AgencyUpdateRequest();
@@ -150,6 +162,7 @@ class AgencyServiceCoverageTest {
         assertThat(t.getAgencyName()).isEqualTo("Sea Travels");
         assertThat(t.getOwnerName()).isEqualTo("New Owner");
         assertThat(t.getOwnerEmail()).isEqualTo("owner@example.test");
+        verify(ownerNameSyncService).resync("T1", "New Owner");
         verify(loginEmailService, never()).assertFree(any());
         assertThat(TenantCache.isValidTenant("T1")).isTrue();
 

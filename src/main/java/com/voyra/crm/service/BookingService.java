@@ -143,7 +143,9 @@ public class BookingService {
         if (request.getSellingPrice() == null) request.setSellingPrice(BigDecimal.ZERO);
         AuthorResolver.AuthorInfo owner = resolveOwningAgent(request.getAgentId());
         // The platform's mirror names the agent who issued the ticket; Voyra already checked they may book it.
-        if ((request.getServiceId() == null || request.getServiceId().isBlank()) && !com.voyra.crm.security.SystemActor.isActive()) {
+        // The owner handles every service type, so only an agent's own types are checked.
+        if ((request.getServiceId() == null || request.getServiceId().isBlank()) && !com.voyra.crm.security.SystemActor.isActive()
+                && !owner.id().equals(SecurityContextUtil.getCurrentUserOrThrow().tenantId())) {
             assertAgentHandlesStandaloneType(request.getType(), owner.id());
         }
         clientCreditService.assertWithinLimit(request.getClientId(), request.getSellingPrice(),
@@ -1219,8 +1221,13 @@ public class BookingService {
                     .orElseThrow(() -> new IllegalStateException("Agent not found: " + principal.userId()));
             return new AuthorResolver.AuthorInfo(agent.getId(), agent.getName());
         }
-        if (requestedAgentId == null || requestedAgentId.isBlank()) {
-            throw new IllegalArgumentException("agentId is required when an Owner creates a booking");
+        // Owner: the booking is theirs and any requested agent is ignored; the platform mirror names who issued it.
+        if (!com.voyra.crm.security.SystemActor.isActive()
+                || principal.tenantId().equals(requestedAgentId)
+                || requestedAgentId == null || requestedAgentId.isBlank()) {
+            Tenant tenant = tenantRepository.findById(principal.tenantId())
+                    .orElseThrow(() -> new IllegalStateException("Agency not found: " + principal.tenantId()));
+            return new AuthorResolver.AuthorInfo(tenant.getId(), tenant.getOwnerName());
         }
         Agent agent = agentRepository.findByIdAndTenantId(requestedAgentId, principal.tenantId())
                 .orElseThrow(() -> new IllegalArgumentException("Agent not found in this agency: " + requestedAgentId));
