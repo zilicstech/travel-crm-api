@@ -172,4 +172,28 @@ class SubscriptionPaymentServiceTest {
         assertThatThrownBy(() -> service.simulate("T1", "I1")).isInstanceOf(NotFoundException.class);
         verifyNoInteractions(webhookService);
     }
+
+    @Test
+    void aFailedEarlierOrderIsReplacedByANewOneAndTheAgencyIsNamed() {
+        inv.setGatewayOrderId("order_old");
+        given(orderRepository.findByGatewayOrderId("order_old")).willReturn(Optional.of(GatewayOrder.builder()
+                .gatewayOrderId("order_old").status(GatewayOrderStatus.FAILED).build()));
+        given(tenantRepository.findById("T1")).willReturn(Optional.of(com.voyra.crm.entity.Tenant.builder().agencyName("Sky Trips").build()));
+
+        SubscriptionPaymentResponse r = service.pay("T1", "I1");
+
+        assertThat(r.getGatewayOrderId()).isEqualTo("order_9");
+        assertThat(inv.getGatewayOrderId()).isEqualTo("order_9");
+        assertThat(r.getAgencyName()).isEqualTo("Sky Trips");
+    }
+
+    @Test
+    void simulateNeedsTheCallersInvoiceAndAStartedPayment() {
+        assertThatThrownBy(() -> service.simulate("T2", "I1")).isInstanceOf(NotFoundException.class).hasMessage("Invoice not found");
+
+        given(gateway.simulateEnabled()).willReturn(true);
+        assertThatThrownBy(() -> service.simulate("T1", "I1")).isInstanceOf(IllegalStateException.class)
+                .hasMessage("Start the payment first");
+        verifyNoInteractions(webhookService);
+    }
 }

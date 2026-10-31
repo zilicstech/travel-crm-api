@@ -381,4 +381,139 @@ class SubscriptionServiceTest {
                 .hasMessage("Founding agencies don't need a trial");
         verify(subscriptionRepository, never()).save(any());
     }
+
+    // ---- remaining branches
+
+    private static void signIn(String tenantId) {
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+                new CustomUserPrincipal("O1", "owner", UserType.AGENCY_OWNER, tenantId), null, List.of()));
+    }
+
+    @Test
+    void aLoginWithoutAnAgencyHasNoSubscriptionViewOrUpgrade() {
+        signIn(null);
+        assertThatThrownBy(() -> service.agencyView()).isInstanceOf(org.springframework.security.access.AccessDeniedException.class)
+                .hasMessage("No tenant context for current user");
+        assertThatThrownBy(() -> service.upgrade(SubscriptionPlan.SUITE)).isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
+        org.mockito.Mockito.verifyNoInteractions(billingService);
+    }
+
+    @Test
+    void anUpgradeIsRaisedForTheOwnersAgency() {
+        signIn("T1");
+        com.voyra.crm.dto.SubscriptionInvoiceResponse inv = com.voyra.crm.dto.SubscriptionInvoiceResponse.builder().id("I1").build();
+        when(billingService.raiseUpgrade("T1", SubscriptionPlan.LITE)).thenReturn(inv);
+        assertThat(service.upgrade(SubscriptionPlan.LITE)).isSameAs(inv);
+    }
+
+    @Test
+    void anExpiredWaiverIsNotShownAsWaivedAndOnlyPricedPlansAreOffered() {
+        signIn("T1");
+        sub.setPeriodEnd(Instant.now().minus(Duration.ofDays(2)));
+        when(entitlementService.resolve("T1")).thenReturn(new Entitlements(SubscriptionPlan.SUITE, SubscriptionStatus.READ_ONLY,
+                EnumSet.allOf(Sku.class), 5, true, null));
+        when(settingService.skuPrices()).thenReturn(Map.of("LITE", new BigDecimal("2999"), "CRM_CORE", new BigDecimal("2499")));
+
+        AgencySubscriptionResponse r = service.agencyView();
+
+        assertThat(r.isWaived()).isFalse();
+        assertThat(r.getWaivedLabel()).isNull();
+        assertThat(r.isReadOnly()).isTrue();
+        assertThat(r.getPlanPrices()).containsExactly(Map.entry("LITE", new BigDecimal("2999")));
+
+        sub.setWaivedReason(null);
+        assertThat(service.agencyView().isWaived()).isFalse();
+    }
+
+    @Test
+    void seatsAreRequiredAndCustomWithoutAnySkusHasNone() {
+        SubscriptionUpdateRequest noSeats = update(SubscriptionPlan.SUITE, List.of(), 0, BillingCycle.MONTHLY);
+        noSeats.setSeats(null);
+        assertThatThrownBy(() -> service.update("T1", noSeats)).hasMessage("seats cannot be negative");
+
+        SubscriptionUpdateRequest seatsNoSkus = update(SubscriptionPlan.CUSTOM, null, 2, BillingCycle.MONTHLY);
+        assertThatThrownBy(() -> service.update("T1", seatsNoSkus)).hasMessage("Add the Staff seats SKU to give seats");
+
+        service.update("T1", update(SubscriptionPlan.CUSTOM, null, 0, BillingCycle.MONTHLY));
+        assertThat(sub.getSkus()).isEmpty();
+        service.update("T1", update(SubscriptionPlan.CUSTOM, List.of(Sku.VISA, Sku.VISA), 0, BillingCycle.MONTHLY));
+        assertThat(sub.getSkus()).containsExactly("VISA");
+    }
+
+    @Test
+    void anyChangeOfSeatsOrCycleAloneIsAChangeBlockedByAnOpenInvoice() {
+        when(invoiceRepository.findFirstByTenantIdAndStatusOrderByDueAtAsc("T1", "ISSUED")).thenReturn(Optional.of(
+                SubscriptionInvoice.builder().number("VOY-SUB-2026-3").build()));
+        List<Sku> all = List.of(Sku.values());
+        assertThatThrownBy(() -> service.update("T1", update(SubscriptionPlan.SUITE, all, 1, BillingCycle.MONTHLY)))
+                .hasMessage("Void or settle invoice VOY-SUB-2026-3 before changing the plan");
+        assertThatThrownBy(() -> service.update("T1", update(SubscriptionPlan.SUITE, all, 0, BillingCycle.ANNUAL)))
+                .hasMessage("Void or settle invoice VOY-SUB-2026-3 before changing the plan");
+        verify(subscriptionRepository, never()).save(any());
+    }
+
+    @Test
+    void aPastDuePlanMissingOnlyItsEndGetsAnEndAndATrialGetsNone() {
+        sub.setWaivedReason(null);
+        sub.setStatus(SubscriptionStatus.PAST_DUE);
+        Instant start = Instant.parse("2026-09-01T00:00:00Z");
+        sub.setPeriodStart(start);
+        sub.setPeriodEnd(null);
+        service.update("T1", update(SubscriptionPlan.SUITE, List.of(), 0, BillingCycle.MONTHLY));
+        assertThat(sub.getPeriodStart()).isEqualTo(start);
+        assertThat(sub.getPeriodEnd()).isNotNull();
+
+        sub.setStatus(SubscriptionStatus.TRIAL);
+        sub.setPeriodEnd(null);
+        service.update("T1", update(SubscriptionPlan.SUITE, List.of(), 0, BillingCycle.MONTHLY));
+        assertThat(sub.getPeriodEnd()).isNull();
+
+        Instant end = Instant.parse("2026-12-01T00:00:00Z");
+        sub.setStatus(SubscriptionStatus.ACTIVE);
+        sub.setPeriodStart(null);
+        sub.setPeriodEnd(end);
+        service.update("T1", update(SubscriptionPlan.SUITE, List.of(), 0, BillingCycle.MONTHLY));
+        assertThat(sub.getPeriodStart()).isNotNull();
+        assertThat(sub.getPeriodEnd()).isEqualTo(end);
+    }
+
+    @Test
+    void aTrialWithNoOrAPastEndRestartsFromNow() {
+        sub.setWaivedReason(null);
+        sub.setStatus(SubscriptionStatus.TRIAL);
+        sub.setTrialEndsAt(null);
+        TrialExtendRequest r = new TrialExtendRequest();
+        r.setDays(7);
+        Instant before = Instant.now();
+        service.extendTrial("T1", r);
+        assertThat(sub.getTrialEndsAt()).isAfterOrEqualTo(before.plus(Duration.ofDays(7)));
+
+        sub.setTrialEndsAt(Instant.now().minus(Duration.ofDays(3)));
+        service.extendTrial("T1", r);
+        assertThat(sub.getTrialEndsAt()).isAfterOrEqualTo(before.plus(Duration.ofDays(7)));
+        assertThat(sub.getPlan()).isEqualTo(SubscriptionPlan.SUITE);
+    }
+
+    @Test
+    void aPastDueAgencyStillInItsPaidPeriodGetsNoTrial() {
+        sub.setWaivedReason(null);
+        sub.setStatus(SubscriptionStatus.PAST_DUE);
+        sub.setPeriodEnd(Instant.now().plus(Duration.ofDays(4)));
+        TrialExtendRequest r = new TrialExtendRequest();
+        r.setDays(7);
+        assertThatThrownBy(() -> service.extendTrial("T1", r)).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("use a waiver instead of a trial");
+    }
+
+    @Test
+    void aPaidPlanWithAPeriodKeepsIt() {
+        sub.setWaivedReason(null);
+        Instant start = Instant.parse("2026-10-01T00:00:00Z");
+        Instant end = Instant.parse("2026-11-01T00:00:00Z");
+        sub.setPeriodStart(start);
+        sub.setPeriodEnd(end);
+        service.update("T1", update(SubscriptionPlan.SUITE, List.of(), 0, BillingCycle.MONTHLY));
+        assertThat(sub.getPeriodStart()).isEqualTo(start);
+        assertThat(sub.getPeriodEnd()).isEqualTo(end);
+    }
 }

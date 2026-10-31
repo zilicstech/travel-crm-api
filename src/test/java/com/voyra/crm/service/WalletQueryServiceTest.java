@@ -191,4 +191,52 @@ class WalletQueryServiceTest {
         assertThat(w.getIsTest()).isTrue();
         verify(auditService).record(eq(PlatformAuditAction.WALLET_TEST_FLAG), eq("Wallet"), eq("W1"), any(Map.class));
     }
+
+    @Test
+    void theOtherBookingPostingsReadInWordsAndABookingRowWithoutAnIdKeepsItsNarration() {
+        given(walletRepository.findByTenantId("T1")).willReturn(Optional.of(wallet()));
+        Pageable p = PageRequest.of(0, 25);
+        java.util.function.BiFunction<String, String, WalletEntry> pb = (type, ref) -> {
+            WalletEntry e = entry("E-" + type, type, null);
+            e.setRefType("PLATFORM_BOOKING");
+            e.setRefId(ref);
+            return e;
+        };
+        given(entryRepository.findPagedByWalletIdOrderByCreatedAtDescIdDesc("W1", p)).willReturn(new PageImpl<>(List.of(
+                pb.apply("COMMISSION_CREDIT", "PB1"), pb.apply("TDS_DEDUCTED", "PB1"), pb.apply("REFUND_CREDIT", "PB1"),
+                pb.apply("ADJUSTMENT", "PB1"), pb.apply("HOLD", null)), p, 5));
+        given(platformBookingRepository.findAllById(List.of("PB1"))).willReturn(List.of(
+                com.voyra.crm.entity.PlatformBooking.builder().id("PB1").product(com.voyra.crm.enums.PricingProduct.HOTEL).pnr("H1").build()));
+
+        List<String> narrations = service.entries("T1", p).getContent().stream().map(WalletEntryResponse::getNarration).toList();
+
+        assertThat(narrations).containsExactly("Commission on hotel booking H1", "TDS on the commission for hotel booking H1",
+                "Refund on cancelled hotel booking H1", null, null);
+    }
+
+    @Test
+    void csvLeavesEmptyAndPlainTextAloneAndAnyFormulaStartIsNeutralised() {
+        given(walletRepository.findByTenantId("T1")).willReturn(Optional.of(wallet()));
+        WalletEntry empty = entry("E1", "TOPUP", "");
+        empty.setCreatedByName("");
+        WalletEntry plus = entry("E2", "TOPUP", "+1 bonus");
+        plus.setCreatedByName("@admin");
+        WalletEntry plain = entry("E3", "TOPUP", "Top-up");
+        given(entryRepository.findByWalletIdOrderByCreatedAtDescIdDesc(eq("W1"), any(Pageable.class))).willReturn(List.of(empty, plus, plain));
+
+        String[] lines = service.csv("T1").split("\n");
+
+        assertThat(lines[1]).endsWith(",,");
+        assertThat(lines[2]).contains("'+1 bonus").contains("'@admin");
+        assertThat(lines[3]).endsWith(",Top-up,Asha");
+        org.mockito.Mockito.verifyNoInteractions(platformBookingRepository);
+    }
+
+    @Test
+    void aWriteToAMissingWalletIsNotFound() {
+        given(walletRepository.findByTenantIdForUpdate("T9")).willReturn(Optional.empty());
+        assertThatThrownBy(() -> service.setThreshold("T9", BigDecimal.TEN)).isInstanceOf(NotFoundException.class)
+                .hasMessage("Wallet not found for this agency");
+        org.mockito.Mockito.verify(walletRepository, org.mockito.Mockito.never()).save(any());
+    }
 }

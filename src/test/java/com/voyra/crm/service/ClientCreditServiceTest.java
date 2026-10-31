@@ -136,4 +136,39 @@ class ClientCreditServiceTest {
         assertThatCode(() -> service.assertWithinLimit("C1", new BigDecimal("-5000"), false)).doesNotThrowAnyException();
         verifyNoInteractions(clientRepository);
     }
+
+    @Test
+    void noClientsNeedNoQueriesAndRowsWithoutAnAmountAreSkipped() {
+        assertThat(service.creditFor(List.of())).isEmpty();
+        verifyNoInteractions(ledgerRepository, bookingRepository);
+
+        org.mockito.Mockito.when(ledgerRepository.balanceInrByClient(any())).thenReturn(List.<Object[]>of(
+                new Object[] { "C1", null }, new Object[] { "C1", "10.005" }, new Object[] { "C1", 5 }));
+        org.mockito.Mockito.when(bookingRepository.liveSellingPriceByClient(any())).thenReturn(List.of());
+        org.mockito.Mockito.when(bookingRepository.liveInvoicedInrByClient(any())).thenReturn(List.of());
+        org.mockito.Mockito.when(bookingRepository.uninvoicedCancellationChargesByClient(any())).thenReturn(List.of());
+        assertThat(service.credit(client).getInvoicedUnpaid()).isEqualByComparingTo("15.01");
+    }
+
+    @Test
+    void noClientNoAmountOrAnUnknownClientIsNeverChecked() {
+        service.assertWithinLimit(null, BigDecimal.TEN, false);
+        service.assertWithinLimit("C1", null, false);
+        org.mockito.Mockito.when(clientRepository.findById("C9")).thenReturn(Optional.empty());
+        service.assertWithinLimit("C9", BigDecimal.TEN, false);
+        verifyNoInteractions(ledgerRepository, auditService);
+        org.mockito.Mockito.verify(bookingRepository, org.mockito.Mockito.never()).flush();
+    }
+
+    @Test
+    void aClientWithNoLimitHasNoAvailableFigure() {
+        given("250", null, null, null);
+        Client open = Client.builder().id("C1").name("Open Account").build();
+
+        ClientCreditResponse c = service.credit(open);
+
+        assertThat(c.getLimit()).isNull();
+        assertThat(c.getAvailable()).isNull();
+        assertThat(c.getUsed()).isEqualByComparingTo("250.00");
+    }
 }

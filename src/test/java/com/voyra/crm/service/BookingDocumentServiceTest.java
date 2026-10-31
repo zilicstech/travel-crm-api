@@ -396,4 +396,242 @@ class BookingDocumentServiceTest {
                 .hasMessage("Managed from Platform Bookings");
         verify(fileStorageService, never()).store(any(), any(), any(), any());
     }
+
+    // ------------------------------------------------------------------ remaining paths
+
+    @Test
+    void aCancelledBookingTakesNoCostOrMarkupButAPlainDocumentIsFine() {
+        signIn();
+        booking.setBookingStatus(BookingStatus.CANCELLED);
+        booking.setLeadId("L1");
+        booking.setServiceId("S1");
+        booking.setDestination("Goa");
+        when(bookingService.lockAccessibleBooking("B1")).thenReturn(booking);
+
+        assertThatThrownBy(() -> service.addDocument("B1", edit("100", "0")))
+                .isInstanceOf(IllegalStateException.class).hasMessage("This booking is cancelled - a voucher can't add cost or price to it");
+        assertThatThrownBy(() -> service.addDocument("B1", edit("0", "10")))
+                .isInstanceOf(IllegalStateException.class).hasMessage("This booking is cancelled - a voucher can't add cost or price to it");
+        verify(bookingDocumentRepository, never()).save(any());
+
+        BookingDocumentCreateRequest plain = edit("0", "0");
+        plain.setMarkupMode(null);
+        plain.setDocType(BookingDocumentType.OTHER);
+        service.addDocument("B1", plain);
+
+        verify(bookingDocumentRepository).save(any());
+        verify(bookingService).syncReference(booking, null);
+        verify(leadTimelineService).record("L1", "S1", com.voyra.crm.enums.LeadTimelineEventType.BOOKING_DOCUMENT_ADDED,
+                "OTHER added to Goa booking");
+    }
+
+    @Test
+    void editingAnUnknownDocumentFails() {
+        when(bookingService.lockAccessibleBooking("B1")).thenReturn(booking);
+        when(bookingDocumentRepository.findByIdAndBookingId("D9", "B1")).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> service.updateDocument("B1", "D9", edit("1", "1")))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Document not found: D9");
+        assertThatThrownBy(() -> service.setCharges("B1", "D9", charges("1", "1")))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Document not found: D9");
+    }
+
+    @Test
+    void aStaleCommissionOrSupplierTdsIsAMoneyChange() {
+        stub();
+        voucher.setCommission(new BigDecimal("99"));
+        service.updateDocument("B1", "D1", edit("4000", "10"));
+        verify(bookingService).reverseVoucher(booking, voucher, false);
+        assertThat(voucher.getCommission()).isEqualByComparingTo("0");
+
+        org.mockito.Mockito.clearInvocations(bookingService);
+        voucher.setSupplierTds(new BigDecimal("5"));
+        service.updateDocument("B1", "D1", edit("4000", "10"));
+        verify(bookingService).reverseVoucher(booking, voucher, false);
+        assertThat(voucher.getSupplierTds()).isEqualByComparingTo("0");
+    }
+
+    @Test
+    void anotherMarkupModeValueOrSupplierRebooksTheMoney() {
+        stub();
+        BookingDocumentCreateRequest flat = edit("4000", "10");
+        flat.setMarkupMode(MarkupMode.FLAT);
+        service.updateDocument("B1", "D1", flat);
+        assertThat(voucher.getMarkupMode()).isEqualTo(MarkupMode.FLAT);
+
+        service.updateDocument("B1", "D1", edit("4000", "12"));
+        assertThat(voucher.getMarkupValue()).isEqualByComparingTo("12");
+
+        // a blank supplier keeps the booking's; a booking supplier the voucher never had still rebooks it
+        booking.setVendorId("V1");
+        BookingDocumentCreateRequest blank = edit("4000", "12");
+        blank.setVendorId(" ");
+        service.updateDocument("B1", "D1", blank);
+        BookingDocumentCreateRequest other = edit("4000", "12");
+        other.setVendorId("V2");
+        service.updateDocument("B1", "D1", other);
+
+        verify(bookingService, org.mockito.Mockito.times(4)).reverseVoucher(booking, voucher, false);
+        verify(bookingService).applyVoucher(booking, voucher, " ", false);
+        verify(bookingService).applyVoucher(booking, voucher, "V2", false);
+    }
+
+    @Test
+    void aCancelledBookingsVoucherMoneyCannotChange() {
+        stub();
+        booking.setBookingStatus(BookingStatus.CANCELLED);
+        assertThatThrownBy(() -> service.updateDocument("B1", "D1", edit("4500", "10")))
+                .isInstanceOf(IllegalStateException.class).hasMessage("This booking is cancelled - a voucher's cost or price can't change");
+        verify(bookingService, never()).reverseVoucher(any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
+    }
+
+    @Test
+    void noBreakdownClearsItAndRefreshesTheDraftInvoice() {
+        stub();
+        broken_down();
+        com.voyra.crm.dto.VoucherChargesRequest none = new com.voyra.crm.dto.VoucherChargesRequest();
+
+        service.setCharges("B1", "D1", none);
+
+        assertThat(voucher.getCharges()).isNull();
+        assertThat(voucher.getCommission()).isEqualByComparingTo("0");
+        verify(bookingService).changeCommission(org.mockito.ArgumentMatchers.eq(booking), org.mockito.ArgumentMatchers.eq(voucher), any());
+        verify(invoiceLineSource).refreshDraftCharges(voucher);
+        verify(bookingDocumentRepository).save(voucher);
+    }
+
+    @Test
+    void listMapsEveryVoucherWithItsInvoiceState() {
+        when(bookingService.findAccessibleBooking("B1")).thenReturn(booking);
+        when(bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc("B1")).thenReturn(java.util.List.of(voucher));
+        when(bookingService.approvedBillIds(java.util.List.of(voucher))).thenReturn(java.util.Set.of());
+
+        assertThat(service.listForBooking("B1")).extracting(com.voyra.crm.dto.BookingDocumentResponse::getId).containsExactly("D1");
+    }
+
+    @Test
+    void deleteHandsOffToTheBooking() {
+        service.deleteDocument("B1", "D1");
+        verify(bookingService).removeVoucher("B1", "D1");
+    }
+
+    @Test
+    void attachingAFileStoresItUnderTheTenantAndDownloadingReturnsIt() {
+        signIn();
+        when(bookingService.findAccessibleBooking("B1")).thenReturn(booking);
+        when(bookingDocumentRepository.findByIdAndBookingId("D1", "B1")).thenReturn(Optional.of(voucher));
+        org.springframework.mock.web.MockMultipartFile file =
+                new org.springframework.mock.web.MockMultipartFile("file", "ticket.pdf", "application/pdf", new byte[]{1, 2});
+        when(fileStorageService.store("T1", "booking-documents", "D1", file)).thenReturn("tenant/key");
+
+        service.attachFile("B1", "D1", file);
+
+        assertThat(voucher.getFileKey()).isEqualTo("tenant/key");
+        assertThat(voucher.getFileName()).isEqualTo("ticket.pdf");
+        assertThat(voucher.getContentType()).isEqualTo("application/pdf");
+        verify(bookingDocumentRepository).save(voucher);
+
+        org.springframework.core.io.Resource res = new org.springframework.core.io.ByteArrayResource(new byte[]{1, 2});
+        when(fileStorageService.retrieve("tenant/key")).thenReturn(res);
+        BookingDocumentService.BookingDocumentFileContent content = service.downloadFile("B1", "D1");
+        assertThat(content.resource()).isSameAs(res);
+        assertThat(content.filename()).isEqualTo("ticket.pdf");
+        assertThat(content.contentType()).isEqualTo("application/pdf");
+    }
+
+    @Test
+    void aMissingDocumentOrFileCannotBeAttachedOrDownloaded() {
+        when(bookingService.findAccessibleBooking("B1")).thenReturn(booking);
+        when(bookingDocumentRepository.findByIdAndBookingId("D9", "B1")).thenReturn(Optional.empty());
+        when(bookingDocumentRepository.findByIdAndBookingId("D1", "B1")).thenReturn(Optional.of(voucher));
+
+        assertThatThrownBy(() -> service.attachFile("B1", "D9", null))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Document not found: D9");
+        assertThatThrownBy(() -> service.downloadFile("B1", "D9"))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Document not found: D9");
+        assertThatThrownBy(() -> service.downloadFile("B1", "D1"))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("No file attached to this document");
+        verify(fileStorageService, never()).retrieve(any());
+    }
+
+    @Test
+    void aTicketWithNoTravellerListOrOnlyBlankIdsIsRefusedAndRepeatsCountOnce() {
+        signIn();
+        when(bookingService.lockAccessibleBooking("F1")).thenReturn(flight);
+        BookingDocumentCreateRequest none = ticket();
+        none.setTravellers(null);
+        assertThatThrownBy(() -> service.addDocument("F1", none)).hasMessage("Add the travellers on this ticket");
+
+        BookingDocumentCreateRequest blanks = ticket();
+        blanks.setTravellers(java.util.List.of(com.voyra.crm.dto.VoucherTraveller.builder().memberId(null).build(),
+                com.voyra.crm.dto.VoucherTraveller.builder().memberId(" ").build()));
+        assertThatThrownBy(() -> service.addDocument("F1", blanks)).hasMessage("Add the travellers on this ticket");
+
+        when(memberRepository.findByMemberIdAndClientId("M1", "C1"))
+                .thenReturn(Optional.of(member("M1", "Pax One", java.time.LocalDate.of(1990, 1, 1))));
+        org.mockito.ArgumentCaptor<BookingDocument> saved = org.mockito.ArgumentCaptor.forClass(BookingDocument.class);
+        service.addDocument("F1", ticket("M1", "M1"));
+        verify(bookingDocumentRepository).save(saved.capture());
+        assertThat(saved.getValue().getTravellers()).hasSize(1);
+
+        com.voyra.crm.entity.Member inactive = member("M2", "Pax Two", null);
+        inactive.setIsActive(false);
+        when(memberRepository.findByMemberIdAndClientId("M2", "C1")).thenReturn(Optional.of(inactive));
+        assertThatThrownBy(() -> service.addDocument("F1", ticket("M2")))
+                .hasMessage("That traveller isn't one of this client's members");
+    }
+
+    @Test
+    void theTripTypeIsLeftAloneOffFlightsOrWhenUnchangedAndLockedByAnyInvoiceTrace() {
+        signIn();
+        BookingDocumentCreateRequest intl = edit("0", "0");
+        intl.setDocType(BookingDocumentType.OTHER);
+        intl.setInternationalTrip(true);
+        when(bookingService.lockAccessibleBooking("B1")).thenReturn(booking);
+        service.addDocument("B1", intl);
+        assertThat(booking.getInternationalTrip()).isNotEqualTo(Boolean.TRUE);
+
+        when(bookingService.lockAccessibleBooking("F1")).thenReturn(flight);
+        BookingDocumentCreateRequest flightIntl = edit("0", "0");
+        flightIntl.setDocType(BookingDocumentType.OTHER);
+        flightIntl.setInternationalTrip(false);
+        service.addDocument("F1", flightIntl);
+        assertThat(flight.getInternationalTrip()).isNotEqualTo(Boolean.TRUE);
+        verify(invoiceLineSource, never()).draftOf(any());
+
+        flightIntl.setInternationalTrip(true);
+        for (InvoiceLineSource.Invoiced trace : java.util.List.of(
+                new InvoiceLineSource.Invoiced(BigDecimal.ONE, java.util.Set.of(), null),
+                new InvoiceLineSource.Invoiced(BigDecimal.ZERO, java.util.Set.of("D7"), null),
+                new InvoiceLineSource.Invoiced(BigDecimal.ZERO, java.util.Set.of(), java.time.LocalDateTime.now()))) {
+            when(bookingService.invoiced("F1")).thenReturn(trace);
+            assertThatThrownBy(() -> service.addDocument("F1", flightIntl)).isInstanceOf(IllegalStateException.class)
+                    .hasMessage("This booking is already on an invoice as Domestic - its trip type can't change");
+        }
+        assertThat(flight.getInternationalTrip()).isNotEqualTo(Boolean.TRUE);
+    }
+
+    @Test
+    void aNewMarkupValueOrTheSameBaseCostInAnotherCurrencyOrRateRebooksTheMoney() {
+        stub();
+        service.updateDocument("B1", "D1", edit("4000", "12"));
+        assertThat(voucher.getMarkupValue()).isEqualByComparingTo("12");
+
+        BookingDocumentCreateRequest aed = edit("0", "12");
+        aed.setPurchaseCurrency("AED");
+        aed.setPurchasePrice(new BigDecimal("1000"));
+        aed.setPurchaseRate(new BigDecimal("4"));
+        service.updateDocument("B1", "D1", aed);
+        assertThat(voucher.getPurchaseCurrency()).isEqualTo("AED");
+        assertThat(voucher.getNetCost()).isEqualByComparingTo("4000.00");
+
+        BookingDocumentCreateRequest rate = edit("0", "12");
+        rate.setPurchaseCurrency("AED");
+        rate.setPurchasePrice(new BigDecimal("800"));
+        rate.setPurchaseRate(new BigDecimal("5"));
+        service.updateDocument("B1", "D1", rate);
+        assertThat(voucher.getPurchaseRate()).isEqualByComparingTo("5");
+        assertThat(voucher.getNetCost()).isEqualByComparingTo("4000.00");
+
+        verify(bookingService, org.mockito.Mockito.times(3)).reverseVoucher(booking, voucher, false);
+    }
 }

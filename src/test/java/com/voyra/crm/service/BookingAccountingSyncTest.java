@@ -46,6 +46,8 @@ class BookingAccountingSyncTest {
     private InvoiceLineItemRepository invoiceLineItemRepository;
     @Mock
     private InvoiceLineSource invoiceLineSource;
+    @Mock
+    private com.voyra.crm.repository.BookingDocumentRepository bookingDocumentRepository;
 
     @org.junit.jupiter.api.BeforeEach
     void nothingAddedSinceTheInvoice() {
@@ -342,5 +344,151 @@ class BookingAccountingSyncTest {
 
         assertThat(b1.getRefundedTotalInr()).isEqualByComparingTo("0");
         assertThat(b1.getPaymentStatus()).isEqualTo(PaymentStatus.PAID);
+    }
+
+    // ---- remaining branches
+
+    @Test
+    void noBookingIdOrAnUnknownBookingIsLeftAlone() {
+        bookingAccountingSync.syncPayment(null);
+        bookingAccountingSync.syncRefund(null);
+        when(bookingRepository.findById("B9")).thenReturn(Optional.empty());
+        bookingAccountingSync.syncPayment("B9");
+        org.mockito.Mockito.verify(bookingRepository, org.mockito.Mockito.never()).save(any());
+        org.mockito.Mockito.verifyNoInteractions(invoiceRepository, creditNoteRepository);
+    }
+
+    @Test
+    void aZeroInvoiceLeavesAManualStatusAndCountsReceiptsOnOtherInvoices() {
+        Booking b = manualBooking();
+        b.setPaymentStatus(PaymentStatus.PARTIAL);
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(b));
+        Invoice zero = Invoice.builder().id("I1").bookingId("B1").grandTotalInr(null).build();
+        when(invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc(any(), any(), any())).thenReturn(List.of(zero));
+        when(paymentReceiptRepository.findByBookingIdAndDirection("B1", ReceiptDirection.RECEIPT)).thenReturn(List.of(
+                PaymentReceipt.builder().invoiceId("I7").amountInr(new BigDecimal("300.00")).build(),
+                PaymentReceipt.builder().invoiceId(null).isAdvance(true).amountInr(new BigDecimal("999.00")).build(),
+                PaymentReceipt.builder().invoiceId(null).isAdvance(false).amountInr(null).build()));
+        when(paymentReceiptRepository.findByBookingIdAndDirection("B1", ReceiptDirection.REFUND)).thenReturn(List.of());
+
+        bookingAccountingSync.syncPayment("B1");
+
+        assertThat(b.getInvoicedTotalInr()).isEqualByComparingTo("0");
+        assertThat(b.getReceivedTotalInr()).isEqualByComparingTo("300.00");
+        assertThat(b.getPrimaryInvoiceId()).isEqualTo("I1");
+        assertThat(b.getPaymentStatusSource()).isEqualTo(PaymentStatusSource.MANUAL);
+        assertThat(b.getPaymentStatus()).isEqualTo(PaymentStatus.PARTIAL);
+        org.mockito.Mockito.verify(bookingRepository).save(b);
+    }
+
+    @Test
+    void onlyAnIssuedCreditNoteOnAKnownBookingMovesTheRefundState() {
+        when(creditNoteRepository.findByBookingIdAndStatusNot("B1", com.voyra.crm.enums.CreditNoteStatus.CANCELLED)).thenReturn(List.of(
+                com.voyra.crm.entity.CreditNote.builder().status(com.voyra.crm.enums.CreditNoteStatus.DRAFT).build()));
+        bookingAccountingSync.syncRefund("B1");
+        org.mockito.Mockito.verifyNoInteractions(bookingRepository);
+
+        when(creditNoteRepository.findByBookingIdAndStatusNot("B9", com.voyra.crm.enums.CreditNoteStatus.CANCELLED)).thenReturn(List.of(
+                com.voyra.crm.entity.CreditNote.builder().status(com.voyra.crm.enums.CreditNoteStatus.ISSUED).build()));
+        when(bookingRepository.findById("B9")).thenReturn(Optional.empty());
+        bookingAccountingSync.syncRefund("B9");
+        org.mockito.Mockito.verify(bookingRepository, org.mockito.Mockito.never()).save(any());
+    }
+
+    @Test
+    void uninvoicedIsZeroForACancelledOrUnpricedBookingAndNeverNegative() {
+        assertThat(BookingAccountingSync.uninvoiced(Booking.builder().bookingStatus(com.voyra.crm.enums.BookingStatus.CANCELLED)
+                .sellingPrice(new BigDecimal("500")).build(), BigDecimal.ZERO)).isEqualByComparingTo("0");
+        assertThat(BookingAccountingSync.uninvoiced(Booking.builder().bookingStatus(com.voyra.crm.enums.BookingStatus.CONFIRMED)
+                .sellingPrice(null).build(), BigDecimal.ZERO)).isEqualByComparingTo("0");
+        Booking live = Booking.builder().bookingStatus(com.voyra.crm.enums.BookingStatus.CONFIRMED).sellingPrice(new BigDecimal("500")).build();
+        assertThat(BookingAccountingSync.uninvoiced(live, null)).isEqualByComparingTo("500");
+        assertThat(BookingAccountingSync.uninvoiced(live, new BigDecimal("200"))).isEqualByComparingTo("300");
+        assertThat(BookingAccountingSync.uninvoiced(live, new BigDecimal("900"))).isEqualByComparingTo("0");
+    }
+
+    @Test
+    void onASingleBookingInvoiceEveryCreditAndPaymentCountsAndRefundsArePaidBack() {
+        Invoice invoice = Invoice.builder().id("I1").bookingId("B1").grandTotal(null).build();
+        when(creditNoteRepository.findByInvoiceIdAndStatus("I1", com.voyra.crm.enums.CreditNoteStatus.ISSUED)).thenReturn(List.of(
+                com.voyra.crm.entity.CreditNote.builder().id("CN1").bookingId(null).totalAmount(new BigDecimal("100.00")).build()));
+        when(paymentReceiptRepository.findByInvoiceIdOrderByReceivedOnAscCreatedAtAsc("I1")).thenReturn(List.of(
+                PaymentReceipt.builder().bookingId(null).direction(ReceiptDirection.RECEIPT).amount(new BigDecimal("500.00")).build(),
+                PaymentReceipt.builder().bookingId("B1").direction(ReceiptDirection.REFUND).amount(new BigDecimal("50.00")).build()));
+
+        BookingAccountingSync.Position p = bookingAccountingSync.positionOn(invoice, "B1", null);
+
+        assertThat(p.billed()).isEqualByComparingTo("-100.00");
+        assertThat(p.received()).isEqualByComparingTo("450.00");
+        assertThat(p.owed()).isEqualByComparingTo("-550.00");
+    }
+
+    private Invoice commissionAgentInvoice(BigDecimal fx, String netB1, String netB2, boolean everyLineHasAVoucher) {
+        Invoice invoice = Invoice.builder().id("I1").bookingId("B1").grandTotal(new BigDecimal("10360.00"))
+                .billingModel(com.voyra.crm.enums.InvoiceBillingModel.COMMISSION_AGENT).fxRateToInr(fx).build();
+        when(invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc("I1")).thenReturn(List.of(
+                com.voyra.crm.entity.InvoiceLineItem.builder().bookingId("B1").bookingDocumentId("D1").taxableValue(new BigDecimal("6000")).build(),
+                com.voyra.crm.entity.InvoiceLineItem.builder().bookingId("B2").bookingDocumentId(everyLineHasAVoucher ? "D2" : null)
+                        .taxableValue(new BigDecimal("4000")).build(),
+                com.voyra.crm.entity.InvoiceLineItem.builder().bookingId(null).bookingDocumentId(everyLineHasAVoucher ? "D3" : null)
+                        .taxableValue(BigDecimal.ZERO).build()));
+        if (everyLineHasAVoucher) {
+            when(bookingDocumentRepository.findById("D1")).thenReturn(Optional.of(
+                    com.voyra.crm.entity.BookingDocument.builder().netCost(new BigDecimal(netB1)).build()));
+            when(bookingDocumentRepository.findById("D2")).thenReturn(Optional.of(
+                    com.voyra.crm.entity.BookingDocument.builder().netCost(new BigDecimal(netB2)).build()));
+            when(bookingDocumentRepository.findById("D3")).thenReturn(Optional.of(
+                    com.voyra.crm.entity.BookingDocument.builder().netCost(BigDecimal.ZERO).build()));
+        }
+        return invoice;
+    }
+
+    /** GST on the markup: 1,000 fee each, so the 360 tax splits evenly - B2 is billed 4,180, not 4,144 by price. */
+    @Test
+    void aCommissionAgentInvoiceSharesItsTaxByEachBookingsOwnFee() {
+        Invoice invoice = commissionAgentInvoice(null, "5000", "3000", true);
+        assertThat(bookingAccountingSync.positionOn(invoice, "B2", null).billed()).isEqualByComparingTo("4180.00");
+        assertThat(bookingAccountingSync.positionOn(invoice, "B1", null).billed()).isEqualByComparingTo("6180.00");
+    }
+
+    @Test
+    void aForeignCommissionAgentInvoiceConvertsVoucherCostsAtItsRate() {
+        Invoice invoice = commissionAgentInvoice(new BigDecimal("2"), "10000", "6000", true);
+        assertThat(bookingAccountingSync.positionOn(invoice, "B2", null).billed()).isEqualByComparingTo("4180.00");
+    }
+
+    @Test
+    void aZeroRateCountsAsOne() {
+        Invoice invoice = commissionAgentInvoice(BigDecimal.ZERO, "5000", "3000", true);
+        assertThat(bookingAccountingSync.positionOn(invoice, "B2", null).billed()).isEqualByComparingTo("4180.00");
+    }
+
+    @Test
+    void aLineWithoutAVoucherKeepsThePriceWeights() {
+        Invoice invoice = commissionAgentInvoice(BigDecimal.ONE, null, null, false);
+        assertThat(bookingAccountingSync.positionOn(invoice, "B2", null).billed()).isEqualByComparingTo("4144.00");
+        org.mockito.Mockito.verifyNoInteractions(bookingDocumentRepository);
+    }
+
+    /** A receipt recorded on the booking against a shared invoice is counted once, through that invoice's split. */
+    @Test
+    void aBookingsOwnReceiptOnASharedInvoiceIsNotCountedTwice() {
+        Booking b2 = Booking.builder().id("B2").paymentStatusSource(PaymentStatusSource.MANUAL).paymentStatus(PaymentStatus.PENDING).build();
+        Invoice invoice = Invoice.builder().id("I1").bookingId("B1").grandTotalInr(new BigDecimal("10000.00")).build();
+        when(bookingRepository.findById("B2")).thenReturn(Optional.of(b2));
+        when(invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc(any(), any(), any())).thenReturn(List.of(invoice));
+        when(invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc("I1")).thenReturn(List.of(
+                com.voyra.crm.entity.InvoiceLineItem.builder().bookingId("B1").taxableValue(new BigDecimal("5000")).build(),
+                com.voyra.crm.entity.InvoiceLineItem.builder().bookingId("B2").taxableValue(new BigDecimal("5000")).build()));
+        PaymentReceipt own = PaymentReceipt.builder().invoiceId("I1").bookingId("B2").direction(ReceiptDirection.RECEIPT)
+                .amountInr(new BigDecimal("2000.00")).build();
+        when(paymentReceiptRepository.findByInvoiceIdOrderByReceivedOnAscCreatedAtAsc("I1")).thenReturn(List.of(own));
+        when(paymentReceiptRepository.findByBookingIdAndDirection("B2", ReceiptDirection.RECEIPT)).thenReturn(List.of(own));
+        when(paymentReceiptRepository.findByBookingIdAndDirection("B2", ReceiptDirection.REFUND)).thenReturn(List.of());
+
+        bookingAccountingSync.syncPayment("B2");
+
+        assertThat(b2.getReceivedTotalInr()).isEqualByComparingTo("2000.00");
+        assertThat(b2.getInvoicedTotalInr()).isEqualByComparingTo("5000.00");
     }
 }

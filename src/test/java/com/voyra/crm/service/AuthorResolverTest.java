@@ -83,4 +83,21 @@ class AuthorResolverTest {
         assertThat(com.voyra.crm.security.SecurityContextUtil.getCurrentUserOrThrow().userId()).isEqualTo("ROOT");
         assertThat(com.voyra.crm.security.SystemActor.isActive()).isFalse();
     }
+
+    @Test
+    void aStaffLoginOrOwnerWithoutItsRowFails() {
+        org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(
+                new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                        new com.voyra.crm.security.CustomUserPrincipal("A9", "a", com.voyra.crm.enums.UserType.AGENT, "T1"), null, java.util.List.of()));
+        org.mockito.Mockito.when(agentRepository.findById("A9")).thenReturn(java.util.Optional.empty());
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> authorResolver.resolveCurrentAuthor())
+                .isInstanceOf(IllegalStateException.class).hasMessage("Agent not found: A9");
+
+        org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(
+                new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                        new com.voyra.crm.security.CustomUserPrincipal("T9", "o", com.voyra.crm.enums.UserType.AGENCY_OWNER, "T9"), null, java.util.List.of()));
+        org.mockito.Mockito.when(tenantRepository.findById("T9")).thenReturn(java.util.Optional.empty());
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> authorResolver.resolveCurrentAuthor())
+                .isInstanceOf(IllegalStateException.class).hasMessage("Agency not found: T9");
+    }
 }
