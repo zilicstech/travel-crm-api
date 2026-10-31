@@ -62,6 +62,7 @@ class AgentServiceCoverageTest {
     @Mock private LoginEmailService loginEmailService;
     @Mock private EntitlementService entitlementService;
     @Mock private SubscriptionRepository subscriptionRepository;
+    @Mock private com.voyra.crm.repository.TenantRepository tenantRepository;
     @InjectMocks private AgentService service;
 
     @BeforeEach
@@ -273,5 +274,49 @@ class AgentServiceCoverageTest {
         assertThat(c.getId()).isEqualTo("A1");
         assertThat(c.getEmail()).isEqualTo("pax-a@example.test");
         assertThat(c.getPassword()).isEqualTo("plain-pw");
+    }
+
+    @Test
+    void leaderboardAddsOwnerRowWithOwnersBookings() {
+        BookingRepository.AgentBookingStatsProjection mine = mock(BookingRepository.AgentBookingStatsProjection.class);
+        when(mine.getAgentId()).thenReturn("T1");
+        when(mine.getBookingsCount()).thenReturn(3L);
+        when(mine.getTotalRevenue()).thenReturn(new BigDecimal("900"));
+        when(mine.getTotalProfit()).thenReturn(new BigDecimal("90"));
+        when(bookingRepository.aggregateBookingStatsByAgent(List.of("T1"))).thenReturn(List.of(mine));
+        when(agentRepository.findByTenantIdAndUserRole("T1", UserType.AGENT)).thenReturn(List.of());
+        when(tenantRepository.findById("T1")).thenReturn(Optional.of(
+                com.voyra.crm.entity.Tenant.builder().id("T1").ownerName("Olivia Owner").build()));
+
+        List<AgentPerformanceResponse> rows = service.leaderboard();
+
+        assertThat(rows).hasSize(1);
+        AgentPerformanceResponse owner = rows.get(0);
+        assertThat(owner.getId()).isEqualTo("T1");
+        assertThat(owner.getName()).isEqualTo("Olivia Owner");
+        assertThat(owner.getBookingsCount()).isEqualTo(3);
+        assertThat(owner.getRevenueGenerated()).isEqualByComparingTo("900");
+        assertThat(owner.getDepartment()).isNull();
+        assertThat(owner.getCommission()).isNull();
+        assertThat(owner.getCommissionRate()).isNull();
+    }
+
+    @Test
+    void leaderboardOwnerWithNoBookingsIsZero() {
+        when(agentRepository.findByTenantIdAndUserRole("T1", UserType.AGENT)).thenReturn(List.of());
+        when(tenantRepository.findById("T1")).thenReturn(Optional.empty());
+
+        AgentPerformanceResponse owner = service.leaderboard().get(0);
+
+        assertThat(owner.getBookingsCount()).isZero();
+        assertThat(owner.getName()).isNull();
+    }
+
+    @Test
+    void agentListStillExcludesOwner() {
+        when(agentRepository.findByTenantIdAndUserRole("T1", UserType.AGENT)).thenReturn(List.of());
+
+        assertThat(service.listAgents()).isEmpty();
+        verifyNoInteractions(tenantRepository);
     }
 }

@@ -22,6 +22,7 @@ import com.voyra.crm.repository.BookingRepository;
 import com.voyra.crm.repository.LeadNoteRepository;
 import com.voyra.crm.repository.LeadRepository;
 import com.voyra.crm.repository.SubscriptionRepository;
+import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.repository.VisaRepository;
 import com.voyra.crm.security.AesPasswordEncoder;
 import com.voyra.crm.security.CustomUserPrincipal;
@@ -63,6 +64,7 @@ public class AgentService {
     private final LoginEmailService loginEmailService;
     private final EntitlementService entitlementService;
     private final SubscriptionRepository subscriptionRepository;
+    private final TenantRepository tenantRepository;
 
     @Transactional
     public AgentCreateResponse createAgent(AgentCreateRequest request) {
@@ -109,6 +111,21 @@ public class AgentService {
     @Transactional(readOnly = true)
     public List<AgentPerformanceResponse> listAgents() {
         return listAgents(UserType.AGENT);
+    }
+
+    /** The agents plus the owner, who books in their own name (user id = tenant id); /agents management never lists the owner. */
+    @Transactional(readOnly = true)
+    public List<AgentPerformanceResponse> leaderboard() {
+        List<AgentPerformanceResponse> rows = new java.util.ArrayList<>(listAgents());
+        String tenantId = ownerTenantId();
+        String ownerName = tenantRepository.findById(tenantId).map(com.voyra.crm.entity.Tenant::getOwnerName).orElse(null);
+        Agent owner = Agent.builder().id(tenantId).name(ownerName).isActive(true).commissionRate(BigDecimal.ZERO).build();
+        AgentPerformanceResponse row = toPerformanceResponse(owner,
+                loadStats(List.of(tenantId)).getOrDefault(tenantId, AgentStats.empty()));
+        row.setCommission(null);
+        row.setCommissionRate(null);
+        rows.add(row);
+        return rows;
     }
 
     @Transactional(readOnly = true)

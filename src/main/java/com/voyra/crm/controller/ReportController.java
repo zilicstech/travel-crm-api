@@ -42,7 +42,7 @@ public class ReportController {
     @GetMapping("/agent-leaderboard")
     @Operation(summary = "Agent leaderboard", description = "Revenue, conversion %, bookings per agent.")
     public ResponseEntity<List<AgentPerformanceResponse>> getAgentLeaderboard() {
-        return ResponseEntity.ok(agentService.listAgents());
+        return ResponseEntity.ok(agentService.leaderboard());
     }
 
     @GetMapping("/lead-pipeline")

@@ -207,7 +207,7 @@ public class ReportService {
     }
 
     private ReportTable agentsTable() {
-        List<AgentPerformanceResponse> agents = agentService.listAgents();
+        List<AgentPerformanceResponse> agents = agentService.leaderboard();
         List<String> header = List.of("id", "name", "department", "leadsAssigned", "bookingsCount",
                 "revenueGenerated", "conversionPercent", "commission");
         List<List<String>> rows = agents.stream()

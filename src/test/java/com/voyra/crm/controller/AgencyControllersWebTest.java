@@ -257,7 +257,7 @@ class AgencyControllersWebTest {
         }
 
         verify(reportService).getRevenueTrend(6);
-        verify(agentService).listAgents();
+        verify(agentService).leaderboard();
         verify(reportService).getLeadPipeline();
         verify(reportService).getLeadSourceDistribution();
         verify(reportService).getBookingTypeDistribution();

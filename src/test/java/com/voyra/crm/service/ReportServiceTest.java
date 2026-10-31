@@ -164,7 +164,7 @@ class ReportServiceTest {
                 .department(AgentDepartment.values()[0]).leadsAssigned(4L).bookingsCount(2L)
                 .revenueGenerated(new BigDecimal("2000.00")).conversionPercent(50).commission(new BigDecimal("40.00")).build();
         AgentPerformanceResponse noDept = AgentPerformanceResponse.builder().id("A2").name("Agent B").build();
-        when(agentService.listAgents()).thenReturn(List.of(withDept, noDept));
+        when(agentService.leaderboard()).thenReturn(List.of(withDept, noDept));
 
         assertThat(service.exportAgentsCsv().split("\n")).containsExactly(
                 "id,name,department,leadsAssigned,bookingsCount,revenueGenerated,conversionPercent,commission",
@@ -172,5 +172,14 @@ class ReportServiceTest {
                 "A2,Agent B,,,,,,");
         assertThat(service.exportAgentsXlsx()).startsWith('P', 'K');
         assertThat(new String(service.exportAgentsPdf(), 0, 4, StandardCharsets.US_ASCII)).isEqualTo("%PDF");
+    }
+
+    @Test
+    void agentsExportListsOwner() {
+        AgentPerformanceResponse owner = AgentPerformanceResponse.builder().id("T1").name("Olivia Owner")
+                .bookingsCount(3L).revenueGenerated(new BigDecimal("900.00")).conversionPercent(0).build();
+        when(agentService.leaderboard()).thenReturn(List.of(owner));
+
+        assertThat(service.exportAgentsCsv().split("\n")[1]).isEqualTo("T1,Olivia Owner,,,3,900.00,0,");
     }
 }
