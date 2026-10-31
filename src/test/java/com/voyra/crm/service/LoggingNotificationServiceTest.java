@@ -1,5 +1,6 @@
 package com.voyra.crm.service;
 
+import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
@@ -22,9 +23,13 @@ class LoggingNotificationServiceTest {
 
     private final Logger logger = (Logger) LoggerFactory.getLogger(LoggingNotificationService.class);
     private final ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    private Level previousLevel;
 
+    // a Spring test context started earlier in the same JVM sets com.voyra.crm to WARN (application-test.properties)
     @BeforeEach
     void capture() {
+        previousLevel = logger.getLevel();
+        logger.setLevel(Level.INFO);
         appender.start();
         logger.addAppender(appender);
     }
@@ -32,6 +37,7 @@ class LoggingNotificationServiceTest {
     @AfterEach
     void release() {
         logger.detachAppender(appender);
+        logger.setLevel(previousLevel);
     }
 
     @Test
