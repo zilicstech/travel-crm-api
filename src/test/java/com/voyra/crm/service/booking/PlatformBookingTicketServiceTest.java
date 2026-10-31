@@ -49,7 +49,6 @@ import java.util.function.Supplier;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.CALLS_REAL_METHODS;
 import static org.mockito.Mockito.mockStatic;
@@ -325,7 +324,37 @@ class PlatformBookingTicketServiceTest {
                         org.assertj.core.groups.Tuple.tuple("Mr Rahul Sharma", "DEL-BOM", "P-1", "T01"),
                         org.assertj.core.groups.Tuple.tuple("Mr Rahul Sharma", "BOM-DEL", "P2", "T02"),
                         org.assertj.core.groups.Tuple.tuple("Asha Rao", "DEL-BOM", "P-1", "T11"),
-                        org.assertj.core.groups.Tuple.tuple("Asha Rao", "BOM-DEL", null, "-"));
+                        org.assertj.core.groups.Tuple.tuple("Asha Rao", "BOM-DEL", "P-1 / P2", "-"));
+    }
+
+    /** An admin-resolved round trip has no ticket_details: every row prints the booking's PNR, never a positional ticket number. */
+    @Test
+    void adminResolvedRoundTripPrintsTheBookingPnrOnBothDirections() {
+        owner();
+        PlatformBooking b = booking("T1");
+        b.setItinerary(Map.of("sI", List.of(seg("DEL", "BOM", false), seg("BOM", "DEL", true))));
+        b.setPnr("XYZ999");
+        b.setTicketNumbers(List.of("FLAT-1"));
+        stored(b);
+        service.create("B1", null);
+        PlatformBookingTicket t = saved.get(0);
+        openable(t);
+
+        ETicketPdfRenderer.ETicketData d = rendered(() -> service.pdf("B1", t.getId()));
+
+        assertThat(d.passengers()).extracting(ETicketPdfRenderer.PaxRow::sector, ETicketPdfRenderer.PaxRow::pnr,
+                        ETicketPdfRenderer.PaxRow::ticketNumber)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("DEL-BOM", "XYZ999", "-"),
+                        org.assertj.core.groups.Tuple.tuple("BOM-DEL", "XYZ999", "-"));
+    }
+
+    @Test
+    void anUnknownBookingIs404() {
+        login("T1", UserType.AGENCY_OWNER);
+        given(bookings.findByIdForUpdate("NOPE")).willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.create("NOPE", null)).isInstanceOf(NotFoundException.class).hasMessage("Booking not found");
+        verifyNoInteractions(tickets);
     }
 
     private static Map<String, Object> line(int pax, String sector, String pnr, String ticket) {
@@ -410,9 +439,10 @@ class PlatformBookingTicketServiceTest {
 
         assertThatThrownBy(() -> service.pdf("B1", "K1")).isInstanceOf(NotFoundException.class);
         assertThatThrownBy(() -> service.list("B1")).isInstanceOf(NotFoundException.class);
+        // lock-first: the colleague's row is locked until the refused transaction rolls back, and no ticket is touched
+        given(bookings.findByIdForUpdate("B1")).willReturn(Optional.of(booking("A1")));
         assertThatThrownBy(() -> service.create("B1", null)).isInstanceOf(NotFoundException.class);
-        verifyNoInteractions(tickets);
-        verify(bookings, never()).findByIdForUpdate(anyString());
+        verifyNoInteractions(tickets, authorResolver);
     }
 
     @Test

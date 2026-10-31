@@ -67,8 +67,10 @@ public class PlatformBookingTicketService {
 
     @Transactional
     public TicketDownloadResponse create(String bookingId, BigDecimal markup) {
-        // visibility first (404), then the row lock so two clicks get seq 1 and 2, never the same one
-        PlatformBooking b = bookingRepository.findByIdForUpdate(queryService.visible(bookingId).getId()).orElseThrow();
+        // lock first so two clicks get seq 1 and 2 and the checks below read the row as locked; visible() then returns
+        // that same locked instance or 404s (an unseen id is only locked until this transaction rolls back)
+        bookingRepository.findByIdForUpdate(bookingId).orElseThrow(() -> new NotFoundException("Booking not found"));
+        PlatformBooking b = queryService.visible(bookingId);
         if (b.getProduct() != PricingProduct.FLIGHT || b.getStatus() != PlatformBookingStatus.TICKETED) {
             throw new BookingConflictException("TICKET_NOT_AVAILABLE", "A ticket can be downloaded only for a ticketed flight", Map.of());
         }
@@ -135,16 +137,15 @@ public class PlatformBookingTicketService {
         List<TicketLine> lines = b.getTicketDetails() == null ? List.of()
                 : b.getTicketDetails().stream().map(l -> objectMapper.convertValue(l, TicketLine.class)).toList();
         boolean oneDirection = facts.directions().size() == 1;
-        // the flat fallbacks hold no sector, so they are trusted only for a one-direction trip
+        // flat ticket numbers hold no sector, so they are trusted only for a one-direction trip; the booking's PNR always applies
         List<String> flat = oneDirection && b.getTicketNumbers() != null ? b.getTicketNumbers() : List.of();
-        String joinedPnr = oneDirection ? b.getPnr() : null;
         List<ETicketPdfRenderer.PaxRow> out = new ArrayList<>();
         for (int i = 0; i < pax.size(); i++) {
             PaxInput p = pax.get(i);
             for (Direction dir : facts.directions()) {
                 out.add(new ETicketPdfRenderer.PaxRow(PlatformBookingQueryService.fullName(p.getTitle(), p.getFirstName(), p.getLastName()),
                         p.getType(), p.getDob(), p.getPassportNo(), p.getNationality(), p.getPassportExpiry(), dir.key(),
-                        pnr(i, dir.key(), lines, joinedPnr), TicketFacts.ticketNumber(i, dir.key(), lines, flat, pax.size())));
+                        pnr(i, dir.key(), lines, b.getPnr()), TicketFacts.ticketNumber(i, dir.key(), lines, flat, pax.size())));
             }
         }
         return out;
