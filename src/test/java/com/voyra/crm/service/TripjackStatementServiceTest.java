@@ -437,4 +437,93 @@ class TripjackStatementServiceTest {
         assertThat(saved.getValue().getImportedBy()).isEqualTo("A1");
         assertThat(saved.getValue().getFileSha256()).hasSize(64);
     }
+
+    // ---- remaining branches
+
+    @Test
+    void aFileWithNoNameOrThatCannotBeReadIsRefused() {
+        MockMultipartFile nameless = new MockMultipartFile("file", "x.csv", "text/csv", HEADER.getBytes()) {
+            @Override
+            public String getOriginalFilename() {
+                return null;
+            }
+        };
+        assertThatThrownBy(() -> service.importStatement(nameless, SupplierEnvironment.PROD, "A1", "Admin"))
+                .hasMessage("Upload the statement as a CSV file");
+        MockMultipartFile unreadable = new MockMultipartFile("file", "tj.csv", "text/csv", (HEADER + "a,b,SALE,1,1,2026-10-05\n").getBytes()) {
+            @Override
+            public byte[] getBytes() throws java.io.IOException {
+                throw new java.io.IOException("gone");
+            }
+        };
+        assertThatThrownBy(() -> service.importStatement(unreadable, SupplierEnvironment.PROD, "A1", "Admin"))
+                .hasMessage("The file could not be read - try uploading it again");
+    }
+
+    @Test
+    void aBookingIdMatchingTwoBookingsOrABookingThatVanishedIsUnmatchedOrAnError() {
+        given(bookingRepository.findIdsBySupplierBookingId("TJ-9", SupplierEnvironment.PROD)).willReturn(List.of("B8", "B9"));
+        StatementImportResponse r = run(HEADER + "TJ-9,,SALE,100,1,2026-10-05\n");
+        assertThat(line(r, 2).getReason()).isEqualTo("Booking id matches 2 bookings");
+
+        given(bookingRepository.findIdsBySupplierBookingId("TJ-7", SupplierEnvironment.PROD)).willReturn(List.of("B7"));
+        given(bookingRepository.findByIdForUpdate("B7")).willReturn(Optional.empty());
+        assertThatThrownBy(() -> run(HEADER + "TJ-7,,SALE,100,1,2026-10-05\n")).hasMessage("Booking B7 disappeared during the import");
+    }
+
+    @Test
+    void aSaleAfterARefundAppliedEarlierKeepsThatClawbackAndANoGrossBookingNotesNothing() {
+        PlatformBooking b = cancelled().toBuilder().gross(null).build();
+        found(b);
+        given(lineRepository.existsByPlatformBookingIdAndTypeAndStatus("B2", StatementLineType.SALE, StatementLineStatus.APPLIED)).willReturn(false);
+        given(lineRepository.existsByPlatformBookingIdAndTypeAndStatus("B2", StatementLineType.REFUND, StatementLineStatus.APPLIED)).willReturn(true);
+
+        StatementImportResponse r = run(HEADER + "TJ-2,XYZ789,SALE,10000,180,2026-10-05\n");
+
+        assertThat(b.getVoyraEarnedReversal()).isEqualByComparingTo("150.00");
+        assertThat(line(r, 2).getReason()).isNull();
+    }
+
+    @Test
+    void aSaleOfADifferentAmountIsAppliedWithANote() {
+        PlatformBooking b = ticketed();
+        found(b);
+
+        StatementImportResponse r = run(HEADER + "TJ-1,ABC123,SALE,9999.00,180,2026-10-05\n");
+
+        assertThat(line(r, 2).getStatus()).isEqualTo(StatementLineStatus.APPLIED);
+        assertThat(line(r, 2).getReason()).isEqualTo("Statement amount 9999.00 differs from the booked gross 10000.00");
+    }
+
+    @Test
+    void aRefundAfterTheActualSaleRederivesOnTheActual() {
+        PlatformBooking b = cancelled().toBuilder().voyraEarnedActual(new BigDecimal("180.00")).voyraEarnedReversal(new BigDecimal("180.00")).build();
+        found(b);
+
+        run(HEADER + "TJ-2,XYZ789,REFUND,-9000,-160,2026-10-09\n");
+
+        assertThat(b.getVoyraEarnedReversal()).isEqualByComparingTo("160.00");
+        assertThat(b.getVoyraNet()).isEqualByComparingTo("-480.00");
+    }
+
+    @Test
+    void blankRowsAreSkippedShortRowsReadBlankAndBlankValuesAreRefused() {
+        assertThatThrownBy(() -> run(",,,,,\n" + "TJ-1,,SALE,1,1,2026-10-05\n")).hasMessage("The statement has no header row");
+        assertThatThrownBy(() -> run(HEADER + "TJ-1,ABC123\n")).hasMessageContaining("type must be SALE or REFUND, got \"null\"");
+        assertThatThrownBy(() -> run(HEADER + "TJ-1,ABC123,SALE,,1,2026-10-05\n")).hasMessage("Line 2: amount is blank");
+        assertThatThrownBy(() -> run(HEADER + "TJ-1,ABC123,SALE,1,1,\n")).hasMessage("Line 2: date \"null\" is not yyyy-MM-dd or dd-MM-yyyy");
+
+        StatementImportResponse r = run(HEADER + ",,,,,\n" + "TJ-NOPE,,SALE,1,1,2026-10-05\n");
+        assertThat(r.getTotalLines()).isEqualTo(1);
+    }
+
+    @Test
+    void longIdsAndNamesAreCutToTheirColumns() {
+        String longId = "X".repeat(130);
+        StatementImportResponse r = service.importStatement(new MockMultipartFile("file", "s".repeat(300) + ".csv", "text/csv",
+                (HEADER + longId + ",,SALE,1,1,2026-10-05\n").getBytes(StandardCharsets.UTF_8)), SupplierEnvironment.PROD, "A1", "Admin");
+
+        assertThat(r.getFileName()).hasSize(255);
+        assertThat(r.getLines().get(0).getSupplierBookingId()).hasSize(120);
+    }
 }
