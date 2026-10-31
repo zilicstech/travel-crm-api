@@ -240,6 +240,25 @@ class PlatformBookingPurgeTxServiceTest {
         verify(notifications, never()).platformAlert(any(), any());
     }
 
+    /** The cap counts as the repair job does: failures before the newest MIRROR_QUEUED belong to an earlier status. */
+    @Test
+    void oldFailuresBeforeTheLastQueueDoNotMakeAMirrorAbandoned() {
+        PlatformBooking b = booking(PlatformBookingStatus.FAILED, daysAgo(200));
+        b.setClientId("c1");
+        b.setMirrorStatus(MirrorStatus.FAILED);
+        stub(b);
+        Instant queuedAt = daysAgo(199);
+        given(events.findFirstByPlatformBookingIdAndTypeOrderByCreatedAtDesc("b1", "MIRROR_QUEUED"))
+                .willReturn(Optional.of(PlatformBookingEvent.builder().createdAt(queuedAt).build()));
+        given(events.countByPlatformBookingIdAndTypeAndCreatedAtAfter("b1", "MIRROR_FAILED", queuedAt)).willReturn(3L);
+        org.mockito.Mockito.lenient().when(events.countByPlatformBookingIdAndType("b1", "MIRROR_FAILED"))
+                .thenReturn(com.voyra.crm.scheduler.PlatformBookingMirrorRepairJob.MAX_ATTEMPTS + 10);
+
+        assertThat(service().purge("b1", NOW, DAYS)).isEqualTo(PurgeOutcome.SKIPPED_MIRROR);
+        assertThat(b.getPaxEnc()).isEqualTo("CIPHER");
+        verify(notifications, never()).platformAlert(any(), any());
+    }
+
     /** Carried minor: these exact keys (any case, underscores ignored) are personal; a key merely containing one is not. */
     @Test
     void passportNationalityAndContactKeysAreRedactedExactly() {

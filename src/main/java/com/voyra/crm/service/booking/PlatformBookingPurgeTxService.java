@@ -69,7 +69,7 @@ public class PlatformBookingPurgeTxService {
         if (b.getClientId() != null && (b.getMirrorStatus() == MirrorStatus.PENDING || b.getMirrorStatus() == MirrorStatus.FAILED)) {
             // the repair job has given up on a FAILED mirror: nothing will ever read the travellers, so they go on schedule
             boolean abandoned = b.getMirrorStatus() == MirrorStatus.FAILED
-                    && eventRepository.countByPlatformBookingIdAndType(bookingId, "MIRROR_FAILED") >= PlatformBookingMirrorRepairJob.MAX_ATTEMPTS;
+                    && PlatformBookingMirrorRepairJob.attempts(eventRepository, bookingId) >= PlatformBookingMirrorRepairJob.MAX_ATTEMPTS;
             if (!abandoned) {
                 return PurgeOutcome.SKIPPED_MIRROR; // the mirror repair job still needs the travellers; purged once the mirror is done
             }

@@ -30,7 +30,7 @@ public class PlatformBookingMirrorRepairJob {
     @Scheduled(cron = "${app.flight-booking.mirror-repair.cron:0 */10 * * * *}")
     public void run() {
         for (PlatformBooking b : repository.findByMirrorStatusIn(TO_REPAIR)) {
-            if (attempts(b.getId()) >= MAX_ATTEMPTS) {
+            if (attempts(eventRepository, b.getId()) >= MAX_ATTEMPTS) {
                 continue;
             }
             try {
@@ -41,10 +41,13 @@ public class PlatformBookingMirrorRepairJob {
         }
     }
 
-    /** MIRROR_FAILED events since the newest MIRROR_QUEUED (each status move), so the cap is per status, not per row. */
-    private long attempts(String id) {
-        return eventRepository.findFirstByPlatformBookingIdAndTypeOrderByCreatedAtDesc(id, "MIRROR_QUEUED")
-                .map(q -> eventRepository.countByPlatformBookingIdAndTypeAndCreatedAtAfter(id, "MIRROR_FAILED", q.getCreatedAt()))
-                .orElseGet(() -> eventRepository.countByPlatformBookingIdAndType(id, "MIRROR_FAILED"));
+    /**
+     * MIRROR_FAILED events since the newest MIRROR_QUEUED (each status move), so the cap is per status, not per row; all
+     * of them when the row was never queued. The DPDP purge uses the same count to decide a mirror was abandoned.
+     */
+    public static long attempts(PlatformBookingEventRepository events, String id) {
+        return events.findFirstByPlatformBookingIdAndTypeOrderByCreatedAtDesc(id, "MIRROR_QUEUED")
+                .map(q -> events.countByPlatformBookingIdAndTypeAndCreatedAtAfter(id, "MIRROR_FAILED", q.getCreatedAt()))
+                .orElseGet(() -> events.countByPlatformBookingIdAndType(id, "MIRROR_FAILED"));
     }
 }
