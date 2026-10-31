@@ -140,7 +140,17 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
         // pnrDetails maps each sector ("DEL-BOM") to its PNR; a split round trip can have one per direction, so keep every distinct one
         java.util.Set<String> pnrs = new java.util.LinkedHashSet<>();
         List<String> tickets = new ArrayList<>();
+        List<TicketLine> lines = new ArrayList<>();
+        int paxIndex = 0;
         for (JsonNode traveller : res.path("itemInfos").path("AIR").path("travellerInfos")) {
+            java.util.Set<String> sectors = new java.util.LinkedHashSet<>();
+            traveller.path("pnrDetails").fieldNames().forEachRemaining(sectors::add);
+            traveller.path("ticketNumberDetails").fieldNames().forEachRemaining(sectors::add);
+            for (String sector : sectors) {
+                lines.add(new TicketLine(paxIndex, sector, blankToNull(traveller.path("pnrDetails").path(sector).asText(null)),
+                        blankToNull(traveller.path("ticketNumberDetails").path(sector).asText(null))));
+            }
+            paxIndex++;
             traveller.path("pnrDetails").elements().forEachRemaining(v -> {
                 if (!v.asText("").isBlank()) {
                     pnrs.add(v.asText().trim());
@@ -156,7 +166,11 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
         String pnr = pnrs.isEmpty() ? null : String.join(" / ", pnrs); // platform_booking.pnr is 40: room for several 6-character PNRs
         log.info("Tripjack booking-details: bookingId={}, orderStatus={}, mapped={}, pnr={}, tickets={}, amount={}", supplierBookingId,
                 orderStatus, status, pnr, tickets.size(), res.path("order").path("amount").asText("-"));
-        return new BookResult(supplierBookingId, status, pnr, tickets, orderStatus.isEmpty() ? null : orderStatus, null);
+        return new BookResult(supplierBookingId, status, pnr, tickets, orderStatus.isEmpty() ? null : orderStatus, null, lines);
+    }
+
+    private static String blankToNull(String v) {
+        return v == null || v.isBlank() ? null : v.trim();
     }
 
     @Override

@@ -273,6 +273,20 @@ class TripjackFlightBookingProviderTest {
     }
 
     @Test
+    void twoPaxRoundTripMapsTicketPerPaxAndSector() throws Exception {
+        server.expect(requestTo(BASE + "/oms/v1/booking-details")).andRespond(withSuccess(
+                fixture("tripjack/booking-details-roundtrip-two-pax.json"), MediaType.APPLICATION_JSON));
+        BookResult r = provider.bookingDetails("TJS1");
+        assertThat(r.lines()).containsExactly(
+                new com.voyra.crm.models.booking.TicketLine(0, "DEL-BOM", "ABC123", "176-111"),
+                new com.voyra.crm.models.booking.TicketLine(0, "BOM-DEL", "XYZ789", "176-112"),
+                new com.voyra.crm.models.booking.TicketLine(1, "DEL-BOM", "ABC123", "176-221"),
+                new com.voyra.crm.models.booking.TicketLine(1, "BOM-DEL", "XYZ789", null));
+        assertThat(r.pnr()).isEqualTo("ABC123 / XYZ789");
+        assertThat(r.ticketNumbers()).containsExactly("176-111", "176-112", "176-221");
+    }
+
+    @Test
     void bookingDetails_keepsEveryDistinctSectorPnr() {
         server.expect(requestTo(BASE + "/oms/v1/booking-details")).andRespond(withSuccess(
                 OK + ",\"order\":{\"status\":\"SUCCESS\"},\"itemInfos\":{\"AIR\":{\"travellerInfos\":["

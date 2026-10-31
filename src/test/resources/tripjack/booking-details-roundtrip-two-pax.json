@@ -1,0 +1,3 @@
+{"status":{"success":true,"httpStatus":200},"order":{"status":"SUCCESS"},"itemInfos":{"AIR":{"travellerInfos":[
+{"pnrDetails":{"DEL-BOM":"ABC123","BOM-DEL":"XYZ789"},"ticketNumberDetails":{"DEL-BOM":"176-111","BOM-DEL":"176-112"}},
+{"pnrDetails":{"DEL-BOM":"ABC123","BOM-DEL":"XYZ789"},"ticketNumberDetails":{"DEL-BOM":"176-221","BOM-DEL":" "}}]}}}

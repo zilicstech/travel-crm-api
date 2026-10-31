@@ -882,6 +882,9 @@ public class PlatformBookingService {
         }
         b.setPnr(result.pnr());
         b.setTicketNumbers(result.ticketNumbers());
+        if (!result.lines().isEmpty()) {
+            b.setTicketDetails(result.lines().stream().map(l -> objectMapper.convertValue(l, MAP)).toList());
+        }
         b.setTicketedAt(Instant.now());
         b.setSupplierMessage(truncate(result.message()));
         // a null or non-positive amount means the supplier did not say what it charged - not a variance

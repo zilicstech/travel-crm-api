@@ -134,6 +134,11 @@ public class PlatformBooking {
     @Column(name = "itinerary", columnDefinition = "jsonb")
     private Map<String, Object> itinerary;
 
+    /** Per passenger and sector {paxIndex, sector, pnr, ticketNumber}; null for rows ticketed without detail. */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "ticket_details", columnDefinition = "jsonb")
+    private List<Map<String, Object>> ticketDetails;
+
     @Column(name = "hold_entry_id", length = 36)
     private String holdEntryId;
 

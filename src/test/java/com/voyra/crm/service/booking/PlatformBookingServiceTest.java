@@ -690,6 +690,28 @@ class PlatformBookingServiceTest {
     }
 
     @Test
+    void ticketingStoresTicketDetails() {
+        String id = reviewed();
+        when(provider.book(any())).thenThrow(new SupplierTimeoutException("timed out", null));
+        service.confirm(id, confirmRequest("key-00000001", "4500.00"));
+
+        PlatformBooking b = service.applySupplierResult(id, new BookResult("rv-1", SupplierBookingStatus.TICKETED, "PNR123",
+                List.of("TKT-1"), "Ticketed", null, List.of(new com.voyra.crm.models.booking.TicketLine(0, "DEL-BOM", "PNR123", "TKT-1"))));
+
+        assertThat(b.getTicketDetails()).containsExactly(
+                Map.of("paxIndex", 0, "sector", "DEL-BOM", "pnr", "PNR123", "ticketNumber", "TKT-1"));
+    }
+
+    @Test
+    void emptyLinesLeaveTicketDetailsNull() {
+        String id = reviewed();
+        service.confirm(id, confirmRequest("key-00000001", "4500.00"));
+        PlatformBooking b = rows.get(id);
+        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
+        assertThat(b.getTicketDetails()).isNull();
+    }
+
+    @Test
     void timeoutThenTicketedWithoutAChargedAmountKeepsVoyraNet() {
         String id = reviewed();
         when(provider.book(any())).thenThrow(new SupplierTimeoutException("timed out", null));
