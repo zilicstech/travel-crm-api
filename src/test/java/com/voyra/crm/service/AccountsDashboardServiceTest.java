@@ -147,4 +147,90 @@ class AccountsDashboardServiceTest {
         assertThat(rows.get(0).getTcsSection()).isEqualTo("206C(1G)");
         assertThat(rows.get(0).getTcsAmountInr()).isEqualByComparingTo("50.00");
     }
+
+    // ---- remaining branches
+
+    @Test
+    void walletAdjustmentsAreNotCollectedAndOnlyPastDueDatesAreOverdue() {
+        LocalDate today = LocalDate.now();
+        when(paymentReceiptRepository.findByDirectionAndReceivedOnBetween(eq(ReceiptDirection.RECEIPT), any(), any())).thenReturn(List.of(
+                PaymentReceipt.builder().paymentMode(com.voyra.crm.enums.PaymentMode.ADJUSTMENT).amountInr(new BigDecimal("900.00")).build(),
+                PaymentReceipt.builder().paymentMode(com.voyra.crm.enums.PaymentMode.CASH).amountInr(new BigDecimal("100.00")).build()));
+        when(invoiceRepository.findByDocumentTypeAndStatusInAndBalanceDueInrGreaterThan(any(), any(), any())).thenReturn(List.of(
+                invoice(BigDecimal.ONE, BigDecimal.ZERO, new BigDecimal("10.00"), null),
+                invoice(BigDecimal.ONE, BigDecimal.ZERO, new BigDecimal("20.00"), today),
+                invoice(BigDecimal.ONE, BigDecimal.ZERO, new BigDecimal("40.00"), today.minusDays(1))));
+        when(journalLineRepository.sumCreditBefore(eq("2110"), any())).thenReturn(BigDecimal.ZERO);
+        when(journalLineRepository.sumDebitBefore(eq("2110"), any())).thenReturn(new BigDecimal("5.00"));
+        when(creditNoteRepository.findByStatusAndNoteDateBetween(eq(com.voyra.crm.enums.CreditNoteStatus.ISSUED), any(), any()))
+                .thenReturn(List.of(com.voyra.crm.entity.CreditNote.builder().taxableValue(new BigDecimal("10.005"))
+                        .fxRateToInr(BigDecimal.ONE).build()));
+
+        AccountsDashboardSummaryResponse s = accountsDashboardService.summary();
+
+        assertThat(s.getCollectedThisMonthInr()).isEqualByComparingTo("100.00");
+        assertThat(s.getOutstandingInr()).isEqualByComparingTo("70.00");
+        assertThat(s.getOverdueInr()).isEqualByComparingTo("40.00");
+        assertThat(s.getAdvanceHeldInr()).isEqualByComparingTo("0");
+        assertThat(s.getNetRevenueThisMonthInr()).isEqualByComparingTo("-10.01");
+    }
+
+    @Test
+    void gstSummarySkipsTcsRowsGroupsCustomTaxesUnderADashAndExports() throws Exception {
+        Invoice usd = invoice(new BigDecimal("1000"), BigDecimal.ZERO, BigDecimal.ZERO, null).toBuilder()
+                .fxRateToInr(new BigDecimal("80")).taxableValueInr(new BigDecimal("8000.00")).build();
+        Invoice agent = invoice(BigDecimal.ONE, BigDecimal.ZERO, BigDecimal.ZERO, null).toBuilder().id("I2")
+                .billingModel(com.voyra.crm.enums.InvoiceBillingModel.COMMISSION_AGENT).taxableValueInr(new BigDecimal("500.00")).build();
+        when(invoiceRepository.findByDocumentTypeAndStatusNotAndInvoiceDateBetween(any(), any(), any(), any())).thenReturn(List.of(usd, agent));
+        InvoiceTax tcs = InvoiceTax.builder().id("T0").invoiceId("I1").taxKind(TaxKind.TCS).build();
+        InvoiceTax custom = InvoiceTax.builder().id("T1").invoiceId("I1").taxKind(TaxKind.GST).ratePercent(null)
+                .cgstAmount(BigDecimal.ZERO).sgstAmount(BigDecimal.ZERO).igstAmount(new BigDecimal("1.25")).build();
+        InvoiceTax noSac = gst18("T2", "I1", "4.50").toBuilder().taxRateConfigId("CFG-NOSAC").build();
+        when(invoiceTaxRepository.findByInvoiceIdOrderBySortOrderAsc("I1")).thenReturn(List.of(tcs, custom, noSac));
+        when(invoiceTaxRepository.findByInvoiceIdOrderBySortOrderAsc("I2")).thenReturn(List.of(gst18("T3", "I2", "45.00")));
+        when(taxRateConfigRepository.findAllById(any())).thenReturn(List.of(
+                com.voyra.crm.entity.TaxRateConfig.builder().id("CFG-NOSAC").sacCode(null).build(),
+                com.voyra.crm.entity.TaxRateConfig.builder().id("CFG18").sacCode("998555").build()));
+        when(journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(com.voyra.crm.enums.JournalSourceType.INVOICE, "I2",
+                com.voyra.crm.enums.JournalPurpose.INVOICE_RAISED_COMMISSION_AGENT))
+                .thenReturn(java.util.Optional.of(com.voyra.crm.entity.JournalEntry.builder().id("JE2").build()));
+        when(journalLineRepository.findByJournalEntryIdOrderByLineNo("JE2")).thenReturn(List.of(
+                com.voyra.crm.entity.JournalLine.builder().accountCode("4600").creditAmountInr(null).build(),
+                com.voyra.crm.entity.JournalLine.builder().accountCode("4600").creditAmountInr(new BigDecimal("250.00")).build()));
+
+        LocalDate from = LocalDate.now().minusMonths(1);
+        List<GstSummaryRowResponse> rows = accountsDashboardService.gstSummary(from, LocalDate.now());
+
+        assertThat(rows).extracting(GstSummaryRowResponse::getSacCode).containsExactly("-", "-", "998555");
+        assertThat(rows.get(0).getGstRatePercent()).isEqualByComparingTo("0");
+        assertThat(rows.get(0).getIgstAmountInr()).isEqualByComparingTo("100.00");
+        assertThat(rows.get(1).getGstRatePercent()).isEqualByComparingTo("18");
+        assertThat(rows.get(1).getCgstAmountInr()).isEqualByComparingTo("360.00");
+        assertThat(rows.get(1).getTaxableValueInr()).isEqualByComparingTo("8000.00");
+        assertThat(rows.get(2).getTaxableValueInr()).isEqualByComparingTo("250.00");
+
+        byte[] xlsx = accountsDashboardService.exportGstXlsx(from, LocalDate.now());
+        try (org.apache.poi.xssf.usermodel.XSSFWorkbook wb = new org.apache.poi.xssf.usermodel.XSSFWorkbook(new java.io.ByteArrayInputStream(xlsx))) {
+            org.apache.poi.ss.usermodel.Sheet sh = wb.getSheetAt(0);
+            assertThat(sh.getRow(0).getCell(0).getStringCellValue()).isEqualTo("SAC Code");
+            assertThat(sh.getRow(3).getCell(0).getStringCellValue()).isEqualTo("998555");
+            assertThat(sh.getRow(3).getCell(6).getStringCellValue()).isEqualTo("90.00");
+        }
+    }
+
+    @Test
+    void aCommissionAgentInvoiceWithoutItsJournalUsesTheTaxableValueAndTcsWithoutASectionIsADash() {
+        Invoice agent = invoice(BigDecimal.ONE, BigDecimal.ZERO, BigDecimal.ZERO, null).toBuilder()
+                .billingModel(com.voyra.crm.enums.InvoiceBillingModel.COMMISSION_AGENT).taxableValueInr(new BigDecimal("700.00"))
+                .tcsAmountInr(new BigDecimal("5.00")).tcsSection(null).tcsBaseAmount(new BigDecimal("100")).build();
+        when(invoiceRepository.findByDocumentTypeAndStatusNotAndInvoiceDateBetween(any(), any(), any(), any())).thenReturn(List.of(agent));
+        when(invoiceTaxRepository.findByInvoiceIdOrderBySortOrderAsc("I1")).thenReturn(List.of(gst18("T1", "I1", "63.00")));
+        when(taxRateConfigRepository.findAllById(any())).thenReturn(List.of());
+        when(journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(any(), any(), any())).thenReturn(java.util.Optional.empty());
+
+        LocalDate from = LocalDate.now().minusMonths(1);
+        assertThat(accountsDashboardService.gstSummary(from, LocalDate.now()).get(0).getTaxableValueInr()).isEqualByComparingTo("700.00");
+        assertThat(accountsDashboardService.tcsSummary(from, LocalDate.now())).singleElement()
+                .satisfies(r -> assertThat(r.getTcsSection()).isEqualTo("-"));
+    }
 }
