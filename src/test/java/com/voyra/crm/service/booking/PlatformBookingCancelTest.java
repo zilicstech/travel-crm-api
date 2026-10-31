@@ -94,6 +94,7 @@ class PlatformBookingCancelTest {
     @Mock private PlatformSupplierCredentialRepository credentialRepository;
     @Mock private NotificationService notificationService;
     @Mock private PlatformBookingMirrorService mirrorService;
+    @Mock private com.voyra.crm.service.EntitlementService entitlementService;
     @Mock private PlatformTransactionManager transactionManager;
     @Mock private WalletEntryRepository walletEntryRepository;
     @Mock private PlatformAuditService platformAuditService;
@@ -120,7 +121,7 @@ class PlatformBookingCancelTest {
         service = new PlatformBookingService(bookingRepository, registry(), quoter, pricingService,
                 walletService, walletRepository, tenantRepository, agentRepository, credentialRepository, notificationService,
                 new PlatformBookingEventRecorder(eventRepository, paxCodec), paxCodec, objectMapper, transactionManager,
-                walletEntryRepository, platformAuditService, settings, mirrorService);
+                walletEntryRepository, platformAuditService, settings, mirrorService, entitlementService);
         lenient().when(bookingRepository.save(any())).thenAnswer(i -> {
             PlatformBooking b = i.getArgument(0);
             rows.put(b.getId(), b);

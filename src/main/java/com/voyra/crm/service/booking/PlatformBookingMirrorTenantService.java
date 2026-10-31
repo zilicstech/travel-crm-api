@@ -130,7 +130,7 @@ public class PlatformBookingMirrorTenantService {
                 .docType(hotel ? BookingDocumentType.HOTEL_VOUCHER : BookingDocumentType.E_TICKET)
                 .netCost(net)
                 .markupMode(MarkupMode.FLAT)
-                .markupValue(markupBase(pb, rate, base, net))
+                .markupValue(markupBase(pb, newestTicketMarkup(pb), rate, base))
                 .purchaseCurrency(INR)
                 .purchasePrice(pb.getDisplayed())
                 .purchaseRate(rate)
@@ -196,11 +196,26 @@ public class PlatformBookingMirrorTenantService {
         return VoucherDetails.clean(BookingType.HOTEL, details);
     }
 
-    /** The FLAT markup in base that makes the selling price the published fare plus the newest ticket markup (spec Part 3). */
-    private BigDecimal markupBase(PlatformBooking pb, BigDecimal rate, String base, BigDecimal net) {
-        BigDecimal ticketMarkup = ticketRepository.findTopByPlatformBookingIdOrderBySeqDesc(pb.getId())
+    private BigDecimal newestTicketMarkup(PlatformBooking pb) {
+        return ticketRepository.findTopByPlatformBookingIdOrderBySeqDesc(pb.getId())
                 .map(PlatformBookingTicket::getMarkup).orElse(BigDecimal.ZERO);
+    }
+
+    /** The FLAT markup in base that makes the selling price the published fare plus {@code ticketMarkup} (spec Part 3). */
+    private static BigDecimal markupBase(PlatformBooking pb, BigDecimal ticketMarkup, BigDecimal rate, String base) {
+        BigDecimal net = FxMath.toBase(INR, pb.getDisplayed(), rate, base).base();
         return FxMath.toBase(INR, pb.getDisplayed().add(markupInr(pb, ticketMarkup)), rate, base).base().subtract(net);
+    }
+
+    /**
+     * Set markup (spec Part 3): the CRM booking's price becomes the published fare plus {@code ticketMarkup}, converted at
+     * the voucher's stored rate (ensure made the only FX lookup). A markup-only reprice through
+     * {@link BookingService#repriceVoyraMarkup}; its refusals (cancelled, below the invoiced price) reach the caller.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void setMarkup(PlatformBooking pb, BigDecimal ticketMarkup) {
+        String crmId = pb.getTenantBookingId();
+        bookingService.repriceVoyraMarkup(crmId, markupBase(pb, ticketMarkup, voucherRate(crmId), baseCurrency.code()));
     }
 
     /** What the agency adds over the displayed fare, in rupees: its discount (published minus displayed) plus the ticket markup. */

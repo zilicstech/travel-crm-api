@@ -298,6 +298,41 @@ class PlatformBookingControllerTest {
     }
 
     @Test
+    void patchMarkupReturnsTheBooking() throws Exception {
+        PlatformBooking row = PlatformBooking.builder().id("B1").status(PlatformBookingStatus.TICKETED).build();
+        given(service.setMarkup("B1", new BigDecimal("250.50"))).willReturn(row);
+        given(queryService.view(row)).willReturn(PlatformBookingResponse.builder().id("B1").status(PlatformBookingStatus.TICKETED).build());
+        for (UserType type : List.of(UserType.AGENCY_OWNER, UserType.AGENT)) {
+            mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch("/api/platform-bookings/B1/markup")
+                            .with(as(type)).contentType(MediaType.APPLICATION_JSON).content("{\"markup\":250.50}"))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.id").value("B1"));
+        }
+        verify(service, org.mockito.Mockito.times(2)).setMarkup("B1", new BigDecimal("250.50"));
+    }
+
+    /** The ticket's rules: not negative, two decimals; and the markup must be given (0 sets the published fare). */
+    @Test
+    void patchMarkupValidatesLikeTheTicket() throws Exception {
+        Map<String, String> bad = Map.of("{\"markup\":-1}", "Markup cannot be negative",
+                "{\"markup\":1.234}", "Markup can have at most two decimals",
+                "{}", "Markup is required");
+        for (Map.Entry<String, String> e : bad.entrySet()) {
+            mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch("/api/platform-bookings/B1/markup")
+                            .with(as(UserType.AGENT)).contentType(MediaType.APPLICATION_JSON).content(e.getKey()))
+                    .andExpect(status().isBadRequest()).andExpect(jsonPath("$.details.errors.markup").value(e.getValue()));
+        }
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void patchMarkupForbiddenToAccountants() throws Exception {
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch("/api/platform-bookings/B1/markup")
+                .with(as(UserType.ACCOUNTANT)).contentType(MediaType.APPLICATION_JSON).content("{\"markup\":1}"))
+                .andExpect(status().isForbidden());
+        verifyNoInteractions(service);
+    }
+
+    @Test
     void accountantCannotCreate() throws Exception {
         mockMvc.perform(post("/api/platform-bookings/B1/tickets").with(as(UserType.ACCOUNTANT))
                 .contentType(MediaType.APPLICATION_JSON).content("{}")).andExpect(status().isForbidden());

@@ -113,6 +113,15 @@ class TenantStatusInterceptorTest {
         verify(platformBookingTicketService).create("B1", null);
     }
 
+    /** Set markup is a CRM write, not the download: a suspended agency is refused (its download still reprices). */
+    @Test
+    void patchMarkupIsRefusedWhileSuspended() throws Exception {
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch("/api/platform-bookings/B1/markup")
+                        .header("Authorization", bearer).contentType(MediaType.APPLICATION_JSON).content("{\"markup\":1}"))
+                .andExpect(status().is(423));
+        org.mockito.Mockito.verifyNoInteractions(platformBookingService);
+    }
+
     @Test
     void suspendedOtherWriteStill423() throws Exception {
         mockMvc.perform(post("/api/platform-bookings/B1/cancel").header("Authorization", bearer)

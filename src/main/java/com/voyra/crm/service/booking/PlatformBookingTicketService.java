@@ -9,26 +9,30 @@ import com.voyra.crm.entity.PlatformBookingTicket;
 import com.voyra.crm.entity.Tenant;
 import com.voyra.crm.enums.PlatformBookingStatus;
 import com.voyra.crm.enums.PricingProduct;
+import com.voyra.crm.enums.Sku;
 import com.voyra.crm.enums.SupplierEnvironment;
 import com.voyra.crm.exception.BookingConflictException;
 import com.voyra.crm.exception.NotFoundException;
+import com.voyra.crm.models.Entitlements;
 import com.voyra.crm.models.booking.TicketLine;
 import com.voyra.crm.repository.PlatformBookingRepository;
 import com.voyra.crm.repository.PlatformBookingTicketRepository;
 import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.service.AgencyLogoLoader;
 import com.voyra.crm.service.AuthorResolver;
+import com.voyra.crm.service.EntitlementService;
 import com.voyra.crm.service.booking.ticket.Direction;
 import com.voyra.crm.service.booking.ticket.FareLine;
 import com.voyra.crm.service.booking.ticket.TicketFacts;
 import com.voyra.crm.service.booking.ticket.TicketFare;
-import com.voyra.crm.security.SecurityContextUtil;
 import com.voyra.crm.util.ETicketPdfRenderer;
 import com.voyra.crm.util.UniqueIdResolver;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -57,6 +61,9 @@ public class PlatformBookingTicketService {
     private final AgencyLogoLoader agencyLogoLoader;
     private final PaxCodec paxCodec;
     private final ObjectMapper objectMapper;
+    private final EntitlementService entitlementService;
+    private final PlatformBookingMirrorService mirrorService;
+    private final PlatformTransactionManager transactionManager;
 
     public record TicketPdf(byte[] bytes, String filename) {
     }
@@ -66,42 +73,67 @@ public class PlatformBookingTicketService {
     record StoredPax(List<PaxInput> passengers) {
     }
 
-    @Transactional
+    /**
+     * Records a download. Like confirm, no platform transaction is open while the CRM is written (blueprint 3.5): (1) a
+     * short transaction checks the row and the markup; (2) when the agency has a CRM booking for it (CRM Core, not
+     * READ_ONLY) its price becomes the published fare plus this markup, and a refusal there (below the invoiced price)
+     * means no ticket; (3) a transaction locks the row, checks it again and saves the ticket ({@code seq} under the lock).
+     * If (3) fails after (2) the price has moved without a ticket; downloading again records it.
+     */
     public TicketDownloadResponse create(String bookingId, BigDecimal markup) {
-        // lock first so two clicks get seq 1 and 2 and the checks below read the row as locked; visible() then returns
-        // that same locked instance or 404s (only the caller's own agency's rows are ever locked)
-        bookingRepository.findByIdAndTenantIdForUpdate(bookingId, SecurityContextUtil.getCurrentUserOrThrow().tenantId()).orElseThrow(() -> new NotFoundException("Booking not found"));
-        PlatformBooking b = queryService.visible(bookingId);
+        BigDecimal m = (markup == null ? BigDecimal.ZERO : markup).setScale(2, RoundingMode.HALF_UP);
+        TransactionTemplate tx = new TransactionTemplate(transactionManager);
+        PlatformBooking checked = tx.execute(s -> {
+            PlatformBooking b = queryService.visible(bookingId);
+            fareLines(b, m);
+            return b;
+        });
+        if (checked.getTenantBookingId() != null) {
+            Entitlements crm = entitlementService.resolve(checked.getTenantId());
+            if (crm.skus().contains(Sku.CRM_CORE) && !crm.readOnly()) {
+                mirrorService.setMarkup(checked, m);
+            }
+        }
+        PlatformBookingTicket t = tx.execute(s -> {
+            // lock so two clicks get seq 1 and 2; only the caller's own agency's rows are ever locked
+            PlatformBooking b = bookingRepository.findByIdAndTenantIdForUpdate(bookingId, checked.getTenantId())
+                    .orElseThrow(() -> new NotFoundException("Booking not found"));
+            List<FareLine> lines = fareLines(b, m);
+            AuthorResolver.AuthorInfo who = authorResolver.resolveCurrentAuthor();
+            return ticketRepository.save(PlatformBookingTicket.builder()
+                    .id(UniqueIdResolver.resolve(ticketRepository::existsById))
+                    .platformBookingId(b.getId()).tenantId(b.getTenantId())
+                    .seq(ticketRepository.maxSeq(b.getId()) + 1)
+                    .markup(m)
+                    .fareLines(lines.stream().map(l -> {
+                        Map<String, Object> line = new LinkedHashMap<>();
+                        line.put("label", l.label());
+                        line.put("amount", l.amount().toPlainString()); // a string keeps the exact scale through jsonb
+                        return line;
+                    }).toList())
+                    .total(TicketFare.total(b.getGross(), m))
+                    .createdBy(who.id()).createdByName(who.name())
+                    .createdAt(Instant.now())
+                    .build());
+        });
+        log.info("E-ticket download recorded: booking={} ticket={} seq={} markup={}", bookingId, t.getId(), t.getSeq(), m);
+        return view(t);
+    }
+
+    /** A ticketed flight whose passengers are still held, and a markup of at most the published fare: its fare lines. */
+    private static List<FareLine> fareLines(PlatformBooking b, BigDecimal m) {
         if (b.getProduct() != PricingProduct.FLIGHT || b.getStatus() != PlatformBookingStatus.TICKETED) {
             throw new BookingConflictException("TICKET_NOT_AVAILABLE", "A ticket can be downloaded only for a ticketed flight", Map.of());
         }
         if (b.getPaxPurgedAt() != null) {
             throw new BookingConflictException("PASSENGERS_PURGED", ETicketPdfRenderer.PURGED_TEXT, Map.of());
         }
-        BigDecimal m = (markup == null ? BigDecimal.ZERO : markup).setScale(2, RoundingMode.HALF_UP);
         List<FareLine> lines = TicketFare.lines(b.getGross(), b.getBase(), m,
                 TicketFacts.from(b.getItinerary(), b.getPricingSnapshot()).namedTaxes());
         if (m.compareTo(b.getGross()) > 0) {
             throw new IllegalArgumentException("Markup can be at most the published fare");
         }
-        AuthorResolver.AuthorInfo who = authorResolver.resolveCurrentAuthor();
-        PlatformBookingTicket t = ticketRepository.save(PlatformBookingTicket.builder()
-                .id(UniqueIdResolver.resolve(ticketRepository::existsById))
-                .platformBookingId(b.getId()).tenantId(b.getTenantId())
-                .seq(ticketRepository.maxSeq(b.getId()) + 1)
-                .markup(m)
-                .fareLines(lines.stream().map(l -> {
-                    Map<String, Object> line = new LinkedHashMap<>();
-                    line.put("label", l.label());
-                    line.put("amount", l.amount().toPlainString()); // a string keeps the exact scale through jsonb
-                    return line;
-                }).toList())
-                .total(TicketFare.total(b.getGross(), m))
-                .createdBy(who.id()).createdByName(who.name())
-                .createdAt(Instant.now())
-                .build());
-        log.info("E-ticket download recorded: booking={} ticket={} seq={} markup={}", b.getId(), t.getId(), t.getSeq(), m);
-        return view(t);
+        return lines;
     }
 
     /** Newest first. */

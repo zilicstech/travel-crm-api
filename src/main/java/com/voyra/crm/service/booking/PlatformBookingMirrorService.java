@@ -18,6 +18,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.Assert;
 
+import java.math.BigDecimal;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -102,6 +103,19 @@ public class PlatformBookingMirrorService {
             log.warn("CRM mirror of platform booking {} failed: {}", platformBookingId, e.toString());
             finish(platformBookingId, acted, null, e);
         }
+    }
+
+    /**
+     * Prices the CRM booking of a ticketed platform booking at the published fare plus {@code markup}, as the system in
+     * the agency's schema, with no platform transaction open. Unlike {@link #sync} its refusals reach the caller.
+     */
+    public void setMarkup(PlatformBooking pb, BigDecimal markup) {
+        Assert.state(!TransactionSynchronizationManager.isActualTransactionActive(),
+                "setMarkup must not run inside a platform transaction");
+        SystemActor.call(pb.getTenantId(), () -> {
+            tenantService.setMarkup(pb, markup);
+            return null;
+        });
     }
 
     /** The CRM client, lead and service a review names exist in the caller's tenant and the caller may reach them. */

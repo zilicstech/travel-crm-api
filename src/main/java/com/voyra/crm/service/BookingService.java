@@ -395,6 +395,47 @@ public class BookingService {
         }
     }
 
+    /**
+     * The markup-only reprice of a Voyra booking (spec Part 3): its voucher's FLAT markup becomes {@code markupBase} and
+     * the booking's price, markup and profit follow. The cost, the vendor and the supplier bill never change, so this does
+     * not go through {@link #reverseVoucher} / {@link #applyVoucher}. Refused below what is already invoiced; the same
+     * price again writes nothing.
+     */
+    @Transactional
+    public void repriceVoyraMarkup(String bookingId, BigDecimal markupBase) {
+        Booking booking = lockVoyra(bookingId);
+        if (booking.getBookingStatus() != BookingStatus.CONFIRMED && booking.getBookingStatus() != BookingStatus.COMPLETED) {
+            throw new com.voyra.crm.exception.BookingConflictException("MARKUP_NOT_APPLICABLE",
+                    "Markup can be set only on a confirmed booking", Map.of());
+        }
+        List<BookingDocument> docs = bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc(bookingId);
+        BookingDocument voucher = docs.stream().filter(d -> VOYRA_VOUCHERS.contains(d.getDocType())).findFirst()
+                .orElseThrow(() -> new IllegalStateException("This Voyra booking has no ticket or voucher"));
+        BigDecimal price = com.voyra.crm.util.MarkupMath.sellingPrice(nzMoney(voucher.getNetCost()), MarkupMode.FLAT, markupBase);
+        if (price.compareTo(nzMoney(voucher.getSellingPrice())) == 0) {
+            return;
+        }
+        BigDecimal selling = docs.stream().filter(d -> d != voucher).map(d -> nzMoney(d.getSellingPrice())).reduce(price, BigDecimal::add);
+        if (selling.compareTo(invoicedPrice(bookingId)) < 0) {
+            throw new com.voyra.crm.exception.BookingConflictException("PRICE_BELOW_INVOICED",
+                    "This price is below what you have invoiced; adjust the invoice first", Map.of());
+        }
+        Map<String, String> before = AuditSnapshot.of(booking, AUDITED);
+        voucher.setMarkupMode(MarkupMode.FLAT);
+        voucher.setMarkupValue(markupBase);
+        voucher.setSellingPrice(price);
+        booking.setMarkupMode(MarkupMode.FLAT);
+        booking.setMarkupValue(markupBase);
+        booking.setSellingPrice(selling);
+        booking.setProfit(computeProfit(selling, booking.getNetCost(), booking.getCommission()));
+        touch(booking);
+        bookingRepository.save(booking);
+        bookingDocumentRepository.save(voucher);
+        auditService.recordUpdate(AuditEntityType.BOOKING, booking.getId(), labelFor(booking),
+                AuditSnapshot.diff(before, AuditSnapshot.of(booking, AUDITED)));
+        syncPaymentIfInvoiced(booking);
+    }
+
     /** A Voyra booking the platform has not ticketed yet: no client money moves until it is confirmed. */
     static boolean waitingForVoyra(Booking b) {
         return b.getPlatformBookingId() != null && b.getBookingStatus() == BookingStatus.PENDING;

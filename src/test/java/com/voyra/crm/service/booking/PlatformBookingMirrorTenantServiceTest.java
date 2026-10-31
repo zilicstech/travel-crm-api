@@ -351,6 +351,35 @@ class PlatformBookingMirrorTenantServiceTest {
         verify(exchangeRateProvider, never()).resolve(any(), any(), any());
     }
 
+    /**
+     * Set markup (spec Part 3): published 5500 + markup 500 = 6000 INR and the displayed 5400 cost, both at the voucher's
+     * stored EUR rate 0.011 (66.00 - 59.40); today's rate is never looked up again.
+     */
+    @Test
+    void markupRepricesAtTheVouchersStoredRate() {
+        org.mockito.Mockito.doReturn("EUR").when(baseCurrency).code();
+        when(bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc("B1")).thenReturn(List.of(
+                ticket.toBuilder().purchaseRate(new BigDecimal("0.011")).build()));
+        PlatformBooking pb = platformBooking();
+        pb.setTenantBookingId("B1");
+
+        service.setMarkup(pb, new BigDecimal("500.00"));
+
+        verify(bookingService).repriceVoyraMarkup("B1", new BigDecimal("6.60"));
+        verify(exchangeRateProvider, never()).resolve(any(), any(), any());
+    }
+
+    /** Markup 0 sets an INR agency's price back to the published fare: the FLAT markup is the discount. */
+    @Test
+    void aZeroMarkupIsThePublishedFare() {
+        PlatformBooking pb = platformBooking();
+        pb.setTenantBookingId("B1");
+
+        service.setMarkup(pb, BigDecimal.ZERO);
+
+        verify(bookingService).repriceVoyraMarkup("B1", new BigDecimal("100.00"));
+    }
+
     @Test
     void aTicketWithoutAnApprovableBillIsNotPaid() {
         when(bookingService.confirmVoyraTicket(eq("B1"), any(), any(), any())).thenReturn(null);

@@ -111,6 +111,7 @@ class PlatformBookingServiceTest {
     @Mock private PlatformSupplierCredentialRepository credentialRepository;
     @Mock private NotificationService notificationService;
     @Mock private PlatformBookingMirrorService mirrorService;
+    @Mock private com.voyra.crm.service.EntitlementService entitlementService;
     @Mock private PlatformTransactionManager transactionManager;
     @Mock private WalletEntryRepository walletEntryRepository;
     @Mock private PlatformAuditService platformAuditService;
@@ -148,7 +149,7 @@ class PlatformBookingServiceTest {
         service = new PlatformBookingService(bookingRepository, registry(), quoter, pricingService, walletService,
                 walletRepository, tenantRepository, agentRepository, credentialRepository, notificationService,
                 new PlatformBookingEventRecorder(eventRepository, paxCodec), paxCodec, objectMapper, transactionManager,
-                walletEntryRepository, platformAuditService, settings, mirrorService);
+                walletEntryRepository, platformAuditService, settings, mirrorService, entitlementService);
         wallet = Wallet.builder().id("W1").tenantId(T).balance(new BigDecimal("10000.00")).held(BigDecimal.ZERO)
                 .isTest(true).build();
         tenant = Tenant.builder().id(T).status(TenantStatus.ACTIVE).bookingBlocked(false).build();
@@ -659,6 +660,110 @@ class PlatformBookingServiceTest {
         verify(mirrorService).sync(id);
     }
 
+    /** A mirror error never blocks the booking: the platform money committed and the repair job retries. */
+    @Test
+    void confirmStillReturnsTheBookingWhenTheMirrorThrows() {
+        String id = reviewedForClient();
+        org.mockito.Mockito.doThrow(new IllegalStateException("tenant schema down")).when(mirrorService).sync(id);
+
+        PlatformBooking b = service.confirm(id, confirmRequest("key-00000001", "4500.00"));
+
+        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
+        verify(mirrorService, times(2)).sync(id);
+    }
+
+    /** The poller re-asks an admin-resolved FAILED row for 72 hours: an unchanged answer must not run the mirror again. */
+    @Test
+    void aRepeatedFailedAnswerDoesNotSyncAgain() {
+        String id = reviewedForClient();
+        BookResult failed = new BookResult("SB-1", SupplierBookingStatus.FAILED, null, List.of(), "No seats", null);
+        when(provider.book(any())).thenReturn(failed);
+        service.confirm(id, confirmRequest("key-00000001", "4500.00"));
+        org.mockito.Mockito.clearInvocations(mirrorService);
+
+        service.applySupplierResult(id, failed);
+        verify(mirrorService, never()).sync(id);
+
+        service.applySupplierResult(id, ticketed(null)); // a late ticket is a move, so it mirrors
+        verify(mirrorService).sync(id);
+    }
+
+    // ---- Set markup (spec Part 3): the owner or the booking agent prices the CRM booking without a ticket ----
+
+    private String ticketedWithCrmRow() {
+        String id = reviewedForClient();
+        service.confirm(id, confirmRequest("key-00000001", "4500.00"));
+        rows.get(id).setTenantBookingId("CRM1");
+        lenient().when(bookingRepository.findByIdAndTenantId(id, T)).thenAnswer(i -> Optional.ofNullable(rows.get(id)));
+        return id;
+    }
+
+    private void crmPlan(boolean crmCore) {
+        when(entitlementService.resolve(T)).thenReturn(new com.voyra.crm.models.Entitlements(com.voyra.crm.enums.SubscriptionPlan.SUITE,
+                com.voyra.crm.enums.SubscriptionStatus.ACTIVE, crmCore ? java.util.EnumSet.allOf(com.voyra.crm.enums.Sku.class) : java.util.Set.of(),
+                5, false, null));
+    }
+
+    @Test
+    void setMarkupRepricesTheCrmBookingAndReturnsTheRow() {
+        String id = ticketedWithCrmRow();
+        crmPlan(true);
+
+        PlatformBooking b = service.setMarkup(id, new BigDecimal("250.5"));
+
+        assertThat(b).isSameAs(rows.get(id));
+        org.mockito.InOrder order = inOrder(entitlementService, mirrorService);
+        order.verify(entitlementService).assertWritable(T);
+        order.verify(mirrorService).setMarkup(b, new BigDecimal("250.50"));
+    }
+
+    @Test
+    void setMarkupOnlyOnATicketedBookingAndAtMostThePublishedFare() {
+        String id = ticketedWithCrmRow();
+
+        assertThatThrownBy(() -> service.setMarkup(id, new BigDecimal("5000.01")))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Markup can be at most the published fare");
+        rows.get(id).setStatus(PlatformBookingStatus.CANCELLED);
+        assertThatThrownBy(() -> service.setMarkup(id, BigDecimal.ONE)).isInstanceOfSatisfying(BookingConflictException.class, e -> {
+            assertThat(e.getCode()).isEqualTo("TICKET_NOT_AVAILABLE");
+            assertThat(e.getMessage()).isEqualTo("Markup can be set only on a ticketed booking");
+        });
+        verify(mirrorService, never()).setMarkup(any(), any());
+        org.mockito.Mockito.verifyNoInteractions(entitlementService);
+    }
+
+    /** No CRM booking yet (mirror not run), or a plan without CRM Core: there is nothing to price. */
+    @Test
+    void setMarkupWithoutACrmBookingIs404() {
+        String id = ticketedWithCrmRow();
+        crmPlan(false);
+        assertThatThrownBy(() -> service.setMarkup(id, BigDecimal.ONE)).isInstanceOf(NotFoundException.class);
+
+        rows.get(id).setTenantBookingId(null);
+        assertThatThrownBy(() -> service.setMarkup(id, BigDecimal.ONE)).isInstanceOf(NotFoundException.class);
+        verify(mirrorService, never()).setMarkup(any(), any());
+        verify(entitlementService, never()).assertWritable(any());
+    }
+
+    @Test
+    void setMarkupOnAReadOnlyPlanIs402() {
+        String id = ticketedWithCrmRow();
+        crmPlan(true);
+        org.mockito.Mockito.doThrow(com.voyra.crm.exception.TenantWriteRefusedException.readOnly()).when(entitlementService).assertWritable(T);
+
+        assertThatThrownBy(() -> service.setMarkup(id, BigDecimal.ONE)).isInstanceOf(com.voyra.crm.exception.TenantWriteRefusedException.class);
+        verify(mirrorService, never()).setMarkup(any(), any());
+    }
+
+    @Test
+    void setMarkupOnAColleaguesBookingIs404() {
+        String id = ticketedWithCrmRow();
+        loginAs(UserType.AGENT, "AG2");
+
+        assertThatThrownBy(() -> service.setMarkup(id, BigDecimal.ONE)).isInstanceOf(NotFoundException.class);
+        org.mockito.Mockito.verifyNoInteractions(entitlementService);
+    }
+
     @Test
     void aRowWithoutAClientIsNeverQueued() {
         String id = reviewed();
@@ -853,7 +958,7 @@ class PlatformBookingServiceTest {
         PlatformBookingService broken = new PlatformBookingService(bookingRepository, registry(), quoter, pricingService,
                 walletService, walletRepository, tenantRepository, agentRepository, credentialRepository, notificationService,
                 new PlatformBookingEventRecorder(eventRepository, paxCodec), new PaxCodec(objectMapper, "bad"), objectMapper,
-                transactionManager, walletEntryRepository, platformAuditService, settings, mirrorService);
+                transactionManager, walletEntryRepository, platformAuditService, settings, mirrorService, entitlementService);
         String id = broken.review(reviewRequest()).getBookingId();
 
         assertThatThrownBy(() -> broken.confirm(id, confirmRequest("key-00000001", "4500.00"))).isInstanceOf(RuntimeException.class);

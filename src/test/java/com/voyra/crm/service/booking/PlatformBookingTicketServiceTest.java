@@ -70,6 +70,9 @@ class PlatformBookingTicketServiceTest {
     @Mock private PlatformBookingTicketRepository tickets;
     @Mock private AuthorResolver authorResolver;
     @Mock private AgencyLogoLoader logoLoader;
+    @Mock private PlatformBookingMirrorService mirrorService;
+    @Mock private com.voyra.crm.repository.SubscriptionRepository subscriptions;
+    @Mock private org.springframework.transaction.PlatformTransactionManager transactionManager;
 
     private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
     private final PaxCodec paxCodec = new PaxCodec(objectMapper, KEY);
@@ -79,12 +82,15 @@ class PlatformBookingTicketServiceTest {
     @BeforeEach
     void setUp() {
         service = new PlatformBookingTicketService(new PlatformBookingQueryService(bookings, events, tenants, agents, clients, paxCodec, objectMapper),
-                bookings, tickets, tenants, authorResolver, logoLoader, paxCodec, objectMapper);
+                bookings, tickets, tenants, authorResolver, logoLoader, paxCodec, objectMapper,
+                new com.voyra.crm.service.EntitlementService(subscriptions, transactionManager), mirrorService, transactionManager);
+        com.voyra.crm.cache.TenantCache.remove("T1");
     }
 
     @AfterEach
     void clear() {
         SecurityContextHolder.clearContext();
+        com.voyra.crm.cache.TenantCache.remove("T1");
     }
 
     private static void login(String userId, UserType type) {
@@ -187,7 +193,6 @@ class PlatformBookingTicketServiceTest {
         PlatformBooking b = booking("T1");
         b.setStatus(PlatformBookingStatus.CANCELLED);
         given(bookings.findByIdAndTenantId("B1", "T1")).willReturn(Optional.of(b));
-        given(bookings.findByIdAndTenantIdForUpdate("B1", "T1")).willReturn(Optional.of(b));
 
         assertThatThrownBy(() -> service.create("B1", null)).isInstanceOfSatisfying(BookingConflictException.class,
                 e -> assertThat(e.getCode()).isEqualTo("TICKET_NOT_AVAILABLE"));
@@ -200,7 +205,6 @@ class PlatformBookingTicketServiceTest {
         PlatformBooking b = booking("T1");
         b.setProduct(PricingProduct.HOTEL);
         given(bookings.findByIdAndTenantId("B1", "T1")).willReturn(Optional.of(b));
-        given(bookings.findByIdAndTenantIdForUpdate("B1", "T1")).willReturn(Optional.of(b));
 
         assertThatThrownBy(() -> service.create("B1", null)).isInstanceOfSatisfying(BookingConflictException.class,
                 e -> assertThat(e.getCode()).isEqualTo("TICKET_NOT_AVAILABLE"));
@@ -214,13 +218,119 @@ class PlatformBookingTicketServiceTest {
         b.setPaxEnc(null);
         b.setPaxPurgedAt(Instant.parse("2027-03-01T00:00:00Z"));
         given(bookings.findByIdAndTenantId("B1", "T1")).willReturn(Optional.of(b));
-        given(bookings.findByIdAndTenantIdForUpdate("B1", "T1")).willReturn(Optional.of(b));
 
         assertThatThrownBy(() -> service.create("B1", null)).isInstanceOfSatisfying(BookingConflictException.class, e -> {
             assertThat(e.getCode()).isEqualTo("PASSENGERS_PURGED");
             assertThat(e.getMessage()).isEqualTo(ETicketPdfRenderer.PURGED_TEXT);
         });
         verify(tickets, never()).save(any());
+    }
+
+    // ---- the download's markup is the CRM booking's markup (spec Part 3) ----
+
+    private void plan(com.voyra.crm.enums.SubscriptionPlan plan, com.voyra.crm.enums.SubscriptionStatus status) {
+        given(subscriptions.findByTenantId("T1")).willReturn(Optional.of(com.voyra.crm.entity.Subscription.builder()
+                .id("S1").tenantId("T1").plan(plan).status(status).skus(List.of()).seats(0).build()));
+    }
+
+    private PlatformBooking mirrored() {
+        PlatformBooking b = booking("T1");
+        b.setTenantBookingId("CRM1");
+        stored(b);
+        return b;
+    }
+
+    @Test
+    void aDownloadSetsTheCrmMarkupBeforeSavingTheTicket() {
+        owner();
+        PlatformBooking b = mirrored();
+        plan(com.voyra.crm.enums.SubscriptionPlan.SUITE, com.voyra.crm.enums.SubscriptionStatus.ACTIVE);
+
+        TicketDownloadResponse t = service.create("B1", new BigDecimal("500.5"));
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(mirrorService, bookings, tickets);
+        order.verify(mirrorService).setMarkup(b, new BigDecimal("500.50"));
+        order.verify(bookings).findByIdAndTenantIdForUpdate("B1", "T1");
+        order.verify(tickets).save(any());
+        assertThat(t.getTicketPrice()).isEqualByComparingTo("5500.50");
+    }
+
+    /** Review Focus 3: a lower markup after invoicing is refused by the CRM, so no ticket is made at a price the CRM does not show. */
+    @Test
+    void aDownloadBelowTheInvoicedPriceMakesNoTicket() {
+        login("T1", UserType.AGENCY_OWNER);
+        PlatformBooking b = booking("T1");
+        b.setTenantBookingId("CRM1");
+        given(bookings.findByIdAndTenantId("B1", "T1")).willReturn(Optional.of(b));
+        plan(com.voyra.crm.enums.SubscriptionPlan.SUITE, com.voyra.crm.enums.SubscriptionStatus.ACTIVE);
+        org.mockito.Mockito.doThrow(new BookingConflictException("PRICE_BELOW_INVOICED",
+                        "This price is below what you have invoiced; adjust the invoice first", Map.of()))
+                .when(mirrorService).setMarkup(b, new BigDecimal("100.00"));
+
+        assertThatThrownBy(() -> service.create("B1", new BigDecimal("100")))
+                .isInstanceOfSatisfying(BookingConflictException.class, e -> assertThat(e.getCode()).isEqualTo("PRICE_BELOW_INVOICED"));
+
+        assertThat(saved).isEmpty();
+        verify(bookings, never()).findByIdAndTenantIdForUpdate(any(), any());
+    }
+
+    /** Basic has no CRM booking to show and READ_ONLY freezes it: the ticket downloads at its price and the CRM is left alone. */
+    @Test
+    void aDownloadOnBasicOrReadOnlyLeavesTheCrmAlone() {
+        owner();
+        mirrored();
+        plan(com.voyra.crm.enums.SubscriptionPlan.STARTER, com.voyra.crm.enums.SubscriptionStatus.ACTIVE);
+        service.create("B1", new BigDecimal("500"));
+
+        com.voyra.crm.cache.TenantCache.remove("T1");
+        plan(com.voyra.crm.enums.SubscriptionPlan.SUITE, com.voyra.crm.enums.SubscriptionStatus.READ_ONLY);
+        service.create("B1", new BigDecimal("500"));
+
+        assertThat(saved).hasSize(2);
+        verifyNoInteractions(mirrorService);
+    }
+
+    @Test
+    void aDownloadWithNoCrmRowJustSavesTheTicket() {
+        owner();
+        stored(booking("T1"));
+
+        service.create("B1", new BigDecimal("500"));
+
+        assertThat(saved).hasSize(1);
+        verifyNoInteractions(mirrorService, subscriptions);
+    }
+
+    /** The ticket download is a suspended agency's one allowed write, and its CRM price follows it (written as the system). */
+    @Test
+    void aSuspendedAgencyDownloadStillReprices() {
+        owner();
+        PlatformBooking b = mirrored();
+        com.voyra.crm.cache.TenantCache.put("T1", "A", com.voyra.crm.enums.TenantStatus.SUSPENDED);
+        plan(com.voyra.crm.enums.SubscriptionPlan.SUITE, com.voyra.crm.enums.SubscriptionStatus.ACTIVE);
+
+        service.create("B1", new BigDecimal("500"));
+
+        verify(mirrorService).setMarkup(b, new BigDecimal("500.00"));
+        assertThat(saved).hasSize(1);
+    }
+
+    /** The row is checked again under the lock: one cancelled while the CRM was repriced gets no ticket. */
+    @Test
+    void aBookingThatMovedBeforeTheLockGetsNoTicket() {
+        login("T1", UserType.AGENCY_OWNER);
+        PlatformBooking b = booking("T1");
+        PlatformBooking moved = booking("T1");
+        moved.setStatus(PlatformBookingStatus.CANCELLING);
+        given(bookings.findByIdAndTenantId("B1", "T1")).willReturn(Optional.of(b));
+        given(bookings.findByIdAndTenantIdForUpdate("B1", "T1")).willReturn(Optional.of(moved));
+
+        assertThatThrownBy(() -> service.create("B1", null)).isInstanceOfSatisfying(BookingConflictException.class,
+                e -> assertThat(e.getCode()).isEqualTo("TICKET_NOT_AVAILABLE"));
+        verify(tickets, never()).save(any());
+
+        given(bookings.findByIdAndTenantIdForUpdate("B1", "T1")).willReturn(Optional.empty());
+        assertThatThrownBy(() -> service.create("B1", null)).isInstanceOf(NotFoundException.class);
     }
 
     /** Negative and three-decimal markups are refused by validation (controller test); above the published fare here. */
@@ -241,7 +351,6 @@ class PlatformBookingTicketServiceTest {
         PlatformBooking b = booking("T1");
         b.setGross(null);
         given(bookings.findByIdAndTenantId("B1", "T1")).willReturn(Optional.of(b));
-        given(bookings.findByIdAndTenantIdForUpdate("B1", "T1")).willReturn(Optional.of(b));
 
         assertThatThrownBy(() -> service.create("B1", new BigDecimal("10"))).isInstanceOfSatisfying(BookingConflictException.class,
                 e -> assertThat(e.getCode()).isEqualTo("TICKET_NOT_AVAILABLE"));
@@ -351,10 +460,8 @@ class PlatformBookingTicketServiceTest {
     @Test
     void anUnknownBookingIs404() {
         login("T1", UserType.AGENCY_OWNER);
-        given(bookings.findByIdAndTenantIdForUpdate("NOPE", "T1")).willReturn(Optional.empty());
-
         assertThatThrownBy(() -> service.create("NOPE", null)).isInstanceOf(NotFoundException.class).hasMessage("Booking not found");
-        verifyNoInteractions(tickets);
+        verifyNoInteractions(tickets, mirrorService);
     }
 
     @Test
@@ -363,7 +470,8 @@ class PlatformBookingTicketServiceTest {
                 new CustomUserPrincipal("T2", "o@t2.test", UserType.AGENCY_OWNER, "T2"), null));
 
         assertThatThrownBy(() -> service.create("B1", null)).isInstanceOf(NotFoundException.class).hasMessage("Booking not found");
-        verify(bookings).findByIdAndTenantIdForUpdate("B1", "T2");
+        verify(bookings).findByIdAndTenantId("B1", "T2");
+        verify(bookings, never()).findByIdAndTenantIdForUpdate(any(), any());
         verify(bookings, never()).findByIdForUpdate(any());
         verifyNoInteractions(tickets);
     }
@@ -450,10 +558,10 @@ class PlatformBookingTicketServiceTest {
 
         assertThatThrownBy(() -> service.pdf("B1", "K1")).isInstanceOf(NotFoundException.class);
         assertThatThrownBy(() -> service.list("B1")).isInstanceOf(NotFoundException.class);
-        // lock-first: the colleague's row is locked until the refused transaction rolls back, and no ticket is touched
-        given(bookings.findByIdAndTenantIdForUpdate("B1", "T1")).willReturn(Optional.of(booking("A1")));
+        // refused at the visibility check: the colleague's row is never locked and no ticket is touched
         assertThatThrownBy(() -> service.create("B1", null)).isInstanceOf(NotFoundException.class);
-        verifyNoInteractions(tickets, authorResolver);
+        verify(bookings, never()).findByIdAndTenantIdForUpdate(any(), any());
+        verifyNoInteractions(tickets, authorResolver, mirrorService);
     }
 
     @Test

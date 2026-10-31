@@ -407,4 +407,136 @@ class BookingServiceVoyraTest {
         verify(serviceBookingStatusSync).onBookingLogged("S1", "A1", "Priya");
         verify(bookingRepository, never()).findByIdForUpdate(any());
     }
+
+    // ---- markup-only reprice (spec Part 3) ----
+
+    private static BookingDocument pricedTicket() {
+        BookingDocument v = ticket();
+        v.setBookingId("B1");
+        v.setSellingPrice(new BigDecimal("10500"));
+        v.setSupplierInvoiceId("SI1");
+        return v;
+    }
+
+    private static Booking.BookingBuilder confirmed() {
+        return pending().bookingStatus(BookingStatus.CONFIRMED).pnr("PNR9").markupMode(MarkupMode.FLAT)
+                .markupValue(new BigDecimal("500")).profit(new BigDecimal("500"));
+    }
+
+    private void invoicedAt(String price) {
+        when(invoiceRepository.findByBookingIdAndDocumentTypeAndStatusNotOrderByCreatedAtAsc("B1",
+                com.voyra.crm.enums.InvoiceDocumentType.TAX_INVOICE, com.voyra.crm.enums.InvoiceLifecycle.CANCELLED))
+                .thenReturn(List.of(com.voyra.crm.entity.Invoice.builder().id("I1").bookingId("B1")
+                        .status(com.voyra.crm.enums.InvoiceLifecycle.ISSUED).build()));
+        when(invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc("I1"))
+                .thenReturn(List.of(com.voyra.crm.entity.InvoiceLineItem.builder().lineSubtotal(new BigDecimal(price)).build()));
+    }
+
+    @Test
+    void repriceMovesSellingAndProfitButNotCostOrBill() {
+        Booking b = confirmed().paymentStatusSource(com.voyra.crm.enums.PaymentStatusSource.DERIVED).build();
+        BookingDocument voucher = pricedTicket();
+        BookingDocument other = BookingDocument.builder().id("D0").docType(BookingDocumentType.OTHER).build();
+        locked(b, other, voucher);
+
+        platformRun(() -> bookingService.repriceVoyraMarkup("B1", new BigDecimal("800.40")));
+
+        assertThat(voucher.getMarkupMode()).isEqualTo(MarkupMode.FLAT);
+        assertThat(voucher.getMarkupValue()).isEqualByComparingTo("800.40");
+        assertThat(voucher.getSellingPrice()).isEqualByComparingTo("10800");
+        assertThat(voucher.getNetCost()).isEqualByComparingTo("10000");
+        assertThat(voucher.getSupplierInvoiceId()).isEqualTo("SI1");
+        assertThat(b.getSellingPrice()).isEqualByComparingTo("10800");
+        assertThat(b.getProfit()).isEqualByComparingTo("800");
+        assertThat(b.getMarkupMode()).isEqualTo(MarkupMode.FLAT);
+        assertThat(b.getMarkupValue()).isEqualByComparingTo("800.40");
+        assertThat(b.getNetCost()).isEqualByComparingTo("10000");
+        assertThat(b.getVendorId()).isEqualTo("V1");
+        assertThat(b.getUpdatedBy()).isEqualTo(SystemActor.USER_ID);
+        verify(bookingRepository).save(b);
+        verify(bookingDocumentRepository).save(voucher);
+        verify(auditService).recordUpdate(any(), any(), any(), any());
+        verify(bookingAccountingSync).syncPayment("B1");
+        verifyNoInteractions(supplierInvoiceService, supplierInvoiceRepository, clientCreditService);
+    }
+
+    @Test
+    void repriceOnACancelledBookingIs409() {
+        for (BookingStatus status : List.of(BookingStatus.CANCELLED, BookingStatus.PENDING)) {
+            Booking b = confirmed().bookingStatus(status).build();
+            when(bookingRepository.findByIdForUpdate("B1")).thenReturn(Optional.of(b));
+
+            assertThatThrownBy(() -> platformRun(() -> bookingService.repriceVoyraMarkup("B1", new BigDecimal("800"))))
+                    .isInstanceOfSatisfying(com.voyra.crm.exception.BookingConflictException.class, e -> {
+                        assertThat(e.getCode()).isEqualTo("MARKUP_NOT_APPLICABLE");
+                        assertThat(e.getMessage()).isEqualTo("Markup can be set only on a confirmed booking");
+                    });
+        }
+        verify(bookingRepository, never()).save(any());
+        verifyNoInteractions(auditService);
+    }
+
+    @Test
+    void repriceBelowTheInvoicedPriceIs409() {
+        Booking b = confirmed().build();
+        BookingDocument voucher = pricedTicket();
+        locked(b, voucher);
+        invoicedAt("10500");
+
+        assertThatThrownBy(() -> platformRun(() -> bookingService.repriceVoyraMarkup("B1", new BigDecimal("300"))))
+                .isInstanceOfSatisfying(com.voyra.crm.exception.BookingConflictException.class, e -> {
+                    assertThat(e.getCode()).isEqualTo("PRICE_BELOW_INVOICED");
+                    assertThat(e.getMessage()).isEqualTo("This price is below what you have invoiced; adjust the invoice first");
+                });
+
+        assertThat(voucher.getSellingPrice()).isEqualByComparingTo("10500");
+        assertThat(voucher.getMarkupValue()).isEqualByComparingTo("500");
+        assertThat(b.getSellingPrice()).isEqualByComparingTo("10500");
+        verify(bookingRepository, never()).save(any());
+        verify(bookingDocumentRepository, never()).save(any());
+        verifyNoInteractions(auditService);
+    }
+
+    /** A higher price after invoicing leaves an uninvoiced balance; a completed booking is repriced too. */
+    @Test
+    void repriceAboveTheInvoicedPriceIsAllowed() {
+        Booking b = confirmed().bookingStatus(BookingStatus.COMPLETED).build();
+        BookingDocument voucher = pricedTicket();
+        locked(b, voucher);
+        invoicedAt("10500");
+
+        platformRun(() -> bookingService.repriceVoyraMarkup("B1", new BigDecimal("900")));
+
+        assertThat(b.getSellingPrice()).isEqualByComparingTo("10900");
+        assertThat(b.getProfit()).isEqualByComparingTo("900");
+        assertThat(voucher.getSellingPrice()).isEqualByComparingTo("10900");
+        verify(bookingRepository).save(b);
+        verifyNoInteractions(bookingAccountingSync); // a MANUAL payment status is left alone
+    }
+
+    /** The same markup again (or one that rounds to the same price) changes nothing and is never refused. */
+    @Test
+    void repriceToTheSamePriceWritesNothing() {
+        Booking b = confirmed().build();
+        BookingDocument voucher = pricedTicket();
+        locked(b, voucher);
+
+        platformRun(() -> bookingService.repriceVoyraMarkup("B1", new BigDecimal("500")));
+        platformRun(() -> bookingService.repriceVoyraMarkup("B1", new BigDecimal("500.40")));
+
+        assertThat(voucher.getMarkupValue()).isEqualByComparingTo("500");
+        verify(bookingRepository, never()).save(any());
+        verify(bookingDocumentRepository, never()).save(any());
+        verifyNoInteractions(auditService, invoiceRepository, bookingAccountingSync);
+    }
+
+    @Test
+    void repriceRefusesOutsideTheSystemActorOrWithoutAVoucher() {
+        assertThatThrownBy(() -> bookingService.repriceVoyraMarkup("B1", BigDecimal.ONE))
+                .isInstanceOf(IllegalStateException.class).hasMessage("Voyra bookings are written by the platform only");
+
+        locked(confirmed().build(), BookingDocument.builder().id("D0").docType(BookingDocumentType.OTHER).build());
+        assertThatThrownBy(() -> platformRun(() -> bookingService.repriceVoyraMarkup("B1", BigDecimal.ONE)))
+                .isInstanceOf(IllegalStateException.class).hasMessage("This Voyra booking has no ticket or voucher");
+    }
 }

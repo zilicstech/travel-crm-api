@@ -22,6 +22,7 @@ import com.voyra.crm.enums.PricingProduct;
 import com.voyra.crm.enums.ReceivableReason;
 import com.voyra.crm.enums.ServiceType;
 import com.voyra.crm.enums.SupplierEnvironment;
+import com.voyra.crm.enums.Sku;
 import com.voyra.crm.enums.SupplierProvider;
 import com.voyra.crm.enums.TenantStatus;
 import com.voyra.crm.enums.VoyraEarnedSource;
@@ -49,6 +50,7 @@ import com.voyra.crm.repository.WalletRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.security.SecurityContextUtil;
 import com.voyra.crm.service.AgencyPricingService;
+import com.voyra.crm.service.EntitlementService;
 import com.voyra.crm.service.NotificationService;
 import com.voyra.crm.service.PlatformAuditService;
 import com.voyra.crm.service.PlatformSettingService;
@@ -105,6 +107,7 @@ public class PlatformBookingService {
     private final PlatformAuditService platformAuditService;
     private final PlatformSettingService settings;
     private final PlatformBookingMirrorService mirrorService;
+    private final EntitlementService entitlementService;
 
     /** How long confirm waits for the supplier to ticket an accepted booking before the poller takes over; 0 in unit tests. */
     @org.springframework.beans.factory.annotation.Value("${app.platform-booking.confirm-wait-seconds:30}")
@@ -118,7 +121,8 @@ public class PlatformBookingService {
                                   NotificationService notificationService, PlatformBookingEventRecorder events,
                                   PaxCodec paxCodec, ObjectMapper objectMapper, PlatformTransactionManager transactionManager,
                                   WalletEntryRepository walletEntryRepository, PlatformAuditService platformAuditService,
-                                  PlatformSettingService settings, PlatformBookingMirrorService mirrorService) {
+                                  PlatformSettingService settings, PlatformBookingMirrorService mirrorService,
+                                  EntitlementService entitlementService) {
         this.bookingRepository = bookingRepository;
         this.providers = providers;
         this.quoter = quoter;
@@ -137,6 +141,7 @@ public class PlatformBookingService {
         this.platformAuditService = platformAuditService;
         this.settings = settings;
         this.mirrorService = mirrorService;
+        this.entitlementService = entitlementService;
     }
 
     /**
@@ -422,11 +427,40 @@ public class PlatformBookingService {
      * Every wallet call is keyed, so re-applying after a crash posts nothing twice.
      */
     PlatformBooking applySupplierResult(String bookingId, BookResult result) {
-        PlatformBooking booking = tx.execute(s -> applyLocked(bookingId, result));
-        if (booking.getStatus() == PlatformBookingStatus.TICKETED || booking.getStatus() == PlatformBookingStatus.FAILED) {
+        PlatformBookingStatus[] before = new PlatformBookingStatus[1];
+        PlatformBooking booking = tx.execute(s -> {
+            before[0] = bookingRepository.findByIdForUpdate(bookingId).map(PlatformBooking::getStatus).orElse(null);
+            return applyLocked(bookingId, result);
+        });
+        // only a move: the poller re-asks an admin-resolved FAILED row for 72 hours and must not re-run its mirror each time
+        if (booking.getStatus() != before[0]) {
             scheduleMirror(booking);
         }
         return booking;
+    }
+
+    /**
+     * Set markup without a ticket (spec Part 3): the CRM booking of a ticketed booking is priced at the published fare
+     * plus {@code markup}. The owner, or the agent who booked it and handles its product; 404 when the agency has no CRM
+     * booking for it (mirror not run, or no CRM Core), 402 on a READ_ONLY plan. Runs with no platform transaction open.
+     */
+    public PlatformBooking setMarkup(String bookingId, BigDecimal markup) {
+        CustomUserPrincipal principal = requireBooker();
+        PlatformBooking b = actedOn(principal, bookingRepository.findByIdAndTenantId(bookingId, principal.tenantId()));
+        if (b.getStatus() != PlatformBookingStatus.TICKETED) {
+            throw new BookingConflictException("TICKET_NOT_AVAILABLE", "Markup can be set only on a ticketed booking", Map.of());
+        }
+        BigDecimal m = markup.setScale(2, java.math.RoundingMode.HALF_UP);
+        if (m.compareTo(b.getGross()) > 0) {
+            throw new IllegalArgumentException("Markup can be at most the published fare");
+        }
+        if (b.getTenantBookingId() == null || !entitlementService.resolve(b.getTenantId()).skus().contains(Sku.CRM_CORE)) {
+            throw new NotFoundException("This booking has no CRM booking to price");
+        }
+        entitlementService.assertWritable(b.getTenantId());
+        mirrorService.setMarkup(b, m);
+        log.info("Platform booking {} CRM markup set: markup={}", bookingId, m);
+        return b;
     }
 
     /** What cancelling this ticketed booking would refund and recall, from the supplier's quote. Posts nothing. */
@@ -914,7 +948,11 @@ public class PlatformBookingService {
 
     /** Brings the CRM mirror up to date after a status move committed, outside any transaction; a failure is the repair job's. */
     private void scheduleMirror(PlatformBooking booking) {
-        mirrorService.sync(booking.getId());
+        try {
+            mirrorService.sync(booking.getId());
+        } catch (RuntimeException e) {
+            log.warn("CRM mirror of platform booking {} could not run: {}", booking.getId(), e.getClass().getSimpleName());
+        }
     }
 
     private void stamp(PlatformBooking b, PriceQuote q) {

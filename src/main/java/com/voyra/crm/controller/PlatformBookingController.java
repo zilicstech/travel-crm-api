@@ -7,6 +7,7 @@ import com.voyra.crm.dto.PlatformBookingCancelRequest;
 import com.voyra.crm.dto.PlatformBookingConfirmRequest;
 import com.voyra.crm.dto.PlatformBookingResponse;
 import com.voyra.crm.dto.PlatformBookingSummaryResponse;
+import com.voyra.crm.dto.PlatformMarkupRequest;
 import com.voyra.crm.dto.PlatformBookingReviewResponse;
 import com.voyra.crm.dto.TicketCreateRequest;
 import com.voyra.crm.dto.TicketDownloadResponse;
@@ -26,6 +27,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -109,6 +111,13 @@ public class PlatformBookingController {
     @Operation(summary = "Record a customer e-ticket download", description = "Ticketed flights only; the markup is folded into the printed price and never shown on the ticket.")
     public ResponseEntity<TicketDownloadResponse> createTicket(@PathVariable String id, @Valid @RequestBody TicketCreateRequest request) {
         return ResponseEntity.ok(ticketService.create(id, request.getMarkup()));
+    }
+
+    @PatchMapping("/{id}/markup")
+    @PreAuthorize("hasAnyRole('AGENCY_OWNER','AGENT')")
+    @Operation(summary = "Set the CRM selling price of a ticketed booking", description = "Published fare plus the markup; refused below what is already invoiced (409 PRICE_BELOW_INVOICED).")
+    public ResponseEntity<PlatformBookingResponse> setMarkup(@PathVariable String id, @Valid @RequestBody PlatformMarkupRequest request) {
+        return ResponseEntity.ok(queryService.view(service.setMarkup(id, request.getMarkup())));
     }
 
     @GetMapping("/{id}/tickets")

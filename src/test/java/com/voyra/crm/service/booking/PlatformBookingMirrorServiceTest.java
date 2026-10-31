@@ -262,6 +262,43 @@ class PlatformBookingMirrorServiceTest {
         verifyNoInteractions(tenantService);
     }
 
+    /** Set markup runs as the system in the agency's schema, restores the caller, and a refusal reaches the caller. */
+    @Test
+    void setMarkupRunsAsTheSystemAndPassesRefusalsOn() {
+        PlatformBooking b = ticketed("C1");
+        List<String> seen = new ArrayList<>();
+        doAnswer(i -> {
+            seen.add(TenantContext.getTenantId());
+            seen.add(String.valueOf(SystemActor.isActive()));
+            return null;
+        }).when(tenantService).setMarkup(b, new BigDecimal("500.00"));
+
+        service.setMarkup(b, new BigDecimal("500.00"));
+
+        assertThat(seen).containsExactly("T1", "true");
+        assertThat(TenantContext.getTenantId()).isNull();
+        assertThat(SystemActor.isActive()).isFalse();
+
+        org.mockito.Mockito.doThrow(new com.voyra.crm.exception.BookingConflictException("PRICE_BELOW_INVOICED", "below", Map.of()))
+                .when(tenantService).setMarkup(b, BigDecimal.ONE);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.setMarkup(b, BigDecimal.ONE))
+                .isInstanceOf(com.voyra.crm.exception.BookingConflictException.class);
+        assertThat(SystemActor.isActive()).isFalse();
+    }
+
+    @Test
+    void setMarkupNeverRunsInsideAPlatformTransaction() {
+        PlatformBooking b = ticketed("C1");
+        org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(true);
+        try {
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.setMarkup(b, BigDecimal.ONE))
+                    .isInstanceOf(IllegalStateException.class);
+        } finally {
+            org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(false);
+        }
+        verifyNoInteractions(tenantService);
+    }
+
     /** A hotel booking for a client is mirrored from its stay (a HOTEL_VOUCHER), never from flight legs. */
     @Test
     void aHotelBookingIsMirroredFromItsStay() {
