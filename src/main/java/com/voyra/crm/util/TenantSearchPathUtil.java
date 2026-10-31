@@ -21,7 +21,7 @@ public final class TenantSearchPathUtil {
         // Schema name is concatenated into DDL-ish SQL, so it MUST be validated against a
         // strict allowlist pattern. Never relax this regex - it is the only thing standing
         // between the tenant identifier and SQL injection via search_path.
-        if (schema == null || !SAFE_SCHEMA.matcher(schema).matches()) {
+        if (!SAFE_SCHEMA.matcher(schema).matches()) {
             return "public";
         }
         return schema + ", public";

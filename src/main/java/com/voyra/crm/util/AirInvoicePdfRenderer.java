@@ -149,7 +149,7 @@ public final class AirInvoicePdfRenderer {
             int rows = Math.max(1, Math.max(travellers.size(), legs.size()));
             for (int i = 0; i < rows; i++) {
                 String who = i < travellers.size() ? "%03d %s".formatted(++passenger, upper(travellers.get(i).getName()))
-                        : (i == 0 && travellers.isEmpty() ? valueOr(line.getDescription()) : "");
+                        : (i == 0 ? valueOr(line.getDescription()) : ""); // row 0 past the travellers means there are none
                 VoucherLeg leg = i < legs.size() ? legs.get(i) : null;
                 table.addCell(cell(who, body, false));
                 table.addCell(cell(leg == null ? "" : String.join("  ", nn(leg.getFrom()), nn(leg.getTo()), cabin(leg.getCabin())).trim(), body, false));

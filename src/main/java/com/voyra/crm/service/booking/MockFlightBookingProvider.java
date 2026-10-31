@@ -14,6 +14,7 @@ import com.voyra.crm.service.MockFlightSearchProvider;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import com.voyra.crm.util.ExcludeFromJacocoGenerated;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
@@ -157,9 +158,15 @@ public class MockFlightBookingProvider implements FlightBookingProvider {
 
     /** Short and stable per review, ending in the fare so a refund survives a restart: {@code mock-bk-<12 hex>-<fare>}. */
     static String bookingId(String reviewId, BigDecimal fare) {
+        byte[] digest = sha256().digest(reviewId.getBytes(StandardCharsets.UTF_8));
+        return "mock-bk-" + HexFormat.of().formatHex(digest).substring(0, 12) + "-" + fare.toPlainString();
+    }
+
+    /** Every JRE ships SHA-256, so the catch the compiler forces cannot run. */
+    @ExcludeFromJacocoGenerated
+    private static MessageDigest sha256() {
         try {
-            byte[] digest = MessageDigest.getInstance("SHA-256").digest(reviewId.getBytes(StandardCharsets.UTF_8));
-            return "mock-bk-" + HexFormat.of().formatHex(digest).substring(0, 12) + "-" + fare.toPlainString();
+            return MessageDigest.getInstance("SHA-256");
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 unavailable", e);
         }

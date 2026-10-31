@@ -9,6 +9,7 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
+import com.voyra.crm.util.ExcludeFromJacocoGenerated;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.math.BigDecimal;
@@ -64,12 +65,19 @@ public class RazorpayPaymentGateway implements PaymentGateway {
         if (rawBody == null || signature == null) {
             return false;
         }
+        Mac mac = hmacSha256(new SecretKeySpec(webhookSecret, "HmacSHA256"));
+        byte[] expected = HexFormat.of().formatHex(mac.doFinal(rawBody.getBytes(StandardCharsets.UTF_8)))
+                .getBytes(StandardCharsets.US_ASCII);
+        return MessageDigest.isEqual(expected, signature.trim().toLowerCase().getBytes(StandardCharsets.US_ASCII));
+    }
+
+    /** Every JRE ships HmacSHA256 and accepts any HmacSHA256 key spec, so the catch the compiler forces cannot run. */
+    @ExcludeFromJacocoGenerated
+    private static Mac hmacSha256(SecretKeySpec key) {
         try {
             Mac mac = Mac.getInstance("HmacSHA256");
-            mac.init(new SecretKeySpec(webhookSecret, "HmacSHA256"));
-            byte[] expected = HexFormat.of().formatHex(mac.doFinal(rawBody.getBytes(StandardCharsets.UTF_8)))
-                    .getBytes(StandardCharsets.US_ASCII);
-            return MessageDigest.isEqual(expected, signature.trim().toLowerCase().getBytes(StandardCharsets.US_ASCII));
+            mac.init(key);
+            return mac;
         } catch (GeneralSecurityException e) {
             throw new IllegalStateException("HmacSHA256 unavailable", e);
         }

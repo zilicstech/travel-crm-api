@@ -652,6 +652,14 @@ class PlatformBookingMirrorTenantServiceTest {
     }
 
     @Test
+    void blankTicketNumbersAddNoSeparatorSoEveryRealNumberCanFitBeforeTheEllipsis() {
+        List<String> numbers = new java.util.ArrayList<>(java.util.Collections.nCopies(25, ""));
+        numbers.add("0981234567890");
+
+        assertThat(PlatformBookingMirrorTenantService.ticketNo(numbers)).isEqualTo("0981234567890…");
+    }
+
+    @Test
     void aMarkupDefaultWithAModeButNoValueAddsNothingAndUndatedTravellersUseTheirDateOfBirthOnlyWithAFlight() {
         when(markupDefaultRepository.findById(ServiceType.FLIGHT)).thenReturn(Optional.of(MarkupDefault.builder()
                 .serviceType(ServiceType.FLIGHT).mode(MarkupMode.FLAT).value(null).build()));

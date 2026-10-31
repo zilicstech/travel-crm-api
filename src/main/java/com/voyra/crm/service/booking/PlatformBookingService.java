@@ -1102,7 +1102,7 @@ public class PlatformBookingService {
 
     /** The travellers' declared types add up to the reviewed adults, children and infants (rows reviewed before the mix was stamped skip this). */
     private static void requireReviewedMix(PlatformBooking b, List<PaxInput> passengers) {
-        if (b.getPricingSnapshot() == null || !(b.getPricingSnapshot().get(PAX_MIX) instanceof Map<?, ?> mix)) {
+        if (!(b.getPricingSnapshot().get(PAX_MIX) instanceof Map<?, ?> mix)) { // the snapshot is stamped before a row is first saved
             return;
         }
         for (String[] t : new String[][]{{"ADULT", "adults"}, {"CHILD", "children"}, {"INFANT", "infants"}}) {
@@ -1125,7 +1125,7 @@ public class PlatformBookingService {
 
     /** The travel date stamped at review; rows reviewed before it was stamped fall back to their itinerary. */
     private java.time.LocalDate travelDateOf(PlatformBooking b) {
-        Object stamped = b.getPricingSnapshot() == null ? null : b.getPricingSnapshot().get(TRAVEL_DATE);
+        Object stamped = b.getPricingSnapshot().get(TRAVEL_DATE);
         java.time.LocalDate d = stamped == null ? null : dateOrNull(stamped.toString());
         return d != null ? d : firstDeparture(b.getItinerary());
     }

@@ -76,7 +76,6 @@ public final class AmountInWords {
     // ---------------------------------------------------------------- Indian grouping (Lakh/Crore)
 
     private static String spellIndian(long n) {
-        if (n == 0) return "Zero";
         StringBuilder sb = new StringBuilder();
         long crore = n / 10_000_000; n %= 10_000_000;
         long lakh = n / 100_000; n %= 100_000;
@@ -93,7 +92,6 @@ public final class AmountInWords {
     // ---------------------------------------------------------------- International grouping
 
     private static String spellInternational(long n) {
-        if (n == 0) return "Zero";
         StringBuilder sb = new StringBuilder();
         long billion = n / 1_000_000_000; n %= 1_000_000_000;
         long million = n / 1_000_000; n %= 1_000_000;

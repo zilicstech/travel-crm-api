@@ -134,7 +134,7 @@ public class PlatformBookingPurgeTxService {
         if (node instanceof List<?> list) {
             return list.stream().map(v -> redactNode(v, key)).toList();
         }
-        if (node != null && key != null && PERSONAL_KEYS.contains(key.toLowerCase(Locale.ROOT).replace("_", ""))) {
+        if (node != null && PERSONAL_KEYS.contains(key.toLowerCase(Locale.ROOT).replace("_", ""))) {
             return REMOVED;
         }
         return node;
@@ -142,6 +142,6 @@ public class PlatformBookingPurgeTxService {
 
     @SuppressWarnings("unchecked")
     static Map<String, Object> redact(Map<String, Object> payload) {
-        return (Map<String, Object>) redactNode(payload, null);
+        return (Map<String, Object>) redactNode(payload, ""); // "" names the top level, never a personal key
     }
 }

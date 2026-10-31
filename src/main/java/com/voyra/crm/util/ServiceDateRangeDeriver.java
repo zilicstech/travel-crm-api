@@ -18,18 +18,20 @@ public final class ServiceDateRangeDeriver {
     }
 
     public static void derive(LeadService service) {
-        switch (service.getType()) {
-            case FLIGHT -> deriveFromSectors(service);
-            case HOTEL -> deriveFromHotel(service);
-            case VISA -> {
+        // a switch expression over every type, so a new type fails to compile instead of keeping stale dates
+        Runnable derive = switch (service.getType()) {
+            case FLIGHT -> () -> deriveFromSectors(service);
+            case HOTEL -> () -> deriveFromHotel(service);
+            case VISA -> () -> {
                 service.setDateFrom(service.getVisaIntendedTravelDate());
                 service.setDateTo(service.getVisaIntendedTravelDate());
-            }
-            case TRANSFER -> {
+            };
+            case TRANSFER -> () -> {
                 service.setDateFrom(service.getTransferDate());
                 service.setDateTo(service.getTransferDate());
-            }
-        }
+            };
+        };
+        derive.run();
     }
 
     private static void deriveFromSectors(LeadService service) {

@@ -17,6 +17,7 @@ import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.function.Consumer;
 
 /**
  * Turns the short "log a booking" form into the full {@link BookingCreateRequest} the existing
@@ -89,8 +90,8 @@ public final class BookingLogRequestMapper {
     }
 
     private static void fillFromService(BookingCreateRequest req, LeadService s, BookingLogRequest log) {
-        switch (s.getType()) {
-            case FLIGHT -> {
+        Runnable fill = switch (s.getType()) {
+            case FLIGHT -> () -> {
                 List<FlightSectorDto> legs = s.getFlightSectors() != null ? s.getFlightSectors() : List.of();
                 if (!legs.isEmpty()) {
                     req.setFlightFrom(legs.get(0).getFrom());
@@ -102,8 +103,8 @@ public final class BookingLogRequestMapper {
                 req.setTripType(s.getFlightTripType() == null ? null : roundTrip ? "Round Trip" : "One Way");
                 req.setFlightCabin(s.getFlightCabin() != null ? titleCase(s.getFlightCabin().name()) : null);
                 req.setInternationalTrip(log.getInternationalTrip());
-            }
-            case HOTEL -> {
+            };
+            case HOTEL -> () -> {
                 req.setHotelCity(s.getHotelCity());
                 req.setHotelCountryCode(s.getHotelCountryCode());
                 req.setHotelCheckIn(s.getHotelCheckIn());
@@ -111,21 +112,22 @@ public final class BookingLogRequestMapper {
                 req.setHotelRooms(s.getHotelRooms());
                 req.setJourneyDate(s.getHotelCheckIn());
                 req.setReturnDate(s.getHotelCheckOut());
-            }
-            case VISA -> {
+            };
+            case VISA -> () -> {
                 req.setVisaCountry(s.getVisaCountry());
                 req.setVisaAppointmentDate(s.getVisaAppointmentDate());
                 req.setJourneyDate(s.getVisaIntendedTravelDate());
-            }
-            case TRANSFER -> {
+            };
+            case TRANSFER -> () -> {
                 req.setTransferVehicleType(s.getTransferVehicleType());
                 req.setTransferPickup(s.getTransferPickup());
                 req.setTransferDropoff(s.getTransferDropoff());
                 req.setTransferDate(s.getTransferDate());
                 req.setTransferTime(s.getTransferTime());
                 req.setJourneyDate(s.getTransferDate());
-            }
-        }
+            };
+        };
+        fill.run();
     }
 
     private static String destinationFor(LeadService s) {
@@ -182,12 +184,14 @@ public final class BookingLogRequestMapper {
     }
 
     private static void setReference(BookingCreateRequest req, String reference) {
-        switch (req.getType()) {
-            case FLIGHT, PACKAGE -> req.setPnr(reference);
-            case HOTEL -> req.setHotelConfirmationNo(reference);
-            case VISA -> req.setVisaApplicationNo(reference);
-            case TRANSFER -> req.setTransferVoucherNo(reference);
-        }
+        // a switch expression over every type, so a new type fails to compile instead of silently storing nothing
+        Consumer<String> setter = switch (req.getType()) {
+            case FLIGHT, PACKAGE -> req::setPnr;
+            case HOTEL -> req::setHotelConfirmationNo;
+            case VISA -> req::setVisaApplicationNo;
+            case TRANSFER -> req::setTransferVoucherNo;
+        };
+        setter.accept(reference);
     }
 
     private static String titleCase(String enumName) {
