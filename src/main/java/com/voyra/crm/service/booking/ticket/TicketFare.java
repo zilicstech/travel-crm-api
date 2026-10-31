@@ -7,7 +7,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-/** Fare lines printed on the customer ticket. The markup is folded into the tax lines and never shown on its own. */
+/**
+ * Fare lines printed on the customer ticket. With a markup the taxes print as one line, because any named
+ * breakdown would leave a residual equal to the markup; without one the supplier's named taxes are shown.
+ */
 public final class TicketFare {
 
     private TicketFare() {
@@ -31,12 +34,14 @@ public final class TicketFare {
         lines.add(new FareLine("Base fare", baseFare));
         BigDecimal named = namedTaxes.values().stream().map(TicketFare::money).reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal other = taxes.subtract(named);
-        if (namedTaxes.isEmpty() || other.signum() < 0) {
+        if (markup != null && markup.signum() > 0 || namedTaxes.isEmpty() || other.signum() < 0) {
             lines.add(new FareLine("Taxes, fees and charges", taxes));
             return lines;
         }
         namedTaxes.forEach((code, amount) -> lines.add(new FareLine(code, money(amount))));
-        lines.add(new FareLine("Other charges", other));
+        if (other.signum() != 0) {
+            lines.add(new FareLine("Other charges", other));
+        }
         return lines;
     }
 }

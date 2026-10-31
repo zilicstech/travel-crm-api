@@ -21,12 +21,27 @@ class TicketFareTest {
     }
 
     @Test
-    void markupGoesIntoOtherCharges() {
+    void markupGivesOneTaxLineSoNoResidualRevealsIt() {
         List<FareLine> lines = TicketFare.lines(d("5000"), d("4000"), d("500"), Map.of("YQ", d("300")));
-        assertThat(lines).extracting(FareLine::label).containsExactly("Base fare", "YQ", "Other charges");
-        assertThat(lines).extracting(FareLine::amount).map(BigDecimal::toPlainString).containsExactly("4000.00", "300.00", "1200.00");
+        assertThat(lines).extracting(FareLine::label).containsExactly("Base fare", "Taxes, fees and charges");
+        assertThat(lines).extracting(FareLine::amount).map(BigDecimal::toPlainString).containsExactly("4000.00", "1500.00");
         assertThat(sum(lines)).isEqualByComparingTo("5500");
         assertThat(TicketFare.total(d("5000"), d("500"))).isEqualByComparingTo("5500").hasScaleOf(2);
+    }
+
+    @Test
+    void noMarkupKeepsNamedTaxesAndTheResidual() {
+        List<FareLine> lines = TicketFare.lines(d("5000"), d("4000"), BigDecimal.ZERO, Map.of("YQ", d("300")));
+        assertThat(lines).extracting(FareLine::label).containsExactly("Base fare", "YQ", "Other charges");
+        assertThat(lines).extracting(FareLine::amount).map(BigDecimal::toPlainString).containsExactly("4000.00", "300.00", "700.00");
+        assertThat(sum(lines)).isEqualByComparingTo("5000");
+    }
+
+    @Test
+    void zeroOtherChargesIsNotPrinted() {
+        List<FareLine> lines = TicketFare.lines(d("5000"), d("4000"), null, Map.of("YQ", d("600"), "K3", d("400")));
+        assertThat(lines).extracting(FareLine::label).containsExactlyInAnyOrder("Base fare", "YQ", "K3");
+        assertThat(sum(lines)).isEqualByComparingTo("5000");
     }
 
     @Test
