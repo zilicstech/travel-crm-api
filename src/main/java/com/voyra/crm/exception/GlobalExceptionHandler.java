@@ -197,7 +197,7 @@ public class GlobalExceptionHandler {
 
         log.warn("Data integrity violation - path: {}, cause: {}", path, cause);
         // The database's own text (SQL, column names) stays in the log, never in the response.
-        String message = messageChain != null && messageChain.contains("value too long")
+        String message = messageChain.contains("value too long")
                 ? tooLongMessage(messageChain)
                 : "The request could not be completed due to a data conflict";
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(

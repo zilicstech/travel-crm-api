@@ -1,5 +1,6 @@
 package com.voyra.crm.cache;
 
+import com.voyra.crm.util.ExcludeFromJacocoGenerated;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.BufferedReader;
@@ -9,7 +10,6 @@ import java.io.InputStreamReader;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -36,12 +36,12 @@ public final class AirportCache {
 
     private static final List<Airport> AIRPORTS;
     private static final Map<String, Airport> BY_CODE = new ConcurrentHashMap<>();
-    private static final Map<String, String> COUNTRIES = new LinkedHashMap<>();
+    private static final Map<String, String> COUNTRIES;
 
     static {
-        AIRPORTS = loadAirports();
+        AIRPORTS = loadAirports(AIRPORTS_RESOURCE);
         AIRPORTS.forEach(a -> BY_CODE.put(a.iata(), a));
-        loadCountries();
+        COUNTRIES = loadCountries(COUNTRIES_RESOURCE);
         log.info("Reference data loaded: {} airports, {} countries", AIRPORTS.size(), COUNTRIES.size());
     }
 
@@ -72,13 +72,17 @@ public final class AirportCache {
      * with the query.
      */
     public static Airport findByPlaceName(String query) {
+        return findByPlaceName(AIRPORTS, query);
+    }
+
+    static Airport findByPlaceName(List<Airport> airports, String query) {
         if (query == null || query.isBlank()) {
             return null;
         }
         String q = query.trim().toUpperCase();
         Airport exactCity = null;
         Airport prefixMatch = null;
-        for (Airport a : AIRPORTS) {
+        for (Airport a : airports) {
             if (a.city().equalsIgnoreCase(q)) {
                 if (exactCity == null || a.sizeRank() < exactCity.sizeRank()) {
                     exactCity = a;
@@ -91,53 +95,44 @@ public final class AirportCache {
         return exactCity != null ? exactCity : prefixMatch;
     }
 
-    private static List<Airport> loadAirports() {
-        List<Airport> out = new ArrayList<>();
-        try (InputStream in = AirportCache.class.getClassLoader().getResourceAsStream(AIRPORTS_RESOURCE)) {
-            if (in == null) {
-                throw new IllegalStateException("Missing classpath resource " + AIRPORTS_RESOURCE);
-            }
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
-                String header = reader.readLine(); // iata,name,city,country_code,size_rank
-                if (header == null) {
-                    throw new IllegalStateException(AIRPORTS_RESOURCE + " is empty");
-                }
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    if (line.isBlank()) {
-                        continue;
-                    }
-                    String[] cols = splitCsvLine(line, 5);
-                    out.add(new Airport(cols[0], cols[1], cols[2], cols[3], Integer.parseInt(cols[4])));
-                }
-            }
-        } catch (IOException e) {
-            throw new UncheckedIOException("Failed to load " + AIRPORTS_RESOURCE, e);
-        }
-        return Collections.unmodifiableList(out);
+    static List<Airport> loadAirports(String resource) {
+        // iata,name,city,country_code,size_rank
+        return rows(resource, 5).stream()
+                .map(cols -> new Airport(cols[0], cols[1], cols[2], cols[3], Integer.parseInt(cols[4]))).toList();
     }
 
-    private static void loadCountries() {
-        try (InputStream in = AirportCache.class.getClassLoader().getResourceAsStream(COUNTRIES_RESOURCE)) {
-            if (in == null) {
-                throw new IllegalStateException("Missing classpath resource " + COUNTRIES_RESOURCE);
+    static Map<String, String> loadCountries(String resource) {
+        Map<String, String> countries = new LinkedHashMap<>(); // code,name
+        rows(resource, 2).forEach(cols -> countries.put(cols[0], cols[1]));
+        return countries;
+    }
+
+    /** A classpath CSV's rows after its header line, blank lines skipped, each split into {@code expectedCols} fields. */
+    private static List<String[]> rows(String resource, int expectedCols) {
+        InputStream in = AirportCache.class.getClassLoader().getResourceAsStream(resource);
+        if (in == null) {
+            throw new IllegalStateException("Missing classpath resource " + resource);
+        }
+        List<String> lines = readLines(in, resource);
+        if (lines.isEmpty()) {
+            throw new IllegalStateException(resource + " is empty");
+        }
+        List<String[]> rows = new ArrayList<>();
+        for (String line : lines.subList(1, lines.size())) {
+            if (!line.isBlank()) {
+                rows.add(splitCsvLine(line, expectedCols));
             }
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
-                String header = reader.readLine(); // code,name
-                if (header == null) {
-                    throw new IllegalStateException(COUNTRIES_RESOURCE + " is empty");
-                }
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    if (line.isBlank()) {
-                        continue;
-                    }
-                    String[] cols = splitCsvLine(line, 2);
-                    COUNTRIES.put(cols[0], cols[1]);
-                }
-            }
+        }
+        return rows;
+    }
+
+    /** Reads and closes an opened classpath resource; the IOException the compiler forces cannot be provoked by a test. */
+    @ExcludeFromJacocoGenerated
+    private static List<String> readLines(InputStream in, String resource) {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
+            return reader.lines().toList();
         } catch (IOException e) {
-            throw new UncheckedIOException("Failed to load " + COUNTRIES_RESOURCE, e);
+            throw new UncheckedIOException("Failed to load " + resource, e);
         }
     }
 

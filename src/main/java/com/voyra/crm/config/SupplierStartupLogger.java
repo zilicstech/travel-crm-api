@@ -7,6 +7,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
+import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 
 /**
@@ -20,6 +21,8 @@ import org.springframework.stereotype.Component;
 public class SupplierStartupLogger {
 
     private final PlatformSupplierCredentialService platformSupplierCredentialService;
+    /** Spring's environment includes the OS environment, and a test can set or drop FLIGHT_SUPPLIER in it. */
+    private final Environment environment;
 
     @Value("${app.flight-supplier.provider:}")
     private String flightProvider;
@@ -31,7 +34,7 @@ public class SupplierStartupLogger {
     public void logSupplierConfig() {
         log.info("Supplier config at startup: flightProvider={}, hotelProvider={}, "
                 + "FLIGHT_SUPPLIER env present={}", flightProvider, hotelProvider,
-                System.getenv("FLIGHT_SUPPLIER") != null);
+                environment.containsProperty("FLIGHT_SUPPLIER"));
         if ("mock".equalsIgnoreCase(flightProvider)) {
             log.warn("Flight search is using the MOCK provider - offers are generated, not from Tripjack. "
                     + "Set FLIGHT_SUPPLIER=tripjack on this service to use the real supplier.");
