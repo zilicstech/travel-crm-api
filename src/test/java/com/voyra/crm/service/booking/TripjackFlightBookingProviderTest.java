@@ -281,4 +281,154 @@ class TripjackFlightBookingProviderTest {
                 MediaType.APPLICATION_JSON));
         assertThat(provider.bookingDetails("TJS1").pnr()).isEqualTo("ABC123 / XYZ789");
     }
+
+    // ---------------------------------------------------------------- coverage: review edges, sparse bookings, odd answers
+
+    @Test
+    void aReviewThatCannotReachTheSupplierIsNotAnUnavailableFare() {
+        server.expect(requestTo(BASE + "/fms/v1/review")).andRespond(withStatus(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE));
+
+        assertThatThrownBy(() -> provider.review("off-1", 1, 0, 0))
+                .isInstanceOf(SupplierException.class).isNotInstanceOf(FareUnavailableException.class)
+                .hasMessage("Tripjack review call failed (HTTP 503)");
+    }
+
+    @Test
+    void aRefused4xxPairReviewGetsThePairMessage() {
+        server.expect(requestTo(BASE + "/fms/v1/review")).andRespond(withStatus(org.springframework.http.HttpStatus.BAD_REQUEST));
+
+        assertThatThrownBy(() -> provider.review(List.of("ON", "RET"), 1, 0, 0))
+                .isInstanceOf(FareUnavailableException.class).hasMessage(AgencySupplierMessage.NOT_CONFIRMED_PAIR);
+    }
+
+    @Test
+    void aReviewWithABlankIdOrUnreadableTotalIsIncomplete() {
+        server.expect(requestTo(BASE + "/fms/v1/review")).andRespond(withSuccess(
+                OK + ",\"bookingId\":\" \",\"totalPriceInfo\":{\"totalFareDetail\":{\"fC\":{\"TF\":100}}}}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(BASE + "/fms/v1/review")).andRespond(withSuccess(
+                OK + ",\"bookingId\":\"TJS1\",\"totalPriceInfo\":{\"totalFareDetail\":{\"fC\":{\"TF\":\"abc\"}}}}", MediaType.APPLICATION_JSON));
+
+        String message = "Tripjack review response is missing the review id or total fare";
+        assertThatThrownBy(() -> provider.review("off-1", 1, 0, 0)).isInstanceOf(SupplierException.class).hasMessage(message);
+        assertThatThrownBy(() -> provider.review("off-1", 1, 0, 0)).isInstanceOf(SupplierException.class).hasMessage(message);
+    }
+
+    @Test
+    void aReviewWithoutTripInfosBaseOrRulesStillReviews() {
+        server.expect(requestTo(BASE + "/fms/v1/review")).andRespond(withSuccess(
+                OK + ",\"bookingId\":\"TJS2\",\"conditions\":{\"x\":1},\"totalPriceInfo\":{\"totalFareDetail\":{\"fC\":{\"TF\":100,\"BF\":null}}}}",
+                MediaType.APPLICATION_JSON));
+        server.expect(requestTo(BASE + "/fms/v2/farerule")).andRespond(withSuccess(OK + ",\"fareRule\":null}", MediaType.APPLICATION_JSON));
+
+        FareReview r = provider.review("off-1", 1, 0, 0);
+
+        assertThat(r.itinerary()).isNull();
+        assertThat(r.baseFare()).isNull();
+        assertThat(r.fareRules()).isNull();
+    }
+
+    @Test
+    void unavailableFareRulesDoNotStopTheReview() {
+        server.expect(requestTo(BASE + "/fms/v1/review")).andRespond(withSuccess(
+                OK + ",\"bookingId\":\"TJS3\",\"totalPriceInfo\":{\"totalFareDetail\":{\"fC\":{\"TF\":100}}}}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(BASE + "/fms/v2/farerule")).andRespond(withStatus(org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR)
+                .body("x".repeat(300)));
+
+        assertThat(provider.review("off-1", 1, 0, 0).fareRules()).isNull();
+    }
+
+    @Test
+    void aReviewWithANullBookingIdIsIncomplete() {
+        server.expect(requestTo(BASE + "/fms/v1/review")).andRespond(withSuccess(
+                OK + ",\"bookingId\":null,\"totalPriceInfo\":{\"totalFareDetail\":{\"fC\":{\"TF\":100}}}}", MediaType.APPLICATION_JSON));
+
+        assertThatThrownBy(() -> provider.review("off-1", 1, 0, 0))
+                .isInstanceOf(SupplierException.class).hasMessage("Tripjack review response is missing the review id or total fare");
+    }
+
+    @Test
+    void aTimeoutWithItsOwnCauseIsStillATimeout() {
+        server.expect(requestTo(BASE + "/oms/v1/booking-details")).andRespond(req -> {
+            SocketTimeoutException timeout = new SocketTimeoutException("Read timed out");
+            timeout.initCause(new java.io.IOException("socket"));
+            throw timeout;
+        });
+
+        assertThatThrownBy(() -> provider.bookingDetails("TJS1"))
+                .isInstanceOf(SupplierTimeoutException.class).hasMessage("Tripjack booking-details timed out");
+    }
+
+    @Test
+    void aBookingWithoutContactsOrOptionalPassengerFieldsSendsEmptyLists() {
+        PaxDetail bare = new PaxDetail("CHILD", "Ms", "Pax", "Child", null, null, null, null);
+        server.expect(requestTo(BASE + "/oms/v1/air/book"))
+                .andExpect(jsonPath("$.deliveryInfo.emails").isEmpty())
+                .andExpect(jsonPath("$.deliveryInfo.contacts").isEmpty())
+                .andExpect(jsonPath("$.travellerInfo[0].dob").doesNotExist())
+                .andExpect(jsonPath("$.travellerInfo[0].pNum").doesNotExist())
+                .andRespond(withSuccess(OK + "}", MediaType.APPLICATION_JSON));
+
+        BookResult r = provider.book(new BookRequest("TJS1", new BigDecimal("100"), List.of(bare), null, null));
+
+        server.verify();
+        assertThat(r.status()).isEqualTo(SupplierBookingStatus.PENDING);
+    }
+
+    @Test
+    void aBlankEmailIsSentAsGiven() {
+        server.expect(requestTo(BASE + "/oms/v1/air/book")).andExpect(jsonPath("$.deliveryInfo.emails[0]").value(" "))
+                .andRespond(withSuccess(OK + "}", MediaType.APPLICATION_JSON));
+
+        assertThat(provider.book(new BookRequest("TJS1", BigDecimal.ONE, List.of(), " ", "+91 00")).status())
+                .isEqualTo(SupplierBookingStatus.PENDING);
+    }
+
+    @Test
+    void anUnsuccessfulBookingDetailsAnswerIsStillPending() {
+        server.expect(requestTo(BASE + "/oms/v1/booking-details")).andRespond(withSuccess(
+                "{\"status\":{\"success\":false},\"errors\":[{\"message\":\"Try later\"}]}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(BASE + "/oms/v1/booking-details")).andRespond(withSuccess("", MediaType.APPLICATION_JSON));
+
+        BookResult first = provider.bookingDetails("TJS1");
+        BookResult second = provider.bookingDetails("TJS1");
+
+        assertThat(first.status()).isEqualTo(SupplierBookingStatus.PENDING);
+        assertThat(first.message()).isEqualTo("Try later");
+        assertThat(second.status()).isEqualTo(SupplierBookingStatus.PENDING);
+        assertThat(second.message()).isNull();
+    }
+
+    @Test
+    void blankPnrsAndTicketsAreSkippedAndAMissingStatusHasNoMessage() {
+        server.expect(requestTo(BASE + "/oms/v1/booking-details")).andRespond(withSuccess(OK + ",\"itemInfos\":{\"AIR\":{\"travellerInfos\":["
+                + "{\"pnrDetails\":{\"DEL-BOM\":\" \"},\"ticketNumberDetails\":{\"DEL-BOM\":\"\"}}]}}}", MediaType.APPLICATION_JSON));
+
+        BookResult r = provider.bookingDetails("TJS1");
+
+        assertThat(r.pnr()).isNull();
+        assertThat(r.ticketNumbers()).isEmpty();
+        assertThat(r.message()).isNull();
+    }
+
+    @Test
+    void anEmptyCancelQuoteHasNoRefundOrMessage() {
+        server.expect(requestTo(BASE + "/oms/v1/air/amendment/amendment-charges")).andRespond(withSuccess("", MediaType.APPLICATION_JSON));
+
+        CancelQuote q = provider.cancelQuote("TJS1");
+
+        assertThat(q.refund()).isNull();
+        assertThat(q.message()).isNull();
+    }
+
+    @Test
+    void aTransportFailureThatIsNotATimeoutIsAPlainFailureAndJunkIsUnparseable() {
+        server.expect(requestTo(BASE + "/oms/v1/booking-details")).andRespond(req -> { throw new java.io.IOException("reset"); });
+        server.expect(requestTo(BASE + "/oms/v1/booking-details")).andRespond(withSuccess("<html>", MediaType.TEXT_HTML));
+
+        assertThatThrownBy(() -> provider.bookingDetails("TJS1"))
+                .isInstanceOf(SupplierException.class).isNotInstanceOf(SupplierTimeoutException.class)
+                .hasMessage("Tripjack booking-details call failed");
+        assertThatThrownBy(() -> provider.bookingDetails("TJS1"))
+                .isInstanceOf(SupplierException.class).hasMessage("Tripjack booking-details returned an unparseable response");
+    }
 }
