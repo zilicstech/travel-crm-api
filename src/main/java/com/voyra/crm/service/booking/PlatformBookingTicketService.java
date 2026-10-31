@@ -91,7 +91,15 @@ public class PlatformBookingTicketService {
         if (checked.getTenantBookingId() != null) {
             Entitlements crm = entitlementService.resolve(checked.getTenantId());
             if (crm.skus().contains(Sku.CRM_CORE) && !crm.readOnly()) {
-                mirrorService.setMarkup(checked, m);
+                try {
+                    mirrorService.setMarkup(checked, m);
+                } catch (BookingConflictException e) {
+                    if (!"MARKUP_NOT_APPLICABLE".equals(e.getCode())) {
+                        throw e;
+                    }
+                    // the CRM row is not confirmed yet: the mirror's ticket phase prices this (now current) markup
+                    log.info("E-ticket download for booking {} leaves its unconfirmed CRM booking to the mirror", bookingId);
+                }
             }
         }
         PlatformBookingTicket t = tx.execute(s -> {

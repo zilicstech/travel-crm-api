@@ -72,6 +72,7 @@ import java.util.stream.Stream;
 public class PlatformBookingMirrorTenantService {
 
     private static final String INR = "INR";
+    private static final java.util.Set<BookingStatus> CONFIRMED = java.util.EnumSet.of(BookingStatus.CONFIRMED, BookingStatus.COMPLETED);
     private static final java.util.Set<BookingDocumentType> MIRROR_VOUCHERS = java.util.EnumSet.of(BookingDocumentType.E_TICKET, BookingDocumentType.HOTEL_VOUCHER);
 
     private final BookingService bookingService;
@@ -228,6 +229,7 @@ public class PlatformBookingMirrorTenantService {
         boolean hotel = pb.getProduct() == PricingProduct.HOTEL;
         List<VoucherLeg> legs = hotel ? List.of() : legs(segments);
         LocalDate firstFlight = VoucherTrip.firstDate(legs);
+        boolean wasConfirmed = CONFIRMED.contains(bookingRepository.findById(crmId).map(Booking::getBookingStatus).orElse(null));
         String billId = bookingService.confirmVoyraTicket(crmId, pb.getPnr(), ticketNo(pb.getTicketNumbers()), voucher -> {
             voucher.setIssuedDate(LocalDate.now());
             if (!hotel) {
@@ -242,6 +244,11 @@ public class PlatformBookingMirrorTenantService {
                 .orElseThrow(() -> new IllegalStateException("The mirror's supplier bill was not drafted"));
         if (bill.getStatus() == SupplierInvoiceStatus.DRAFT) {
             payFromVoyraWallet(billId, bill.getVendorId(), voucherRate(crmId), pb);
+        }
+        // only the row this phase confirmed: a ticket downloaded while it was pending is priced now, and an older
+        // confirmed row keeps its price until its markup is set
+        if (!wasConfirmed && bookingRepository.findById(crmId).map(Booking::getBookingStatus).orElse(null) == BookingStatus.CONFIRMED) {
+            bookingService.repriceVoyraMarkup(crmId, markupBase(pb, queryService.currentMarkup(pb.getId()), voucherRate(crmId), baseCurrency.code()));
         }
     }
 

@@ -57,10 +57,12 @@ class PlatformAdminBookingControllerTest {
     void superAdminListsWithFiltersAndSeesVoyraMoney() throws Exception {
         given(queryService.adminList(eq(0), eq(25), eq(PlatformBookingStatus.UNKNOWN), eq("T1")))
                 .willReturn(PagedResponse.<PlatformAdminBookingResponse>builder().content(List.of(
-                        PlatformAdminBookingResponse.builder().id("B1").voyraNet(new BigDecimal("145.00")).build())).build());
+                        PlatformAdminBookingResponse.builder().id("B1").voyraNet(new BigDecimal("145.00"))
+                                .markup(new BigDecimal("500.00")).build())).build());
 
         mockMvc.perform(get("/api/platform/bookings?page=0&size=25&status=UNKNOWN&tenantId=T1").with(as(UserType.SUPER_ADMIN)))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.content[0].voyraNet").value(145.00));
+                .andExpect(status().isOk()).andExpect(jsonPath("$.content[0].voyraNet").value(145.00))
+                .andExpect(jsonPath("$.content[0].markup").doesNotExist()); // the agency's own figure, not an admin one
     }
 
     @Test

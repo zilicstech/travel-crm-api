@@ -1,5 +1,6 @@
 package com.voyra.crm.dto;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.voyra.crm.enums.SupplierEnvironment;
 import com.voyra.crm.enums.VoyraEarnedSource;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -15,6 +16,7 @@ import java.util.List;
 @EqualsAndHashCode(callSuper = true)
 @SuperBuilder
 @Schema(description = "A platform booking with Voyra's earnings and audit trail, for platform admins")
+@JsonIgnoreProperties({"markup"}) // the agency's own price over the published fare; not shown to Voyra
 public class PlatformAdminBookingResponse extends PlatformBookingResponse {
 
     @Schema(description = "Agency that owns the booking", example = "t1d2e3f4-0000-0000-0000-000000000001")

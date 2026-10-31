@@ -172,6 +172,12 @@ class PlatformBookingQueryServiceTest {
     }
 
     @Test
+    void noBookingsMeansNoMarkupQuery() {
+        assertThat(service().currentMarkups(List.of())).isEmpty();
+        org.mockito.Mockito.verifyNoInteractions(tickets, events);
+    }
+
+    @Test
     void detailCarriesTheCurrentMarkup() {
         login("O1", UserType.AGENCY_OWNER, "T1");
         given(bookings.findByIdAndTenantId("B1", "T1")).willReturn(Optional.of(booking("B1", "T1", "O1")));

@@ -245,7 +245,10 @@ public class PlatformBookingQueryService {
     }
 
     /** {@link #currentMarkup} for several bookings in two queries; a booking with neither is absent. */
-    private Map<String, BigDecimal> currentMarkups(List<String> ids) {
+    Map<String, BigDecimal> currentMarkups(List<String> ids) {
+        if (ids.isEmpty()) {
+            return Map.of();
+        }
         record Mark(Instant at, BigDecimal markup) {
         }
         java.util.function.BinaryOperator<Mark> newer = (a, b) -> b.at().isAfter(a.at()) ? b : a;

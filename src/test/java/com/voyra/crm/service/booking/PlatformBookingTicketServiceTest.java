@@ -274,6 +274,25 @@ class PlatformBookingTicketServiceTest {
         verify(bookings, never()).findByIdAndTenantIdForUpdate(any(), any());
     }
 
+    /**
+     * A ticketed booking whose CRM row is not confirmed yet (mirror ticket phase pending or failed) still downloads: the
+     * ticket's markup becomes the current markup, which the mirror's ticket phase prices once the row is confirmed.
+     */
+    @Test
+    void aDownloadWhileTheCrmRowIsPendingStillMakesTheTicket() {
+        owner();
+        PlatformBooking b = mirrored();
+        plan(com.voyra.crm.enums.SubscriptionPlan.SUITE, com.voyra.crm.enums.SubscriptionStatus.ACTIVE);
+        org.mockito.Mockito.doThrow(new BookingConflictException("MARKUP_NOT_APPLICABLE",
+                        "Markup can be set only on a confirmed booking", Map.of()))
+                .when(mirrorService).setMarkup(b, new BigDecimal("500.00"));
+
+        TicketDownloadResponse t = service.create("B1", new BigDecimal("500"));
+
+        assertThat(t.getTicketPrice()).isEqualByComparingTo("5500.00");
+        assertThat(saved).singleElement().satisfies(row -> assertThat(row.getMarkup()).isEqualByComparingTo("500.00"));
+    }
+
     /** Basic has no CRM booking to show and READ_ONLY freezes it: the ticket downloads at its price and the CRM is left alone. */
     @Test
     void aDownloadOnBasicOrReadOnlyLeavesTheCrmAlone() {

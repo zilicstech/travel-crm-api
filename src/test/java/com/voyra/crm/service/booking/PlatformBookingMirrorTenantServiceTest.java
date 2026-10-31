@@ -378,6 +378,35 @@ class PlatformBookingMirrorTenantServiceTest {
         verify(bookingService).repriceVoyraMarkup("B1", new BigDecimal("100.00"));
     }
 
+    /** A ticket downloaded while the CRM row was pending is priced when the ticket phase confirms the row. */
+    @Test
+    void theTicketPhasePricesTheCurrentMarkup() {
+        Booking pending = Booking.builder().id("B1").bookingStatus(BookingStatus.PENDING).build();
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(pending));
+        when(bookingService.confirmVoyraTicket(eq("B1"), any(), any(), any())).thenAnswer(i -> {
+            pending.setBookingStatus(BookingStatus.CONFIRMED);
+            return "SI1";
+        });
+        when(queryService.currentMarkup("PB1")).thenReturn(new BigDecimal("500.00"));
+
+        service.ticket("B1", platformBooking(), roundTrip(), pax());
+
+        verify(bookingService).repriceVoyraMarkup("B1", new BigDecimal("600.00")); // discount 100 + markup 500
+    }
+
+    /** A row already confirmed keeps its price (an old-style row moves only on Set markup), and a really cancelled one is left alone. */
+    @Test
+    void theTicketPhaseRepricesOnlyTheRowItConfirmed() {
+        Booking row = Booking.builder().id("B1").bookingStatus(BookingStatus.CONFIRMED).build();
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(row));
+        service.ticket("B1", platformBooking(), roundTrip(), pax());
+
+        row.setBookingStatus(BookingStatus.CANCELLED); // confirmVoyraTicket leaves a really cancelled row cancelled
+        service.ticket("B1", platformBooking(), roundTrip(), pax());
+
+        verify(bookingService, never()).repriceVoyraMarkup(any(), any());
+    }
+
     @Test
     void aTicketWithoutAnApprovableBillIsNotPaid() {
         when(bookingService.confirmVoyraTicket(eq("B1"), any(), any(), any())).thenReturn(null);
