@@ -181,6 +181,9 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
     private String fareRules(String reviewId) {
         try {
             JsonNode res = post("/fms/v2/farerule", Map.of("id", reviewId, "flowType", "REVIEW"), "farerule");
+            if (res == null) {
+                return null; // 200 with an empty body: the review goes on without fare rules
+            }
             JsonNode rules = res.path("fareRule");
             return rules.isMissingNode() || rules.isNull() ? null : rules.toString();
         } catch (SupplierException e) {
