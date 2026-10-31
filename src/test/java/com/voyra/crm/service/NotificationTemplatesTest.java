@@ -92,6 +92,16 @@ class NotificationTemplatesTest {
     }
 
     @Test
+    void anApprovalWithNoOwnerNameGreetsWithoutOne() {
+        for (String name : new String[] {null, " "}) {
+            Email e = NotificationTemplates.applicationApproved(name, "Sky Tours", "asha@sky.test", URL + "/login");
+
+            assertThat(e.text()).contains("\n\nHello,\n").doesNotContain("null");
+            assertThat(e.html()).contains(">Hello,</p>");
+        }
+    }
+
+    @Test
     void aCancellationWithoutAKnownRefundSaysVoyraWillConfirmIt() {
         Email unknown = NotificationTemplates.bookingCancelled("flight", "PB1", "PNR123", null, false, URL);
         Email known = NotificationTemplates.bookingCancelled("flight", "PB1", "PNR123", new BigDecimal("4000"), false, URL);

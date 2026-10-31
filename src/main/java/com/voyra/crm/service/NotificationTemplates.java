@@ -78,7 +78,7 @@ public final class NotificationTemplates {
     }
 
     public static Email applicationMoreInfo(String ownerName, String agencyName, String note, String resumeUrl) {
-        List<String> lines = new ArrayList<>(List.of("Hello " + ownerName + ",",
+        List<String> lines = new ArrayList<>(List.of(hello(ownerName),
                 "We need a little more information to finish reviewing the application for " + agencyName + "."));
         if (note != null && !note.isBlank()) {
             lines.add("What we need: " + note);
@@ -90,7 +90,7 @@ public final class NotificationTemplates {
     }
 
     public static Email applicationRejected(String ownerName, String agencyName, String reason) {
-        List<String> lines = new ArrayList<>(List.of("Hello " + ownerName + ",",
+        List<String> lines = new ArrayList<>(List.of(hello(ownerName),
                 "Thank you for applying to Voyra. We are unable to approve the application for " + agencyName + " at this time."));
         if (reason != null && !reason.isBlank()) {
             lines.add("Reason: " + reason);
@@ -101,7 +101,7 @@ public final class NotificationTemplates {
 
     public static Email applicationApproved(String ownerName, String agencyName, String loginEmail, String loginUrl) {
         return email("Welcome to Voyra - " + oneLine(agencyName) + " is approved", "Your agency is approved",
-                List.of("Hello " + ownerName + ",",
+                List.of(hello(ownerName),
                         agencyName + " is now live on Voyra.",
                         "Sign in with " + loginEmail + ". The Voyra team shares your first password separately; "
                                 + "change it after your first sign-in."),
@@ -139,6 +139,11 @@ public final class NotificationTemplates {
         }
         return email("Your " + product + " booking" + ref + " is cancelled", "Booking cancelled",
                 List.of("Booking " + bookingId + ref + " has been cancelled.", money), "Open the booking", url);
+    }
+
+    /** "Hello Asha," or, with no name on the application, just "Hello,". */
+    private static String hello(String name) {
+        return name == null || name.isBlank() ? "Hello," : "Hello " + name + ",";
     }
 
     // ---- layout
