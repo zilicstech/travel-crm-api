@@ -60,8 +60,9 @@ public final class AmountInWords {
         int minorUnits = scaled.subtract(BigDecimal.valueOf(whole)).movePointRight(2)
                 .setScale(0, RoundingMode.HALF_UP).intValue();
 
-        CurrencyWords words = CURRENCIES.getOrDefault(currencyCode,
-                new CurrencyWords(currencyCode == null ? "" : currencyCode, "Cents"));
+        // the map refuses a null key, so a missing currency is handled before the lookup
+        CurrencyWords words = currencyCode == null ? new CurrencyWords("", "Cents")
+                : CURRENCIES.getOrDefault(currencyCode, new CurrencyWords(currencyCode, "Cents"));
         boolean indian = "INR".equals(currencyCode);
 
         StringBuilder sb = new StringBuilder();
