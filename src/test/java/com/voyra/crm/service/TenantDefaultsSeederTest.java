@@ -33,4 +33,16 @@ class TenantDefaultsSeederTest {
                 org.mockito.ArgumentMatchers.<Object>any());
         order.verify(agencySettingSeedRunner).seedCurrentTenant();
     }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void theLockQueryReadsNothingBack() throws Exception {
+        seeder.seedCurrentTenant();
+
+        org.mockito.ArgumentCaptor<org.springframework.jdbc.core.ResultSetExtractor<Object>> extractor =
+                org.mockito.ArgumentCaptor.forClass(org.springframework.jdbc.core.ResultSetExtractor.class);
+        org.mockito.Mockito.verify(jdbcTemplate).query(org.mockito.ArgumentMatchers.anyString(), extractor.capture(),
+                org.mockito.ArgumentMatchers.<Object>any());
+        org.assertj.core.api.Assertions.assertThat(extractor.getValue().extractData(org.mockito.Mockito.mock(java.sql.ResultSet.class))).isNull();
+    }
 }

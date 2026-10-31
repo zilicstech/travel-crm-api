@@ -158,4 +158,50 @@ class TaxConfigServiceTest {
         verify(taxRateConfigRepository, times(1)).save(any());
         verify(auditService, never()).recordCreate(any(), any(), any());
     }
+
+    @Test
+    void listFiltersByKindOrReturnsEverySlab() {
+        com.voyra.crm.entity.TaxRateConfig gst = com.voyra.crm.entity.TaxRateConfig.builder().id("G1").taxKind(TaxKind.GST).label("GST 5%").build();
+        com.voyra.crm.entity.TaxRateConfig tcs = com.voyra.crm.entity.TaxRateConfig.builder().id("T1").taxKind(TaxKind.TCS).label("TCS").build();
+        org.mockito.Mockito.when(taxRateConfigRepository.findByTaxKindOrderBySupplyNatureAscEffectiveFromDesc(TaxKind.GST)).thenReturn(List.of(gst));
+        org.mockito.Mockito.when(taxRateConfigRepository.findAllByOrderByTaxKindAscSupplyNatureAscEffectiveFromDesc()).thenReturn(List.of(gst, tcs));
+
+        assertThat(taxConfigService.list(TaxKind.GST)).extracting(r -> r.getId()).containsExactly("G1");
+        assertThat(taxConfigService.list(null)).extracting(r -> r.getId()).containsExactly("G1", "T1");
+    }
+
+    @Test
+    void aSlabWithNoStartOrTaxablePercentStartsTodayFullyTaxableAndIsNotDefault() {
+        TaxRateConfigCreateRequest r = request("5", null);
+        r.setIsDefault(null);
+
+        var res = taxConfigService.create(r);
+
+        org.mockito.ArgumentCaptor<com.voyra.crm.entity.TaxRateConfig> saved = org.mockito.ArgumentCaptor.forClass(com.voyra.crm.entity.TaxRateConfig.class);
+        org.mockito.Mockito.verify(taxRateConfigRepository).save(saved.capture());
+        assertThat(saved.getValue().getEffectiveFrom()).isEqualTo(com.voyra.crm.util.FinancialYear.today());
+        assertThat(saved.getValue().getTaxablePercent()).isEqualByComparingTo("100");
+        assertThat(saved.getValue().getIsDefault()).isFalse();
+        assertThat(res.getLabel()).isEqualTo("Domestic package");
+    }
+
+    @Test
+    void aGivenTaxablePercentIsKept() {
+        TaxRateConfigCreateRequest r = request("5", LocalDate.now().minusDays(1));
+        r.setTaxablePercent(new BigDecimal("40"));
+
+        taxConfigService.create(r);
+
+        org.mockito.ArgumentCaptor<com.voyra.crm.entity.TaxRateConfig> saved = org.mockito.ArgumentCaptor.forClass(com.voyra.crm.entity.TaxRateConfig.class);
+        org.mockito.Mockito.verify(taxRateConfigRepository).save(saved.capture());
+        assertThat(saved.getValue().getTaxablePercent()).isEqualByComparingTo("40");
+    }
+
+    @Test
+    void anUnknownSlabIsRefused() {
+        org.mockito.Mockito.when(taxRateConfigRepository.findById("NOPE")).thenReturn(java.util.Optional.empty());
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> taxConfigService.updateStatus("NOPE", false))
+                .hasMessage("Tax rate config not found: NOPE");
+    }
 }

@@ -158,4 +158,46 @@ class HotelSearchServiceTest {
         assertThat(service.search(query(t1Search, 0)).getOffers().get(0).getDisplayedFare()).isEqualByComparingTo("190");
         verify(provider, times(3)).search(any());
     }
+
+    @Test
+    void onceFullTheOldestKeptResultMakesWayForTheNewOne() {
+        when(provider.search(any())).thenAnswer(i -> new java.util.ArrayList<HotelOfferResponse>());
+        String oldest = service.search(query(null, 0)).getSearchId();
+        for (int i = 1; i < HotelSearchService.MAX_KEPT; i++) {
+            service.search(query(null, 0));
+        }
+        // still kept: no new supplier call
+        assertThat(service.search(query(oldest, 0)).getSearchId()).isEqualTo(oldest);
+
+        service.search(query(null, 0));
+
+        assertThat(service.search(query(oldest, 0)).getSearchId()).isNotEqualTo(oldest);
+        verify(provider, times(HotelSearchService.MAX_KEPT + 2)).search(any());
+    }
+
+    @Test
+    void aDetailForAPlatformAdminOrWithNoOptionsIsReturnedUnpriced() {
+        HotelDetailResponse forAdmin = detailWith(new BigDecimal("160"));
+        HotelDetailResponse noOptions = HotelDetailResponse.builder().hotelId("h1").build();
+        when(provider.detail(any(), any())).thenReturn(forAdmin, noOptions);
+
+        assertThat(service.detail("h1", query(null, 0)).getOptions().get(0).getPublishedFare()).isNull();
+        TenantContext.setTenantId("t1");
+        assertThat(service.detail("h1", query(null, 0)).getOptions()).isNull();
+        verifyNoInteractions(quoter);
+    }
+
+    @Test
+    void anOfferWithNoPriceIsNotBookable() {
+        TenantContext.setTenantId("t1");
+        when(quoter.quoterFor("t1", PricingProduct.HOTEL)).thenReturn(Optional.of((g, b) -> quoteOf(g)));
+        HotelOfferResponse unpriced = HotelOfferResponse.builder().hotelId("h1").price(null).baseFare(new BigDecimal("100")).build();
+        when(provider.search(any())).thenReturn(new java.util.ArrayList<>(List.of(unpriced)));
+
+        HotelOfferResponse o = service.search(query(null, 0)).getOffers().get(0);
+
+        assertThat(o.isBookable()).isFalse();
+        assertThat(o.getNotBookableReason()).isEqualTo("BASE_FARE_UNAVAILABLE");
+        assertThat(o.getAgencyEarns()).isEqualByComparingTo("0");
+    }
 }

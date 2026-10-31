@@ -261,4 +261,30 @@ class EmailNotificationServiceTest {
         assertThat(out.recipients()).containsExactly(recipients);
         return out.email();
     }
+
+    @Test
+    void aResumePathWithoutALeadingSlashStillLinksUnderTheBase() {
+        AgencyApplication app = AgencyApplication.builder().ownerEmail("asha@sky.test").ownerName("Asha").agencyName("Sky Tours").build();
+
+        service.applicationMoreInfo(app, "apply?application=app-1");
+
+        assertThat(queued(NotificationKind.APPLICATION_MORE_INFO, "asha@sky.test").text()).contains(BASE + "/apply?application=app-1");
+    }
+
+    @Test
+    void aHotelBookingIsNamedAsSuch() {
+        PlatformBooking hotel = booking("T1", PlatformBookingStatus.FAILED);
+        hotel.setProduct(PricingProduct.HOTEL);
+
+        service.bookingFailed(hotel);
+
+        assertThat(queued(NotificationKind.BOOKING_FAILED, "owner@sky.test").subject()).containsIgnoringCase("hotel");
+    }
+
+    @Test
+    void anOutboxThatCannotQueueNeverFailsTheCaller() {
+        org.mockito.Mockito.doThrow(new IllegalStateException("outbox down")).when(outbox).enqueue(eq(NotificationKind.LOW_BALANCE), any());
+
+        assertThatCode(() -> service.lowBalance("T1", BigDecimal.ONE)).doesNotThrowAnyException();
+    }
 }

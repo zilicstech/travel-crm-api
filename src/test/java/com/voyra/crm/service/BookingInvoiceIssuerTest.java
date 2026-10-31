@@ -121,4 +121,36 @@ class BookingInvoiceIssuerTest {
         assertThat(issuer.cancellationChargesTotal(Booking.builder().type(BookingType.TRANSFER).build(),
                 new BigDecimal("1200"), new BigDecimal("300"))).isEqualByComparingTo("1500");
     }
+
+    @org.junit.jupiter.api.Test
+    void everyCategoryMapsToItsSupplyNature() {
+        org.assertj.core.api.Assertions.assertThat(BookingInvoiceIssuer.supplyNature(com.voyra.crm.enums.InvoiceServiceCategory.AIR_DOMESTIC, false))
+                .isEqualTo(com.voyra.crm.enums.SupplyNature.AIR_TICKET);
+        org.assertj.core.api.Assertions.assertThat(BookingInvoiceIssuer.supplyNature(com.voyra.crm.enums.InvoiceServiceCategory.AIR_INTERNATIONAL, true))
+                .isEqualTo(com.voyra.crm.enums.SupplyNature.AIR_TICKET);
+        org.assertj.core.api.Assertions.assertThat(BookingInvoiceIssuer.supplyNature(com.voyra.crm.enums.InvoiceServiceCategory.HOTEL, false))
+                .isEqualTo(com.voyra.crm.enums.SupplyNature.HOTEL_ONLY);
+        org.assertj.core.api.Assertions.assertThat(BookingInvoiceIssuer.supplyNature(com.voyra.crm.enums.InvoiceServiceCategory.VISA, false))
+                .isEqualTo(com.voyra.crm.enums.SupplyNature.VISA_SERVICE);
+        org.assertj.core.api.Assertions.assertThat(BookingInvoiceIssuer.supplyNature(com.voyra.crm.enums.InvoiceServiceCategory.PACKAGE, true))
+                .isEqualTo(com.voyra.crm.enums.SupplyNature.OVERSEAS_PACKAGE);
+        org.assertj.core.api.Assertions.assertThat(BookingInvoiceIssuer.supplyNature(com.voyra.crm.enums.InvoiceServiceCategory.PACKAGE, false))
+                .isEqualTo(com.voyra.crm.enums.SupplyNature.DOMESTIC_PACKAGE);
+        for (com.voyra.crm.enums.InvoiceServiceCategory c : java.util.List.of(com.voyra.crm.enums.InvoiceServiceCategory.TRANSPORT,
+                com.voyra.crm.enums.InvoiceServiceCategory.RAIL, com.voyra.crm.enums.InvoiceServiceCategory.MISCELLANEOUS)) {
+            org.assertj.core.api.Assertions.assertThat(BookingInvoiceIssuer.supplyNature(c, false)).isEqualTo(com.voyra.crm.enums.SupplyNature.OTHER);
+        }
+    }
+
+    @org.junit.jupiter.api.Test
+    void aDraftsOwnCategoryPicksTheSupplyNature() {
+        org.springframework.test.util.ReflectionTestUtils.setField(issuer, "gstEnabled", false);
+        com.voyra.crm.dto.InvoiceDraftRequest draft = new com.voyra.crm.dto.InvoiceDraftRequest();
+        draft.setServiceCategory(com.voyra.crm.enums.InvoiceServiceCategory.VISA);
+
+        issuer.applyDefaultGst(draft, com.voyra.crm.entity.Booking.builder().type(com.voyra.crm.enums.BookingType.HOTEL).build());
+
+        org.assertj.core.api.Assertions.assertThat(draft.getSupplyNature()).isEqualTo(com.voyra.crm.enums.SupplyNature.VISA_SERVICE);
+        org.assertj.core.api.Assertions.assertThat(draft.getTaxes()).isNull();
+    }
 }
