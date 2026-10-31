@@ -578,4 +578,320 @@ class SubscriptionBillingServiceTest {
         assertThat(service.lapseUpgrades("T1", now)).isEqualTo(1);
         assertThat(inv.getStatus()).isEqualTo("VOID");
     }
+
+    // ---- remaining branches
+
+    @Test
+    void aSuiteWithNoExtraSeatsIsOneLineAndNullSeatsCountAsNone() {
+        assertThat(SubscriptionBillingService.lines(suite(0, BillingCycle.MONTHLY), PRICES)).hasSize(1);
+        Subscription nullSeats = suite(0, BillingCycle.MONTHLY).toBuilder().seats(null).build();
+        assertThat(SubscriptionBillingService.lines(nullSeats, PRICES)).extracting(l -> l.get("sku")).containsExactly("SUITE");
+    }
+
+    @Test
+    void aCustomPlanNamesEachSkuAndSkipsSeatsItDoesNotHold() {
+        Subscription all = suite(2, BillingCycle.MONTHLY).toBuilder().plan(SubscriptionPlan.CUSTOM).build();
+        List<Map<String, Object>> lines = SubscriptionBillingService.lines(all, PRICES);
+        assertThat(lines).extracting(l -> l.get("description"))
+                .containsExactly("CRM Core", "Staff seats", "Accounts & GST", "Reports", "Visa desk");
+        assertThat(lines.get(1)).containsEntry("quantity", 2);
+
+        Subscription noSeats = all.toBuilder().seats(0).build();
+        assertThat(SubscriptionBillingService.lines(noSeats, PRICES)).extracting(l -> l.get("sku")).doesNotContain("STAFF_SEATS");
+        Subscription basic = all.toBuilder().plan(SubscriptionPlan.STARTER).build();
+        assertThat(SubscriptionBillingService.lines(basic, PRICES)).isEmpty();
+    }
+
+    @Test
+    void aSkuWithoutAPriceIsRefused() {
+        assertThatThrownBy(() -> SubscriptionBillingService.lines(suite(0, BillingCycle.MONTHLY), Map.of()))
+                .isInstanceOf(IllegalStateException.class).hasMessage("No price for SUITE in the sku_prices setting");
+    }
+
+    @Test
+    void theNextPaidPeriodStartsAfterThePaidOneOrAfterARunningTrialOrWaiverElseNow() {
+        Instant now = Instant.parse("2026-11-01T00:00:00Z");
+        Instant later = now.plus(Duration.ofDays(10));
+        Instant earlier = now.minus(Duration.ofDays(10));
+        Subscription active = suite(0, BillingCycle.MONTHLY).toBuilder().periodEnd(later).build();
+        assertThat(SubscriptionBillingService.nextPeriodStart(active, now)).isEqualTo(later);
+        assertThat(SubscriptionBillingService.nextPeriodStart(active.toBuilder().status(SubscriptionStatus.PAST_DUE).periodEnd(earlier).build(), now))
+                .isEqualTo(earlier);
+        assertThat(SubscriptionBillingService.nextPeriodStart(active.toBuilder().periodEnd(null).build(), now)).isEqualTo(now);
+        Subscription trial = active.toBuilder().status(SubscriptionStatus.TRIAL).trialEndsAt(null).periodEnd(later).build();
+        assertThat(SubscriptionBillingService.nextPeriodStart(trial, now)).isEqualTo(later);
+        assertThat(SubscriptionBillingService.nextPeriodStart(trial.toBuilder().trialEndsAt(earlier).build(), now)).isEqualTo(now);
+        Subscription waived = active.toBuilder().waivedReason(WaivedReason.COMPLIMENTARY).periodEnd(later).build();
+        assertThat(SubscriptionBillingService.nextPeriodStart(waived, now)).isEqualTo(later);
+        assertThat(SubscriptionBillingService.nextPeriodStart(active.toBuilder().status(SubscriptionStatus.READ_ONLY).build(), now)).isEqualTo(now);
+    }
+
+    @Test
+    void aBuyerWithoutAnAgencyRowOrUsableStateIsBilledIgstUnderItsId() {
+        Instant start = Instant.parse("2026-11-01T00:00:00Z");
+        given(tenantRepository.findById("T1")).willReturn(Optional.empty(),
+                Optional.of(agency(" ", " ")), Optional.of(agency(null, "X7ABCDE1234F1Z5")), Optional.of(agency(null, "2")),
+                Optional.of(agency(null, "2X")));
+
+        SubscriptionInvoice none = service.issue(suite(0, BillingCycle.MONTHLY), start, start);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> buyer = (Map<String, Object>) none.getBillingDetails().get("buyer");
+        assertThat(buyer).containsEntry("name", "T1").containsEntry("address", null).containsEntry("gstin", null);
+        assertThat(none.getIgst()).isEqualByComparingTo("899.82");
+        for (int i = 0; i < 4; i++) {
+            SubscriptionInvoice inv = service.issue(suite(0, BillingCycle.MONTHLY), start, start);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> b = (Map<String, Object>) inv.getBillingDetails().get("buyer");
+            assertThat(b.get("stateCode")).isNull();
+            assertThat(inv.getCgst()).isEqualByComparingTo("0");
+        }
+    }
+
+    @Test
+    void anAgencyWithoutALegalNameIsBilledByItsAgencyNameAndVoyraWithoutAStateBillsIgst() {
+        Instant start = Instant.parse("2026-11-01T00:00:00Z");
+        Tenant t = agency("27", null);
+        t.setLegalName(" ");
+        given(tenantRepository.findById("T1")).willReturn(Optional.of(t));
+        given(settingService.voyraLegal()).willReturn(new VoyraLegal("Voyra Travel Pvt Ltd", null, "Mumbai", null));
+
+        SubscriptionInvoice inv = service.issue(suite(0, BillingCycle.MONTHLY), start, start);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> buyer = (Map<String, Object>) inv.getBillingDetails().get("buyer");
+        assertThat(buyer).containsEntry("name", "Sky Trips").containsEntry("stateCode", "27");
+        assertThat(inv.getIgst()).isEqualByComparingTo("899.82");
+        assertThat(inv.getCgst()).isEqualByComparingTo("0");
+    }
+
+    @Test
+    void raiseNowNeedsASubscriptionAndAPaidPlan() {
+        given(subscriptionRepository.findByTenantIdForUpdate("T9")).willReturn(Optional.empty());
+        assertThatThrownBy(() -> service.raiseNow("T9")).isInstanceOf(com.voyra.crm.exception.NotFoundException.class)
+                .hasMessage("Agency subscription not found");
+
+        Subscription basic = suite(0, BillingCycle.MONTHLY).toBuilder().plan(SubscriptionPlan.STARTER).build();
+        Subscription cancelled = suite(0, BillingCycle.MONTHLY).toBuilder().status(SubscriptionStatus.CANCELLED).build();
+        given(subscriptionRepository.findByTenantIdForUpdate("T1")).willReturn(Optional.of(basic), Optional.of(cancelled));
+        assertThatThrownBy(() -> service.raiseNow("T1")).hasMessage("Set a paid plan before raising an invoice");
+        assertThatThrownBy(() -> service.raiseNow("T1")).hasMessage("Set a paid plan before raising an invoice");
+        verify(invoiceRepository, never()).save(any());
+    }
+
+    @Test
+    void raisingNowUnderATimedWaiverStartsWhenItEndsAndLeavesAReadOnlyWaivedAgencyAlone() {
+        Instant waiverEnd = Instant.now().plus(Duration.ofDays(20));
+        Subscription s = suite(0, BillingCycle.MONTHLY).toBuilder().status(SubscriptionStatus.READ_ONLY)
+                .waivedReason(WaivedReason.COMPLIMENTARY).periodEnd(waiverEnd).build();
+        given(subscriptionRepository.findByTenantIdForUpdate("T1")).willReturn(Optional.of(s));
+
+        SubscriptionInvoiceResponse r = service.raiseNow("T1");
+
+        assertThat(r.getPeriodStart()).isEqualTo(waiverEnd);
+        assertThat(s.getStatus()).isEqualTo(SubscriptionStatus.READ_ONLY);
+        verify(subscriptionRepository, never()).save(any());
+        verify(entitlementService, never()).refresh(anyString());
+    }
+
+    @Test
+    void anUpgradeMustBeToLiteOrSuiteOfAKnownSubscriptionAndCarriesHeldSeats() {
+        assertThatThrownBy(() -> service.raiseUpgrade("T1", SubscriptionPlan.CUSTOM))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Choose LITE or SUITE");
+        given(subscriptionRepository.findByTenantIdForUpdate("T9")).willReturn(Optional.empty());
+        assertThatThrownBy(() -> service.raiseUpgrade("T9", SubscriptionPlan.SUITE))
+                .isInstanceOf(com.voyra.crm.exception.NotFoundException.class);
+
+        Subscription lite = suite(0, BillingCycle.MONTHLY).toBuilder().plan(SubscriptionPlan.LITE)
+                .skus(EntitlementService.planSkus(SubscriptionPlan.LITE)).seats(null).build();
+        Subscription liteWithSeats = lite.toBuilder().seats(2).build();
+        given(subscriptionRepository.findByTenantIdForUpdate("T1")).willReturn(Optional.of(lite), Optional.of(liteWithSeats));
+
+        assertThat(service.raiseUpgrade("T1", SubscriptionPlan.SUITE).getAmount()).isEqualByComparingTo("4999.00");
+        // 4999 + 2 x 399
+        assertThat(service.raiseUpgrade("T1", SubscriptionPlan.SUITE).getAmount()).isEqualByComparingTo("5797.00");
+    }
+
+    @Test
+    void anUnknownInvoiceCannotBePaidAndABankPaidOneAlertsOnAGatewayCapture() {
+        given(invoiceRepository.findByIdForUpdate("I9")).willReturn(Optional.empty());
+        assertThatThrownBy(() -> service.markPaid("I9", "pay_1")).isInstanceOf(IllegalStateException.class)
+                .hasMessage("Subscription invoice I9 not found");
+
+        SubscriptionInvoice inv = issued("PAID");
+        inv.setPaidVia("BANK");
+        inv.setPaidRef("pay_1");
+        assertThat(service.markPaid("I1", "pay_1")).isFalse();
+        verify(notificationService).platformAlert(eq("Second payment on a paid subscription invoice"), contains("payment pay_1 was not applied"));
+    }
+
+    @Test
+    void settlingWithoutASubscriptionFailsLoudly() {
+        issued("ISSUED");
+        given(subscriptionRepository.findByTenantIdForUpdate("T1")).willReturn(Optional.empty());
+        assertThatThrownBy(() -> service.markPaid("I1", "pay_1")).isInstanceOf(IllegalStateException.class)
+                .hasMessage("Agency T1 has no subscription");
+    }
+
+    @Test
+    void anEarlierPaidPeriodNeverMovesALaterOneBack() {
+        SubscriptionInvoice inv = issued("ISSUED");
+        Instant start = Instant.parse("2026-12-01T00:00:00Z");
+        Instant end = Instant.parse("2027-01-01T00:00:00Z");
+        Subscription s = suite(0, BillingCycle.MONTHLY).toBuilder().periodStart(start).periodEnd(end).build();
+        given(subscriptionRepository.findByTenantIdForUpdate("T1")).willReturn(Optional.of(s));
+
+        service.markPaid("I1", "pay_1");
+
+        assertThat(s.getPeriodStart()).isEqualTo(start);
+        assertThat(s.getPeriodEnd()).isEqualTo(end);
+        assertThat(inv.getStatus()).isEqualTo("PAID");
+        assertThat(inv.getPaidVia()).isEqualTo("GATEWAY");
+    }
+
+    @Test
+    void voidingLeavesAnActiveOrStillOverdueOrMissingSubscriptionAlone() {
+        given(subscriptionRepository.findByTenantIdForUpdate("T1")).willReturn(Optional.empty(),
+                Optional.of(suite(0, BillingCycle.MONTHLY)),
+                Optional.of(suite(0, BillingCycle.MONTHLY).toBuilder().status(SubscriptionStatus.PAST_DUE).build()));
+        given(invoiceRepository.existsByTenantIdAndStatusAndDueAtLessThanEqual(eq("T1"), eq("ISSUED"), any())).willReturn(true);
+        for (int i = 0; i < 3; i++) {
+            SubscriptionInvoice inv = issued("ISSUED");
+            service.voidInvoice("T1", "I1", " wrong plan ");
+            assertThat(inv.getStatus()).isEqualTo("VOID");
+        }
+        verify(subscriptionRepository, never()).save(any());
+        verify(auditService, times(3)).record(eq(PlatformAuditAction.SUBSCRIPTION_INVOICE_VOID), eq("SUBSCRIPTION_INVOICE"), eq("I1"),
+                eq(Map.of("tenantId", "T1", "number", "VOY-SUB-2026-1", "reason", "wrong plan")));
+    }
+
+    @Test
+    void thePlatformListsAnAgencysInvoicesNewestFirst() {
+        SubscriptionInvoice inv = issued("ISSUED");
+        given(invoiceRepository.findByTenantIdOrderByCreatedAtDesc("T1")).willReturn(List.of(inv));
+        assertThat(service.listForPlatform("T1")).extracting(SubscriptionInvoiceResponse::getNumber).containsExactly("VOY-SUB-2026-1");
+    }
+
+    @Test
+    void aDraftInvoiceHasNoPdf() {
+        issued("DRAFT");
+        assertThatThrownBy(() -> service.pdf("T1", "I1")).isInstanceOf(com.voyra.crm.exception.NotFoundException.class)
+                .hasMessage("Invoice not found");
+        verifyNoInteractions(fileStorageService);
+    }
+
+    @Test
+    void ensurePdfSkipsAStoredCopyAndSwallowsAStorageFailure() {
+        SubscriptionInvoice inv = issued("ISSUED");
+        inv.setPdfKey("k");
+        service.ensurePdfQuietly("I1");
+        verifyNoInteractions(fileStorageService);
+
+        inv.setPdfKey(null);
+        given(fileStorageService.store(any(), any(), any(), any())).willThrow(new IllegalStateException("bucket down"));
+        service.ensurePdfQuietly("I1");
+        verify(invoiceRepository, never()).setPdfKey(any(), any());
+    }
+
+    @Test
+    void aFailedRerenderAfterVoidingDoesNotFailTheVoid() {
+        SubscriptionInvoice inv = issued("ISSUED");
+        given(fileStorageService.store(any(), any(), any(), any())).willThrow(new IllegalStateException("bucket down"));
+
+        service.voidInvoice("T1", "I1", "dup");
+
+        assertThat(inv.getStatus()).isEqualTo("VOID");
+        verify(invoiceRepository, never()).setPdfKey(any(), any());
+    }
+
+    @Test
+    void insideATransactionTheRerenderWaitsForTheCommit() {
+        issued("ISSUED");
+        given(fileStorageService.store(any(), any(), any(), any())).willReturn("void-copy");
+        org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+        try {
+            service.voidInvoice("T1", "I1", "dup");
+            verify(fileStorageService, never()).store(any(), any(), any(), any());
+            for (org.springframework.transaction.support.TransactionSynchronization sync
+                    : org.springframework.transaction.support.TransactionSynchronizationManager.getSynchronizations()) {
+                sync.afterCommit();
+            }
+            verify(invoiceRepository).setPdfKey("I1", "void-copy");
+        } finally {
+            org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
+        }
+    }
+
+    @Test
+    void anOldCopyThatCannotBeDeletedIsLeftAndTheSameKeyIsNotDeleted() {
+        SubscriptionInvoice inv = issued("ISSUED");
+        inv.setPdfKey("old");
+        given(fileStorageService.store(any(), any(), any(), any())).willReturn("new", "new");
+        org.mockito.Mockito.doThrow(new IllegalStateException("bucket down")).when(fileStorageService).delete("old");
+
+        service.voidInvoice("T1", "I1", "dup");
+        assertThat(inv.getPdfKey()).isEqualTo("new");
+
+        inv.setStatus("ISSUED");
+        service.voidInvoice("T1", "I1", "dup");
+        verify(fileStorageService, never()).delete("new");
+    }
+
+    @Test
+    void aCustomPlanWithNoSkuListAndABasicRenewalHaveNothingToBill() {
+        Subscription custom = suite(0, BillingCycle.MONTHLY).toBuilder().plan(SubscriptionPlan.CUSTOM).skus(null).build();
+        assertThat(SubscriptionBillingService.lines(custom, PRICES)).isEmpty();
+        Subscription basic = suite(0, BillingCycle.MONTHLY).toBuilder().plan(SubscriptionPlan.STARTER).periodEnd(Instant.now()).build();
+        assertThat(service.raiseRenewal(basic, Instant.now())).isEmpty();
+        verify(invoiceRepository, never()).save(any());
+    }
+
+    @Test
+    void anAgencyWithNoLegalNameAtAllIsBilledByItsAgencyName() {
+        Instant start = Instant.parse("2026-11-01T00:00:00Z");
+        Tenant t = agency("29", null);
+        t.setLegalName(null);
+        given(tenantRepository.findById("T1")).willReturn(Optional.of(t));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> buyer = (Map<String, Object>) service.issue(suite(0, BillingCycle.MONTHLY), start, start)
+                .getBillingDetails().get("buyer");
+        assertThat(buyer).containsEntry("name", "Sky Trips");
+    }
+
+    @Test
+    void anotherGatewayPaymentOnAGatewayPaidInvoiceAlerts() {
+        SubscriptionInvoice inv = issued("PAID");
+        inv.setPaidVia("GATEWAY");
+        inv.setPaidRef("pay_1");
+        assertThat(service.markPaid("I1", "pay_2")).isFalse();
+        verify(notificationService).platformAlert(eq("Second payment on a paid subscription invoice"), contains("payment pay_2"));
+    }
+
+    @Test
+    void payingUnderAWaiverTakesTheInvoicedPeriodAndClearsTheWaiver() {
+        SubscriptionInvoice inv = issued("ISSUED");
+        Subscription s = suite(0, BillingCycle.MONTHLY).toBuilder().waivedReason(WaivedReason.COMPLIMENTARY)
+                .periodStart(Instant.parse("2027-01-01T00:00:00Z")).periodEnd(Instant.parse("2027-02-01T00:00:00Z")).build();
+        given(subscriptionRepository.findByTenantIdForUpdate("T1")).willReturn(Optional.of(s));
+
+        service.markPaid("I1", "pay_1");
+
+        assertThat(s.getPeriodStart()).isEqualTo(inv.getPeriodStart());
+        assertThat(s.getPeriodEnd()).isEqualTo(inv.getPeriodEnd());
+        assertThat(s.getWaivedReason()).isNull();
+        assertThat(s.getStatus()).isEqualTo(SubscriptionStatus.ACTIVE);
+        verify(entitlementService).refresh("T1");
+    }
+
+    @Test
+    void payingWithNoPeriodYetTakesTheInvoicedPeriod() {
+        SubscriptionInvoice inv = issued("ISSUED");
+        Subscription s = suite(0, BillingCycle.MONTHLY).toBuilder().periodStart(null).periodEnd(null).build();
+        given(subscriptionRepository.findByTenantIdForUpdate("T1")).willReturn(Optional.of(s));
+
+        service.markPaidByBank("T1", "I1", " UTR123 ");
+
+        assertThat(s.getPeriodStart()).isEqualTo(inv.getPeriodStart());
+        assertThat(s.getPeriodEnd()).isEqualTo(inv.getPeriodEnd());
+        assertThat(inv.getPaidRef()).isEqualTo("UTR123");
+    }
 }
