@@ -82,6 +82,7 @@ class PlatformBookingMirrorTenantServiceTest {
     @Mock private com.voyra.crm.repository.ClientRepository clientRepository;
     @Mock private com.voyra.crm.service.LeadService leadAccess;
     @Mock private com.voyra.crm.service.ServiceInstanceService serviceAccess;
+    @Mock private com.voyra.crm.repository.AgentRepository agentRepository;
 
     @InjectMocks private PlatformBookingMirrorTenantService service;
 
@@ -90,6 +91,7 @@ class PlatformBookingMirrorTenantServiceTest {
 
     @BeforeEach
     void setUp() {
+        when(agentRepository.findByIdAndTenantId("A1", "T1")).thenReturn(Optional.of(Agent.builder().id("A1").build()));
         when(vendorRepository.findByIsSystemTrueAndIsActiveTrue())
                 .thenReturn(Optional.of(Vendor.builder().id("V-VOYRA").name("Voyra Platform").isActive(true).isSystem(true).build()));
         when(exchangeRateProvider.resolve(eq("INR"), eq("INR"), any()))
@@ -620,6 +622,15 @@ class PlatformBookingMirrorTenantServiceTest {
         PlatformBooking pb = platformBooking();
         pb.setLeadId("L1");
         pb.setBookedBy("T1");
+        service.create(pb, roundTrip(), pax());
+        assertThat(loggedRequest().getAgentId()).isEqualTo("T1");
+    }
+
+    /** The booker's login was deleted before the mirror ran (or a repair retried it): the owner gets the CRM booking. */
+    @Test
+    void aDeletedBookerFallsBackToTheOwner() {
+        PlatformBooking pb = platformBooking();
+        pb.setBookedBy("A-GONE");
         service.create(pb, roundTrip(), pax());
         assertThat(loggedRequest().getAgentId()).isEqualTo("T1");
     }

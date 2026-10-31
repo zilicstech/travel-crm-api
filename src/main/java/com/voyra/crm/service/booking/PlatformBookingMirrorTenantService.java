@@ -87,6 +87,7 @@ public class PlatformBookingMirrorTenantService {
     private final com.voyra.crm.repository.ClientRepository clientRepository;
     private final com.voyra.crm.service.LeadService leadAccess;
     private final com.voyra.crm.service.ServiceInstanceService serviceAccess;
+    private final com.voyra.crm.repository.AgentRepository agentRepository;
 
     /**
      * The flight mirror (spec 6): CONFIRMED with vendor Voyra Platform, one E_TICKET bought in INR at the displayed fare
@@ -301,9 +302,12 @@ public class PlatformBookingMirrorTenantService {
         }
     }
 
-    /** Whoever booked owns the CRM booking: an agent, or the owner (tenant id), which the booking service resolves. */
+    /**
+     * Whoever booked owns the CRM booking: an agent, or the owner (tenant id), which the booking service resolves. A booker
+     * deleted since (the lookup skips deleted agents) falls back to the owner, so the mirror never fails for good.
+     */
     private String agentFor(PlatformBooking pb) {
-        return pb.getBookedBy();
+        return agentRepository.findByIdAndTenantId(pb.getBookedBy(), pb.getTenantId()).isPresent() ? pb.getBookedBy() : pb.getTenantId();
     }
 
     /** The fare's base/tax split carried onto the ticket: the tax as quoted, the agency's discount off the basic. */
