@@ -1494,4 +1494,241 @@ class PlatformBookingServiceTest {
         return new AgencyPricingService.EffectivePricing(PricingRule.builder().id("D1").version(1).build(),
                 PricingRule.builder().id("C1").version(1).build());
     }
+
+    // ---------------------------------------------------------------- coverage: refusals, races and odd rows
+
+    @Test
+    void aSweepLeavesARowThatMovedOnAndNeverReleasesAHoldTwice() {
+        String moved = reviewed();
+        service.sweepAbort(moved, PlatformBookingStatus.HELD, "Not sent to supplier");
+        assertThat(rows.get(moved).getStatus()).isEqualTo(PlatformBookingStatus.REVIEWING);
+
+        committedHold(moved);
+        walletEntries.put("pb-release:" + moved, WalletEntry.builder().id("R1").type(WalletEntryType.HOLD_RELEASE)
+                .relatedEntryId("H1").idempotencyKey("pb-release:" + moved).build());
+        service.sweepAbort(moved, PlatformBookingStatus.REVIEWING, PlatformBookingService.REVIEW_EXPIRED_REASON);
+
+        assertThat(rows.get(moved).getStatus()).isEqualTo(PlatformBookingStatus.ABORTED);
+        verify(walletService, never()).releaseHold(any(), any());
+    }
+
+    @Test
+    void resolveRefusesBadOutcomesMissingPnrOrNoteUnknownRowsAndSettledOnes() {
+        String id = reviewed();
+        loginAsPlatformAdmin();
+
+        assertThatThrownBy(() -> service.resolve(id, PlatformBookingStatus.CANCELLED, "P", List.of(), "n"))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("A booking can only be resolved as TICKETED or FAILED");
+        assertThatThrownBy(() -> service.resolve(id, PlatformBookingStatus.TICKETED, " ", List.of(), "n"))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("The PNR is required to resolve a booking as ticketed");
+        assertThatThrownBy(() -> service.resolve(id, PlatformBookingStatus.FAILED, null, List.of(), null))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("A note is required to resolve a booking");
+        assertThatThrownBy(() -> service.resolve(id, PlatformBookingStatus.FAILED, null, List.of(), " "))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("A note is required to resolve a booking");
+        assertThatThrownBy(() -> service.resolve("NOPE", PlatformBookingStatus.FAILED, null, null, "note"))
+                .isInstanceOf(NotFoundException.class).hasMessage("Booking not found");
+        assertThatThrownBy(() -> service.resolve(id, PlatformBookingStatus.FAILED, null, null, "note"))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("(it is REVIEWING)");
+        verify(platformAuditService, never()).record(any(), anyString(), anyString(), any());
+    }
+
+    @Test
+    void aHotelReviewNeedsACheckOutAfterCheckInAndCountsRoomsWithoutChildAges() {
+        hotelSupplierQuotes("5000.00");
+        HotelReviewRequest sameDay = hotelReviewRequest();
+        sameDay.setCheckOut(sameDay.getCheckIn());
+        assertThatThrownBy(() -> service.reviewHotel(sameDay))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Check-out must be after check-in");
+
+        HotelReviewRequest noAges = hotelReviewRequest();
+        noAges.setRooms(List.of(new HotelRoomRequest(2, null)));
+        PlatformBooking b = rows.get(service.reviewHotel(noAges).getBookingId());
+
+        assertThat(b.getPaxCount()).isEqualTo(2);
+        assertThat(((List<?>) b.getItinerary().get("rooms"))).singleElement()
+                .satisfies(r -> assertThat(((Map<?, ?>) r).get("childAges")).isEqualTo(List.of()));
+    }
+
+    @Test
+    void aReviewIsRefusedForAMissingOrSuspendedAgencyAnUnknownIssuerOrAnUnconfiguredTripjack() {
+        when(tenantRepository.findById(T)).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> service.review(reviewRequest())).isInstanceOf(NotFoundException.class).hasMessage("Agency not found");
+
+        when(tenantRepository.findById(T)).thenAnswer(i -> Optional.of(tenant));
+        tenant.setStatus(TenantStatus.SUSPENDED);
+        assertThatThrownBy(() -> service.review(reviewRequest())).isInstanceOf(IllegalStateException.class)
+                .hasMessage("This agency is suspended or deactivated - bookings are not allowed");
+
+        tenant.setStatus(TenantStatus.ACTIVE);
+        FlightReviewRequest unknownIssuer = reviewRequest();
+        unknownIssuer.setIssuedByAgentId("NOPE");
+        assertThatThrownBy(() -> service.review(unknownIssuer)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Agent not found in this agency: NOPE");
+
+        config.setProvider("tripjack");
+        assertThatThrownBy(() -> service.review(reviewRequest())).isInstanceOf(IllegalStateException.class)
+                .hasMessage("Tripjack is not configured on the platform");
+        verify(provider, never()).review(any(FlightReviewRequest.class));
+        verify(walletService, never()).hold(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void aRowAbortedBetweenTheHoldAndTheBookIsNeverSent() {
+        String id = reviewed();
+        lenient().when(eventRepository.save(any())).thenAnswer(i -> {
+            PlatformBookingEvent e = i.getArgument(0);
+            savedEvents.add(e);
+            if ("HELD".equals(e.getType())) {
+                rows.get(id).setStatus(PlatformBookingStatus.ABORTED); // an agency abort won the race
+            }
+            return e;
+        });
+
+        PlatformBooking b = service.confirm(id, confirmRequest("key-00000001", "4500.00"));
+
+        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.ABORTED);
+        verify(provider, never()).book(any());
+    }
+
+    @Test
+    void anInterruptedConfirmWaitLeavesTheBookingToThePoller() {
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "confirmWaitSeconds", 10L);
+        String id = reviewed();
+        when(provider.book(any())).thenAnswer(i -> {
+            Thread.currentThread().interrupt();
+            return new BookResult("SB-1", SupplierBookingStatus.PENDING, null, List.of(), null, null);
+        });
+
+        try {
+            PlatformBooking b = service.confirm(id, confirmRequest("key-00000001", "4500.00"));
+
+            assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.BOOKING);
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+            verify(provider, never()).bookingDetails(anyString());
+        } finally {
+            Thread.interrupted();
+        }
+    }
+
+    @Test
+    void anUnansweredDetailsCallDuringTheConfirmWaitKeepsTheBooking() {
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "confirmWaitSeconds", 1L);
+        String id = reviewed();
+        when(provider.book(any())).thenReturn(new BookResult("SB-1", SupplierBookingStatus.PENDING, null, List.of(), null, null));
+        when(provider.bookingDetails("SB-1")).thenThrow(new SupplierException("not yet", null));
+
+        PlatformBooking b = service.confirm(id, confirmRequest("key-00000001", "4500.00"));
+
+        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.BOOKING);
+        verify(provider).bookingDetails("SB-1");
+        verify(walletService, never()).debitHeld(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void aTicketForARowWithoutAHoldIsRefusedAndAnUnknownRowIsNotFound() {
+        String id = reviewed();
+        rows.get(id).setStatus(PlatformBookingStatus.BOOKING);
+
+        assertThatThrownBy(() -> service.applySupplierResult(id, ticketed(null)))
+                .isInstanceOf(IllegalStateException.class).hasMessage("Booking " + id + " has no wallet hold to debit");
+        assertThatThrownBy(() -> service.applySupplierResult("NOPE", ticketed(null)))
+                .isInstanceOf(NotFoundException.class).hasMessage("Booking not found");
+        verify(walletService, never()).debitHeld(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void aChargedAmountEqualToTheGrossIsNoVarianceAndALongSupplierMessageIsCut() {
+        String id = reviewed();
+        when(provider.book(any())).thenReturn(new BookResult("SB-1", SupplierBookingStatus.TICKETED, "PNR1", List.of("T"),
+                "m".repeat(600), new BigDecimal("5000.00")));
+
+        PlatformBooking b = service.confirm(id, confirmRequest("key-00000001", "4500.00"));
+
+        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
+        assertThat(b.getVoyraNet()).isEqualByComparingTo("-472.50");
+        assertThat(b.getSupplierMessage()).hasSize(500);
+        assertThat(savedEvents).extracting(PlatformBookingEvent::getType).doesNotContain("VARIANCE");
+    }
+
+    @Test
+    void aConfirmOfASweptOrExpiredReviewIsRefusedAsExpired() {
+        String swept = reviewed();
+        rows.get(swept).setStatus(PlatformBookingStatus.ABORTED);
+        rows.get(swept).setAbortReason(PlatformBookingService.REVIEW_EXPIRED_REASON);
+        String old = reviewed();
+        rows.get(old).setReviewExpiresAt(Instant.now().minus(1, ChronoUnit.MINUTES));
+
+        assertThatThrownBy(() -> service.confirm(swept, confirmRequest("key-00000001", "4500.00"))).isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("expired");
+        assertThatThrownBy(() -> service.confirm(old, confirmRequest("key-00000002", "4500.00"))).isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("expired");
+        verify(walletService, never()).hold(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void aRowReviewedBeforeTheMixAndDateWereStampedChecksOnlyDatesOfBirth() {
+        String id = reviewed();
+        rows.get(id).setPricingSnapshot(new java.util.LinkedHashMap<>(Map.of("pricingId", "P1", "paxMix", "not a map", "travelDate", "soon")));
+        PlatformBookingConfirmRequest r = confirmRequest("key-00000001", "4500.00");
+        r.setPassengers(List.of(PaxInput.builder().type(null).title("Mr").firstName("Pax").lastName("One").build(),
+                r.getPassengers().get(1), r.getPassengers().get(2)));
+
+        assertThatThrownBy(() -> service.confirm(id, r)).isInstanceOfSatisfying(com.voyra.crm.exception.BookingRequestException.class, e -> {
+            assertThat(e.getCode()).isEqualTo("PAX_DOB_REQUIRED");
+            assertThat(e.getMessage()).isEqualTo("Traveller 1 needs a date of birth to travel as an adult");
+        });
+        verify(walletService, never()).hold(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void aMixThatIsNotANumberIsNotCompared() {
+        String id = reviewed();
+        rows.get(id).getPricingSnapshot().put("paxMix", Map.of("adults", "two", "children", "one", "infants", "none"));
+        rows.get(id).getPricingSnapshot().put("travelDate", "not-a-date");
+
+        PlatformBooking b = service.confirm(id, confirmRequest("key-00000001", "4500.00"));
+
+        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
+    }
+
+    @Test
+    void hotelGuestsAreCheckedAgainstTheReviewedRooms() {
+        hotelSupplierQuotes("5000.00");
+        String id = service.reviewHotel(hotelReviewRequest()).getBookingId();
+        PlatformBooking b = rows.get(id);
+
+        PlatformBookingConfirmRequest tooMany = hotelConfirmRequest("key-00000001", "4500.00");
+        List<PaxInput> five = new ArrayList<>(tooMany.getPassengers());
+        five.add(PaxInput.builder().type("ADULT").firstName("A").lastName("B").roomIndex(1).build());
+        five.add(PaxInput.builder().type("ADULT").firstName("C").lastName("D").roomIndex(1).build());
+        tooMany.setPassengers(five);
+        assertThatThrownBy(() -> service.confirm(id, tooMany)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Enter at most 4 guests, as reviewed");
+
+        PlatformBookingConfirmRequest roomTwoFull = hotelConfirmRequest("key-00000002", "4500.00");
+        List<PaxInput> four = new ArrayList<>(roomTwoFull.getPassengers());
+        four.add(PaxInput.builder().type("ADULT").firstName("A").lastName("B").roomIndex(1).build());
+        roomTwoFull.setPassengers(four);
+        assertThatThrownBy(() -> service.confirm(id, roomTwoFull)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Enter at most 1 guests in room 2, as reviewed");
+
+        b.setItinerary(new java.util.LinkedHashMap<>(Map.of("rooms", "not a list")));
+        PlatformBookingConfirmRequest outside = hotelConfirmRequest("key-00000003", "4500.00");
+        assertThatThrownBy(() -> service.confirm(id, outside)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("A guest is in a room that was not reviewed");
+
+        b.setItinerary(null);
+        assertThatThrownBy(() -> service.confirm(id, hotelConfirmRequest("key-00000004", "4500.00")))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("A guest is in a room that was not reviewed");
+
+        b.setItinerary(new java.util.LinkedHashMap<>(Map.of("rooms", List.of(Map.of("adults", 3, "childAges", "x"), "odd"))));
+        PlatformBookingConfirmRequest roomOneOver = hotelConfirmRequest("key-00000005", "4500.00");
+        List<PaxInput> given = roomOneOver.getPassengers();
+        roomOneOver.setPassengers(List.of(given.get(0), given.get(2),
+                PaxInput.builder().type("ADULT").firstName("E").lastName("F").roomIndex(0).build(),
+                PaxInput.builder().type("ADULT").firstName("G").lastName("H").roomIndex(0).build()));
+        assertThatThrownBy(() -> service.confirm(id, roomOneOver)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Enter at most 3 guests in room 1, as reviewed");
+        verify(walletService, never()).hold(any(), any(), any(), any(), any());
+    }
 }
