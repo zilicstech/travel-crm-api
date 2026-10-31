@@ -5,6 +5,7 @@ import com.voyra.crm.dto.BookingCreateRequest;
 import com.voyra.crm.dto.BookingResponse;
 import com.voyra.crm.dto.ItinerarySegment;
 import com.voyra.crm.dto.PaxInput;
+import com.voyra.crm.dto.HotelStaySummary;
 import com.voyra.crm.dto.SupplierInvoiceResponse;
 import com.voyra.crm.dto.SupplierPaymentRequest;
 import com.voyra.crm.entity.Agent;
@@ -449,6 +450,234 @@ class PlatformBookingMirrorTenantServiceTest {
 
         when(clientRepository.existsById("C1")).thenReturn(true);
         service.requireLinks("C1", null, "S1");
+        verify(serviceAccess).assertEditAccess(s1);
+    }
+
+    // ---------------------------------------------------------------- coverage: sparse mirrors and their refusals
+
+    private BookingCreateRequest loggedRequest() {
+        ArgumentCaptor<BookingCreateRequest> request = ArgumentCaptor.forClass(BookingCreateRequest.class);
+        verify(bookingService).logBooking(request.capture(), anyString(), any(), any(), any(), any(), any(), any());
+        return request.getValue();
+    }
+
+    @Test
+    void aMirrorWithoutLegsPassengersOrAMarkupDefaultIsPlain() {
+        when(markupDefaultRepository.findById(ServiceType.FLIGHT)).thenReturn(Optional.empty());
+        PlatformBooking pb = platformBooking();
+        pb.setGross(null);
+
+        service.create(pb, List.of(), List.of());
+
+        BookingCreateRequest r = loggedRequest();
+        assertThat(r.getTripType()).isNull();
+        assertThat(r.getDestination()).isEqualTo("Flight");
+        assertThat(r.getMarkupMode()).isEqualTo(MarkupMode.PERCENT);
+        assertThat(r.getMarkupValue()).isEqualByComparingTo("0");
+        assertThat(ticket.get().getLegs()).isNull();
+        assertThat(ticket.get().getTravellers()).isNull();
+        assertThat(ticket.get().getCharges()).isNull();
+    }
+
+    @Test
+    void aOneWayMirrorWithAMarkupMissingItsModeAndValueAndShortTimes() {
+        when(markupDefaultRepository.findById(ServiceType.FLIGHT)).thenReturn(Optional.of(MarkupDefault.builder().serviceType(ServiceType.FLIGHT).build()));
+        List<ItinerarySegment> oneWay = List.of(new ItinerarySegment("DEL", "BOM", "2026-12-02", null, "IndiGo", "6E-201"));
+
+        service.create(platformBooking(), oneWay, List.of(PaxInput.builder().type("SENIOR").firstName("Pax").build(),
+                PaxInput.builder().firstName("Nobody").build()));
+
+        BookingCreateRequest r = loggedRequest();
+        assertThat(r.getTripType()).isEqualTo("One Way");
+        assertThat(r.getMarkupMode()).isEqualTo(MarkupMode.PERCENT);
+        assertThat(r.getMarkupValue()).isEqualByComparingTo("0");
+        assertThat(r.getFlightDepartTime()).isNull();
+        assertThat(r.getPassengers()).extracting(p -> p.getPaxType()).containsExactly(com.voyra.crm.enums.PaxType.UNKNOWN,
+                com.voyra.crm.enums.PaxType.UNKNOWN);
+    }
+
+    @Test
+    void aSegmentWithoutADateCannotBeMirrored() {
+        assertThatThrownBy(() -> service.create(platformBooking(),
+                List.of(new ItinerarySegment("DEL", "BOM", "soon", "x", "IndiGo", "6E-1")), List.of()))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Flight 1 needs from, to and the travel date");
+    }
+
+    @Test
+    void aMirrorWhoseVoucherOrBookingWasNotSavedFails() {
+        when(bookingDocumentRepository.findById(anyString())).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> service.create(platformBooking(), roundTrip(), pax()))
+                .isInstanceOf(IllegalStateException.class).hasMessage("The mirror's voucher was not saved");
+
+        when(bookingDocumentRepository.findById(anyString())).thenAnswer(i -> Optional.ofNullable(ticket.get()));
+        when(bookingRepository.findById("B1")).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> service.create(platformBooking(), roundTrip(), pax()))
+                .isInstanceOf(com.voyra.crm.exception.NotFoundException.class).hasMessage("Booking not found: B1");
+        verify(supplierPaymentService, never()).pay(any());
+    }
+
+    @Test
+    void aMirrorWithoutAnApprovableBillIsNotPaid() {
+        when(bookingService.logBooking(any(), anyString(), any(), any(), any(), any(), any(), any())).thenAnswer(i -> {
+            ticket.set(BookingDocument.builder().id(i.getArgument(1)).bookingId("B1").supplierInvoiceId(null).build());
+            return BookingResponse.builder().id("B1").build();
+        });
+        assertThatThrownBy(() -> service.create(platformBooking(), roundTrip(), pax()))
+                .isInstanceOf(IllegalStateException.class).hasMessage("The mirror's supplier bill was not drafted");
+
+        when(bookingService.logBooking(any(), anyString(), any(), any(), any(), any(), any(), any())).thenAnswer(i -> {
+            ticket.set(BookingDocument.builder().id(i.getArgument(1)).bookingId("B1").supplierInvoiceId("SI1").build());
+            return BookingResponse.builder().id("B1").build();
+        });
+        when(supplierInvoiceService.approveForBooking(eq("SI1"), anyString())).thenReturn(SupplierInvoiceResponse.builder()
+                .id("SI1").status(SupplierInvoiceStatus.PENDING_APPROVAL).build());
+        assertThatThrownBy(() -> service.create(platformBooking(), roundTrip(), pax()))
+                .isInstanceOf(IllegalStateException.class).hasMessage("The mirror's supplier bill could not be approved (PENDING_APPROVAL)");
+        verify(supplierPaymentService, never()).pay(any());
+    }
+
+    @Test
+    void aHotelWithoutACompleteStayCannotBeMirrored() {
+        PlatformBooking pb = hotelBooking();
+        HotelStaySummary noOut = new HotelStaySummary("H", "Goa", LocalDate.of(2026, 12, 1), null, 1, 1, null);
+        HotelStaySummary noIn = new HotelStaySummary("H", "Goa", null, LocalDate.of(2026, 12, 2), 1, 1, null);
+
+        for (HotelStaySummary s : java.util.Arrays.asList(null, noIn, noOut)) {
+            assertThatThrownBy(() -> service.createHotel(pb, s, pax()))
+                    .isInstanceOf(IllegalStateException.class).hasMessage("Platform booking PB1 has no stay to mirror");
+        }
+    }
+
+    @Test
+    void aHotelStayWithoutCityNameOrRoomsIsNamedHotelAndCarriesNoRoomName() {
+        PlatformBooking pb = hotelBooking();
+        pb.setItinerary(java.util.Map.of("rooms", List.of("not a map")));
+        HotelStaySummary bare = new HotelStaySummary(" ", null, LocalDate.of(2026, 12, 1), LocalDate.of(2026, 12, 3), 2, null, null);
+
+        service.createHotel(pb, bare, List.of());
+
+        BookingCreateRequest r = loggedRequest();
+        assertThat(r.getDestination()).isEqualTo("Hotel");
+        assertThat(r.getHotelRoomType()).isNull();
+        assertThat(r.getHotelRooms()).isNull();
+    }
+
+    @Test
+    void theRoomNameIsReadOnlyFromAFirstRoomThatNamesIt() {
+        HotelStaySummary stay = new HotelStaySummary("H", "Goa", LocalDate.of(2026, 12, 1), LocalDate.of(2026, 12, 3), 2, 1, null);
+        for (java.util.Map<String, Object> itinerary : List.<java.util.Map<String, Object>>of(java.util.Map.of(),
+                java.util.Map.of("rooms", List.of()), java.util.Map.of("rooms", "x"), java.util.Map.of("rooms", List.of(java.util.Map.of("adults", 2))))) {
+            PlatformBooking pb = hotelBooking();
+            pb.setItinerary(itinerary);
+            org.mockito.Mockito.clearInvocations(bookingService);
+            service.createHotel(pb, stay, List.of());
+            assertThat(loggedRequest().getHotelRoomType()).isNull();
+        }
+        PlatformBooking noItinerary = hotelBooking();
+        noItinerary.setItinerary(null);
+        org.mockito.Mockito.clearInvocations(bookingService);
+        service.createHotel(noItinerary, stay, List.of());
+        assertThat(loggedRequest().getHotelRoomType()).isNull();
+    }
+
+    @Test
+    void cancellingAMissingMirrorOrOneWithoutARefundFigureIsRefused() {
+        when(bookingRepository.findByIdForUpdate("B9")).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> service.cancel("B9", platformBooking()))
+                .isInstanceOf(com.voyra.crm.exception.NotFoundException.class).hasMessage("Booking not found: B9");
+
+        PlatformBooking pb = platformBooking();
+        pb.setCancelRefund(null);
+        assertThatThrownBy(() -> service.cancel("B1", pb)).isInstanceOf(IllegalStateException.class)
+                .hasMessage("Platform booking PB1 was cancelled without a refund figure - settle the mirror by hand");
+        verify(cancellationService, never()).cancel(anyString(), any());
+    }
+
+    @Test
+    void aZeroRefundCancelRecordsNoWalletRefundAndSkipsOtherVouchers() {
+        when(bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc("B1")).thenReturn(List.of(
+                BookingDocument.builder().docType(BookingDocumentType.OTHER).purchaseRate(new BigDecimal("99")).build(),
+                BookingDocument.builder().docType(BookingDocumentType.E_TICKET).purchaseRate(null).build()));
+        PlatformBooking pb = platformBooking();
+        pb.setCancelRefund(BigDecimal.ZERO);
+
+        service.cancel("B1", pb);
+
+        ArgumentCaptor<BookingCancelRequest> request = ArgumentCaptor.forClass(BookingCancelRequest.class);
+        verify(cancellationService).cancel(eq("B1"), request.capture());
+        assertThat(request.getValue().getSupplierCharge()).isEqualByComparingTo("5400.00");
+        verify(cancellationService, never()).recordVoyraWalletRefund(anyString(), any());
+    }
+
+    @Test
+    void theLeadsAgentIsTheServicesAssigneeElseTheLeadsCreator() {
+        when(leadServiceRepository.findById("S1")).thenReturn(Optional.of(com.voyra.crm.entity.LeadService.builder().id("S1").build()));
+        when(leadRepository.findById("L1")).thenReturn(Optional.of(com.voyra.crm.entity.Lead.builder().id("L1").createdBy("A1").build()));
+        when(leadServiceRepository.findById("S9")).thenReturn(Optional.empty());
+        when(leadRepository.findById("L9")).thenReturn(Optional.empty());
+
+        assertThat(service.leadAgent("T1", "S1", "L1")).contains("A1");
+        assertThat(service.leadAgent("T1", "S9", "L9")).isEmpty();
+        assertThat(service.leadAgent("T1", null, null)).isEmpty();
+    }
+
+    @Test
+    void aMirrorWithoutABookerOrIssuerFallsBackToTheLeadsAgent() {
+        PlatformBooking pb = platformBooking();
+        pb.setBookedBy(null);
+        pb.setIssuedByAgentId(null);
+        pb.setLeadId("L1");
+        when(leadRepository.findById("L1")).thenReturn(Optional.of(com.voyra.crm.entity.Lead.builder().id("L1").createdBy("A1").build()));
+
+        service.create(pb, roundTrip(), pax());
+
+        assertThat(loggedRequest().getAgentId()).isEqualTo("A1");
+    }
+
+    @Test
+    void chargesNeedTheFullFareAndABasicThatIsNotNegative() {
+        PlatformBooking pb = platformBooking();
+        assertThat(PlatformBookingMirrorTenantService.charges(pb.toBuilder().base(null).build())).isNull();
+        assertThat(PlatformBookingMirrorTenantService.charges(pb.toBuilder().displayed(null).build())).isNull();
+        assertThat(PlatformBookingMirrorTenantService.charges(pb.toBuilder().displayed(new BigDecimal("500")).build())).isNull();
+        assertThat(PlatformBookingMirrorTenantService.charges(pb.toBuilder().base(new BigDecimal("6000")).build()))
+                .containsExactly(java.util.Map.entry("basic", new BigDecimal("5400.00")));
+    }
+
+    @Test
+    void aSingleOverlongTicketNumberIsCut() {
+        assertThat(PlatformBookingMirrorTenantService.ticketNo(null)).isNull();
+        assertThat(PlatformBookingMirrorTenantService.ticketNo(List.of())).isNull();
+        assertThat(PlatformBookingMirrorTenantService.ticketNo(List.of("9".repeat(60)))).isEqualTo("9".repeat(49) + "…");
+    }
+
+    @Test
+    void aMarkupDefaultWithAModeButNoValueAddsNothingAndUndatedTravellersUseTheirDateOfBirthOnlyWithAFlight() {
+        when(markupDefaultRepository.findById(ServiceType.FLIGHT)).thenReturn(Optional.of(MarkupDefault.builder()
+                .serviceType(ServiceType.FLIGHT).mode(MarkupMode.FLAT).value(null).build()));
+
+        service.create(platformBooking(), List.of(), List.of(PaxInput.builder().type("CHILD").title(" ").firstName("Pax")
+                .lastName("Child").dob(LocalDate.of(2020, 1, 1)).build()));
+
+        BookingCreateRequest r = loggedRequest();
+        assertThat(r.getMarkupMode()).isEqualTo(MarkupMode.FLAT);
+        assertThat(r.getMarkupValue()).isEqualByComparingTo("0");
+        assertThat(r.getPassengers()).singleElement().satisfies(p -> {
+            assertThat(p.getPaxType()).isEqualTo(com.voyra.crm.enums.PaxType.CHILD);
+            assertThat(p.getPassengerName()).isEqualTo("Pax Child");
+        });
+    }
+
+    @Test
+    void withoutAClientOnlyTheLeadAndServiceAreChecked() {
+        when(leadAccess.findAccessibleLead("L1")).thenReturn(com.voyra.crm.entity.Lead.builder().id("L1").clientId("C1").build());
+        com.voyra.crm.entity.LeadService s1 = com.voyra.crm.entity.LeadService.builder().id("S1").leadId("L1").clientId("C1").build();
+        when(leadServiceRepository.findById("S1")).thenReturn(Optional.of(s1));
+
+        service.requireLinks(" ", "L1", null);
+        service.requireLinks(null, null, "S1");
+
+        verify(clientRepository, never()).existsById(any());
         verify(serviceAccess).assertEditAccess(s1);
     }
 }
