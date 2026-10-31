@@ -597,6 +597,7 @@ class PlatformBookingMirrorTenantServiceTest {
     /** Whoever booked owns the CRM booking: the owner's id is the tenant id, which BookingService resolves to the owner. */
     @Test
     void ownerBookingMirrorsUnderOwner() {
+        // BookingService is mocked here; BookingServiceCoverageTest.systemActorWithTenantIdResolvesOwner proves tenant id -> owner author
         PlatformBooking pb = platformBooking();
         pb.setBookedBy("T1");
 

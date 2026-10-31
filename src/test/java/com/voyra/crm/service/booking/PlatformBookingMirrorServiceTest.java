@@ -106,11 +106,14 @@ class PlatformBookingMirrorServiceTest {
     void ownerBookingMirrorsUnderOwner() {
         PlatformBooking crm = ticketed("C1");
         crm.setBookedBy(crm.getTenantId());
+        crm.setLeadId(null);
+        crm.setServiceId(null);
         when(tenantService.create(any(), anyList(), anyList())).thenReturn("B1");
 
         service.sync("PB1");
 
-        verify(tenantService).create(eq(crm), anyList(), anyList());
+        verify(tenantService).create(org.mockito.ArgumentMatchers.argThat(p -> "C1".equals(p.getClientId())
+                && p.getLeadId() == null && p.getBookedBy().equals(p.getTenantId())), anyList(), anyList());
         assertThat(crm.getMirrorStatus()).isEqualTo(MirrorStatus.DONE);
     }
 
