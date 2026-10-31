@@ -1352,6 +1352,18 @@ class InvoiceDocumentServiceCoverageTest {
     }
 
     @Test
+    void aBookingWithNoNumberIsLeftOutOfTheNarration() {
+        Invoice inv = draft(InvoiceBillingModel.PRINCIPAL);
+        money(inv, "1000.00", null, null);
+        Booking unnumbered = booking("BX", 0);
+        unnumbered.setBookingNumber(null);
+        when(invoiceLineSource.bookingIdsOf(inv)).thenReturn(List.of("BX", "B1"));
+        when(bookingRepository.findAllById(List.of("BX", "B1"))).thenReturn(List.of(unnumbered, booking("B1", 1)));
+
+        assertThat(issue(inv).narration()).isEqualTo("Tax invoice HTL/26-27/0001 raised · BK00000001");
+    }
+
+    @Test
     void theNarrationNamesTheVoucherReferences() {
         Invoice inv = draft(InvoiceBillingModel.PRINCIPAL);
         money(inv, "1000.00", null, null);

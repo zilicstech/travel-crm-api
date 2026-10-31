@@ -889,8 +889,8 @@ public class InvoiceDocumentService {
         List<String> ids = invoiceLineSource.bookingIdsOf(invoice);
         // findAllById has no order: bookings by number, vouchers in line order.
         String bookings = bookingRepository.findAllById(ids).stream()
-                .sorted(java.util.Comparator.comparing(Booking::getBookingNumber, java.util.Comparator.nullsLast(java.util.Comparator.naturalOrder())))
-                .map(b -> BookingService.bookingRef(b.getBookingNumber())).collect(java.util.stream.Collectors.joining(", "));
+                .map(Booking::getBookingNumber).filter(java.util.Objects::nonNull).sorted()
+                .map(BookingService::bookingRef).collect(java.util.stream.Collectors.joining(", "));
         List<String> voucherIds = invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc(invoice.getId()).stream()
                 .map(InvoiceLineItem::getBookingDocumentId).filter(java.util.Objects::nonNull).distinct().toList();
         Map<String, com.voyra.crm.entity.BookingDocument> vouchers = bookingDocumentRepository.findAllById(voucherIds).stream()
