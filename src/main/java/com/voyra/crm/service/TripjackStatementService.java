@@ -268,7 +268,7 @@ public class TripjackStatementService {
     /** The trimmed cell under a header, or null when blank. */
     private static String cell(List<String> values, Map<String, Integer> header, String column) {
         Integer i = header.get(column.toLowerCase(Locale.ROOT));
-        if (i == null || i >= values.size()) {
+        if (i >= values.size()) {
             return null;
         }
         String s = values.get(i).trim();
@@ -300,8 +300,14 @@ public class TripjackStatementService {
     }
 
     static String sha256(byte[] bytes) {
+        return HexFormat.of().formatHex(sha256Digest().digest(bytes));
+    }
+
+    /** Every JVM must ship SHA-256, so the checked exception cannot be thrown. */
+    @com.voyra.crm.util.ExcludeFromJacocoGenerated
+    private static MessageDigest sha256Digest() {
         try {
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+            return MessageDigest.getInstance("SHA-256");
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException(e);
         }

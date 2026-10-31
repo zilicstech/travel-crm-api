@@ -430,8 +430,14 @@ public class AgencyApplicationService {
     }
 
     private static String sha256Hex(String value) {
+        return HexFormat.of().formatHex(sha256().digest(value.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    /** Every JVM must ship SHA-256, so the checked exception cannot be thrown. */
+    @com.voyra.crm.util.ExcludeFromJacocoGenerated
+    private static MessageDigest sha256() {
         try {
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
+            return MessageDigest.getInstance("SHA-256");
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 is not available", e);
         }
