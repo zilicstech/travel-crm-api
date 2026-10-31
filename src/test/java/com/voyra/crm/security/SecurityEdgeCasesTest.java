@@ -134,6 +134,13 @@ class SecurityEdgeCasesTest {
     }
 
     @Test
+    void withNobodySignedInTheCurrentUserIsRequiredButAbsent() {
+        assertThat(SecurityContextUtil.getCurrentUser()).isEmpty();
+        assertThatThrownBy(SecurityContextUtil::getCurrentUserOrThrow)
+                .isInstanceOf(IllegalStateException.class).hasMessage("No authenticated user in security context");
+    }
+
+    @Test
     void theSystemActorNeedsATenant() {
         assertThatThrownBy(() -> SystemActor.call(null, () -> 1)).isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("The system actor needs a tenant");
