@@ -64,4 +64,34 @@ class MockHotelSearchProviderTest {
         // The searched room is the page's cheapest option at the same price.
         assertThat(d.getOptions().get(0).getPrice()).isEqualByComparingTo(offer.getPrice());
     }
+
+    @Test
+    void anUnknownHotelHasNoPage() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> provider.detail("mock-gone", query(1)))
+                .isInstanceOf(com.voyra.crm.exception.NotFoundException.class)
+                .hasMessage("This hotel is no longer in the search - search again");
+    }
+
+    @Test
+    void aNonRefundableHotelsStandardRoomSaysSoAndUpgradesStayRefundable() {
+        com.voyra.crm.dto.HotelDetailResponse d = provider.detail("mock-ibis-budget", query(0));
+        assertThat(d.getOptions().get(0).isRefundable()).isFalse();
+        assertThat(d.getOptions().get(0).getCancellationPolicy()).isEqualTo("Non-refundable");
+        assertThat(d.getOptions().get(1).getCancellationPolicy()).isEqualTo("Free cancellation until 48 hours before check-in");
+        // zero rooms counts as one: 3200 x 3 nights
+        assertThat(d.getOptions().get(0).getPrice()).isEqualByComparingTo("9600.00");
+        assertThat(d.getOptions().get(0).getBaseFare()).isEqualByComparingTo("7872.00");
+    }
+
+    @Test
+    void optionTotalPricesAMockOptionAsThePageDoesAndNothingElse() {
+        assertThat(MockHotelSearchProvider.optionTotal("mock-ibis-budget", "mock-mock-ibis-budget-suite", 2, 0))
+                .isEqualByComparingTo("11520.00");
+        assertThat(MockHotelSearchProvider.optionTotal("mock-ibis-budget", "mock-mock-ibis-budget-up", 1, 2))
+                .isEqualByComparingTo("8640.00");
+        assertThat(MockHotelSearchProvider.optionTotal("mock-ibis-budget", "mock-mock-ibis-budget-penthouse", 1, 1)).isNull();
+        assertThat(MockHotelSearchProvider.optionTotal("mock-ibis-budget", "other-option", 1, 1)).isNull();
+        assertThat(MockHotelSearchProvider.optionTotal("mock-ibis-budget", null, 1, 1)).isNull();
+        assertThat(MockHotelSearchProvider.optionTotal("mock-gone", "mock-gone-std", 1, 1)).isNull();
+    }
 }
