@@ -248,6 +248,6 @@ public class FinancialStatementsService {
     }
 
     private static BigDecimal scale(BigDecimal value) {
-        return (value != null ? value : BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP);
+        return value.setScale(2, RoundingMode.HALF_UP);
     }
 }

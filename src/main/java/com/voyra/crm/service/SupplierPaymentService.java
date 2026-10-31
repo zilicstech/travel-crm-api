@@ -70,7 +70,7 @@ public class SupplierPaymentService {
     @Transactional
     public SupplierPaymentResponse pay(SupplierPaymentRequest request) {
         com.voyra.crm.util.PlatformManaged.checkPaymentMode(request.getPaymentMode());
-        if (request.getPaidOn() != null && request.getPaidOn().isAfter(FinancialYear.today())) {
+        if (request.getPaidOn().isAfter(FinancialYear.today())) {
             throw new IllegalArgumentException("The payment date can't be in the future");
         }
         Vendor vendor = findVendor(request.getVendorId());
@@ -497,7 +497,7 @@ public class SupplierPaymentService {
      */
     private void postPaymentJournal(SupplierPayment payment, SupplierInvoice invoice) {
         BigDecimal amountInr = payment.getAmountInr();
-        if (amountInr == null || amountInr.compareTo(BigDecimal.ZERO) <= 0) {
+        if (amountInr.compareTo(BigDecimal.ZERO) <= 0) {
             return;
         }
         String bankCode = payment.getPaymentMode() == PaymentMode.VOYRA_WALLET ? ledgerAccountResolver.voyraWalletCode()
@@ -536,7 +536,7 @@ public class SupplierPaymentService {
     /** Posting-rule-table row 11 - moves a balance from the vendor's advance pool onto this bill's payable. */
     private void postAdvanceAppliedJournal(SupplierPayment applied, SupplierInvoice invoice) {
         BigDecimal amountInr = applied.getAmountInr();
-        if (amountInr == null || amountInr.compareTo(BigDecimal.ZERO) <= 0) {
+        if (amountInr.compareTo(BigDecimal.ZERO) <= 0) {
             return;
         }
         String narration = "Advance applied to bill " + (invoice.getSupplierInvoiceNumber() != null

@@ -30,6 +30,6 @@ public class BaseCurrency {
 
     public String of(String tenantId) {
         return byTenant.computeIfAbsent(tenantId, id -> tenantRepository.findById(id)
-                .map(Tenant::getBaseCurrencyCode).filter(c -> c != null && !c.isBlank()).orElse(DEFAULT));
+                .map(Tenant::getBaseCurrencyCode).filter(c -> !c.isBlank()).orElse(DEFAULT));
     }
 }

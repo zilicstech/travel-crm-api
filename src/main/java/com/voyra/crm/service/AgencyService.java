@@ -271,11 +271,7 @@ public class AgencyService {
             log.error("Could not seed default settings for new agency {}; they will be seeded on the next restart",
                     tenantId, e);
         } finally {
-            if (previous == null || previous.isBlank()) {
-                TenantContext.clear();
-            } else {
-                TenantContext.setTenantId(previous);
-            }
+            restoreTenant(previous);
         }
     }
 
@@ -291,11 +287,15 @@ public class AgencyService {
             TenantContext.setTenantId(tenantId);
             chartOfAccountsSeedService.seed();
         } finally {
-            if (previous == null || previous.isBlank()) {
-                TenantContext.clear();
-            } else {
-                TenantContext.setTenantId(previous);
-            }
+            restoreTenant(previous);
+        }
+    }
+
+    private static void restoreTenant(String previous) {
+        if (previous == null || previous.isBlank()) {
+            TenantContext.clear();
+        } else {
+            TenantContext.setTenantId(previous);
         }
     }
 
@@ -306,11 +306,7 @@ public class AgencyService {
             TenantContext.setTenantId(tenantId);
             return tenantScopedReadService.sumTotalBookingRevenue();
         } finally {
-            if (previous == null || previous.isBlank()) {
-                TenantContext.clear();
-            } else {
-                TenantContext.setTenantId(previous);
-            }
+            restoreTenant(previous);
         }
     }
 

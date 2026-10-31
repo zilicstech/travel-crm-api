@@ -422,7 +422,7 @@ public class InvoiceDocumentService {
         BigDecimal fx = foreignRate(invoice);
         if (fx == null) return lines;
         for (InvoiceLineItemRequest l : lines) {
-            if (l.getUnitPrice() != null) l.setUnitPrice(l.getUnitPrice().divide(fx, 2, RoundingMode.HALF_UP));
+            l.setUnitPrice(l.getUnitPrice().divide(fx, 2, RoundingMode.HALF_UP));
             if (l.getCharges() != null) {
                 Map<String, BigDecimal> converted = new java.util.LinkedHashMap<>();
                 l.getCharges().forEach((k, v) -> converted.put(k, v == null ? null : v.divide(fx, 2, RoundingMode.HALF_UP)));
@@ -800,7 +800,7 @@ public class InvoiceDocumentService {
 
     /** The agency's logo for the printed invoice; none when it has no logo or the file can't be read. */
     private byte[] logoOf(Tenant agency) {
-        if (agency == null || agency.getLogoKey() == null || agency.getLogoKey().isBlank()) return null;
+        if (agency.getLogoKey() == null || agency.getLogoKey().isBlank()) return null;
         try (java.io.InputStream in = fileStorageService.retrieve(agency.getLogoKey()).getInputStream()) {
             return in.readAllBytes();
         } catch (Exception e) {
@@ -1077,43 +1077,41 @@ public class InvoiceDocumentService {
         BigDecimal subtotal = BigDecimal.ZERO;
         BigDecimal discountTotal = BigDecimal.ZERO;
 
-        if (lineRequests != null) {
-            int sortOrder = 0;
-            for (InvoiceLineItemRequest req : lineRequests) {
-                BigDecimal discount = req.getDiscountAmount() != null ? req.getDiscountAmount() : BigDecimal.ZERO;
-                BigDecimal lineSubtotal = req.getQuantity().multiply(req.getUnitPrice()).setScale(2, RoundingMode.HALF_UP);
-                BigDecimal net = lineSubtotal.subtract(discount);
+        int sortOrder = 0;
+        for (InvoiceLineItemRequest req : lineRequests) {
+            BigDecimal discount = req.getDiscountAmount() != null ? req.getDiscountAmount() : BigDecimal.ZERO;
+            BigDecimal lineSubtotal = req.getQuantity().multiply(req.getUnitPrice()).setScale(2, RoundingMode.HALF_UP);
+            BigDecimal net = lineSubtotal.subtract(discount);
 
-                InvoiceLineItem line = InvoiceLineItem.builder()
-                        .id(UniqueIdResolver.resolve(invoiceLineItemRepository::existsById))
-                        .invoiceId(invoice.getId())
-                        .sortOrder(sortOrder++)
-                        .description(req.getDescription())
-                        .sacCode(req.getSacCode())
-                        .serviceType(req.getServiceType())
-                        .quantity(req.getQuantity())
-                        .unitPrice(req.getUnitPrice())
-                        .lineSubtotal(lineSubtotal)
-                        .discountAmount(discount)
-                        .taxablePercent(new BigDecimal("100.000"))
-                        .taxableValue(net)
-                        .lineTotal(net)
-                        .fareAmount(req.getFareAmount())
-                        .taxAmount(req.getTaxAmount())
-                        .bookingId(req.getBookingId())
-                        .bookingDocumentId(req.getBookingDocumentId())
-                        .charges(req.getCharges())
-                        .travellers(req.getTravellers())
-                        .legs(req.getLegs())
-                        .purchaseCurrency(req.getPurchaseCurrency())
-                        .purchaseRate(req.getPurchaseRate())
-                        .createdAt(LocalDateTime.now())
-                        .build();
-                lines.add(line);
+            InvoiceLineItem line = InvoiceLineItem.builder()
+                    .id(UniqueIdResolver.resolve(invoiceLineItemRepository::existsById))
+                    .invoiceId(invoice.getId())
+                    .sortOrder(sortOrder++)
+                    .description(req.getDescription())
+                    .sacCode(req.getSacCode())
+                    .serviceType(req.getServiceType())
+                    .quantity(req.getQuantity())
+                    .unitPrice(req.getUnitPrice())
+                    .lineSubtotal(lineSubtotal)
+                    .discountAmount(discount)
+                    .taxablePercent(new BigDecimal("100.000"))
+                    .taxableValue(net)
+                    .lineTotal(net)
+                    .fareAmount(req.getFareAmount())
+                    .taxAmount(req.getTaxAmount())
+                    .bookingId(req.getBookingId())
+                    .bookingDocumentId(req.getBookingDocumentId())
+                    .charges(req.getCharges())
+                    .travellers(req.getTravellers())
+                    .legs(req.getLegs())
+                    .purchaseCurrency(req.getPurchaseCurrency())
+                    .purchaseRate(req.getPurchaseRate())
+                    .createdAt(LocalDateTime.now())
+                    .build();
+            lines.add(line);
 
-                subtotal = subtotal.add(lineSubtotal);
-                discountTotal = discountTotal.add(discount);
-            }
+            subtotal = subtotal.add(lineSubtotal);
+            discountTotal = discountTotal.add(discount);
         }
 
         BigDecimal taxableValue = subtotal.subtract(discountTotal);
@@ -1279,7 +1277,7 @@ public class InvoiceDocumentService {
         BigDecimal gstTotal = cgst.add(sgst).add(igst);
         // The client pays the full package; only the GST base differs by billing model (a commission-agent
         // invoice taxes just the fee, the supplier's cost passes through untaxed but is still billed).
-        BigDecimal packageValue = invoice.getTaxableValue() != null ? invoice.getTaxableValue() : taxableBase;
+        BigDecimal packageValue = invoice.getTaxableValue();
         BigDecimal grandTotal = packageValue.add(gstTotal).add(tcsAmount).add(otherTaxTotal);
         BigDecimal fx = invoice.getFxRateToInr();
 

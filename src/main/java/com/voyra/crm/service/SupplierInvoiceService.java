@@ -728,7 +728,7 @@ public class SupplierInvoiceService {
         }
 
         BigDecimal gstTotal = cgst.add(sgst).add(igst);
-        BigDecimal tdsAmount = taxable.multiply(invoice.getTdsRatePercent() != null ? invoice.getTdsRatePercent() : BigDecimal.ZERO)
+        BigDecimal tdsAmount = taxable.multiply(invoice.getTdsRatePercent())
                 .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
         BigDecimal grandTotal = taxable.add(gstTotal).add(invoice.getCessAmount() != null ? invoice.getCessAmount() : BigDecimal.ZERO)
                 .add(invoice.getRoundOff() != null ? invoice.getRoundOff() : BigDecimal.ZERO);

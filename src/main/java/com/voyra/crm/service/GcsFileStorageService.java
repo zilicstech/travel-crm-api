@@ -141,10 +141,8 @@ public class GcsFileStorageService implements FileStorageService {
         return objectPrefix.isBlank() ? fileKey : objectPrefix + "/" + fileKey;
     }
 
+    /** The upload check already required a name with an allowed extension. */
     private String sanitizeFilename(String originalFilename) {
-        if (originalFilename == null || originalFilename.isBlank()) {
-            return "file";
-        }
         String nameOnly = Paths.get(originalFilename).getFileName().toString();
         return nameOnly.replaceAll("[^a-zA-Z0-9._-]", "_");
     }

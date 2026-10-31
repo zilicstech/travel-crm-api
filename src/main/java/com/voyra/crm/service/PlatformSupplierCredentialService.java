@@ -61,7 +61,11 @@ public class PlatformSupplierCredentialService {
             SupplierEnvironment.PROD, Set.of("api.tripjack.com", "hms-search.tripjack.com"));
 
     /** Suppliers are production only (owner 2026-10-30): a new row always points here. */
-    static final Map<SupplierProvider, String> PROD_BASE_URL = Map.of(SupplierProvider.TRIPJACK, "https://api.tripjack.com");
+    private static String prodBaseUrl(SupplierProvider provider) {
+        return switch (provider) {
+            case TRIPJACK -> "https://api.tripjack.com";
+        };
+    }
 
     private final PlatformSupplierCredentialRepository repository;
     private final PlatformSupplierProductRepository productRepository;
@@ -93,10 +97,7 @@ public class PlatformSupplierCredentialService {
             throw new BookingConflictException("SUPPLIER_EXISTS",
                     request.getProvider() + " is already set up - edit that supplier instead", Map.of());
         }
-        String baseUrl = PROD_BASE_URL.get(request.getProvider());
-        if (baseUrl == null) {
-            throw new IllegalArgumentException(request.getProvider() + " has no production host configured");
-        }
+        String baseUrl = prodBaseUrl(request.getProvider());
         requireNoBookingsInFlight();
         requireAllowedHost(SupplierEnvironment.PROD, baseUrl);
         PlatformSupplierCredential credential = PlatformSupplierCredential.builder()
@@ -270,7 +271,7 @@ public class PlatformSupplierCredentialService {
         }
         boolean allowed = uri != null && "https".equalsIgnoreCase(uri.getScheme()) && uri.getHost() != null
                 && uri.getUserInfo() == null && uri.getPort() == -1 && uri.getQuery() == null && uri.getFragment() == null
-                && (uri.getPath() == null || uri.getPath().isEmpty() || "/".equals(uri.getPath()))
+                && (uri.getPath().isEmpty() || "/".equals(uri.getPath()))
                 && ALLOWED_HOSTS.getOrDefault(environment, Set.of()).contains(uri.getHost().toLowerCase(Locale.ROOT));
         if (!allowed) {
             throw new IllegalArgumentException("Base URL must be a Tripjack " + environment + " host over https");

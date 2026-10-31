@@ -9,10 +9,7 @@ import com.voyra.crm.models.StatementParseResult;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.StringReader;
-import java.io.UncheckedIOException;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
@@ -51,29 +48,21 @@ public class CsvStatementParser implements StatementParser {
         List<ParsedBankLine> lines = new ArrayList<>();
         List<String> errors = new ArrayList<>();
 
-        try (BufferedReader reader = new BufferedReader(
-                new StringReader(stripBom(new String(fileContent, StandardCharsets.UTF_8))))) {
-            String headerLine = reader.readLine();
-            if (headerLine == null) {
-                return new StatementParseResult(lines, List.of("File is empty"));
+        List<String> rows = stripBom(new String(fileContent, StandardCharsets.UTF_8)).lines().toList();
+        if (rows.isEmpty()) {
+            return new StatementParseResult(lines, List.of("File is empty"));
+        }
+        List<String> headers = splitCsvLine(rows.get(0));
+        for (int i = 1; i < rows.size(); i++) {
+            String row = rows.get(i);
+            if (row.isBlank()) {
+                continue;
             }
-            List<String> headers = splitCsvLine(headerLine);
-
-            String row;
-            int rowNumber = 1;
-            while ((row = reader.readLine()) != null) {
-                rowNumber++;
-                if (row.isBlank()) {
-                    continue;
-                }
-                try {
-                    lines.add(parseRow(headers, splitCsvLine(row), columnMap, dateFormatter, profile.getAmountConvention()));
-                } catch (Exception e) {
-                    errors.add("Row " + rowNumber + ": " + e.getMessage());
-                }
+            try {
+                lines.add(parseRow(headers, splitCsvLine(row), columnMap, dateFormatter, profile.getAmountConvention()));
+            } catch (Exception e) {
+                errors.add("Row " + (i + 1) + ": " + e.getMessage());
             }
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
         }
 
         return new StatementParseResult(lines, errors);
@@ -112,7 +101,7 @@ public class CsvStatementParser implements StatementParser {
         } else {
             String amountColumn = requireMapping(columnMap, "amount");
             String signedRaw = requireValue(row, amountColumn, "amount");
-            BigDecimal signed = parseAmount(signedRaw);
+            BigDecimal signed = toDecimal(signedRaw);
             boolean positiveIsCredit = !"false".equalsIgnoreCase(columnMap.get("positiveIsCredit"));
             boolean isCredit = positiveIsCredit ? signed.signum() >= 0 : signed.signum() < 0;
             direction = isCredit ? BankTransactionDirection.CREDIT : BankTransactionDirection.DEBIT;
@@ -127,13 +116,6 @@ public class CsvStatementParser implements StatementParser {
                 amount,
                 direction,
                 balanceColumn != null ? parseAmountOrZero(row.get(balanceColumn)) : null);
-    }
-
-    private static BigDecimal parseAmount(String raw) {
-        if (raw == null || raw.isBlank()) {
-            throw new IllegalArgumentException("amount is blank");
-        }
-        return toDecimal(raw);
     }
 
     /** Strips thousands separators and a leading currency marker (₹, Rs, INR, $) before parsing. */

@@ -5,7 +5,6 @@ import com.voyra.crm.dto.InvoiceLineItemRequest;
 import com.voyra.crm.dto.InvoiceResponse;
 import com.voyra.crm.dto.InvoiceTaxRequest;
 import com.voyra.crm.entity.Booking;
-import com.voyra.crm.enums.InvoiceBillingModel;
 import com.voyra.crm.enums.InvoiceServiceCategory;
 import com.voyra.crm.enums.SupplyNature;
 import com.voyra.crm.enums.TaxKind;
@@ -78,17 +77,17 @@ public class BookingInvoiceIssuer {
     /**
      * What {@link #issueCancellationCharges} will bill, without writing anything - the cancel preview
      * shows the same refund the cancel then gives. Same base and rounding as the invoice's own tax:
-     * the agency fee alone on a commission-agent (air) booking, everything kept otherwise.
+     * the agency fee alone, since every category is billed as commission agent
+     * ({@link InvoiceServiceCategory#defaultBillingModel}).
      */
     public BigDecimal cancellationChargesTotal(Booking booking, BigDecimal supplierCharge, BigDecimal agencyFee) {
         BigDecimal kept = supplierCharge.add(agencyFee);
         if (!gstEnabled) return kept;
         boolean international = Boolean.TRUE.equals(booking.getInternationalTrip());
         InvoiceServiceCategory category = InvoiceServiceCategory.forBooking(booking.getType(), international);
-        BigDecimal base = category.defaultBillingModel() == InvoiceBillingModel.COMMISSION_AGENT ? agencyFee : kept;
         BigDecimal gst = taxRateConfigRepository
                 .findByTaxKindAndSupplyNatureAndIsDefaultTrueAndIsActiveTrue(TaxKind.GST, supplyNature(category, international))
-                .map(g -> base.multiply(g.getRatePercent()).divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP))
+                .map(g -> agencyFee.multiply(g.getRatePercent()).divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP))
                 .orElse(BigDecimal.ZERO);
         return kept.add(gst);
     }

@@ -147,7 +147,7 @@ public class TaxEngine {
 
         String placeOfSupplyCode = resolvePlaceOfSupply(request, client, agency);
         String agencyState = agency.getStateCode();
-        if (agencyState == null || placeOfSupplyCode == null) {
+        if (agencyState == null) { // with the agency's state set, the place of supply always resolves (it falls back to it)
             throw new IllegalStateException(
                     "Both the agency's GST state and a place of supply are required to compute GST - "
                             + "set the agency's state under Settings, and the client's state or an override here");

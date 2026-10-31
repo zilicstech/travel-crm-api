@@ -172,7 +172,7 @@ public final class NotificationTemplates {
     }
 
     private static String esc(String s) {
-        return HtmlUtils.htmlEscape(s == null ? "" : s, "UTF-8");
+        return HtmlUtils.htmlEscape(s, "UTF-8");
     }
 
     /** Header injection guard: a subject is always a single line. */

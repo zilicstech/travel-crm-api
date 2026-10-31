@@ -248,6 +248,6 @@ public class AccountsDashboardService {
     }
 
     private static String str(Object value) {
-        return value != null ? value.toString() : "";
+        return java.util.Objects.toString(value, "");
     }
 }

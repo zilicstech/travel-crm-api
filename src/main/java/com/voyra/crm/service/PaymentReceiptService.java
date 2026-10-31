@@ -67,7 +67,7 @@ public class PaymentReceiptService {
 
     @Transactional
     public PaymentReceiptResponse record(PaymentReceiptRequest request) {
-        if (request.getReceivedOn() != null && request.getReceivedOn().isAfter(FinancialYear.today())) {
+        if (request.getReceivedOn().isAfter(FinancialYear.today())) {
             throw new IllegalArgumentException("The date received can't be in the future");
         }
         boolean hasInvoice = request.getInvoiceId() != null && !request.getInvoiceId().isBlank();
@@ -726,7 +726,7 @@ public class PaymentReceiptService {
      */
     private void postForReceiptJournal(PaymentReceipt receipt, boolean isProforma) {
         BigDecimal amountInr = receipt.getAmountInr();
-        if (amountInr == null || amountInr.compareTo(BigDecimal.ZERO) <= 0) {
+        if (amountInr.compareTo(BigDecimal.ZERO) <= 0) {
             return;
         }
         boolean isDeposit = receipt.getInvoiceId() == null || isProforma;
@@ -745,7 +745,7 @@ public class PaymentReceiptService {
 
         List<com.voyra.crm.models.JournalLinePosting> lines = new ArrayList<>();
         if (hasGatewayFee) {
-            BigDecimal netInr = receipt.getNetDepositInr() != null ? receipt.getNetDepositInr() : amountInr.subtract(receipt.getGatewayFeeInr());
+            BigDecimal netInr = receipt.getNetDepositInr();
             lines.add(com.voyra.crm.models.JournalLinePosting.debit(debitAccount, netInr, narration));
             lines.add(com.voyra.crm.models.JournalLinePosting.debit(
                     com.voyra.crm.enums.SystemAccount.PAYMENT_PROCESSING_FEES.code(), receipt.getGatewayFeeInr(),
@@ -776,9 +776,6 @@ public class PaymentReceiptService {
 
     /** Posting-rule-table row 6 - moves a balance from the client's wallet onto this invoice's receivable. */
     private void postAdvanceAppliedJournal(PaymentReceipt applied, Invoice invoice, BigDecimal amountInr) {
-        if (amountInr.compareTo(BigDecimal.ZERO) <= 0) {
-            return;
-        }
         String narration = "Wallet applied to invoice " + (invoice.getInvoiceNumber() != null ? invoice.getInvoiceNumber() : invoice.getId());
         journalService.post(new com.voyra.crm.models.JournalPosting(
                 applied.getReceivedOn(), com.voyra.crm.enums.JournalSourceType.RECEIPT, applied.getId(),

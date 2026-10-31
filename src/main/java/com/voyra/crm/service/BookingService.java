@@ -867,19 +867,14 @@ public class BookingService {
                     + " - every voucher on a booking is with its one supplier");
         }
         voucher.setVendorId(vendorId);
-        if (nzMoney(voucher.getCommission()).signum() > 0) {
-            if (booking.getType() != BookingType.FLIGHT) {
-                throw new IllegalArgumentException("Commission is taken on flight tickets only");
-            }
-            if (blank(vendorId)) {
-                throw new IllegalArgumentException("Pick the supplier who pays this commission");
-            }
+        if (nzMoney(voucher.getCommission()).signum() > 0 && booking.getType() != BookingType.FLIGHT) {
+            throw new IllegalArgumentException("Commission is taken on flight tickets only");
         }
 
         Map<String, String> before = AuditSnapshot.of(booking, AUDITED);
         boolean wasConfirmed = booking.getBookingStatus() == BookingStatus.CONFIRMED;
         // The booking's supplier is its first voucher's (invoices are combined by supplier).
-        if (!others && !blank(vendorId) && !vendorId.equals(booking.getVendorId())) {
+        if (!others && !vendorId.equals(booking.getVendorId())) {
             setVendor(booking, vendorId);
         }
         // A voucher-priced booking is the sum of its live vouchers: a price typed on create (API only) is replaced, never added to.
@@ -897,7 +892,7 @@ public class BookingService {
         if (booking.getBookingStatus() == BookingStatus.PENDING && readyToConfirm(booking)) {
             booking.setBookingStatus(BookingStatus.CONFIRMED);
         }
-        if (vendorId != null && cost.signum() > 0) {
+        if (cost.signum() > 0) {
             // The bill is in what the supplier charged: the voucher's purchase currency at its rate, else base.
             voucher.setSupplierInvoiceId(supplierInvoiceService.draftForVoucher(booking, vendorId, voucher.getReferenceNumber(),
                     voucher.getPurchaseCurrency(), voucher.getPurchaseCurrency() != null ? voucher.getPurchasePrice() : cost,
@@ -1092,7 +1087,8 @@ public class BookingService {
         if (all.length() <= 100) return all;
         StringBuilder shown = new StringBuilder();
         int n = 0;
-        for (String ref : refs) {
+        while (true) { // ends by break: with every ref the candidate is the whole join, over 100
+            String ref = refs.get(n);
             String more = " +" + (refs.size() - n - 1) + " more";
             String candidate = (n == 0 ? "" : shown + ", ") + ref;
             if (candidate.length() + more.length() > 100) break;

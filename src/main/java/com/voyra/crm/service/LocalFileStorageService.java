@@ -11,7 +11,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
-import java.net.MalformedURLException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -65,11 +64,7 @@ public class LocalFileStorageService implements FileStorageService {
             log.warn("Stored file missing: {}", fileKey);
             throw new com.voyra.crm.exception.StoredFileNotFoundException();
         }
-        try {
-            return new UrlResource(target.toUri());
-        } catch (MalformedURLException e) {
-            throw new IllegalStateException("Failed to resolve file: " + fileKey, e);
-        }
+        return UrlResource.from(target.toUri());
     }
 
     @Override
@@ -91,10 +86,8 @@ public class LocalFileStorageService implements FileStorageService {
         return resolved;
     }
 
+    /** The upload check already required a name with an allowed extension. */
     private String sanitizeFilename(String originalFilename) {
-        if (originalFilename == null || originalFilename.isBlank()) {
-            return "file";
-        }
         String nameOnly = Paths.get(originalFilename).getFileName().toString();
         return nameOnly.replaceAll("[^a-zA-Z0-9._-]", "_");
     }

@@ -147,9 +147,6 @@ public class MockFlightSearchProvider implements FlightSearchProvider {
     }
 
     private static BigDecimal cabinMultiplier(FlightCabin cabin) {
-        if (cabin == null) {
-            return BigDecimal.ONE;
-        }
         return switch (cabin) {
             case BUSINESS -> CABIN_MULTIPLIER_BUSINESS;
             case PREMIUM_ECONOMY -> CABIN_MULTIPLIER_PREMIUM;

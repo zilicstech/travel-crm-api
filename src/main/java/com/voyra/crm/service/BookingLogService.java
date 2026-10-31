@@ -52,7 +52,7 @@ public class BookingLogService {
         members.forEach(m -> byId.put(m.getId(), m));
         List<com.voyra.crm.dto.BookingPassengerRequest> pax = create.getPassengers() != null ? create.getPassengers() : List.of();
         List<com.voyra.crm.dto.VoucherTraveller> travellers = pax.stream()
-                .filter(p -> byId.containsKey(p.getLeadMemberId()) && byId.get(p.getLeadMemberId()).getMemberId() != null)
+                .filter(p -> byId.get(p.getLeadMemberId()).getMemberId() != null)
                 .map(p -> com.voyra.crm.dto.VoucherTraveller.builder().memberId(byId.get(p.getLeadMemberId()).getMemberId())
                         .name(p.getPassengerName()).paxType(p.getPaxType()).build())
                 .toList();

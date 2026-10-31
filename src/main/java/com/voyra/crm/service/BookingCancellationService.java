@@ -473,10 +473,9 @@ public class BookingCancellationService {
         return expected;
     }
 
-    /** GST on the credit in the same proportion as on the bill. */
+    /** GST on the credit in the same proportion as on the bill (a positive credit means a positive grand total). */
     private static SupplierCreditNoteRequest supplierCreditNote(SupplierInvoice bill, BigDecimal credit) {
-        BigDecimal ratio = bill.getGrandTotal().signum() == 0 ? BigDecimal.ZERO
-                : credit.divide(bill.getGrandTotal(), 10, RoundingMode.HALF_UP);
+        BigDecimal ratio = credit.divide(bill.getGrandTotal(), 10, RoundingMode.HALF_UP);
         BigDecimal cgst = bill.getCgstAmount().multiply(ratio).setScale(2, RoundingMode.HALF_UP);
         BigDecimal sgst = bill.getSgstAmount().multiply(ratio).setScale(2, RoundingMode.HALF_UP);
         BigDecimal igst = bill.getIgstAmount().multiply(ratio).setScale(2, RoundingMode.HALF_UP);

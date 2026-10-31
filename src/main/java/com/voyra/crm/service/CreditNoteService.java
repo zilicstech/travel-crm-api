@@ -636,7 +636,7 @@ public class CreditNoteService {
     /** Posting-rule-table row 13 - a cash refund paid out against a credit note. */
     private void postRefundPaidJournal(CreditNote note, PaymentReceipt receipt, boolean toWallet) {
         BigDecimal amountInr = receipt.getAmountInr();
-        if (amountInr == null || amountInr.compareTo(BigDecimal.ZERO) <= 0) {
+        if (amountInr.compareTo(BigDecimal.ZERO) <= 0) {
             return;
         }
         String bankCode = receipt.getPaymentMode() == com.voyra.crm.enums.PaymentMode.CASH

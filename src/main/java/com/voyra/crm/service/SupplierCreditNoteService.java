@@ -78,7 +78,7 @@ public class SupplierCreditNoteService {
         BigDecimal retentionFee = request.getRetentionFee() != null ? request.getRetentionFee() : BigDecimal.ZERO;
         BigDecimal totalAmount = request.getTaxableValue().add(request.getCgstAmount())
                 .add(request.getSgstAmount()).add(request.getIgstAmount());
-        assertWithinInvoiceValue(invoice, totalAmount, null);
+        assertWithinInvoiceValue(invoice, totalAmount);
         // Only the part of the credit that exceeds what we still owe on the bill can come back as
         // cash - and then only up to cash actually paid. The rest simply lowers the payable.
         BigDecimal stillOwed = invoice.payable().subtract(invoice.getAmountPaid())
@@ -262,10 +262,9 @@ public class SupplierCreditNoteService {
     // ---------------------------------------------------------------- internals
 
     /** Caps total non-cancelled supplier credit notes against one bill at its own grand total. */
-    private void assertWithinInvoiceValue(SupplierInvoice invoice, BigDecimal candidateAmount, String excludeId) {
+    private void assertWithinInvoiceValue(SupplierInvoice invoice, BigDecimal candidateAmount) {
         BigDecimal existing = supplierCreditNoteRepository.findBySupplierInvoiceIdAndStatus(invoice.getId(), SupplierCreditNoteStatus.RECORDED)
                 .stream()
-                .filter(cn -> !cn.getId().equals(excludeId))
                 .map(SupplierCreditNote::getTotalAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         if (existing.add(candidateAmount).compareTo(invoice.getGrandTotal()) > 0) {
@@ -322,7 +321,7 @@ public class SupplierCreditNoteService {
     /** Cash/bank in, payable out: clears the debit balance the credit note left on the vendor's payable. */
     private void postRefundJournal(SupplierPayment payment, SupplierCreditNote note, boolean toWallet) {
         BigDecimal amountInr = payment.getAmountInr();
-        if (amountInr == null || amountInr.compareTo(BigDecimal.ZERO) <= 0) {
+        if (amountInr.compareTo(BigDecimal.ZERO) <= 0) {
             return;
         }
         String bankCode = payment.getPaymentMode() == com.voyra.crm.enums.PaymentMode.VOYRA_WALLET ? ledgerAccountResolver.voyraWalletCode()

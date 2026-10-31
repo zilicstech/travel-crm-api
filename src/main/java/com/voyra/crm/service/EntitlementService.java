@@ -156,14 +156,13 @@ public class EntitlementService {
         Set<Sku> skus = switch (s.getPlan()) {
             case SUITE -> EnumSet.allOf(Sku.class);
             case LITE -> LITE_SKUS;
-            case CUSTOM -> parse(s.getSkus());
-            case STARTER -> Set.of();
+            // STARTER returned above; it shares CUSTOM's arm only so a new plan still fails to compile here.
+            case CUSTOM, STARTER -> parse(s.getSkus());
         };
         int seats = switch (s.getPlan()) {
             case SUITE -> SUITE_INCLUDED_SEATS + extra;
             case LITE -> LITE_INCLUDED_SEATS + extra;
-            case CUSTOM -> skus.contains(Sku.STAFF_SEATS) ? extra : 0;
-            case STARTER -> 0;
+            case CUSTOM, STARTER -> skus.contains(Sku.STAFF_SEATS) ? extra : 0;
         };
         return new Entitlements(s.getPlan(), s.getStatus(), skus, seats, readOnly, accessEndsAt);
     }

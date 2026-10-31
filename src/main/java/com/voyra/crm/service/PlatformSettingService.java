@@ -160,7 +160,7 @@ public class PlatformSettingService {
     }
 
     private static String blankToNull(String v) {
-        return v == null || v.isBlank() ? null : v.trim();
+        return v.isBlank() ? null : v.trim();
     }
 
     @Transactional
