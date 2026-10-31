@@ -13,7 +13,6 @@ import com.voyra.crm.exception.SupplierException;
 import com.voyra.crm.service.HotelSearchProvider;
 import com.voyra.crm.service.PlatformSupplierCredentialService;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -89,7 +88,8 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
     private final RestClient.Builder restClientBuilder;
     private final String uatBaseUrl;
     private final String prodBaseUrl;
-    private final Clock clock;
+    /** The caches' ages are read from this; tests swap in a clock they can move. */
+    Clock clock = Clock.systemUTC();
 
     private final Map<String, StaticData> staticData = new ConcurrentHashMap<>();
     private final Set<String> loading = ConcurrentHashMap.newKeySet();
@@ -105,22 +105,14 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
     });
     private final java.util.concurrent.atomic.AtomicBoolean shapeLogged = new java.util.concurrent.atomic.AtomicBoolean();
 
-    @Autowired
     public TripjackHotelSearchProvider(PlatformSupplierCredentialService platformSupplierCredentialService,
                                        @Qualifier("tripjackRestClientBuilder") RestClient.Builder restClientBuilder,
                                        @Value("${app.hotel-supplier.tripjack.uat-base-url:https://apitest-hms.tripjack.com}") String uatBaseUrl,
                                        @Value("${app.hotel-supplier.tripjack.prod-base-url:https://hms-search.tripjack.com}") String prodBaseUrl) {
-        this(platformSupplierCredentialService, restClientBuilder, uatBaseUrl, prodBaseUrl, Clock.systemUTC());
-    }
-
-    /** With the clock the caches' ages are read from, so a test can age them. */
-    TripjackHotelSearchProvider(PlatformSupplierCredentialService platformSupplierCredentialService, RestClient.Builder restClientBuilder,
-                                String uatBaseUrl, String prodBaseUrl, Clock clock) {
         this.platformSupplierCredentialService = platformSupplierCredentialService;
         this.restClientBuilder = restClientBuilder;
         this.uatBaseUrl = uatBaseUrl;
         this.prodBaseUrl = prodBaseUrl;
-        this.clock = clock;
     }
 
     @Override

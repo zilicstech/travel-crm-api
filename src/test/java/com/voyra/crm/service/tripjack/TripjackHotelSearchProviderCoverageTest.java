@@ -84,7 +84,8 @@ class TripjackHotelSearchProviderCoverageTest {
                 .thenReturn(new ResolvedCredential(SupplierProvider.TRIPJACK, env, "https://unused.example.test", "test-key", null));
         RestClient.Builder builder = RestClient.builder();
         server = MockRestServiceServer.bindTo(builder).ignoreExpectOrder(!ordered).build();
-        provider = new TripjackHotelSearchProvider(credentials, builder, UAT, PROD, clock);
+        provider = new TripjackHotelSearchProvider(credentials, builder, UAT, PROD);
+        provider.clock = clock;
     }
 
     private void json(String host, String path, String body) {
