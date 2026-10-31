@@ -24,7 +24,7 @@ class TicketFareTest {
     void markupGoesIntoOtherCharges() {
         List<FareLine> lines = TicketFare.lines(d("5000"), d("4000"), d("500"), Map.of("YQ", d("300")));
         assertThat(lines).extracting(FareLine::label).containsExactly("Base fare", "YQ", "Other charges");
-        assertThat(lines).extracting(FareLine::amount).map(BigDecimal::toPlainString).containsExactly("4000.00", "300", "1200.00");
+        assertThat(lines).extracting(FareLine::amount).map(BigDecimal::toPlainString).containsExactly("4000.00", "300.00", "1200.00");
         assertThat(sum(lines)).isEqualByComparingTo("5500");
         assertThat(TicketFare.total(d("5000"), d("500"))).isEqualByComparingTo("5500").hasScaleOf(2);
     }

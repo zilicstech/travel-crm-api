@@ -11,52 +11,45 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.stream.Stream;
 
 /**
- * What the stored itinerary says about a flight, for the ticket. Reads the Tripjack shape ({@code tripInfos[]}, one entry
- * per direction, each with its own {@code sI} and {@code totalPriceList}) and the mock's top-level {@code sI}
- * (a round trip marks its return segments {@code isRs}). Fare type, cabin, refundability and baggage come from the first
- * direction's first fare detail (ADULT preferred); anything missing is null.
+ * What the stored itinerary says about a flight, for the ticket. Reads the Tripjack shape ({@code tripInfos[]}, each with
+ * its own {@code sI} and {@code totalPriceList}) and the mock's top-level {@code sI}. Within one trip, segments flagged
+ * {@code isRs} are the way back (a COMBO fare holds both ways), so one trip gives one or two directions that share the
+ * trip's fare detail (ADULT, else the first pax type). Anything missing is null.
  */
-public record TicketFacts(List<Segment> segments, String fareType, String cabinClass, Boolean refundable,
-                          String checkInBaggage, String cabinBaggage, Map<String, BigDecimal> namedTaxes,
-                          List<String> directions) {
+public record TicketFacts(List<Segment> segments, Map<String, BigDecimal> namedTaxes, List<Direction> directions) {
 
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final Map<String, String> PAX_KEYS = Map.of("ADULT", "adults", "CHILD", "children", "INFANT", "infants");
 
     public static TicketFacts from(Map<String, Object> itinerary, Map<String, Object> pricingSnapshot) {
         JsonNode root = JSON.valueToTree(itinerary == null ? Map.of() : itinerary);
-        List<JsonNode> dirs = new ArrayList<>(); // each: the segments of one direction
-        List<JsonNode> fares = new ArrayList<>(); // each: the node holding that direction's totalPriceList
+        List<JsonNode> trips = new ArrayList<>(); // each holds an sI and its totalPriceList
         if (root.path("tripInfos").isArray()) {
-            for (JsonNode trip : root.path("tripInfos")) {
-                dirs.add(trip.path("sI"));
-                fares.add(trip);
-            }
+            root.path("tripInfos").forEach(trips::add);
         } else {
-            splitByReturnMark(root.path("sI"), dirs);
-            fares.add(root);
+            trips.add(root);
         }
         List<Segment> segments = new ArrayList<>();
-        List<String> directions = new ArrayList<>();
-        for (JsonNode dir : dirs) {
-            if (!dir.isArray() || dir.isEmpty()) {
-                continue;
+        List<Direction> directions = new ArrayList<>();
+        for (JsonNode trip : trips) {
+            JsonNode fd = trip.path("totalPriceList").path(0).path("fd");
+            JsonNode fare = fd.has("ADULT") ? fd.get("ADULT") : fd.elements().hasNext() ? fd.elements().next() : JSON.missingNode();
+            for (JsonNode way : split(trip.path("sI"))) {
+                List<Segment> own = new ArrayList<>();
+                way.forEach(s -> own.add(segment(s)));
+                segments.addAll(own);
+                directions.add(new Direction(code(way.get(0).path("da")) + "-" + code(way.get(way.size() - 1).path("aa")), own,
+                        text(trip.path("totalPriceList").path(0).path("fareIdentifier")), text(fare.path("cc")), refundable(fare.path("rT")),
+                        text(fare.path("bI").path("iB")), text(fare.path("bI").path("cB"))));
             }
-            for (JsonNode s : dir) {
-                segments.add(segment(s));
-            }
-            directions.add(code(dir.get(0).path("da")) + "-" + code(dir.get(dir.size() - 1).path("aa")));
         }
         if (segments.isEmpty()) {
             throw new BookingConflictException("TICKET_NOT_AVAILABLE", "This booking has no flight details, so a ticket cannot be made", Map.of());
         }
-        JsonNode fd = fareDetail(fares.get(0));
-        JsonNode first = fd.has("ADULT") ? fd.get("ADULT") : fd.elements().hasNext() ? fd.elements().next() : JSON.missingNode();
-        return new TicketFacts(segments, text(fares.get(0).path("totalPriceList").path(0).path("fareIdentifier")),
-                text(first.path("cc")), refundable(first.path("rT")), text(first.path("bI").path("iB")),
-                text(first.path("bI").path("cB")), namedTaxes(fares, pricingSnapshot), directions);
+        return new TicketFacts(segments, namedTaxes(trips, pricingSnapshot), directions);
     }
 
     /** The ticket number to print for one passenger and sector, or "-". Callers pass an empty {@code flat} when the trip has more than one direction. */
@@ -76,20 +69,17 @@ public record TicketFacts(List<Segment> segments, String fareType, String cabinC
         if (any != null) {
             return any.ticketNumber();
         }
-        return flat.size() == paxCount && pax < paxCount && flat.get(pax) != null ? flat.get(pax) : "-";
+        return flat.size() == paxCount && pax >= 0 && pax < paxCount && flat.get(pax) != null ? flat.get(pax) : "-";
     }
 
-    private static void splitByReturnMark(JsonNode sI, List<JsonNode> dirs) {
-        if (!sI.isArray()) {
-            return;
-        }
+    /** The non-empty ways of one segment list: onward, then the segments flagged isRs. */
+    private static List<JsonNode> split(JsonNode sI) {
         var onward = JSON.createArrayNode();
         var back = JSON.createArrayNode();
-        for (JsonNode s : sI) {
-            (s.path("isRs").asBoolean(false) ? back : onward).add(s);
+        if (sI.isArray()) {
+            sI.forEach(s -> (s.path("isRs").asBoolean(false) ? back : onward).add(s));
         }
-        dirs.add(onward);
-        dirs.add(back);
+        return Stream.of(onward, back).filter(w -> !w.isEmpty()).map(w -> (JsonNode) w).toList();
     }
 
     private static Segment segment(JsonNode s) {
@@ -102,16 +92,12 @@ public record TicketFacts(List<Segment> segments, String fareType, String cabinC
                 text(s.path("dt")), text(s.path("at")), s.path("duration").isInt() ? s.path("duration").asInt() : null);
     }
 
-    private static JsonNode fareDetail(JsonNode holder) {
-        return holder.path("totalPriceList").path(0).path("fd");
-    }
-
-    /** Per tax code: amount per passenger type times that type's count, summed over directions; empty when any part is unreadable. */
+    /** Per tax code: amount per passenger type times that type's count, summed over trips; empty when any part is unreadable. */
     private static Map<String, BigDecimal> namedTaxes(List<JsonNode> fares, Map<String, Object> pricingSnapshot) {
         JsonNode mix = JSON.valueToTree(pricingSnapshot == null ? Map.of() : pricingSnapshot).path("paxMix");
         Map<String, BigDecimal> out = new TreeMap<>();
         for (JsonNode holder : fares) {
-            JsonNode fd = fareDetail(holder);
+            JsonNode fd = holder.path("totalPriceList").path(0).path("fd");
             for (var type : PAX_KEYS.entrySet()) {
                 JsonNode count = mix.path(type.getValue());
                 if (!count.isInt()) {
