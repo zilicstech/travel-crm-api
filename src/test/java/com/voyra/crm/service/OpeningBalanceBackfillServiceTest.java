@@ -142,4 +142,58 @@ class OpeningBalanceBackfillServiceTest {
         assertThat(posted).isZero();
         verify(journalService, never()).post(any());
     }
+
+    @Test
+    void previewListsOnlyNonZeroVariancesWithoutAnOpeningEntryAndPostsNothing() {
+        when(reconciliationService.reconcile()).thenReturn(List.of(
+                row("1200", "Accounts Receivable", "0.00", "100.00"),
+                row("2200", "Accounts Payable", "50.00", "50.00"),
+                row("1300", "Supplier Advances", "10.00", "0.00")));
+        when(journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(
+                JournalSourceType.OPENING_BALANCE, "1200", JournalPurpose.OPENING_BALANCE_POSTED)).thenReturn(Optional.empty());
+        when(journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(
+                JournalSourceType.OPENING_BALANCE, "1300", JournalPurpose.OPENING_BALANCE_POSTED))
+                .thenReturn(Optional.of(JournalEntry.builder().id("JE0").build()));
+
+        assertThat(backfillService.preview()).extracting(ControlAccountReconciliationRowResponse::getAccountCode).containsExactly("1200");
+        verify(journalService, never()).post(any());
+    }
+
+    @Test
+    void anAssetAboveItsSubsidiaryIsCreditedAndALiabilityAboveItIsDebited() {
+        when(reconciliationService.reconcile()).thenReturn(List.of(
+                row("1300", "Supplier Advances", "500.00", "200.00"),
+                row("2200", "Accounts Payable", "900.00", "100.00")));
+        when(ledgerAccountRepository.findByCode("1300"))
+                .thenReturn(Optional.of(LedgerAccount.builder().code("1300").accountType(LedgerAccountType.ASSET).build()));
+        when(ledgerAccountRepository.findByCode("2200"))
+                .thenReturn(Optional.of(LedgerAccount.builder().code("2200").accountType(LedgerAccountType.LIABILITY).build()));
+        when(journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(any(), any(), any())).thenReturn(Optional.empty());
+        when(journalService.post(any())).thenReturn(JournalEntry.builder().id("JE").build());
+
+        assertThat(backfillService.backfillCurrentTenant()).isEqualTo(2);
+
+        ArgumentCaptor<JournalPosting> captor = ArgumentCaptor.forClass(JournalPosting.class);
+        verify(journalService, org.mockito.Mockito.times(2)).post(captor.capture());
+        JournalPosting asset = captor.getAllValues().get(0);
+        assertThat(asset.lines().get(0).accountCode()).isEqualTo("1300");
+        assertThat(asset.lines().get(0).creditAmount()).isEqualByComparingTo("300.00");
+        assertThat(asset.lines().get(1).accountCode()).isEqualTo("3100");
+        assertThat(asset.lines().get(1).debitAmount()).isEqualByComparingTo("300.00");
+        JournalPosting liability = captor.getAllValues().get(1);
+        assertThat(liability.lines().get(0).debitAmount()).isEqualByComparingTo("800.00");
+        assertThat(liability.lines().get(1).creditAmount()).isEqualByComparingTo("800.00");
+        assertThat(liability.narration()).startsWith("Opening balance - Accounts Payable catch-up to subsidiary ledger as of ");
+    }
+
+    @Test
+    void aControlAccountMissingFromTheChartFails() {
+        when(reconciliationService.reconcile()).thenReturn(List.of(row("1200", "Accounts Receivable", "0.00", "1.00")));
+        when(journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(any(), any(), any())).thenReturn(Optional.empty());
+        when(ledgerAccountRepository.findByCode("1200")).thenReturn(Optional.empty());
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> backfillService.backfillCurrentTenant())
+                .isInstanceOf(IllegalStateException.class).hasMessage("Control account not found: 1200");
+        verify(journalService, never()).post(any());
+    }
 }
