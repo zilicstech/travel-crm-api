@@ -12,6 +12,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -42,20 +43,23 @@ public class HotelSearchService {
     private final HotelSearchProvider hotelSearchProvider;
     private final AgencyPriceQuoter quoter;
     private final Map<String, Result> results = new ConcurrentHashMap<>();
+    /** There is no Clock bean; tests set this to move time past the 30-minute keep. */
+    Clock clock = Clock.systemUTC();
 
     public HotelSearchPageResponse search(HotelSearchQuery query) {
         String tenantId = TenantContext.getTenantId();
         String searchId = query.getSearchId();
         Result result = searchId == null ? null : results.get(searchId);
-        if (result == null || !Objects.equals(result.tenantId(), tenantId) || result.at().plus(KEEP).isBefore(Instant.now())) {
-            results.values().removeIf(r -> r.at().plus(KEEP).isBefore(Instant.now()));
+        Instant now = clock.instant();
+        if (result == null || !Objects.equals(result.tenantId(), tenantId) || result.at().plus(KEEP).isBefore(now)) {
+            results.values().removeIf(r -> r.at().plus(KEEP).isBefore(now));
             // Bounded: a burst of searches drops the oldest kept result rather than growing without limit.
             if (results.size() >= MAX_KEPT) {
                 results.entrySet().stream().min(Map.Entry.comparingByValue(java.util.Comparator.comparing(Result::at)))
                         .ifPresent(e -> results.remove(e.getKey()));
             }
             searchId = UUID.randomUUID().toString();
-            result = new Result(tenantId, priced(tenantId, hotelSearchProvider.search(query)), Instant.now());
+            result = new Result(tenantId, priced(tenantId, hotelSearchProvider.search(query)), now);
             results.put(searchId, result);
         }
         int total = result.offers().size();

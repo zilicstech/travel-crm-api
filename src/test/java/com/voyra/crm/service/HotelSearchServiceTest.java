@@ -127,6 +127,27 @@ class HotelSearchServiceTest {
     }
 
     @Test
+    void aResultIsKeptForThirtyMinutesThenSearchedAgain() {
+        TenantContext.setTenantId("t1");
+        when(provider.search(any())).thenAnswer(i -> new java.util.ArrayList<HotelOfferResponse>());
+        java.time.Instant start = java.time.Instant.parse("2026-10-31T10:00:00Z");
+        service.clock = java.time.Clock.fixed(start, java.time.ZoneOffset.UTC);
+        String first = service.search(query(null, 0)).getSearchId();
+
+        service.clock = java.time.Clock.fixed(start.plus(java.time.Duration.ofMinutes(30)), java.time.ZoneOffset.UTC);
+        assertThat(service.search(query(first, 1)).getSearchId()).isEqualTo(first);
+        verify(provider, times(1)).search(any());
+
+        service.clock = java.time.Clock.fixed(start.plus(java.time.Duration.ofMinutes(31)), java.time.ZoneOffset.UTC);
+        String second = service.search(query(first, 1)).getSearchId();
+        assertThat(second).isNotEqualTo(first);
+        verify(provider, times(2)).search(any());
+        // the new result serves its later pages from memory
+        assertThat(service.search(query(second, 1)).getSearchId()).isEqualTo(second);
+        verify(provider, times(2)).search(any());
+    }
+
+    @Test
     void anUnknownSearchIdSearchesAgain() {
         TenantContext.setTenantId("t1");
         when(provider.search(any())).thenReturn(List.of());
