@@ -160,6 +160,8 @@ class AgencyControllersWebTest {
         mvc.perform(get("/api/agents").param("role", "ACCOUNTANT").param("page", "0").param("size", "10").with(as(UserType.AGENCY_OWNER)))
                 .andExpect(status().isOk());
         mvc.perform(get("/api/agents/A1").with(as(UserType.AGENCY_OWNER))).andExpect(status().isOk());
+        mvc.perform(get("/api/agents/me").with(as(UserType.AGENT))).andExpect(status().isOk());
+        mvc.perform(get("/api/agents/me").with(as(UserType.AGENCY_OWNER))).andExpect(status().isForbidden());
         mvc.perform(get("/api/agents/teammates").with(as(UserType.ACCOUNTANT))).andExpect(status().isOk());
         mvc.perform(json(put("/api/agents/A1"), "{\"name\":\"Agent B\"}").with(as(UserType.AGENCY_OWNER))).andExpect(status().isOk());
         mvc.perform(json(patch("/api/agents/A1/status"), "{\"isActive\":false}").with(as(UserType.AGENCY_OWNER))).andExpect(status().isOk());
@@ -172,6 +174,7 @@ class AgencyControllersWebTest {
         verify(agentService).listAgents(UserType.ACCOUNTANT, PageRequest.of(0, 10));
         verify(agentService).getAgent("A1");
         verify(agentService).listTeammates();
+        verify(agentService).getCurrentAgent();
         verify(agentService).updateAgent(eq("A1"), any());
         verify(agentService).updateStatus("A1", false);
         verify(agentService).removeAgent("A1");
@@ -196,7 +199,9 @@ class AgencyControllersWebTest {
     @Test
     void walletEntriesArePagedForTheCallersOwnAgency() throws Exception {
         mvc.perform(get("/api/wallet/entries").param("page", "2").param("size", "10").with(as(UserType.ACCOUNTANT))).andExpect(status().isOk());
+        mvc.perform(get("/api/wallet/entries").with(as(UserType.AGENCY_OWNER))).andExpect(status().isOk());
         verify(walletQueryService).entries(WebTestSupport.TENANT, PageRequest.of(2, 10));
+        verify(walletQueryService).entries(eq(WebTestSupport.TENANT), argThat(p -> p.getPageNumber() == 0));
     }
 
     @Test
