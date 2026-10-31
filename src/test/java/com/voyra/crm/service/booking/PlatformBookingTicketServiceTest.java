@@ -81,7 +81,7 @@ class PlatformBookingTicketServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new PlatformBookingTicketService(new PlatformBookingQueryService(bookings, events, tenants, agents, clients, paxCodec, objectMapper),
+        service = new PlatformBookingTicketService(new PlatformBookingQueryService(bookings, events, tenants, agents, clients, paxCodec, objectMapper, tickets),
                 bookings, tickets, tenants, authorResolver, logoLoader, paxCodec, objectMapper,
                 new com.voyra.crm.service.EntitlementService(subscriptions, transactionManager), mirrorService, transactionManager);
         com.voyra.crm.cache.TenantCache.remove("T1");

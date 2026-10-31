@@ -74,6 +74,9 @@ public class PlatformBookingResponse {
     @Schema(description = "CRM booking written for this ticket, once it exists", example = "b2d2e3f4-0000-0000-0000-000000000002")
     private String tenantBookingId;
 
+    @Schema(description = "The agency's current markup in rupees over the published fare (newest ticket download or Set markup; 0 when none)", example = "500.00")
+    private BigDecimal markup;
+
     @Schema(description = "Plain-language history; filled on the detail view only")
     private List<BookingTimelineLine> timeline;
 }

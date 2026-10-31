@@ -23,6 +23,7 @@ import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.ClientRepository;
 import com.voyra.crm.repository.PlatformBookingEventRepository;
 import com.voyra.crm.repository.PlatformBookingRepository;
+import com.voyra.crm.repository.PlatformBookingTicketRepository;
 import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.security.SecurityContextUtil;
@@ -38,6 +39,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
@@ -92,6 +94,10 @@ public class PlatformBookingQueryService {
     private final ClientRepository clientRepository;
     private final PaxCodec paxCodec;
     private final ObjectMapper objectMapper;
+    private final PlatformBookingTicketRepository ticketRepository;
+
+    /** Event recorded by Set markup; its payload {@code markup} competes with the newest ticket download by time. */
+    static final String MARKUP_SET = "MARKUP_SET";
 
     /** Owner and accountant see the agency's bookings; an agent sees only the ones they made. */
     public PagedResponse<PlatformBookingResponse> list(Integer page, Integer size) {
@@ -220,6 +226,7 @@ public class PlatformBookingQueryService {
         Map<String, String> agentNames = bookerNames(rows);
         Map<String, String> clientNames = names(rows, PlatformBooking::getClientId,
                 clientRepository::findAllById, Client::getId, Client::getName);
+        Map<String, BigDecimal> markups = currentMarkups(rows.stream().map(PlatformBooking::getId).toList());
         return rows.stream().<PlatformBookingResponse>map(b -> PlatformBookingResponse.builder()
                 .id(b.getId()).product(b.getProduct()).status(b.getStatus()).pnr(b.getPnr()).ticketNumbers(b.getTicketNumbers())
                 .publishedFare(b.getGross()).displayedFare(b.getDisplayed()).agencyEarns(agencyEarns(b)).itinerary(itinerary(b))
@@ -227,8 +234,29 @@ public class PlatformBookingQueryService {
                 .bookedByName(agentNames.get(b.getBookedBy())).clientName(clientNames.get(b.getClientId()))
                 .createdAt(b.getCreatedAt()).ticketedAt(b.getTicketedAt()).cancelRefund(b.getCancelRefund())
                 .supplierMessage(AgencySupplierMessage.of(b)).mirrorStatus(b.getMirrorStatus()).tenantBookingId(b.getTenantBookingId())
+                .markup(markups.getOrDefault(b.getId(), BigDecimal.ZERO))
                 .timeline(detail ? timeline(b) : null)
                 .build()).toList();
+    }
+
+    /** The booking's current markup (spec Part 3): the newer of its newest e-ticket download and its newest Set markup; 0 when neither. */
+    public BigDecimal currentMarkup(String platformBookingId) {
+        return currentMarkups(List.of(platformBookingId)).getOrDefault(platformBookingId, BigDecimal.ZERO);
+    }
+
+    /** {@link #currentMarkup} for several bookings in two queries; a booking with neither is absent. */
+    private Map<String, BigDecimal> currentMarkups(List<String> ids) {
+        record Mark(Instant at, BigDecimal markup) {
+        }
+        java.util.function.BinaryOperator<Mark> newer = (a, b) -> b.at().isAfter(a.at()) ? b : a;
+        Map<String, Mark> newest = new java.util.HashMap<>();
+        ticketRepository.findByPlatformBookingIdIn(ids).forEach(t ->
+                newest.merge(t.getPlatformBookingId(), new Mark(t.getCreatedAt(), t.getMarkup()), newer));
+        eventRepository.findByPlatformBookingIdInAndType(ids, MARKUP_SET).forEach(e ->
+                newest.merge(e.getPlatformBookingId(), new Mark(e.getCreatedAt(), new BigDecimal(e.getPayload().get("markup").toString())), newer));
+        Map<String, BigDecimal> out = new java.util.HashMap<>();
+        newest.forEach((id, m) -> out.put(id, m.markup()));
+        return out;
     }
 
     private List<PlatformAdminBookingResponse> adminViews(List<PlatformBooking> rows, boolean detail) {

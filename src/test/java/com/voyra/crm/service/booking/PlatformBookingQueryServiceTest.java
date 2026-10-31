@@ -56,12 +56,13 @@ class PlatformBookingQueryServiceTest {
     @Mock private TenantRepository tenants;
     @Mock private AgentRepository agents;
     @Mock private ClientRepository clients;
+    @Mock private com.voyra.crm.repository.PlatformBookingTicketRepository tickets;
 
     private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
     private final PaxCodec paxCodec = new PaxCodec(objectMapper, KEY);
 
     private PlatformBookingQueryService service() {
-        return new PlatformBookingQueryService(bookings, events, tenants, agents, clients, paxCodec, objectMapper);
+        return new PlatformBookingQueryService(bookings, events, tenants, agents, clients, paxCodec, objectMapper, tickets);
     }
 
     @AfterEach
@@ -137,6 +138,55 @@ class PlatformBookingQueryServiceTest {
 
         assertThat(r.getPublishedFare()).isEqualByComparingTo("5000.00");
         assertThat(r.getDisplayedFare()).isEqualByComparingTo("4500.00");
+    }
+
+    // ---- the current markup: the newer of the newest ticket download and the newest Set markup ----
+
+    private static com.voyra.crm.entity.PlatformBookingTicket download(String bookingId, String at, String markup) {
+        return com.voyra.crm.entity.PlatformBookingTicket.builder().platformBookingId(bookingId)
+                .createdAt(java.time.Instant.parse(at)).markup(new BigDecimal(markup)).build();
+    }
+
+    private static com.voyra.crm.entity.PlatformBookingEvent markupSet(String bookingId, String at, String markup) {
+        return com.voyra.crm.entity.PlatformBookingEvent.builder().platformBookingId(bookingId).type("MARKUP_SET")
+                .createdAt(java.time.Instant.parse(at)).payload(java.util.Map.of("markup", markup)).build();
+    }
+
+    @Test
+    void currentMarkupIsTheNewerOfTicketAndSetMarkup() {
+        // a Set markup after the last download wins
+        given(tickets.findByPlatformBookingIdIn(List.of("B1"))).willReturn(List.of(
+                download("B1", "2026-11-01T10:00:00Z", "100.00"), download("B1", "2026-11-01T11:00:00Z", "200.00")));
+        given(events.findByPlatformBookingIdInAndType(List.of("B1"), "MARKUP_SET")).willReturn(List.of(
+                markupSet("B1", "2026-11-01T12:00:00Z", "300.00"), markupSet("B1", "2026-11-01T09:00:00Z", "50.00")));
+        assertThat(service().currentMarkup("B1")).isEqualByComparingTo("300.00");
+
+        // a download after the Set markup wins
+        given(tickets.findByPlatformBookingIdIn(List.of("B2"))).willReturn(List.of(download("B2", "2026-11-01T13:00:00Z", "250.50")));
+        given(events.findByPlatformBookingIdInAndType(List.of("B2"), "MARKUP_SET")).willReturn(List.of(
+                markupSet("B2", "2026-11-01T12:00:00Z", "300.00")));
+        assertThat(service().currentMarkup("B2")).isEqualByComparingTo("250.50");
+
+        // neither: 0
+        assertThat(service().currentMarkup("B3")).isEqualByComparingTo("0");
+    }
+
+    @Test
+    void detailCarriesTheCurrentMarkup() {
+        login("O1", UserType.AGENCY_OWNER, "T1");
+        given(bookings.findByIdAndTenantId("B1", "T1")).willReturn(Optional.of(booking("B1", "T1", "O1")));
+        given(events.findByPlatformBookingIdInAndType(List.of("B1"), "MARKUP_SET")).willReturn(List.of(
+                markupSet("B1", "2026-11-01T12:00:00Z", "300.00")));
+
+        assertThat(service().get("B1").getMarkup()).isEqualByComparingTo("300.00");
+    }
+
+    @Test
+    void aBookingWithNoMarkupShowsZero() {
+        login("O1", UserType.AGENCY_OWNER, "T1");
+        given(bookings.findByIdAndTenantId("B1", "T1")).willReturn(Optional.of(booking("B1", "T1", "O1")));
+
+        assertThat(service().get("B1").getMarkup()).isZero();
     }
 
     /** R19: an owner's booking is booked by the owner (user id = tenant id), named from the agency, never "-". */

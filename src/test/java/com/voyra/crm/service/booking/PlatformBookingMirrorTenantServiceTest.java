@@ -11,7 +11,6 @@ import com.voyra.crm.entity.Agent;
 import com.voyra.crm.entity.Booking;
 import com.voyra.crm.entity.BookingDocument;
 import com.voyra.crm.entity.PlatformBooking;
-import com.voyra.crm.entity.PlatformBookingTicket;
 import com.voyra.crm.entity.SupplierInvoice;
 import com.voyra.crm.entity.Vendor;
 import com.voyra.crm.enums.BookingDocumentType;
@@ -28,7 +27,6 @@ import com.voyra.crm.models.ResolvedExchangeRate;
 import com.voyra.crm.repository.BookingDocumentRepository;
 import com.voyra.crm.repository.BookingRepository;
 import com.voyra.crm.repository.LeadServiceRepository;
-import com.voyra.crm.repository.PlatformBookingTicketRepository;
 import com.voyra.crm.repository.SupplierInvoiceRepository;
 import com.voyra.crm.repository.VendorRepository;
 import com.voyra.crm.service.BaseCurrency;
@@ -90,7 +88,7 @@ class PlatformBookingMirrorTenantServiceTest {
     @Mock private SupplierPaymentService supplierPaymentService;
     @Mock private VendorRepository vendorRepository;
     @Mock private LeadServiceRepository leadServiceRepository;
-    @Mock private PlatformBookingTicketRepository ticketRepository;
+    @Mock private PlatformBookingQueryService queryService;
     @Mock private ExchangeRateProvider exchangeRateProvider;
     @Spy private BaseCurrency baseCurrency = new BaseCurrency(null);
     @Mock private com.voyra.crm.repository.ClientRepository clientRepository;
@@ -108,6 +106,7 @@ class PlatformBookingMirrorTenantServiceTest {
 
     @BeforeEach
     void setUp() {
+        when(queryService.currentMarkup(anyString())).thenReturn(BigDecimal.ZERO);
         when(agentRepository.findByIdAndTenantId("A1", "T1")).thenReturn(Optional.of(Agent.builder().id("A1").build()));
         when(vendorRepository.findByIsSystemTrueAndIsActiveTrue())
                 .thenReturn(Optional.of(Vendor.builder().id("V-VOYRA").name("Voyra Platform").isActive(true).isSystem(true).build()));
@@ -233,9 +232,8 @@ class PlatformBookingMirrorTenantServiceTest {
     }
 
     @Test
-    void ensureCarriesTheNewestTicketMarkup() {
-        when(ticketRepository.findTopByPlatformBookingIdOrderBySeqDesc("PB1"))
-                .thenReturn(Optional.of(PlatformBookingTicket.builder().seq(2).markup(new BigDecimal("500.00")).build()));
+    void ensureCarriesTheCurrentMarkup() {
+        when(queryService.currentMarkup("PB1")).thenReturn(new BigDecimal("500.00")); // newest ticket download or Set markup
 
         service.ensure(platformBooking(), roundTrip(), null, pax());
 

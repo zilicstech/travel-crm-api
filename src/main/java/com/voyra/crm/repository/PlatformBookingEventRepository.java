@@ -11,6 +11,8 @@ public interface PlatformBookingEventRepository extends JpaRepository<PlatformBo
 
     List<PlatformBookingEvent> findByPlatformBookingIdOrderByCreatedAtAsc(String platformBookingId);
 
+    List<PlatformBookingEvent> findByPlatformBookingIdInAndType(java.util.Collection<String> platformBookingIds, String type);
+
     long countByPlatformBookingIdAndType(String platformBookingId, String type);
 
     long countByPlatformBookingIdAndTypeAndCreatedAtAfter(String platformBookingId, String type, Instant after);

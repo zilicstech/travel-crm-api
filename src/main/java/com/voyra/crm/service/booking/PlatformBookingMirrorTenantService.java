@@ -16,7 +16,6 @@ import com.voyra.crm.entity.BookingDocument;
 import com.voyra.crm.entity.Lead;
 import com.voyra.crm.entity.LeadService;
 import com.voyra.crm.entity.PlatformBooking;
-import com.voyra.crm.entity.PlatformBookingTicket;
 import com.voyra.crm.entity.SupplierInvoice;
 import com.voyra.crm.entity.Vendor;
 import com.voyra.crm.enums.BookingDocumentType;
@@ -32,7 +31,6 @@ import com.voyra.crm.exception.NotFoundException;
 import com.voyra.crm.repository.BookingDocumentRepository;
 import com.voyra.crm.repository.BookingRepository;
 import com.voyra.crm.repository.LeadServiceRepository;
-import com.voyra.crm.repository.PlatformBookingTicketRepository;
 import com.voyra.crm.repository.SupplierInvoiceRepository;
 import com.voyra.crm.repository.VendorRepository;
 import com.voyra.crm.security.SystemActor;
@@ -85,7 +83,7 @@ public class PlatformBookingMirrorTenantService {
     private final VendorRepository vendorRepository;
     private final LeadServiceRepository leadServiceRepository;
     private final SupplierInvoiceRepository supplierInvoiceRepository;
-    private final PlatformBookingTicketRepository ticketRepository;
+    private final PlatformBookingQueryService queryService;
     private final ExchangeRateProvider exchangeRateProvider;
     private final BaseCurrency baseCurrency;
     private final com.voyra.crm.repository.ClientRepository clientRepository;
@@ -98,7 +96,7 @@ public class PlatformBookingMirrorTenantService {
      * second sync waits, then finds this one's row) it returns the existing mirror, or writes it PENDING through
      * {@link BookingService#createVoyraPending}: the trip, the client, agent, lead and service, vendor Voyra Platform, and
      * one voucher bought in INR at the displayed fare (in the agency's base at today's rate, the only FX lookup) with the
-     * fare's base/tax split, priced at the published fare plus the newest ticket markup. No reference until it is ticketed.
+     * fare's base/tax split, priced at the published fare plus the current markup. No reference until it is ticketed.
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public String ensure(PlatformBooking pb, List<ItinerarySegment> segments, HotelStaySummary stay, List<PaxInput> passengers) {
@@ -130,7 +128,7 @@ public class PlatformBookingMirrorTenantService {
                 .docType(hotel ? BookingDocumentType.HOTEL_VOUCHER : BookingDocumentType.E_TICKET)
                 .netCost(net)
                 .markupMode(MarkupMode.FLAT)
-                .markupValue(markupBase(pb, newestTicketMarkup(pb), rate, base))
+                .markupValue(markupBase(pb, queryService.currentMarkup(pb.getId()), rate, base))
                 .purchaseCurrency(INR)
                 .purchasePrice(pb.getDisplayed())
                 .purchaseRate(rate)
@@ -194,11 +192,6 @@ public class PlatformBookingMirrorTenantService {
         details.put("hotelRoomType", r.getHotelRoomType());
         details.put("hotelBoardBasis", r.getHotelBoardBasis());
         return VoucherDetails.clean(BookingType.HOTEL, details);
-    }
-
-    private BigDecimal newestTicketMarkup(PlatformBooking pb) {
-        return ticketRepository.findTopByPlatformBookingIdOrderBySeqDesc(pb.getId())
-                .map(PlatformBookingTicket::getMarkup).orElse(BigDecimal.ZERO);
     }
 
     /** The FLAT markup in base that makes the selling price the published fare plus {@code ticketMarkup} (spec Part 3). */

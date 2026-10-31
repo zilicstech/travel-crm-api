@@ -715,6 +715,20 @@ class PlatformBookingServiceTest {
         org.mockito.InOrder order = inOrder(entitlementService, mirrorService);
         order.verify(entitlementService).assertWritable(T);
         order.verify(mirrorService).setMarkup(b, new BigDecimal("250.50"));
+        assertThat(savedEvents).filteredOn(e -> e.getType().equals("MARKUP_SET")).singleElement()
+                .satisfies(e -> assertThat(e.getPayload()).containsEntry("markup", "250.50"));
+    }
+
+    /** A refused CRM reprice leaves no MARKUP_SET, so the current markup (and the next download's prefill) stays as it was. */
+    @Test
+    void aRefusedSetMarkupRecordsNoEvent() {
+        String id = ticketedWithCrmRow();
+        crmPlan(true);
+        org.mockito.Mockito.doThrow(new BookingConflictException("PRICE_BELOW_INVOICED", "below", Map.of()))
+                .when(mirrorService).setMarkup(any(), any());
+
+        assertThatThrownBy(() -> service.setMarkup(id, BigDecimal.ONE)).isInstanceOf(BookingConflictException.class);
+        assertThat(savedEvents).noneMatch(e -> e.getType().equals("MARKUP_SET"));
     }
 
     @Test

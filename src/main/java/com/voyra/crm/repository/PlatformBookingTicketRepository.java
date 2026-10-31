@@ -17,6 +17,8 @@ public interface PlatformBookingTicketRepository extends JpaRepository<PlatformB
     /** The newest download, whose markup is the booking's markup. */
     Optional<PlatformBookingTicket> findTopByPlatformBookingIdOrderBySeqDesc(String platformBookingId);
 
+    List<PlatformBookingTicket> findByPlatformBookingIdIn(java.util.Collection<String> platformBookingIds);
+
     List<PlatformBookingTicket> findByPlatformBookingIdAndTenantIdOrderBySeqDesc(String platformBookingId, String tenantId);
 
     /** A ticket id under another booking or agency is simply absent (404). */

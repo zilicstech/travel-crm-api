@@ -459,6 +459,8 @@ public class PlatformBookingService {
         }
         entitlementService.assertWritable(b.getTenantId());
         mirrorService.setMarkup(b, m);
+        // the current markup the next ticket download opens with (PlatformBookingQueryService#currentMarkup)
+        tx.executeWithoutResult(s -> events.record(bookingId, PlatformBookingQueryService.MARKUP_SET, Map.of("markup", m.toPlainString())));
         log.info("Platform booking {} CRM markup set: markup={}", bookingId, m);
         return b;
     }
