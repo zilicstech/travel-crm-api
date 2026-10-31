@@ -1195,22 +1195,16 @@ public class BookingService {
                 AuditSnapshot.diff(before, AuditSnapshot.of(booking, AUDITED)));
     }
 
-    /** A standalone booking is gated by its own type, as a service-linked one is by its service: the
-     *  agent it belongs to must handle that type, whoever creates it (an owner booking "for" an agent
-     *  included). PACKAGE has no service type. */
+    /** A standalone booking is gated by its own type, as a service-linked one is by its service: the agent
+     *  creating it must handle that type (an owner handles every type). PACKAGE has no service type. */
     private void assertAgentHandlesStandaloneType(BookingType type, String agentId) {
         ServiceType serviceType = type != null ? ServiceBookingTypeMapper.forBooking(type) : null;
         if (serviceType == null) {
             return;
         }
-        Agent agent = agentRepository.findById(agentId).orElse(null);
-        List<ServiceType> handled = agent != null ? agent.getManageableServices() : null;
+        List<ServiceType> handled = agentRepository.findById(agentId).map(Agent::getManageableServices).orElse(null);
         if (handled == null || !handled.contains(serviceType)) {
-            if (SecurityContextUtil.getCurrentUserOrThrow().isAgent()) {
-                throw new AccessDeniedException("You don't handle " + serviceType + " - only agents who do can create a " + serviceType + " booking");
-            }
-            throw new IllegalArgumentException((agent != null ? agent.getName() : "That agent") + " doesn't handle "
-                    + serviceType + " - pick an agent who does");
+            throw new AccessDeniedException("You don't handle " + serviceType + " - only agents who do can create a " + serviceType + " booking");
         }
     }
 

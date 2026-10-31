@@ -454,6 +454,19 @@ class BookingServiceCoverageTest {
     }
 
     @Test
+    void systemActorWithNullAgentIdResolvesOwner() {
+        ownerOfTenant();
+        clientFound();
+        org.mockito.Mockito.doReturn("INR").when(baseCurrency).code();
+        BookingCreateRequest r = request(BookingType.FLIGHT);
+        r.setAgentId(null);
+
+        SystemActor.call("T1", () -> bookingService.createBooking(r));
+
+        verify(agentRepository, never()).findByIdAndTenantId(any(), any());
+    }
+
+    @Test
     void systemActorWithAgentIdResolvesAgent() {
         Agent priya = agent("A1", "Priya", List.of());
         when(agentRepository.findByIdAndTenantId("A1", "T1")).thenReturn(Optional.of(priya));
@@ -474,6 +487,23 @@ class BookingServiceCoverageTest {
         r.setAgentId("A9");
         assertThatThrownBy(() -> SystemActor.call("T1", () -> bookingService.createBooking(r)))
                 .isInstanceOf(IllegalArgumentException.class).hasMessage("Agent not found in this agency: A9");
+    }
+
+    @Test
+    void anAgentCannotBookATypeTheyDoNotHandle() {
+        ownerPicks(agent("A1", "Priya", List.of(ServiceType.VISA)));
+
+        assertThatThrownBy(() -> bookingService.createBooking(request(BookingType.FLIGHT)))
+                .isInstanceOf(AccessDeniedException.class).hasMessageContaining("You don't handle FLIGHT");
+    }
+
+    @Test
+    void anAgentMayBookATypeTheyHandle() {
+        ownerPicks(agent("A1", "Priya", List.of(ServiceType.FLIGHT)));
+        clientFound();
+        org.mockito.Mockito.doReturn("INR").when(baseCurrency).code();
+
+        assertThat(bookingService.createBooking(request(BookingType.FLIGHT)).getAgentId()).isEqualTo("A1");
     }
 
     @Test

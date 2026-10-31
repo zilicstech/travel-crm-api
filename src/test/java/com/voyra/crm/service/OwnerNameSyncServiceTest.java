@@ -44,6 +44,16 @@ class OwnerNameSyncServiceTest {
     }
 
     @Test
+    void aBlankPreviousTenantIsClearedNotRestored() {
+        when(tx.getTransaction(any())).thenReturn(mock(TransactionStatus.class));
+        TenantContext.setTenantId(" ");
+
+        sync.resync("T1", "X");
+
+        assertThat(TenantContext.getTenantId()).isNull();
+    }
+
+    @Test
     void clearsTheTenantWhenThereWasNoneAndEvenWhenTheUpdateFails() {
         when(tx.getTransaction(any())).thenReturn(mock(TransactionStatus.class));
         doThrow(new IllegalStateException("boom")).when(bookings).updateAgentNameForAgent("T1", "X");
