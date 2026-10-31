@@ -97,6 +97,24 @@ class ForexRevaluationTenantServiceTest {
     }
 
     @Test
+    void aBillWithNoSupplierNumberIsNamedByItsIdInTheNarration() {
+        SupplierInvoice bill = openForeignBill(new BigDecimal("100.00"), new BigDecimal("83.000000"));
+        bill.setSupplierInvoiceNumber(null);
+        when(supplierInvoiceRepository.findByCurrencyCodeNotAndBalanceDueGreaterThanAndStatusIn(
+                eq("INR"), eq(BigDecimal.ZERO), any())).thenReturn(List.of(bill));
+        stubNoPriorRevaluation();
+        when(exchangeRateProvider.resolve("USD", "INR", MONTH_END))
+                .thenReturn(new ResolvedExchangeRate(new BigDecimal("85.000000"), FxRateSource.DAILY_TABLE, MONTH_END));
+        when(journalService.post(any())).thenReturn(JournalEntry.builder().id("JE1").build());
+
+        revaluationService.revalueOpenForeignBills(MONTH_END);
+
+        ArgumentCaptor<JournalPosting> captor = ArgumentCaptor.forClass(JournalPosting.class);
+        verify(journalService).post(captor.capture());
+        assertThat(captor.getValue().narration()).isEqualTo("Unrealized forex revaluation - bill SI1 as of 2026-09-30");
+    }
+
+    @Test
     void aRateFallOnAnOpenForeignBillPostsAnUnrealizedGain() {
         when(supplierInvoiceRepository.findByCurrencyCodeNotAndBalanceDueGreaterThanAndStatusIn(
                 eq("INR"), eq(BigDecimal.ZERO), any())).thenReturn(List.of(openForeignBill(new BigDecimal("100.00"), new BigDecimal("83.000000"))));

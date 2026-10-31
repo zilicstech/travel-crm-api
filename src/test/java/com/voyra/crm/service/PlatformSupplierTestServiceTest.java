@@ -85,6 +85,17 @@ class PlatformSupplierTestServiceTest {
     }
 
     @Test
+    void aFailureWithNoMessageIsNamedByItsType() {
+        when(flightProvider.getIfAvailable()).thenReturn(tripjack);
+        when(tripjack.search(any(), eq(ROW))).thenThrow(new NullPointerException());
+
+        SupplierTestResult result = service().testCall("C1");
+
+        assertThat(result.isOk()).isFalse();
+        assertThat(result.getMessage()).isEqualTo("NullPointerException");
+    }
+
+    @Test
     void mockSupplierReportsDisabledWithoutCallingAnything() {
         when(flightProvider.getIfAvailable()).thenReturn(null);
 

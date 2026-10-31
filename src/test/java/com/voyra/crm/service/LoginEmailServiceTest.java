@@ -50,6 +50,12 @@ class LoginEmailServiceTest {
     }
 
     @Test
+    void noEmailIsNotLookedUp() {
+        assertThatCode(() -> loginEmailService.assertFree(null)).doesNotThrowAnyException();
+        org.mockito.Mockito.verifyNoInteractions(tenantRepository, agentRepository, platformAdminRepository);
+    }
+
+    @Test
     void aFreshEmailPasses() {
         assertThatCode(() -> loginEmailService.assertFree("new@x.com")).doesNotThrowAnyException();
     }

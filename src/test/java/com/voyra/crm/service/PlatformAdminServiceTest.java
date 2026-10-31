@@ -173,6 +173,15 @@ class PlatformAdminServiceTest {
     }
 
     @Test
+    void reactivatingAnActiveAdminChangesNothing() {
+        admin("SA1", true);
+
+        assertThat(service.reactivate("SA1").isActive()).isTrue();
+        verify(repository, never()).save(any());
+        verify(auditService, never()).record(any(), anyString(), anyString(), anyMap());
+    }
+
+    @Test
     void unknownAdminIs404() {
         admin("SA1", true);
         assertThatThrownBy(() -> service.deactivate("NOPE")).isInstanceOf(NotFoundException.class);
