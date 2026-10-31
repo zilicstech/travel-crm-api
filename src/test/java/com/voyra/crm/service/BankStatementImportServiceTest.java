@@ -113,4 +113,67 @@ class BankStatementImportServiceTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Only CSV");
     }
+
+    @Test
+    void anUnknownAccountOrProfileIsRefused() {
+        when(bankAccountRepository.findById("BA9")).thenReturn(Optional.empty());
+        when(bankAccountRepository.findById("BA1")).thenReturn(Optional.of(BankAccount.builder().id("BA1").build()));
+        when(bankStatementProfileRepository.findById("P9")).thenReturn(Optional.empty());
+        org.springframework.mock.web.MockMultipartFile file = new org.springframework.mock.web.MockMultipartFile("file", "s.csv", "text/csv", new byte[]{1});
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> importService.importStatement("BA9", "P1", file))
+                .hasMessage("Bank account not found: BA9");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> importService.importStatement("BA1", "P9", file))
+                .hasMessage("Statement profile not found: P9");
+        org.mockito.Mockito.verifyNoInteractions(fileStorageService);
+    }
+
+    @Test
+    void aCsvStatementIsStoredParsedAndALineLostToARaceIsCountedAsADuplicate() {
+        BankAccount account = BankAccount.builder().id("BA1").accountName("HDFC Current").build();
+        BankStatementProfile profile = BankStatementProfile.builder().id("P1").fileFormat("csv").amountConvention(BankAmountConvention.SINGLE_SIGNED).build();
+        when(bankAccountRepository.findById("BA1")).thenReturn(Optional.of(account));
+        when(bankStatementProfileRepository.findById("P1")).thenReturn(Optional.of(profile));
+        byte[] bytes = "date,amount\n".getBytes();
+        org.springframework.mock.web.MockMultipartFile file = new org.springframework.mock.web.MockMultipartFile("file", "s.csv", "text/csv", bytes);
+        when(fileStorageService.store(org.mockito.ArgumentMatchers.eq("T1"), org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.eq("BA1"), org.mockito.ArgumentMatchers.eq(file))).thenReturn("key-1");
+        ParsedBankLine line = new ParsedBankLine(LocalDate.of(2026, 9, 21), LocalDate.of(2026, 9, 21), "NEFT", "REF9",
+                new BigDecimal("700.00"), BankTransactionDirection.CREDIT, null);
+        when(csvStatementParser.parse(bytes, profile)).thenReturn(new StatementParseResult(List.of(line), List.of()));
+        when(bankTransactionRepository.findByBankAccountIdAndTxnDateAndAmountAndBankReference("BA1", line.txnDate(), line.amount(), "REF9"))
+                .thenReturn(Optional.empty());
+        when(bankTransactionRepository.save(org.mockito.ArgumentMatchers.any()))
+                .thenThrow(new org.springframework.dao.DataIntegrityViolationException("duplicate key"));
+        when(bankMatchingService.runTier1(List.of())).thenReturn(0);
+
+        var outcome = importService.importStatement("BA1", "P1", file);
+
+        assertThat(outcome.rowsSaved()).isZero();
+        assertThat(outcome.duplicatesSkipped()).isEqualTo(1);
+        org.mockito.ArgumentCaptor<com.voyra.crm.entity.BankStatementImport> saved = org.mockito.ArgumentCaptor.forClass(com.voyra.crm.entity.BankStatementImport.class);
+        org.mockito.Mockito.verify(bankStatementImportRepository).save(saved.capture());
+        assertThat(saved.getValue().getStorageKey()).isEqualTo("key-1");
+        assertThat(saved.getValue().getFileName()).isEqualTo("s.csv");
+        assertThat(saved.getValue().getDuplicateCount()).isEqualTo(1);
+    }
+
+    @Test
+    void aFileThatCannotBeReadAfterStoringFailsLoudly() {
+        BankStatementProfile profile = BankStatementProfile.builder().id("P1").fileFormat("CSV").build();
+        when(bankAccountRepository.findById("BA1")).thenReturn(Optional.of(BankAccount.builder().id("BA1").build()));
+        when(bankStatementProfileRepository.findById("P1")).thenReturn(Optional.of(profile));
+        org.springframework.mock.web.MockMultipartFile file = new org.springframework.mock.web.MockMultipartFile("file", "s.csv", "text/csv", new byte[]{1}) {
+            @Override
+            public byte[] getBytes() throws java.io.IOException {
+                throw new java.io.IOException("gone");
+            }
+        };
+        when(fileStorageService.store(org.mockito.ArgumentMatchers.eq("T1"), org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.eq("BA1"), org.mockito.ArgumentMatchers.eq(file))).thenReturn("key-1");
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> importService.importStatement("BA1", "P1", file))
+                .isInstanceOf(java.io.UncheckedIOException.class);
+        org.mockito.Mockito.verifyNoInteractions(csvStatementParser);
+    }
 }
