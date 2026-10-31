@@ -233,6 +233,18 @@ class WalletQueryServiceTest {
     }
 
     @Test
+    void csvWritesBlankCellsForAnEntryWithNoNarrationOrAuthor() {
+        given(walletRepository.findByTenantId("T1")).willReturn(Optional.of(wallet()));
+        WalletEntry bare = entry("E1", "TOPUP", null);
+        bare.setCreatedByName(null);
+        given(entryRepository.findByWalletIdOrderByCreatedAtDescIdDesc(eq("W1"), any(Pageable.class))).willReturn(List.of(bare));
+
+        String[] lines = service.csv("T1").split("\n");
+
+        assertThat(lines[1]).isEqualTo("2026-10-25T10:00:00Z,TOPUP,100.00,1000.00,300.00,700.00,,");
+    }
+
+    @Test
     void aWriteToAMissingWalletIsNotFound() {
         given(walletRepository.findByTenantIdForUpdate("T9")).willReturn(Optional.empty());
         assertThatThrownBy(() -> service.setThreshold("T9", BigDecimal.TEN)).isInstanceOf(NotFoundException.class)

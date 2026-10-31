@@ -167,8 +167,9 @@ public class WalletQueryService {
                 .createdByName(e.getCreatedByName()).createdAt(e.getCreatedAt()).build();
     }
 
-    /** Stops spreadsheet apps running a typed narration or name as a formula. */
+    /** A blank cell for a missing value; stops spreadsheet apps running a typed narration or name as a formula. */
     private static String safe(String value) {
-        return value != null && !value.isEmpty() && "=+@".indexOf(value.charAt(0)) >= 0 ? "'" + value : value;
+        if (value == null) return "";
+        return !value.isEmpty() && "=+@".indexOf(value.charAt(0)) >= 0 ? "'" + value : value;
     }
 }
