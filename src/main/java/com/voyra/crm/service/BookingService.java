@@ -835,10 +835,10 @@ public class BookingService {
         return b.getSupplier() != null ? b.getSupplier() : type.charAt(0) + type.substring(1).toLowerCase();
     }
 
-    /** The free-text supplier as given, else the picked Vendor's name, so the booking always shows who it is with. */
+    /** The free-text supplier as given, else the picked Vendor's name, so the booking always shows who it is with; a blank one is none. */
     private String supplierName(String supplier, String vendorId) {
         if (supplier != null && !supplier.isBlank()) return supplier;
-        if (vendorId == null || vendorId.isBlank()) return supplier;
+        if (vendorId == null || vendorId.isBlank()) return null;
         return vendorRepository.findById(vendorId).map(Vendor::getName).orElse(null);
     }
 

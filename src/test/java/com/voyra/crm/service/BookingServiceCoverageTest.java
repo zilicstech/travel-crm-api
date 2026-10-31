@@ -326,6 +326,24 @@ class BookingServiceCoverageTest {
     }
 
     @Test
+    void aBlankSupplierWithNoVendorIsStoredAsNoneAndTheTimelineNamesTheType() {
+        ownerPicks(agent("A1", "Priya", List.of()));
+        clientFound();
+        LeadService visa = LeadService.builder().id("S1").leadId("L1").type(ServiceType.VISA).label("Dubai visa").build();
+        when(leadServiceRepository.findById("S1")).thenReturn(Optional.of(visa));
+        BookingCreateRequest r = request(BookingType.VISA);
+        r.setServiceId("S1");
+        r.setSupplier(" ");
+
+        bookingService.createBooking(r);
+
+        ArgumentCaptor<Booking> saved = ArgumentCaptor.forClass(Booking.class);
+        verify(bookingRepository).save(saved.capture());
+        assertThat(saved.getValue().getSupplier()).isNull();
+        verify(leadTimelineService).record("L1", "S1", LeadTimelineEventType.BOOKING_LOGGED, "Visa booking logged");
+    }
+
+    @Test
     void loggingOnAnAssignedServiceKeepsItsAgentAndNamesThePnr() {
         ownerPicks(agent("A1", "Priya", List.of()));
         clientFound();
@@ -1416,7 +1434,7 @@ class BookingServiceCoverageTest {
         r.setVendorId(" ");
         r.setLeadId(" ");
         BookingResponse blank = bookingService.createBooking(r);
-        assertThat(blank.getSupplier()).isEqualTo(" ");
+        assertThat(blank.getSupplier()).isNull();
         assertThat(blank.getLeadId()).isNull();
         verifyNoInteractions(leadRepository);
         verify(vendorRepository, times(1)).findById(any());
