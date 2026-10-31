@@ -329,6 +329,27 @@ class BookingLifecycleServiceTest {
 
 
     @Test
+    void recordingAPaymentWhileVoyraIsBookingIs409() {
+        Booking b = booking(BookingStatus.PENDING);
+        b.setPlatformBookingId("PB1");
+        stubBooking(b);
+
+        assertThatThrownBy(() -> service.recordPayment("B1", payment("4000")))
+                .isInstanceOf(com.voyra.crm.exception.BookingConflictException.class)
+                .hasMessage("Voyra is still booking this; bill and collect once it is confirmed")
+                .extracting("code").isEqualTo("WAITING_FOR_VOYRA");
+        verify(paymentReceiptService, never()).record(any());
+    }
+
+    @Test
+    void noRecordPaymentActionWhileVoyraIsBooking() {
+        Booking b = booking(BookingStatus.PENDING);
+        b.setPlatformBookingId("PB1");
+        assertThat(BookingLifecycleService.build(facts(b, 0, List.of(), List.of(), "0"), Viewer.ACCOUNTANT).getAllowedActions())
+                .doesNotContain("RECORD_PAYMENT");
+    }
+
+    @Test
     void paymentBeforeAnyInvoiceIsHeldOnTheClientsAccount() {
         stubBooking(booking(BookingStatus.CONFIRMED));
 

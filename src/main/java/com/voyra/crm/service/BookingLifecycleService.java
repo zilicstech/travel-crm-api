@@ -114,6 +114,10 @@ public class BookingLifecycleService {
     @Transactional
     public BookingLifecycleResponse recordPayment(String bookingId, BookingPaymentRequest request) {
         Booking booking = lockAccessible(bookingId);
+        if (BookingService.waitingForVoyra(booking)) {
+            throw new com.voyra.crm.exception.BookingConflictException("WAITING_FOR_VOYRA",
+                    "Voyra is still booking this; bill and collect once it is confirmed", Map.of());
+        }
         List<Invoice> issued = liveTaxInvoices(booking.getId()).stream()
                 .filter(i -> i.getStatus() != InvoiceLifecycle.DRAFT).toList();
         // On an invoice that also bills other bookings, a payment for this one settles only its own account, even
@@ -304,7 +308,7 @@ public class BookingLifecycleService {
         }
         // Only while something is still to collect: invoiced and unpaid, not invoiced yet (held as an advance until the
         // invoice), a voucher added since the last invoice, or a cancelled booking's charges. A fully paid booking has none.
-        if (accounts && toCollect.signum() > 0) actions.add(RECORD_PAYMENT);
+        if (accounts && toCollect.signum() > 0 && !BookingService.waitingForVoyra(b)) actions.add(RECORD_PAYMENT);
         if (accounts && cancelled && clientRefundOpen) actions.add(REFUND_CLIENT);
         if (ops && cancelled && supplierRefundOpen && claim == null) actions.add(SUPPLIER_REFUND);
         if (accounts && cancelled && claim != null) {

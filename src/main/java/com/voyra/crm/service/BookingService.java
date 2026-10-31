@@ -395,6 +395,11 @@ public class BookingService {
         }
     }
 
+    /** A Voyra booking the platform has not ticketed yet: no client money moves until it is confirmed. */
+    static boolean waitingForVoyra(Booking b) {
+        return b.getPlatformBookingId() != null && b.getBookingStatus() == BookingStatus.PENDING;
+    }
+
     /** Cancelled by {@link #failVoyraBooking} (never by its reason text): the platform did it and no cancellation money was set. */
     static boolean isFailCancelled(Booking b) {
         return b.getBookingStatus() == BookingStatus.CANCELLED && b.getPlatformBookingId() != null

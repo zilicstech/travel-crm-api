@@ -676,6 +676,16 @@ class InvoiceDocumentServiceTest {
     }
 
     @Test
+    void draftingAnInvoiceForAPendingVoyraBookingIsRefused() {
+        Booking pending = flight("B3", 44, "K1", "V1", "5000", "4000");
+        pending.setBookingStatus(BookingStatus.PENDING);
+        pending.setPlatformBookingId("PB1");
+        when(bookingRepository.findByIdForUpdate("B3")).thenReturn(Optional.of(pending));
+        assertThatThrownBy(() -> invoiceDocumentService.createDrafts(List.of("B3")))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("isn't confirmed");
+    }
+
+    @Test
     void aBookingAlreadyOnADraftIsNotDraftedAgain() {
         twoFlights(flight("B1", 42, "K1", "V1", "107800", "105800"), flight("B2", 43, "K1", "V1", "10000", "9000"));
         org.mockito.Mockito.lenient().when(invoiceRepository.findDraftsForBooking("B2")).thenReturn(List.of(Invoice.builder().id("D1").build()));

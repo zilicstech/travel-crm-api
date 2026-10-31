@@ -41,6 +41,15 @@ class BookingNextStepTest {
     }
 
     @Test
+    void nextStepSaysWaitingForVoyra() {
+        Booking b = booking(BookingStatus.PENDING);
+        b.setPlatformBookingId("PB1");
+        assertThat(BookingNextStep.of(b, 0, "INR")).isEqualTo("Waiting for Voyra");
+        b.setBookingStatus(BookingStatus.CONFIRMED);
+        assertThat(BookingNextStep.of(b, 0, "INR")).isEqualTo("Upload voucher");
+    }
+
+    @Test
     void cancelledBookingsPointAtTheRefunds() {
         Booking b = booking(BookingStatus.CANCELLED);
         b.setCustomerRefundDue(d("7500"));
