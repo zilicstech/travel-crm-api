@@ -567,6 +567,111 @@ class PlatformBookingServiceTest {
         assertThat(b.getMirrorStatus()).isEqualTo(com.voyra.crm.enums.MirrorStatus.NONE);
     }
 
+    // ---- the CRM mirror is queued on every status move from BOOKING on ----
+
+    private String reviewedForClient() {
+        FlightReviewRequest request = reviewRequest();
+        request.setClientId("C1");
+        return service.review(request).getBookingId();
+    }
+
+    private List<Object> queuedStatuses(String id) {
+        return savedEvents.stream().filter(e -> e.getType().equals("MIRROR_QUEUED") && id.equals(e.getPlatformBookingId()))
+                .map(e -> e.getPayload().get("status")).toList();
+    }
+
+    private static BookResult pending() {
+        return new BookResult("SB-1", SupplierBookingStatus.PENDING, null, List.of(), "Pending", null);
+    }
+
+    /** The move to BOOKING commits PENDING and its MIRROR_QUEUED event before the supplier is called. */
+    @Test
+    void markBookingQueuesTheMirror() {
+        String id = reviewedForClient();
+        List<Object> seenAtBook = new ArrayList<>();
+        when(provider.book(any())).thenAnswer(i -> {
+            seenAtBook.add(rows.get(id).getStatus());
+            seenAtBook.add(rows.get(id).getMirrorStatus());
+            seenAtBook.addAll(queuedStatuses(id));
+            return ticketed(null);
+        });
+
+        service.confirm(id, confirmRequest("key-00000001", "4500.00"));
+
+        assertThat(seenAtBook).containsExactly(PlatformBookingStatus.BOOKING, com.voyra.crm.enums.MirrorStatus.PENDING, "BOOKING");
+        assertThat(queuedStatuses(id)).containsExactly("BOOKING", "TICKETED");
+    }
+
+    @Test
+    void confirmSyncsAfterTheBookCallNotBefore() {
+        String id = reviewedForClient();
+        when(provider.book(any())).thenReturn(pending());
+
+        PlatformBooking b = service.confirm(id, confirmRequest("key-00000001", "4500.00"));
+
+        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.BOOKING);
+        org.mockito.InOrder order = inOrder(provider, mirrorService);
+        order.verify(provider).book(any());
+        order.verify(mirrorService).sync(id);
+        verify(mirrorService, times(1)).sync(id);
+    }
+
+    @Test
+    void confirmSyncsEvenWhenTheBookCallHasNoAnswer() {
+        String id = reviewedForClient();
+        when(provider.book(any())).thenThrow(new SupplierTimeoutException("timed out", null));
+
+        PlatformBooking b = service.confirm(id, confirmRequest("key-00000001", "4500.00"));
+
+        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.BOOKING);
+        assertThat(b.getMirrorStatus()).isEqualTo(com.voyra.crm.enums.MirrorStatus.PENDING);
+        org.mockito.InOrder order = inOrder(provider, mirrorService);
+        order.verify(provider).book(any());
+        order.verify(mirrorService).sync(id);
+    }
+
+    @Test
+    void aFailedAnswerQueuesTheMirrorAndSyncs() {
+        String id = reviewedForClient();
+        when(provider.book(any())).thenReturn(new BookResult("SB-1", SupplierBookingStatus.FAILED, null, List.of(), "No seats", null));
+
+        PlatformBooking b = service.confirm(id, confirmRequest("key-00000001", "4500.00"));
+
+        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.FAILED);
+        assertThat(b.getMirrorStatus()).isEqualTo(com.voyra.crm.enums.MirrorStatus.PENDING);
+        assertThat(queuedStatuses(id)).containsExactly("BOOKING", "FAILED");
+        verify(mirrorService, times(2)).sync(id); // after the book call, then after the FAILED move committed
+    }
+
+    @Test
+    void anAdminFailedResolveSyncs() {
+        String id = reviewedForClient();
+        when(provider.book(any())).thenThrow(new SupplierTimeoutException("timed out", null));
+        service.confirm(id, confirmRequest("key-00000001", "4500.00"));
+        rows.get(id).setMirrorStatus(com.voyra.crm.enums.MirrorStatus.DONE); // the PENDING CRM row was written
+        org.mockito.Mockito.clearInvocations(mirrorService);
+        loginAsPlatformAdmin();
+
+        PlatformBooking b = service.resolve(id, PlatformBookingStatus.FAILED, null, null, "Tripjack has no such booking");
+
+        assertThat(b.getMirrorStatus()).isEqualTo(com.voyra.crm.enums.MirrorStatus.PENDING);
+        assertThat(queuedStatuses(id)).containsExactly("BOOKING", "FAILED");
+        verify(mirrorService).sync(id);
+    }
+
+    @Test
+    void aRowWithoutAClientIsNeverQueued() {
+        String id = reviewed();
+        rows.get(id).setClientId(null);
+        when(provider.book(any())).thenReturn(new BookResult("SB-1", SupplierBookingStatus.FAILED, null, List.of(), "No seats", null));
+
+        PlatformBooking b = service.confirm(id, confirmRequest("key-00000001", "4500.00"));
+
+        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.FAILED);
+        assertThat(b.getMirrorStatus()).isEqualTo(com.voyra.crm.enums.MirrorStatus.NONE);
+        assertThat(queuedStatuses(id)).isEmpty();
+    }
+
     @Test
     void ticketedWithoutCommissionPostsOnlyTheDebit() {
         when(quoter.quote(eq(T), eq(PricingProduct.FLIGHT), any(), any())).thenReturn(quote("P1", "4500.00", "0.00", "0.00"));
@@ -1178,7 +1283,7 @@ class PlatformBookingServiceTest {
         assertThat(sent.getValue().leadPan()).isEqualTo("ABCDE1234F");
         assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
         assertThat(b.getMirrorStatus()).isEqualTo(com.voyra.crm.enums.MirrorStatus.PENDING);
-        verify(mirrorService).sync(id);
+        verify(mirrorService, times(2)).sync(id); // after the book call (BOOKING) and after the ticket
         verify(walletService).debitHeld("H1", new BigDecimal("4500.00"), "pb-debit:" + id, REF, id);
         verify(walletService).credit(eq(T), eq(WalletEntryType.COMMISSION_CREDIT), any(), eq("pb-comm:" + id), eq(REF), eq(id),
                 contains("hotel booking"));

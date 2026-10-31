@@ -30,7 +30,7 @@ public class PlatformBookingMirrorRepairJob {
     @Scheduled(cron = "${app.flight-booking.mirror-repair.cron:0 */10 * * * *}")
     public void run() {
         for (PlatformBooking b : repository.findByMirrorStatusIn(TO_REPAIR)) {
-            if (eventRepository.countByPlatformBookingIdAndType(b.getId(), "MIRROR_FAILED") >= MAX_ATTEMPTS) {
+            if (attempts(b.getId()) >= MAX_ATTEMPTS) {
                 continue;
             }
             try {
@@ -39,5 +39,12 @@ public class PlatformBookingMirrorRepairJob {
                 log.error("Mirror repair of platform booking {} failed: {}", b.getId(), e.getMessage(), e);
             }
         }
+    }
+
+    /** MIRROR_FAILED events since the newest MIRROR_QUEUED (each status move), so the cap is per status, not per row. */
+    private long attempts(String id) {
+        return eventRepository.findFirstByPlatformBookingIdAndTypeOrderByCreatedAtDesc(id, "MIRROR_QUEUED")
+                .map(q -> eventRepository.countByPlatformBookingIdAndTypeAndCreatedAtAfter(id, "MIRROR_FAILED", q.getCreatedAt()))
+                .orElseGet(() -> eventRepository.countByPlatformBookingIdAndType(id, "MIRROR_FAILED"));
     }
 }

@@ -10,8 +10,10 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.Instant;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Optional;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
@@ -52,5 +54,25 @@ class PlatformBookingMirrorRepairJobTest {
 
         verify(mirrorService, org.mockito.Mockito.never()).sync("PB1");
         verify(mirrorService).sync("PB2");
+    }
+
+    /** A day of failures at BOOKING never stops the ticket phase: the cap counts only failures since the newest MIRROR_QUEUED. */
+    @Test
+    void failuresBeforeTheLastQueueDoNotCountTowardsTheCap() {
+        Instant queuedAt = Instant.parse("2026-11-01T10:00:00Z");
+        when(repository.findByMirrorStatusIn(EnumSet.of(MirrorStatus.FAILED, MirrorStatus.PENDING))).thenReturn(List.of(
+                PlatformBooking.builder().id("PB1").mirrorStatus(MirrorStatus.PENDING).build(),
+                PlatformBooking.builder().id("PB2").mirrorStatus(MirrorStatus.FAILED).build()));
+        when(eventRepository.findFirstByPlatformBookingIdAndTypeOrderByCreatedAtDesc("PB1", "MIRROR_QUEUED"))
+                .thenReturn(Optional.of(com.voyra.crm.entity.PlatformBookingEvent.builder().createdAt(queuedAt).build()));
+        when(eventRepository.countByPlatformBookingIdAndTypeAndCreatedAtAfter("PB1", "MIRROR_FAILED", queuedAt)).thenReturn(3L);
+        when(eventRepository.findFirstByPlatformBookingIdAndTypeOrderByCreatedAtDesc("PB2", "MIRROR_QUEUED"))
+                .thenReturn(Optional.of(com.voyra.crm.entity.PlatformBookingEvent.builder().createdAt(queuedAt).build()));
+        when(eventRepository.countByPlatformBookingIdAndTypeAndCreatedAtAfter("PB2", "MIRROR_FAILED", queuedAt)).thenReturn(144L);
+
+        job.run();
+
+        verify(mirrorService).sync("PB1");
+        verify(mirrorService, org.mockito.Mockito.never()).sync("PB2");
     }
 }

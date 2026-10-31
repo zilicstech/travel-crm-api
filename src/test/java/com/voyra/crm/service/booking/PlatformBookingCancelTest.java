@@ -209,6 +209,7 @@ class PlatformBookingCancelTest {
     @Test
     void cancelSchedulesTheMirrorCancelAfterTheRefund() {
         supplierRefunds("4000.00");
+        rows.get(ID).setClientId("C1");
         rows.get(ID).setMirrorStatus(com.voyra.crm.enums.MirrorStatus.DONE);
 
         PlatformBooking b = service.cancel(ID, "ck-1");
@@ -217,6 +218,21 @@ class PlatformBookingCancelTest {
         InOrder order = inOrder(walletService, mirrorService);
         order.verify(walletService).credit(eq(T), eq(WalletEntryType.REFUND_CREDIT), any(), anyString(), anyString(), anyString(), anyString());
         order.verify(mirrorService).sync(ID);
+    }
+
+    /** A mirror that had failed (or never ran) is queued again too, with a MIRROR_QUEUED event that resets the repair cap. */
+    @Test
+    void aCancelQueuesTheMirrorWhateverItsStatus() {
+        supplierRefunds("4000.00");
+        rows.get(ID).setClientId("C1");
+        rows.get(ID).setMirrorStatus(com.voyra.crm.enums.MirrorStatus.FAILED);
+
+        PlatformBooking b = service.cancel(ID, "ck-1");
+
+        assertThat(b.getMirrorStatus()).isEqualTo(com.voyra.crm.enums.MirrorStatus.PENDING);
+        assertThat(savedEvents).filteredOn(e -> e.getType().equals("MIRROR_QUEUED"))
+                .singleElement().satisfies(e -> assertThat(e.getPayload()).containsEntry("status", "CANCELLED"));
+        verify(mirrorService).sync(ID);
     }
 
     @Test

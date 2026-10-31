@@ -213,9 +213,7 @@ public class PlatformBookingService {
             return applyLocked(bookingId, new BookResult(null, status, pnr, ticketNumbers == null ? List.of() : ticketNumbers,
                     "Resolved by Voyra", null));
         });
-        if (booking.getStatus() == PlatformBookingStatus.TICKETED) {
-            scheduleMirror(booking);
-        }
+        scheduleMirror(booking); // a resolve always ends TICKETED or FAILED
         return booking;
     }
 
@@ -386,9 +384,11 @@ public class PlatformBookingService {
             // outcome unknown (timeout, 5xx, empty body): never release the hold or retry book - the poller asks bookingDetails
             log.warn("Book call for platform booking {} gave no clean answer: {}", bookingId, e.getClass().getSimpleName());
             tx.executeWithoutResult(s -> events.record(bookingId, "BOOK_NO_ANSWER", Map.of("error", e.getClass().getSimpleName())));
+            scheduleMirror(booking);
             return bookingRepository.findById(bookingId).orElse(booking);
         }
         log.info("Platform booking {} book answer: {} {}", bookingId, result.status(), result.message() == null ? "" : result.message());
+        scheduleMirror(booking); // the CRM row exists (Waiting for Voyra) before the outcome is applied
         PlatformBooking out = awaitOutcome(bookingId, applySupplierResult(bookingId, result));
         log.info("Platform booking {} confirm returns {} (pnr {})", bookingId, out.getStatus(), out.getPnr());
         return out;
@@ -423,7 +423,7 @@ public class PlatformBookingService {
      */
     PlatformBooking applySupplierResult(String bookingId, BookResult result) {
         PlatformBooking booking = tx.execute(s -> applyLocked(bookingId, result));
-        if (booking.getStatus() == PlatformBookingStatus.TICKETED) {
+        if (booking.getStatus() == PlatformBookingStatus.TICKETED || booking.getStatus() == PlatformBookingStatus.FAILED) {
             scheduleMirror(booking);
         }
         return booking;
@@ -534,7 +534,7 @@ public class PlatformBookingService {
             throw e;
         }
         if (cancelled.getStatus() == PlatformBookingStatus.CANCELLED) {
-            scheduleMirrorCancel(cancelled);
+            scheduleMirror(cancelled);
         }
         return cancelled;
     }
@@ -576,7 +576,7 @@ public class PlatformBookingService {
             return bookingRepository.save(b);
         });
         if (booking.getStatus() == PlatformBookingStatus.CANCELLED) {
-            scheduleMirrorCancel(booking);
+            scheduleMirror(booking);
         }
         return booking;
     }
@@ -596,7 +596,7 @@ public class PlatformBookingService {
             return cancelLocked(bookingId, refundOnRecord(accepted.get("refund")), message == null ? null : message.toString(), fee);
         });
         if (cancelled.getStatus() == PlatformBookingStatus.CANCELLED) {
-            scheduleMirrorCancel(cancelled);
+            scheduleMirror(cancelled);
         }
     }
 
@@ -691,9 +691,7 @@ public class PlatformBookingService {
             detail.put("recall", recall);
         }
         b.setStatus(PlatformBookingStatus.CANCELLED);
-        if (b.getMirrorStatus() == MirrorStatus.DONE) {
-            b.setMirrorStatus(MirrorStatus.PENDING); // the CRM mirror still has to be cancelled
-        }
+        queueMirror(b); // the CRM mirror still has to be cancelled, whatever state it was in
         b.setCancelledAt(Instant.now());
         b.setSupplierMessage(truncate(message));
         events.record(id, "CANCELLED", detail);
@@ -815,6 +813,7 @@ public class PlatformBookingService {
             return b; // aborted or resolved in between: do not book
         }
         b.setStatus(PlatformBookingStatus.BOOKING);
+        queueMirror(b);
         bookingRepository.save(b);
         events.record(bookingId, "BOOKING", Map.of("paxCount", request.getPassengers().size(),
                 "types", request.getPassengers().stream().map(PaxInput::getType).toList()));
@@ -839,6 +838,7 @@ public class PlatformBookingService {
                 if (PlatformBookingStatus.IN_FLIGHT.contains(b.getStatus())) {
                     walletService.releaseHold(b.getHoldEntryId(), "pb-release:" + bookingId);
                     b.setStatus(PlatformBookingStatus.FAILED);
+                    queueMirror(b);
                     b.setSupplierMessage(truncate(result.message()));
                     events.record(bookingId, "FAILED", Map.of("message", String.valueOf(result.message())));
                     notificationService.bookingFailed(b);
@@ -877,9 +877,7 @@ public class PlatformBookingService {
             }
         }
         b.setStatus(PlatformBookingStatus.TICKETED);
-        if (b.getClientId() != null) {
-            b.setMirrorStatus(MirrorStatus.PENDING); // committed with the debit, so the repair job finds it even after a crash
-        }
+        queueMirror(b); // committed with the debit, so the repair job finds it even after a crash
         b.setPnr(result.pnr());
         b.setTicketNumbers(result.ticketNumbers());
         if (!result.lines().isEmpty()) {
@@ -903,13 +901,19 @@ public class PlatformBookingService {
         notificationService.bookingTicketed(b);
     }
 
-    /** Writes the CRM mirror after the debit committed, outside any transaction; a failure is the repair job's, never the ticket's. */
-    private void scheduleMirror(PlatformBooking booking) {
-        mirrorService.sync(booking.getId());
+    /**
+     * Marks the CRM mirror PENDING in the caller's transaction, with the status move it follows. The MIRROR_QUEUED event
+     * restarts the repair job's attempt count. Old rows without a client have no mirror.
+     */
+    private void queueMirror(PlatformBooking b) {
+        if (b.getClientId() != null) {
+            b.setMirrorStatus(MirrorStatus.PENDING);
+            events.record(b.getId(), "MIRROR_QUEUED", Map.of("status", b.getStatus().name()));
+        }
     }
 
-    /** Cancels the CRM mirror after the refund and recall committed, outside any transaction. */
-    private void scheduleMirrorCancel(PlatformBooking booking) {
+    /** Brings the CRM mirror up to date after a status move committed, outside any transaction; a failure is the repair job's. */
+    private void scheduleMirror(PlatformBooking booking) {
         mirrorService.sync(booking.getId());
     }
 
