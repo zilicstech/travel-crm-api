@@ -324,4 +324,95 @@ class PlatformSupplierCredentialServiceTest {
                 .map(Method::getName))
                 .doesNotContain("reveal");
     }
+
+    // ---- remaining guards
+
+    @Test
+    void getReturnsOneSupplierWithItsSortedTermsAndAShortKeyFullyMasked() {
+        when(repository.findById("C1")).thenReturn(Optional.of(stored("abcd", true)));
+        when(productRepository.findByCredentialIdIn(List.of("C1"))).thenReturn(List.of(
+                com.voyra.crm.entity.PlatformSupplierProduct.builder().product(PricingProduct.HOTEL).commissionEstimatePct(new BigDecimal("3")).build(),
+                com.voyra.crm.entity.PlatformSupplierProduct.builder().product(PricingProduct.FLIGHT).commissionEstimatePct(new BigDecimal("2")).build()));
+
+        var r = service.get("C1");
+
+        assertThat(r.getMaskedApiKey()).isEqualTo("••••••");
+        assertThat(r.getProducts()).extracting(SupplierProductTerms::getProduct).containsExactly(PricingProduct.FLIGHT, PricingProduct.HOTEL);
+    }
+
+    @Test
+    void anUnknownSupplierIsNotFound() {
+        when(repository.findById("C9")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.get("C9")).isInstanceOf(com.voyra.crm.exception.NotFoundException.class).hasMessage("Supplier not found");
+    }
+
+    @Test
+    void aSupplierCreatedInactiveWithNoTermsGetsTheDefaultCommission() {
+        when(repository.existsByProvider(SupplierProvider.TRIPJACK)).thenReturn(false);
+        PlatformSupplierCreateRequest r = createRequest("tj_live_key_9f3a");
+        r.setProducts(null);
+        r.setIsActive(false);
+
+        var res = service.create(r);
+
+        assertThat(res.getIsActive()).isFalse();
+        assertThat(res.getProducts()).extracting(SupplierProductTerms::getCommissionEstimatePct)
+                .allSatisfy(p -> assertThat(p).isEqualByComparingTo("5"));
+    }
+
+    @Test
+    void aSupplierWithNoActiveFlagIsActive() {
+        when(repository.existsByProvider(SupplierProvider.TRIPJACK)).thenReturn(false);
+        PlatformSupplierCreateRequest r = createRequest("tj_live_key_9f3a", terms(PricingProduct.FLIGHT, "2"));
+        r.setIsActive(null);
+
+        assertThat(service.create(r).getIsActive()).isTrue();
+    }
+
+    @Test
+    void termsNeedAProductAndAtLeastOneOnATermsUpdate() {
+        when(repository.findById("C1")).thenReturn(Optional.of(stored("tj_live_key_9f3a", true)));
+        java.util.List<SupplierProductTerms> withNull = new java.util.ArrayList<>();
+        withNull.add(null);
+
+        assertThatThrownBy(() -> service.updateProducts("C1", List.of())).hasMessage("Give the commission for at least one product");
+        assertThatThrownBy(() -> service.updateProducts("C1", withNull)).hasMessage("Product is required");
+        assertThatThrownBy(() -> service.updateProducts("C1", List.of(terms(null, "2")))).hasMessage("Product is required");
+        assertThatThrownBy(() -> service.updateProducts("C1", List.of(terms(PricingProduct.FLIGHT, null))))
+                .hasMessage("Commission % must be between 0 and 100");
+        verify(platformAuditService, never()).record(any(), any(), any(), any());
+    }
+
+    @Test
+    void hasActiveTellsWhetherAnActiveRowExists() {
+        when(repository.findByProviderAndIsActiveTrue(SupplierProvider.TRIPJACK)).thenReturn(Optional.empty(), Optional.of(stored("k", true)));
+
+        assertThat(service.hasActive(SupplierProvider.TRIPJACK)).isFalse();
+        assertThat(service.hasActive(SupplierProvider.TRIPJACK)).isTrue();
+    }
+
+    @Test
+    void aStoredUserIdIsDecryptedToo() {
+        PlatformSupplierCredential c = stored("tj_live_key_9f3a", true);
+        c.setUserIdEncrypted(PasswordEncryptionUtil.encrypt("agency-user-1", KEY));
+        when(repository.findById("C1")).thenReturn(Optional.of(c));
+
+        assertThat(service.resolve("C1").userId()).isEqualTo("agency-user-1");
+    }
+
+    @Test
+    void theKeyIsSentOnlyToAPlainHttpsTripjackHostOfTheRightEnvironment() {
+        for (String url : List.of("http://api.tripjack.com", "https://user@api.tripjack.com", "https://api.tripjack.com:8443",
+                "https://api.tripjack.com/?x=1", "https://api.tripjack.com/#f", "https://api.tripjack.com/v1",
+                "https://apitest.tripjack.com", "https:///nohost", "https://api.trip jack.com")) {
+            when(repository.findById("C1")).thenReturn(Optional.of(stored("tj_live_key_9f3a", true, SupplierEnvironment.PROD, url)));
+            assertThatThrownBy(() -> service.resolve("C1")).as(url).isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("Base URL must be a Tripjack PROD host over https");
+        }
+        when(repository.findById("C1")).thenReturn(Optional.of(stored("tj_live_key_9f3a", true, SupplierEnvironment.PROD, "https://API.tripjack.com/")));
+        assertThat(service.resolve("C1").apiKey()).isEqualTo("tj_live_key_9f3a");
+        when(repository.findById("C1")).thenReturn(Optional.of(stored("tj_live_key_9f3a", true, SupplierEnvironment.UAT, "https://apitest.tripjack.com")));
+        assertThat(service.resolve("C1").environment()).isEqualTo(SupplierEnvironment.UAT);
+    }
 }

@@ -489,4 +489,151 @@ class WalletServiceTest {
                 .thenReturn(new BigDecimal("80.00"));
         assertThat(service.chargebacksPosted("TOPUP_REQUEST", "R1")).isEqualByComparingTo("200.00");
     }
+
+    // ---- coverage of the remaining guards and replays
+
+    @Test
+    void aRepeatedHoldOrReleaseKeyReplaysTheFirstEntry() {
+        fund("1000");
+        WalletEntry hold = service.hold(T, d("300"), "h1", "PLATFORM_BOOKING", "B1");
+        assertThat(service.hold(T, d("300"), "h1", "PLATFORM_BOOKING", "B1")).isSameAs(hold);
+
+        WalletEntry release = service.releaseHold(hold.getId(), "r1");
+        assertThat(service.releaseHold(hold.getId(), "r1")).isSameAs(release);
+        assertThat(entries).hasSize(2);
+        assertThat(wallet.getHeld()).isEqualByComparingTo("0");
+        assertThat(release.getAmount()).isEqualByComparingTo("-300");
+    }
+
+    @Test
+    void aHoldForAnAgencyThatIsGoneIsRefused() {
+        fund("1000");
+        when(tenantRepository.findById(T)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.hold(T, d("100"), "h1", null, null))
+                .isInstanceOf(com.voyra.crm.exception.NotFoundException.class).hasMessage("Agency not found");
+        assertThat(entries).isEmpty();
+    }
+
+    @Test
+    void aWalletOrHoldThatDoesNotExistIsNotFound() {
+        when(walletRepository.findByTenantIdForUpdate("T9")).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> service.credit("T9", WalletEntryType.TOPUP, d("1"), "k", null, null, null))
+                .hasMessage("Wallet not found for this agency");
+        assertThatThrownBy(() -> service.releaseHold("NOPE", "k")).hasMessage("Wallet hold not found");
+
+        WalletEntry topup = service.credit(T, WalletEntryType.TOPUP, d("10"), "k1", null, null, null);
+        assertThatThrownBy(() -> service.debitHeld(topup.getId(), d("5"), "k2", null, null))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Wallet entry " + topup.getId() + " is not a hold");
+    }
+
+    @Test
+    void amountsMustBePositiveWithAtMostTwoDecimalsAndOfAnAllowedType() {
+        assertThatThrownBy(() -> service.credit(T, WalletEntryType.TOPUP, null, "k", null, null, null))
+                .hasMessage("Amount must be greater than zero");
+        assertThatThrownBy(() -> service.credit(T, WalletEntryType.TOPUP, d("0"), "k", null, null, null))
+                .hasMessage("Amount must be greater than zero");
+        assertThatThrownBy(() -> service.credit(T, WalletEntryType.TOPUP, d("1.005"), "k", null, null, null))
+                .hasMessage("Amount must have at most two decimal places");
+        assertThat(service.credit(T, WalletEntryType.TOPUP, d("1.500"), "k", null, null, null).getAmount()).isEqualByComparingTo("1.50");
+        assertThatThrownBy(() -> service.credit(T, WalletEntryType.HOLD, d("1"), "k", null, null, null))
+                .hasMessage("Wallet entry type HOLD is not allowed here");
+        assertThatThrownBy(() -> service.debitOrReceivable(T, WalletEntryType.TOPUP, d("1"), "k", null, null, ReceivableReason.CHARGEBACK))
+                .hasMessage("Wallet entry type TOPUP is not allowed here");
+    }
+
+    @Test
+    void anAdjustmentNeedsANonZeroAmountAndAReason() {
+        assertThatThrownBy(() -> service.adjust(T, null, "r", "k")).hasMessage("Adjustment amount must not be zero");
+        assertThatThrownBy(() -> service.adjust(T, d("0"), "r", "k")).hasMessage("Adjustment amount must not be zero");
+        assertThatThrownBy(() -> service.adjust(T, d("1"), null, "k")).hasMessage("A reason is required for an adjustment");
+        assertThatThrownBy(() -> service.adjust(T, d("1"), " ", "k")).hasMessage("A reason is required for an adjustment");
+        assertThatThrownBy(() -> service.adjust(T, d("1.001"), "r", "k")).hasMessage("Amount must have at most two decimal places");
+        assertThat(entries).isEmpty();
+    }
+
+    @Test
+    void aPositiveAdjustmentCreditsAndSettlesWhatIsDue() {
+        PlatformReceivable owed = due("R1", "40", Instant.now());
+
+        WalletEntry entry = service.adjust(T, d("100"), "Goodwill credit", "adj1");
+
+        assertThat(entry.getType()).isEqualTo(WalletEntryType.ADJUSTMENT);
+        assertThat(entry.getNarration()).isEqualTo("Goodwill credit");
+        assertThat(wallet.getBalance()).isEqualByComparingTo("60");
+        assertThat(owed.getStatus()).isEqualTo(ReceivableStatus.SETTLED);
+    }
+
+    @Test
+    void aNegativeAdjustmentWithinTheBalanceIsPosted() {
+        fund("100");
+
+        WalletEntry entry = service.adjust(T, d("-30"), "Correction", "adj1");
+
+        assertThat(entry.getAmount()).isEqualByComparingTo("-30");
+        assertThat(wallet.getBalance()).isEqualByComparingTo("70");
+    }
+
+    @Test
+    void aCreditUsedUpOnTheOldestReceivableLeavesTheNextDue() {
+        PlatformReceivable first = due("R1", "100", Instant.now().minusSeconds(60));
+        PlatformReceivable second = due("R2", "50", Instant.now());
+
+        service.credit(T, WalletEntryType.TOPUP, d("100"), "k1", null, null, null);
+
+        assertThat(first.getStatus()).isEqualTo(ReceivableStatus.SETTLED);
+        assertThat(second.getStatus()).isEqualTo(ReceivableStatus.DUE);
+        assertThat(second.getAmount()).isEqualByComparingTo("50");
+        assertThat(wallet.getBalance()).isEqualByComparingTo("0");
+    }
+
+    @Test
+    void aShortDebitWithANarrationNotesTheShortfall() {
+        fund("30");
+
+        WalletEntry entry = service.debitOrReceivable(T, WalletEntryType.COMMISSION_RECALL, d("100"), "k1", "PLATFORM_BOOKING", "PB1",
+                ReceivableReason.CHARGEBACK, null, "Commission recalled");
+
+        assertThat(entry.getNarration()).isEqualTo("Commission recalled - short by 70, receivable opened");
+        assertThat(entry.getAmount()).isEqualByComparingTo("-30");
+        assertThat(receivables).singleElement().satisfies(r -> assertThat(r.getAmount()).isEqualByComparingTo("70"));
+    }
+
+    @Test
+    void aDebitOfAnAlreadyReleasedHoldDoesNotReleaseItAgain() {
+        fund("500");
+        WalletEntry hold = service.hold(T, d("200"), "h1", "PLATFORM_BOOKING", "B1");
+        service.releaseHold(hold.getId(), "r1");
+
+        WalletEntry debit = service.debitHeld(hold.getId(), d("200"), "d1", "PLATFORM_BOOKING", "B1");
+
+        assertThat(debit.getAmount()).isEqualByComparingTo("-200");
+        assertThat(entries).filteredOn(e -> e.getType() == WalletEntryType.HOLD_RELEASE).hasSize(1);
+        assertThat(service.debitHeld(hold.getId(), d("200"), "d1", null, null)).isSameAs(debit);
+        assertThat(wallet.getBalance()).isEqualByComparingTo("300");
+    }
+
+    @Test
+    void closingTwiceReplaysAndAFundedWalletNeedsAUtr() {
+        fund("50");
+        assertThatThrownBy(() -> service.close(T, null)).hasMessage("The bank UTR of the closure refund is required");
+        assertThatThrownBy(() -> service.close(T, " ")).hasMessage("The bank UTR of the closure refund is required");
+
+        WalletEntry closed = service.close(T, "UTR9");
+        assertThat(closed.getNarration()).isEqualTo("Closure refund, UTR UTR9");
+        assertThat(service.close(T, "UTR9")).isSameAs(closed);
+    }
+
+    @Test
+    void anEmptyWalletClosedWithAUtrNamesIt() {
+        assertThat(service.close(T, "UTR1").getNarration()).isEqualTo("Closure refund, UTR UTR1");
+    }
+
+    @Test
+    void anEntryIsFoundByItsKey() {
+        WalletEntry e = service.credit(T, WalletEntryType.TOPUP, d("5"), "find-me", null, null, null);
+
+        assertThat(service.findEntry("find-me")).contains(e);
+        assertThat(service.findEntry("missing")).isEmpty();
+    }
 }

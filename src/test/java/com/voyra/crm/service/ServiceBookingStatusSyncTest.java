@@ -84,4 +84,52 @@ class ServiceBookingStatusSyncTest {
 
         assertThat(lead.getStatus()).isEqualTo(LeadStatus.LOST);
     }
+
+    @Test
+    void noServiceOrAGoneOrCalledOffServiceIsLeftAlone() {
+        sync.onBookingLogged(null, "A1", "Ankita");
+        sync.onBookingRemoved(null);
+        when(leadServiceRepository.findById("S9")).thenReturn(Optional.empty());
+        sync.onBookingLogged("S9", "A1", "Ankita");
+        sync.onBookingRemoved("S9");
+        LeadService cancelled = LeadService.builder().id("S1").leadId("L1").status(ServiceStatus.CANCELLED).build();
+        when(leadServiceRepository.findById("S1")).thenReturn(Optional.of(cancelled));
+
+        sync.onBookingLogged("S1", "A1", "Ankita");
+        sync.onBookingRemoved("S1");
+
+        assertThat(cancelled.getStatus()).isEqualTo(ServiceStatus.CANCELLED);
+        org.mockito.Mockito.verify(leadServiceRepository, org.mockito.Mockito.never()).save(org.mockito.ArgumentMatchers.any());
+        org.mockito.Mockito.verifyNoInteractions(bookingRepository, leadRepository, leadTimelineService, auditService);
+    }
+
+    @Test
+    void anUnclaimedServiceBookedWithNoAgentStaysUnclaimedAndAnAlreadyBookedLeadStaysBooked() {
+        LeadService service = LeadService.builder().id("S1").leadId("L1").status(ServiceStatus.CONFIRMED).label("Visa").build();
+        Lead lead = Lead.builder().id("L1").build();
+        lead.setStatus(LeadStatus.BOOKED);
+        when(leadServiceRepository.findById("S1")).thenReturn(Optional.of(service));
+        when(leadRepository.findById("L1")).thenReturn(Optional.of(lead));
+
+        sync.onBookingLogged("S1", null, null);
+
+        assertThat(service.getStatus()).isEqualTo(ServiceStatus.BOOKED);
+        assertThat(service.getAssignedAgentId()).isNull();
+        org.mockito.Mockito.verify(leadRepository, org.mockito.Mockito.never()).save(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void aBookedServiceGoesBackToConfirmedOnlyWhenItsLastBookingGoes() {
+        LeadService service = LeadService.builder().id("S1").leadId("L1").status(ServiceStatus.BOOKED).label("Hotel").build();
+        when(leadServiceRepository.findById("S1")).thenReturn(Optional.of(service));
+        when(bookingRepository.countByServiceIdAndBookingStatusNot("S1", com.voyra.crm.enums.BookingStatus.CANCELLED)).thenReturn(1L, 0L);
+
+        sync.onBookingRemoved("S1");
+        assertThat(service.getStatus()).isEqualTo(ServiceStatus.BOOKED);
+
+        sync.onBookingRemoved("S1");
+        assertThat(service.getStatus()).isEqualTo(ServiceStatus.CONFIRMED);
+        org.mockito.Mockito.verify(leadTimelineService).record("L1", "S1", com.voyra.crm.enums.LeadTimelineEventType.SERVICE_UPDATED,
+                "Hotel Back to Confirmed - no booking remains logged");
+    }
 }

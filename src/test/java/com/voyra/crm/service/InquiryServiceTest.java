@@ -88,4 +88,25 @@ class InquiryServiceTest {
         verify(inquiryRepository).search("%acme%", pageable);
         verify(inquiryRepository).findAllByOrderByCreatedAtDesc(pageable);
     }
+
+    @Test
+    void listedInquiriesCarryEveryField() {
+        PageRequest pageable = PageRequest.of(0, 25);
+        java.time.Instant at = java.time.Instant.parse("2026-10-01T09:00:00Z");
+        com.voyra.crm.entity.Inquiry i = com.voyra.crm.entity.Inquiry.builder().id("Q1").source("pricing-modal").name("Pax A")
+                .email("pax-a@example.test").phone("0000000000").company("Acme").plan("Growth").message("Call me").createdAt(at).build();
+        when(inquiryRepository.findAllByOrderByCreatedAtDesc(pageable)).thenReturn(new org.springframework.data.domain.PageImpl<>(java.util.List.of(i), pageable, 1));
+
+        com.voyra.crm.dto.InquiryResponse r = inquiryService.list(null, pageable).getContent().get(0);
+
+        org.assertj.core.api.Assertions.assertThat(r.getId()).isEqualTo("Q1");
+        org.assertj.core.api.Assertions.assertThat(r.getSource()).isEqualTo("pricing-modal");
+        org.assertj.core.api.Assertions.assertThat(r.getName()).isEqualTo("Pax A");
+        org.assertj.core.api.Assertions.assertThat(r.getEmail()).isEqualTo("pax-a@example.test");
+        org.assertj.core.api.Assertions.assertThat(r.getPhone()).isEqualTo("0000000000");
+        org.assertj.core.api.Assertions.assertThat(r.getCompany()).isEqualTo("Acme");
+        org.assertj.core.api.Assertions.assertThat(r.getPlan()).isEqualTo("Growth");
+        org.assertj.core.api.Assertions.assertThat(r.getMessage()).isEqualTo("Call me");
+        org.assertj.core.api.Assertions.assertThat(r.getCreatedAt()).isEqualTo(at);
+    }
 }
