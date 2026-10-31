@@ -61,11 +61,16 @@ public class MockFlightBookingProvider implements FlightBookingProvider {
         if (!blank(r.getReturnOfferId())) {
             // the way back: the same route swapped, on the return hints (3 days later when they are missing)
             String back = blank(r.getReturnDepartDate()) ? java.time.LocalDate.parse(date).plusDays(3).toString() : r.getReturnDepartDate();
-            sI.add(segment(blank(r.getReturnAirline()) ? r.getAirline() : r.getReturnAirline(),
+            ObjectNode returnSeg = segment(blank(r.getReturnAirline()) ? r.getAirline() : r.getReturnAirline(),
                     blank(r.getReturnAirlineCode()) ? r.getAirlineCode() : r.getReturnAirlineCode(),
                     blank(r.getReturnFlightNumber()) ? "102" : r.getReturnFlightNumber(), destination, origin, back,
-                    r.getReturnDepartTime(), r.getReturnArriveTime(), "18:00", "20:10"));
+                    r.getReturnDepartTime(), r.getReturnArriveTime(), "18:00", "20:10");
+            returnSeg.put("isRs", true); // Tripjack's marker for the way back in one segment list; the ticket splits directions on it
+            sI.add(returnSeg);
         }
+        // the fare facts the ticket prints (a mock has no tax breakdown, so the ticket shows one tax line)
+        var fd = itinerary.putArray("totalPriceList").addObject().put("fareIdentifier", "PUBLISHED").putObject("fd").putObject("ADULT");
+        fd.put("cc", "ECONOMY").put("rT", 1).putObject("bI").put("iB", "15 Kg").put("cB", "7 Kg");
         return new FareReview(base.reviewId(), base.totalFare(), base.baseFare(), base.currency(), base.fareRules(), base.expiresAt(), itinerary);
     }
 
@@ -76,6 +81,7 @@ public class MockFlightBookingProvider implements FlightBookingProvider {
         fD.put("fN", blank(flightNumber) ? "101" : flightNumber);
         fD.putObject("aI").put("code", blank(airlineCode) ? "MK" : airlineCode)
                 .put("name", blank(airline) ? "Mock Air" : airline);
+        seg.put("duration", 130);
         seg.putObject("da").put("code", origin);
         seg.putObject("aa").put("code", destination);
         seg.put("dt", date + "T" + (blank(departTime) ? defaultDepart : departTime));

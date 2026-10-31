@@ -129,6 +129,20 @@ class MockFlightBookingProviderTest {
         assertThat(seg.path("fD").path("aI").path("code").asText()).isEqualTo("6E");
         assertThat(seg.path("fD").path("aI").path("name").asText()).isEqualTo("IndiGo");
         assertThat(seg.path("fD").path("fN").asText()).isEqualTo("201");
+        assertThat(seg.path("duration").asInt()).isEqualTo(130);
+        assertThat(seg.has("isRs")).isFalse();
+        var fare = itinerary.path("totalPriceList").get(0);
+        assertThat(fare.path("fareIdentifier").asText()).isEqualTo("PUBLISHED");
+        var adult = fare.path("fd").path("ADULT");
+        assertThat(adult.path("cc").asText()).isEqualTo("ECONOMY");
+        assertThat(adult.path("rT").asInt()).isEqualTo(1);
+        assertThat(adult.path("bI").path("iB").asText()).isEqualTo("15 Kg");
+        assertThat(adult.path("bI").path("cB").asText()).isEqualTo("7 Kg");
+
+        r.setReturnOfferId("o2");
+        var back = provider.review(r).itinerary().findValues("sI").get(0).get(1);
+        assertThat(back.path("isRs").asBoolean()).isTrue();
+        assertThat(back.path("da").path("code").asText()).isEqualTo("BOM");
     }
 
     /** platform_booking.supplier_booking_id held 80 characters; the old id repeated the ~70-character review id. */
