@@ -71,7 +71,6 @@ import org.mockito.Mock;
 import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.core.io.ByteArrayResource;
-import org.springframework.core.io.InputStreamResource;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -81,8 +80,6 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 
-import java.io.IOException;
-import java.io.InputStream;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
@@ -130,6 +127,7 @@ class InvoiceDocumentServiceCoverageTest {
     @Mock BookingAccountingSync bookingAccountingSync;
     @Mock PaymentReceiptService paymentReceiptService;
     @Mock FileStorageService fileStorageService;
+    @Mock AgencyLogoLoader agencyLogoLoader;
     @Spy BaseCurrency baseCurrency = new BaseCurrency(null);
     @Mock InvoiceLineSource invoiceLineSource;
     @Mock BookingDocumentRepository bookingDocumentRepository;
@@ -940,31 +938,24 @@ class InvoiceDocumentServiceCoverageTest {
         Tenant agency = agency();
         agency.setLogoKey("logo.png");
         when(tenantRepository.findById("T1")).thenReturn(Optional.of(agency));
-        when(fileStorageService.retrieve("logo.png")).thenReturn(new ByteArrayResource(new byte[]{1, 2, 3}));
+        when(agencyLogoLoader.load(agency)).thenReturn(new byte[]{1, 2, 3});
         when(bookingDocumentRepository.findAllById(List.of("D1"))).thenReturn(List.of(
                 BookingDocument.builder().id("D1").referenceNumber("PNR1").details(Map.of("k", "v")).build()));
         when(agentRepository.findById("A1")).thenReturn(Optional.of(Agent.builder().id("A1").name("Liam").build()));
 
         assertThat(isPdf(service.getPdf("I1"))).isTrue();
-        verify(fileStorageService).retrieve("logo.png");
+        verify(agencyLogoLoader).load(agency);
     }
 
     @Test
-    void aHotelInvoicePrintsEvenWhenTheLogoCannotBeReadAndNamesTheOwner() {
+    void aHotelInvoicePrintsWithoutALogoAndNamesTheOwner() {
         Invoice inv = printable(InvoiceServiceCategory.HOTEL);
         inv.setCreatedBy("T1");
         when(invoiceRepository.findById("I1")).thenReturn(Optional.of(inv));
         when(invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc("I1")).thenReturn(List.of(line("L1", "B1", "D1", "1000.00")));
         Tenant agency = agency();
-        agency.setLogoKey("logo.png");
         agency.setOwnerName("Dana");
         when(tenantRepository.findById("T1")).thenReturn(Optional.of(agency));
-        when(fileStorageService.retrieve("logo.png")).thenReturn(new InputStreamResource(new InputStream() {
-            @Override
-            public int read() throws IOException {
-                throw new IOException("gone");
-            }
-        }));
         when(bookingDocumentRepository.findAllById(List.of("D1"))).thenReturn(List.of(
                 BookingDocument.builder().id("D1").referenceNumber("CONF1").build()));
         when(agentRepository.findById("T1")).thenReturn(Optional.empty());
@@ -974,18 +965,13 @@ class InvoiceDocumentServiceCoverageTest {
     }
 
     @Test
-    void aHotelInvoiceWithNoAuthorAndABlankLogoStillPrints() {
+    void aHotelInvoiceWithNoAuthorStillPrints() {
         Invoice inv = printable(InvoiceServiceCategory.HOTEL);
         when(invoiceRepository.findById("I1")).thenReturn(Optional.of(inv));
         when(invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc("I1")).thenReturn(List.of(line("L1", "B1", "D1", "1000.00")));
-        Tenant agency = agency();
-        agency.setLogoKey(" ");
-        when(tenantRepository.findById("T1")).thenReturn(Optional.of(agency));
+        when(tenantRepository.findById("T1")).thenReturn(Optional.of(agency()));
 
         assertThat(isPdf(service.getPdf("I1"))).isTrue();
-        agency.setLogoKey(null);
-        assertThat(isPdf(service.getPdf("I1"))).isTrue();
-        verify(fileStorageService, never()).retrieve(any());
         verify(agentRepository, never()).findById(any());
     }
 

@@ -8,14 +8,21 @@ import com.voyra.crm.dto.PlatformBookingConfirmRequest;
 import com.voyra.crm.dto.PlatformBookingResponse;
 import com.voyra.crm.dto.PlatformBookingSummaryResponse;
 import com.voyra.crm.dto.PlatformBookingReviewResponse;
+import com.voyra.crm.dto.TicketCreateRequest;
+import com.voyra.crm.dto.TicketDownloadResponse;
 import com.voyra.crm.service.booking.CancelPreview;
 import com.voyra.crm.service.booking.PlatformBookingQueryService;
 import com.voyra.crm.service.booking.PlatformBookingService;
+import com.voyra.crm.service.booking.PlatformBookingTicketService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.CacheControl;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -27,6 +34,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.LocalDate;
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/platform-bookings")
@@ -37,6 +45,7 @@ public class PlatformBookingController {
 
     private final PlatformBookingService service;
     private final PlatformBookingQueryService queryService;
+    private final PlatformBookingTicketService ticketService;
 
     @PostMapping("/flights/review")
     @PreAuthorize("hasAnyRole('AGENCY_OWNER','AGENT')")
@@ -93,6 +102,30 @@ public class PlatformBookingController {
             @RequestParam(value = "from", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(value = "to", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
         return ResponseEntity.ok(queryService.summary(from, to));
+    }
+
+    @PostMapping("/{id}/tickets")
+    @PreAuthorize("hasAnyRole('AGENCY_OWNER','AGENT')")
+    @Operation(summary = "Record a customer e-ticket download", description = "Ticketed flights only; the markup is folded into the printed price and never shown on the ticket.")
+    public ResponseEntity<TicketDownloadResponse> createTicket(@PathVariable String id, @Valid @RequestBody TicketCreateRequest request) {
+        return ResponseEntity.ok(ticketService.create(id, request.getMarkup()));
+    }
+
+    @GetMapping("/{id}/tickets")
+    @Operation(summary = "E-ticket downloads of a booking, newest first")
+    public ResponseEntity<List<TicketDownloadResponse>> tickets(@PathVariable String id) {
+        return ResponseEntity.ok(ticketService.list(id));
+    }
+
+    @GetMapping("/{id}/tickets/{ticketId}/pdf")
+    @Operation(summary = "The customer e-ticket PDF of one download", description = "Rebuilt on every open with the price frozen at download.")
+    public ResponseEntity<byte[]> ticketPdf(@PathVariable String id, @PathVariable String ticketId) {
+        PlatformBookingTicketService.TicketPdf pdf = ticketService.pdf(id, ticketId);
+        return ResponseEntity.ok().contentType(MediaType.APPLICATION_PDF)
+                .cacheControl(CacheControl.noStore())
+                .header("X-Content-Type-Options", "nosniff")
+                .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment().filename(pdf.filename()).build().toString())
+                .body(pdf.bytes());
     }
 
     @GetMapping("/{id}")

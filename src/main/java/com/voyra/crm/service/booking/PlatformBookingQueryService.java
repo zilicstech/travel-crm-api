@@ -166,13 +166,16 @@ public class PlatformBookingQueryService {
         return v.setScale(2, RoundingMode.HALF_UP);
     }
 
-    /** Another agency's id, or an agent's colleague's, is simply absent (404). */
     public PlatformBookingResponse get(String id) {
+        return view(visible(id));
+    }
+
+    /** The booking the caller may open: another agency's id, or an agent's colleague's, is simply absent (404). */
+    public PlatformBooking visible(String id) {
         CustomUserPrincipal p = SecurityContextUtil.getCurrentUserOrThrow();
-        PlatformBooking b = bookingRepository.findByIdAndTenantId(id, p.tenantId())
+        return bookingRepository.findByIdAndTenantId(id, p.tenantId())
                 .filter(x -> !p.isAgent() || p.userId().equals(x.getBookedBy()))
                 .orElseThrow(() -> new NotFoundException("Booking not found"));
-        return view(b);
     }
 
     /** Detail view of a row the caller's tenant already owns (a service call just returned it). */
@@ -219,7 +222,8 @@ public class PlatformBookingQueryService {
                 clientRepository::findAllById, Client::getId, Client::getName);
         return rows.stream().<PlatformBookingResponse>map(b -> PlatformBookingResponse.builder()
                 .id(b.getId()).product(b.getProduct()).status(b.getStatus()).pnr(b.getPnr()).ticketNumbers(b.getTicketNumbers())
-                .displayedFare(b.getDisplayed()).agencyEarns(agencyEarns(b)).itinerary(itinerary(b)).hotel(hotel(b)).passengers(passengers(b))
+                .publishedFare(b.getGross()).displayedFare(b.getDisplayed()).agencyEarns(agencyEarns(b)).itinerary(itinerary(b))
+                .hotel(hotel(b)).passengers(passengers(b))
                 .bookedByName(agentNames.get(b.getBookedBy())).clientName(clientNames.get(b.getClientId()))
                 .createdAt(b.getCreatedAt()).ticketedAt(b.getTicketedAt()).cancelRefund(b.getCancelRefund())
                 .supplierMessage(AgencySupplierMessage.of(b)).mirrorStatus(b.getMirrorStatus()).tenantBookingId(b.getTenantBookingId())
@@ -287,9 +291,13 @@ public class PlatformBookingQueryService {
             return List.of();
         }
         return pax.stream().map(o -> (Map<String, Object>) o)
-                .map(m -> new PaxSummary(java.util.stream.Stream.of(m.get("title"), m.get("firstName"), m.get("lastName"))
-                        .filter(Objects::nonNull).map(Object::toString).filter(s -> !s.isBlank()).collect(Collectors.joining(" ")),
-                        String.valueOf(m.get("type")))).toList();
+                .map(m -> new PaxSummary(fullName(m.get("title"), m.get("firstName"), m.get("lastName")), String.valueOf(m.get("type")))).toList();
+    }
+
+    /** "Mr Rahul Sharma": the non-blank parts, in order. */
+    static String fullName(Object... parts) {
+        return java.util.stream.Stream.of(parts).filter(Objects::nonNull).map(Object::toString).filter(s -> !s.isBlank())
+                .collect(Collectors.joining(" "));
     }
 
     /** The stay from a HOTEL row's itinerary {@code {hotel, stay, rooms}}; null for flights. Missing parts stay null. */

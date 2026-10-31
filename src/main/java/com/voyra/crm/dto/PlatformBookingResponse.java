@@ -11,7 +11,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 
-/** The agency's view of a booking made through Voyra. Hand-built: never carries Voyra's earnings, net, gross or supplier ids. */
+/** The agency's view of a booking made through Voyra. Hand-built: never carries Voyra's earnings, net or supplier ids; the gross is shown only as the published fare the agency sees in search. */
 @Data
 @SuperBuilder
 @Schema(description = "A booking made through Voyra, as the agency sees it")
@@ -31,6 +31,9 @@ public class PlatformBookingResponse {
 
     @Schema(description = "Ticket numbers once issued")
     private List<String> ticketNumbers;
+
+    @Schema(description = "The airline's published fare, as shown struck through in search", example = "5000.00")
+    private BigDecimal publishedFare;
 
     @Schema(description = "What the wallet was charged", example = "4500.00")
     private BigDecimal displayedFare;

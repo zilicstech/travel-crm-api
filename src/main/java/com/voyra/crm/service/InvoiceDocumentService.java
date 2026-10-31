@@ -110,6 +110,7 @@ public class InvoiceDocumentService {
     private final BookingAccountingSync bookingAccountingSync;
     private final PaymentReceiptService paymentReceiptService;
     private final FileStorageService fileStorageService;
+    private final AgencyLogoLoader agencyLogoLoader;
     private final BaseCurrency baseCurrency;
     private final InvoiceLineSource invoiceLineSource;
     private final com.voyra.crm.repository.BookingDocumentRepository bookingDocumentRepository;
@@ -530,8 +531,8 @@ public class InvoiceDocumentService {
                     });
             String preparedBy = userName(invoice.getIssuedBy() != null ? invoice.getIssuedBy() : invoice.getCreatedBy());
             return air
-                    ? AirInvoicePdfRenderer.write(invoice, lines, taxes, agency, references, logoOf(agency), preparedBy)
-                    : AirInvoicePdfRenderer.writeHotel(invoice, lines, taxes, agency, references, details, logoOf(agency), preparedBy);
+                    ? AirInvoicePdfRenderer.write(invoice, lines, taxes, agency, references, agencyLogoLoader.load(agency), preparedBy)
+                    : AirInvoicePdfRenderer.writeHotel(invoice, lines, taxes, agency, references, details, agencyLogoLoader.load(agency), preparedBy);
         }
         Booking booking = invoice.getBookingId() != null
                 ? bookingRepository.findById(invoice.getBookingId()).orElse(null) : null;
@@ -796,17 +797,6 @@ public class InvoiceDocumentService {
     /** Every booking the invoice bills gets its invoiced / received figures worked out again. */
     private void syncBookings(Invoice invoice) {
         invoiceLineSource.bookingIdsOf(invoice).forEach(bookingAccountingSync::syncPayment);
-    }
-
-    /** The agency's logo for the printed invoice; none when it has no logo or the file can't be read. */
-    private byte[] logoOf(Tenant agency) {
-        if (agency.getLogoKey() == null || agency.getLogoKey().isBlank()) return null;
-        try (java.io.InputStream in = fileStorageService.retrieve(agency.getLogoKey()).getInputStream()) {
-            return in.readAllBytes();
-        } catch (Exception e) {
-            log.warn("Invoice logo not readable: key={}", agency.getLogoKey());
-            return null;
-        }
     }
 
     /** Who a user id is - an agent, or the agency's owner (whose user id is the tenant's). */

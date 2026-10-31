@@ -39,6 +39,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -61,6 +62,7 @@ class TenantStatusInterceptorTest {
     @MockBean private AuthService authService;
     @MockBean private PlatformBookingService platformBookingService;
     @MockBean private PlatformBookingQueryService platformBookingQueryService;
+    @MockBean private com.voyra.crm.service.booking.PlatformBookingTicketService platformBookingTicketService;
 
     private String bearer;
 
@@ -101,6 +103,35 @@ class TenantStatusInterceptorTest {
         when(platformBookingQueryService.list(any(), any())).thenReturn(PagedResponse.<com.voyra.crm.dto.PlatformBookingResponse>builder()
                 .content(List.of()).build());
         mockMvc.perform(get("/api/platform-bookings").header("Authorization", bearer)).andExpect(status().isOk());
+    }
+
+    /** A download only records who printed it and at what price; no money moves, so a suspended agency may still print. */
+    @Test
+    void suspendedMayDownloadTicket() throws Exception {
+        mockMvc.perform(post("/api/platform-bookings/B1/tickets").header("Authorization", bearer)
+                .contentType(MediaType.APPLICATION_JSON).content("{}")).andExpect(status().isOk());
+        verify(platformBookingTicketService).create("B1", null);
+    }
+
+    @Test
+    void suspendedOtherWriteStill423() throws Exception {
+        mockMvc.perform(post("/api/platform-bookings/B1/cancel").header("Authorization", bearer)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"idempotencyKey\":\"key-12345678\"}"))
+                .andExpect(status().is(423));
+        TenantStatusInterceptor interceptor = new TenantStatusInterceptor(new ObjectMapper());
+        TenantContext.setTenantId(TENANT);
+        try {
+            for (MockHttpServletRequest write : List.of(new MockHttpServletRequest("PUT", "/api/platform-bookings/B1/tickets"),
+                    new MockHttpServletRequest("DELETE", "/api/platform-bookings/B1/tickets"),
+                    new MockHttpServletRequest("POST", "/api/platform-bookings/B1/tickets/K1"),
+                    new MockHttpServletRequest("POST", "/api/bookings/B1/tickets"))) {
+                MockHttpServletResponse refused = new MockHttpServletResponse();
+                assertThat(interceptor.preHandle(write, refused, new Object())).as(write.getMethod() + " " + write.getRequestURI()).isFalse();
+                assertThat(refused.getStatus()).isEqualTo(423);
+            }
+        } finally {
+            TenantContext.clear();
+        }
     }
 
     @Test

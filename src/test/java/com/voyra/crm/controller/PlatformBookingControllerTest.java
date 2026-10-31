@@ -16,6 +16,8 @@ import com.voyra.crm.security.RestAuthenticationEntryPoint;
 import com.voyra.crm.service.booking.CancelPreview;
 import com.voyra.crm.service.booking.PlatformBookingQueryService;
 import com.voyra.crm.service.booking.PlatformBookingService;
+import com.voyra.crm.service.booking.PlatformBookingTicketService;
+import com.voyra.crm.dto.TicketDownloadResponse;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -43,6 +45,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(PlatformBookingController.class)
@@ -57,6 +61,7 @@ class PlatformBookingControllerTest {
     @Autowired private MockMvc mockMvc;
     @MockBean private PlatformBookingService service;
     @MockBean private PlatformBookingQueryService queryService;
+    @MockBean private PlatformBookingTicketService ticketService;
 
     private static RequestPostProcessor as(UserType type) {
         return authentication(new UsernamePasswordAuthenticationToken(
@@ -239,5 +244,88 @@ class PlatformBookingControllerTest {
         mockMvc.perform(post("/api/platform-bookings/B1/confirm").with(as(UserType.AGENT)).contentType(MediaType.APPLICATION_JSON)
                         .content(CONFIRM.replace("\"lastName\":\"Sharma\"", "\"lastName\":\"D'Souza-Rao Jr.\"")))
                 .andExpect(status().isOk());
+    }
+    private static TicketDownloadResponse download() {
+        return TicketDownloadResponse.builder().id("K1").seq(1).createdAt(java.time.Instant.parse("2026-10-31T05:00:00Z"))
+                .createdByName("Olga Owner").markup(new BigDecimal("500.00")).ticketPrice(new BigDecimal("5500.00")).build();
+    }
+
+    @Test
+    void ownerAndAgentCreateADownload() throws Exception {
+        given(ticketService.create(eq("B1"), any())).willReturn(download());
+        for (UserType type : List.of(UserType.AGENCY_OWNER, UserType.AGENT)) {
+            mockMvc.perform(post("/api/platform-bookings/B1/tickets").with(as(type))
+                            .contentType(MediaType.APPLICATION_JSON).content("{\"markup\":500.00}"))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.seq").value(1)).andExpect(jsonPath("$.ticketPrice").value(5500.00));
+        }
+        verify(ticketService, org.mockito.Mockito.times(2)).create("B1", new BigDecimal("500.00"));
+    }
+
+    /** Negative or three decimals is a 400 before the service; blank is 0 (null); above the published fare is the service's 400. */
+    @Test
+    void markupRules() throws Exception {
+        for (String bad : List.of("-1", "-0.01", "1.234")) {
+            mockMvc.perform(post("/api/platform-bookings/B1/tickets").with(as(UserType.AGENT))
+                            .contentType(MediaType.APPLICATION_JSON).content("{\"markup\":" + bad + "}"))
+                    .andExpect(status().isBadRequest()).andExpect(jsonPath("$.details.errors.markup").exists());
+        }
+        verifyNoInteractions(ticketService);
+
+        given(ticketService.create(eq("B1"), isNull())).willReturn(download());
+        mockMvc.perform(post("/api/platform-bookings/B1/tickets").with(as(UserType.AGENT))
+                .contentType(MediaType.APPLICATION_JSON).content("{}")).andExpect(status().isOk());
+
+        given(ticketService.create("B1", new BigDecimal("9000"))).willThrow(new IllegalArgumentException("Markup can be at most the published fare"));
+        mockMvc.perform(post("/api/platform-bookings/B1/tickets").with(as(UserType.AGENT))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"markup\":9000}"))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.message").value("Markup can be at most the published fare"));
+    }
+
+    @Test
+    void accountantCannotCreate() throws Exception {
+        mockMvc.perform(post("/api/platform-bookings/B1/tickets").with(as(UserType.ACCOUNTANT))
+                .contentType(MediaType.APPLICATION_JSON).content("{}")).andExpect(status().isForbidden());
+        verifyNoInteractions(ticketService);
+    }
+
+    @Test
+    void accountantCanList() throws Exception {
+        given(ticketService.list("B1")).willReturn(List.of(download()));
+        mockMvc.perform(get("/api/platform-bookings/B1/tickets").with(as(UserType.ACCOUNTANT)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$[0].id").value("K1"));
+        mockMvc.perform(get("/api/platform-bookings/B1/tickets").with(as(UserType.SUPER_ADMIN))).andExpect(status().isForbidden());
+    }
+
+    @Test
+    void listJsonHasNoVoyraFigures() throws Exception {
+        given(ticketService.list("B1")).willReturn(List.of(download()));
+        String json = mockMvc.perform(get("/api/platform-bookings/B1/tickets").with(as(UserType.AGENCY_OWNER)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$[0].createdByName").value("Olga Owner"))
+                .andExpect(jsonPath("$[0].markup").value(500.00)).andExpect(jsonPath("$[0].ticketPrice").value(5500.00))
+                .andReturn().getResponse().getContentAsString();
+        for (String key : List.of("gross", "base", "displayed", "commission", "voyra", "supplier")) {
+            org.assertj.core.api.Assertions.assertThat(json.toLowerCase()).as(key).doesNotContain(key);
+        }
+    }
+
+    @Test
+    void ticketOfAnotherBookingIs404() throws Exception {
+        given(ticketService.pdf("B1", "K-OF-B2")).willThrow(new NotFoundException("Ticket not found"));
+        mockMvc.perform(get("/api/platform-bookings/B1/tickets/K-OF-B2/pdf").with(as(UserType.AGENT))).andExpect(status().isNotFound());
+    }
+
+    @Test
+    void pdfHeaders() throws Exception {
+        byte[] bytes = "%PDF-1.4".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        given(ticketService.pdf("B1", "K1")).willReturn(new PlatformBookingTicketService.TicketPdf(bytes, "e-ticket-ABC123-1.pdf"));
+        for (UserType type : List.of(UserType.AGENCY_OWNER, UserType.AGENT, UserType.ACCOUNTANT)) {
+            mockMvc.perform(get("/api/platform-bookings/B1/tickets/K1/pdf").with(as(type)))
+                    .andExpect(status().isOk())
+                    .andExpect(content().contentType(MediaType.APPLICATION_PDF))
+                    .andExpect(header().string("Cache-Control", "no-store"))
+                    .andExpect(header().string("X-Content-Type-Options", "nosniff"))
+                    .andExpect(header().string("Content-Disposition", "attachment; filename=\"e-ticket-ABC123-1.pdf\""))
+                    .andExpect(content().bytes(bytes));
+        }
     }
 }

@@ -128,6 +128,17 @@ class PlatformBookingQueryServiceTest {
                 .containsExactly("Wallet amount reserved", "Ticket issued");
     }
 
+    @Test
+    void detailCarriesPublishedFare() {
+        login("O1", UserType.AGENCY_OWNER, "T1");
+        given(bookings.findByIdAndTenantId("B1", "T1")).willReturn(Optional.of(booking("B1", "T1", "O1")));
+
+        PlatformBookingResponse r = service().get("B1");
+
+        assertThat(r.getPublishedFare()).isEqualByComparingTo("5000.00");
+        assertThat(r.getDisplayedFare()).isEqualByComparingTo("4500.00");
+    }
+
     /** R19: an owner's booking is booked by the owner (user id = tenant id), named from the agency, never "-". */
     @Test
     @SuppressWarnings("unchecked")
