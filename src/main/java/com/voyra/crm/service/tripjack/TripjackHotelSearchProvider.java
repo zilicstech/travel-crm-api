@@ -705,7 +705,8 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
     public List<HotelThumbnailResponse> thumbnails(List<String> hids) {
         Conn conn = connect();
         Map<String, JsonNode> info = contentFor(conn.client(), conn.host(), hids);
-        return hids.stream().filter(info::containsKey).map(hid -> toThumbnail(hid, info.get(hid))).toList();
+        // contentFor skips null ids, and the concurrent map refuses a null key
+        return hids.stream().filter(hid -> hid != null && info.containsKey(hid)).map(hid -> toThumbnail(hid, info.get(hid))).toList();
     }
 
     static HotelThumbnailResponse toThumbnail(String hid, JsonNode info) {

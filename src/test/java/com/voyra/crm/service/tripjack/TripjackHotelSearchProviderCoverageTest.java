@@ -449,6 +449,17 @@ class TripjackHotelSearchProviderCoverageTest {
     }
 
     @Test
+    void aNullHotelIdIsSkippedLikeABlankOne() {
+        setUp(SupplierEnvironment.PROD, true);
+        json(PROD, "/hms/v3/content/fetch-hotel-content", "{\"hotels\":[{\"tjHotelId\":\"1\",\"star_rating\":2}]}");
+
+        var thumbs = provider.thumbnails(java.util.Arrays.asList(null, "1"));
+
+        server.verify();
+        assertThat(thumbs).extracting(com.voyra.crm.dto.HotelThumbnailResponse::getHotelId).containsExactly("1");
+    }
+
+    @Test
     void anEmptyContentAnswerListsNoThumbnails() {
         setUp(SupplierEnvironment.PROD, true);
         server.expect(requestTo(PROD + "/hms/v3/content/fetch-hotel-content")).andRespond(withSuccess());
