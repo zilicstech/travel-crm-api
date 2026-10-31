@@ -91,7 +91,7 @@ class PlatformBookingMirrorServiceTest {
         pax.setFirstName("Rahul");
         pax.setLastName("Sharma");
         PlatformBooking b = PlatformBooking.builder().id("PB1").tenantId("T1").clientId(clientId)
-                .status(PlatformBookingStatus.TICKETED).pnr("ABC123").ticketNumbers(List.of("0981234567890"))
+                .status(PlatformBookingStatus.TICKETED).ticketedAt(java.time.Instant.parse("2026-11-01T10:00:00Z")).pnr("ABC123").ticketNumbers(List.of("0981234567890"))
                 .displayed(new BigDecimal("5400.00")).gross(new BigDecimal("5500.00")).base(new BigDecimal("4500.00"))
                 .debitEntryId("WE-DEBIT").mirrorStatus(clientId == null ? MirrorStatus.NONE : MirrorStatus.PENDING)
                 .paxEnc(paxCodec.encrypt(Map.of("passengers", List.of(pax), "contactEmail", "a@b.c", "contactPhone", "9")))
@@ -108,12 +108,12 @@ class PlatformBookingMirrorServiceTest {
         crm.setBookedBy(crm.getTenantId());
         crm.setLeadId(null);
         crm.setServiceId(null);
-        when(tenantService.create(any(), anyList(), anyList())).thenReturn("B1");
+        when(tenantService.ensure(any(), anyList(), any(), anyList())).thenReturn("B1");
 
         service.sync("PB1");
 
-        verify(tenantService).create(org.mockito.ArgumentMatchers.argThat(p -> "C1".equals(p.getClientId())
-                && p.getLeadId() == null && p.getBookedBy().equals(p.getTenantId())), anyList(), anyList());
+        verify(tenantService).ensure(org.mockito.ArgumentMatchers.argThat(p -> "C1".equals(p.getClientId())
+                && p.getLeadId() == null && p.getBookedBy().equals(p.getTenantId())), anyList(), any(), anyList());
         assertThat(crm.getMirrorStatus()).isEqualTo(MirrorStatus.DONE);
     }
 
@@ -127,12 +127,12 @@ class PlatformBookingMirrorServiceTest {
         assertThat(starter.getMirrorStatus()).isEqualTo(MirrorStatus.NONE);
 
         PlatformBooking crm = ticketed("C1");
-        when(tenantService.create(any(), anyList(), anyList())).thenReturn("B1");
+        when(tenantService.ensure(any(), anyList(), any(), anyList())).thenReturn("B1");
 
         service.sync("PB1");
 
         ArgumentCaptor<List<PaxInput>> pax = ArgumentCaptor.forClass(List.class);
-        verify(tenantService).create(eq(crm), anyList(), pax.capture());
+        verify(tenantService).ensure(eq(crm), anyList(), any(), pax.capture());
         assertThat(pax.getValue()).singleElement().satisfies(p -> assertThat(p.getLastName()).isEqualTo("Sharma"));
         verify(tenantService, never()).cancel(anyString(), any());
         assertThat(crm.getMirrorStatus()).isEqualTo(MirrorStatus.DONE);
@@ -143,7 +143,7 @@ class PlatformBookingMirrorServiceTest {
     @Test
     void mirrorFailureLeavesMoneyAndMarksFailed() {
         PlatformBooking b = ticketed("C1");
-        when(tenantService.create(any(), anyList(), anyList()))
+        when(tenantService.ensure(any(), anyList(), any(), anyList()))
                 .thenThrow(new IllegalStateException("Ledger account 1310 is not the Voyra Wallet"));
 
         service.sync("PB1"); // never throws: the ticket and its debit already committed
@@ -170,7 +170,7 @@ class PlatformBookingMirrorServiceTest {
         PlatformBooking live = ticketed("C1"); // the row as it is after the concurrent cancel committed
         when(repository.findById("PB1")).thenReturn(Optional.of(seen));
         when(repository.findByIdForUpdate("PB1")).thenReturn(Optional.of(live));
-        when(tenantService.create(any(), anyList(), anyList())).thenAnswer(i -> {
+        when(tenantService.ensure(any(), anyList(), any(), anyList())).thenAnswer(i -> {
             live.setStatus(PlatformBookingStatus.CANCELLED);
             live.setCancelRefund(new BigDecimal("4000.00"));
             return "B1";
@@ -211,8 +211,8 @@ class PlatformBookingMirrorServiceTest {
         TenantContext.setTenantId("T-OTHER");
         assertThat(SecurityContextUtil.getCurrentUser()).isEmpty();
         List<String> seen = new ArrayList<>();
-        when(tenantService.create(any(), anyList(), anyList())).thenAnswer(i -> {
-            seen.add("create@" + TenantContext.getTenantId());
+        when(tenantService.ensure(any(), anyList(), any(), anyList())).thenAnswer(i -> {
+            seen.add("ensure@" + TenantContext.getTenantId());
             return "B1";
         });
         doAnswer(i -> {
@@ -224,7 +224,7 @@ class PlatformBookingMirrorServiceTest {
 
         service.sync("PB1");
 
-        assertThat(seen).containsExactly("create@T1", "cancel@T1 by system/T1 system=true");
+        assertThat(seen).containsExactly("ensure@T1", "cancel@T1 by system/T1 system=true");
         assertThat(b.getMirrorStatus()).isEqualTo(MirrorStatus.DONE);
         assertThat(TenantContext.getTenantId()).isEqualTo("T-OTHER");
         assertThat(SystemActor.isActive()).isFalse();
@@ -235,7 +235,7 @@ class PlatformBookingMirrorServiceTest {
     void aMirrorCancelFailureIsRecordedAndTheContextStillRestored() {
         PlatformBooking b = ticketed("C1");
         b.setStatus(PlatformBookingStatus.CANCELLED);
-        given(tenantService.create(any(), anyList(), anyList())).willReturn("B1");
+        given(tenantService.ensure(any(), anyList(), any(), anyList())).willReturn("B1");
         doAnswer(i -> {
             throw new IllegalStateException("boom");
         }).when(tenantService).cancel(anyString(), any());
@@ -270,12 +270,12 @@ class PlatformBookingMirrorServiceTest {
         com.voyra.crm.dto.HotelStaySummary stay = new com.voyra.crm.dto.HotelStaySummary("Sea Breeze Resort", "Goa",
                 java.time.LocalDate.of(2026, 12, 1), java.time.LocalDate.of(2026, 12, 3), 2, 1, "Breakfast included");
         when(queryService.hotel(hotel)).thenReturn(stay);
-        when(tenantService.createHotel(any(), any(), anyList())).thenReturn("B1");
+        when(tenantService.ensure(any(), anyList(), any(), anyList())).thenReturn("B1");
 
         service.sync("PB1");
 
-        verify(tenantService).createHotel(eq(hotel), eq(stay), anyList());
-        verify(tenantService, never()).create(any(), anyList(), anyList());
+        verify(tenantService).ensure(eq(hotel), eq(List.of()), eq(stay), anyList());
+        verify(tenantService).ticket(eq("B1"), eq(hotel), eq(List.of()), anyList());
         verify(queryService, never()).itinerary(any());
         assertThat(hotel.getMirrorStatus()).isEqualTo(MirrorStatus.DONE);
         assertThat(hotel.getTenantBookingId()).isEqualTo("B1");
@@ -289,7 +289,7 @@ class PlatformBookingMirrorServiceTest {
         hotel.setStatus(PlatformBookingStatus.CANCELLED);
         when(queryService.hotel(hotel)).thenReturn(new com.voyra.crm.dto.HotelStaySummary("Sea Breeze Resort", "Goa",
                 java.time.LocalDate.of(2026, 12, 1), java.time.LocalDate.of(2026, 12, 3), 2, 1, null));
-        when(tenantService.createHotel(any(), any(), anyList())).thenReturn("B1");
+        when(tenantService.ensure(any(), anyList(), any(), anyList())).thenReturn("B1");
 
         service.sync("PB1");
 
@@ -297,16 +297,97 @@ class PlatformBookingMirrorServiceTest {
         assertThat(hotel.getMirrorStatus()).isEqualTo(MirrorStatus.DONE);
     }
 
+    // ---------------------------------------------------------------- the reconciler: ensure, ticket, fail, cancel in order
+
+    private PlatformBooking at(PlatformBookingStatus status, boolean ticketed) {
+        PlatformBooking b = ticketed("C1");
+        b.setStatus(status);
+        b.setTicketedAt(ticketed ? b.getTicketedAt() : null);
+        when(tenantService.ensure(any(), anyList(), any(), anyList())).thenReturn("B1");
+        return b;
+    }
+
+    @Test
+    void syncAtBookingCreatesAPendingRowAndNothingElse() {
+        for (PlatformBookingStatus status : List.of(PlatformBookingStatus.BOOKING, PlatformBookingStatus.UNKNOWN)) {
+            org.mockito.Mockito.clearInvocations(tenantService);
+            PlatformBooking b = at(status, false);
+
+            service.sync("PB1");
+
+            verify(tenantService).ensure(eq(b), anyList(), any(), anyList());
+            verify(tenantService, never()).ticket(anyString(), any(), anyList(), anyList());
+            verify(tenantService, never()).fail(anyString());
+            verify(tenantService, never()).cancel(anyString(), any());
+            assertThat(b.getMirrorStatus()).isEqualTo(MirrorStatus.DONE);
+            assertThat(b.getTenantBookingId()).isEqualTo("B1");
+        }
+    }
+
+    @Test
+    void syncAtTicketedEnsuresThenTicketsAndPaysOnce() {
+        PlatformBooking b = at(PlatformBookingStatus.TICKETED, true);
+
+        service.sync("PB1");
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(tenantService);
+        order.verify(tenantService).ensure(eq(b), anyList(), any(), anyList());
+        order.verify(tenantService).ticket(eq("B1"), eq(b), anyList(), anyList()); // the ticket phase is the one that pays
+        verify(tenantService, org.mockito.Mockito.times(1)).ticket(anyString(), any(), anyList(), anyList());
+        verify(tenantService, never()).fail(anyString());
+        verify(tenantService, never()).cancel(anyString(), any());
+        assertThat(b.getMirrorStatus()).isEqualTo(MirrorStatus.DONE);
+    }
+
+    @Test
+    void syncAtFailedEnsuresThenFails() {
+        PlatformBooking b = at(PlatformBookingStatus.FAILED, false);
+
+        service.sync("PB1");
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(tenantService);
+        order.verify(tenantService).ensure(eq(b), anyList(), any(), anyList());
+        order.verify(tenantService).fail("B1");
+        verify(tenantService, never()).cancel(anyString(), any());
+        assertThat(b.getMirrorStatus()).isEqualTo(MirrorStatus.DONE);
+    }
+
+    @Test
+    void syncAtFailedNeverPays() {
+        at(PlatformBookingStatus.FAILED, false);
+
+        service.sync("PB1");
+
+        verify(tenantService, never()).ticket(anyString(), any(), anyList(), anyList());
+    }
+
+    /** Review Focus 2: the platform only cancels a ticketed row, so a mirror still PENDING is ticketed (paid) first, then cancelled. */
+    @Test
+    void aCancelledRowWhoseMirrorNeverTicketedIsTicketedThenCancelled() {
+        PlatformBooking b = at(PlatformBookingStatus.CANCELLED, true);
+        b.setCancelRefund(new BigDecimal("4000.00"));
+
+        service.sync("PB1");
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(tenantService);
+        order.verify(tenantService).ensure(eq(b), anyList(), any(), anyList());
+        order.verify(tenantService).ticket(eq("B1"), eq(b), anyList(), anyList());
+        order.verify(tenantService).cancel("B1", b);
+        verify(tenantService, never()).fail(anyString());
+        assertThat(b.getMirrorStatus()).isEqualTo(MirrorStatus.DONE);
+    }
+
     // ---------------------------------------------------------------- coverage: rows not ready, odd payloads, finish races
 
     @Test
     void aMissingRowOrOneStillMovingIsNotMirrored() {
         when(repository.findById("NONE")).thenReturn(Optional.empty());
-        PlatformBooking b = ticketed("C1");
-        b.setStatus(PlatformBookingStatus.BOOKING);
-
         service.sync("NONE");
-        service.sync("PB1");
+        for (PlatformBookingStatus status : List.of(PlatformBookingStatus.REVIEWING, PlatformBookingStatus.HELD,
+                PlatformBookingStatus.CANCELLING, PlatformBookingStatus.ABORTED)) {
+            ticketed("C1").setStatus(status);
+            service.sync("PB1");
+        }
 
         verifyNoInteractions(tenantService);
     }
@@ -315,11 +396,11 @@ class PlatformBookingMirrorServiceTest {
     void aBookingWithoutStoredPassengersIsMirroredWithNone() {
         PlatformBooking b = ticketed("C1");
         b.setPaxEnc(null);
-        when(tenantService.create(any(), anyList(), anyList())).thenReturn("B1");
+        when(tenantService.ensure(any(), anyList(), any(), anyList())).thenReturn("B1");
 
         service.sync("PB1");
 
-        verify(tenantService).create(eq(b), anyList(), eq(List.of()));
+        verify(tenantService).ensure(eq(b), anyList(), any(), eq(List.of()));
         assertThat(b.getMirrorStatus()).isEqualTo(MirrorStatus.DONE);
         assertThat(b.getTenantBookingId()).isEqualTo("B1");
     }
@@ -328,18 +409,18 @@ class PlatformBookingMirrorServiceTest {
     void storedPassengersWithoutAListAreMirroredWithNone() {
         PlatformBooking b = ticketed("C1");
         b.setPaxEnc(paxCodec.encrypt(Map.of("contactEmail", "pax-a@example.test")));
-        when(tenantService.create(any(), anyList(), anyList())).thenReturn("B1");
+        when(tenantService.ensure(any(), anyList(), any(), anyList())).thenReturn("B1");
 
         service.sync("PB1");
 
-        verify(tenantService).create(eq(b), anyList(), eq(List.of()));
+        verify(tenantService).ensure(eq(b), anyList(), any(), eq(List.of()));
     }
 
     @Test
     void aRowGoneBeforeTheOutcomeIsRecordedIsLeftAlone() {
         PlatformBooking b = ticketed("C1");
         when(repository.findByIdForUpdate("PB1")).thenReturn(Optional.empty());
-        when(tenantService.create(any(), anyList(), anyList())).thenThrow(new IllegalStateException("boom"));
+        when(tenantService.ensure(any(), anyList(), any(), anyList())).thenThrow(new IllegalStateException("boom"));
 
         service.sync("PB1");
 
@@ -352,7 +433,7 @@ class PlatformBookingMirrorServiceTest {
         PlatformBooking seen = ticketed("C1");
         PlatformBooking live = seen.toBuilder().mirrorStatus(MirrorStatus.DONE).tenantBookingId("B9").build();
         when(repository.findByIdForUpdate("PB1")).thenReturn(Optional.of(live));
-        when(tenantService.create(any(), anyList(), anyList())).thenThrow(new IllegalStateException("duplicate"));
+        when(tenantService.ensure(any(), anyList(), any(), anyList())).thenThrow(new IllegalStateException("duplicate"));
 
         service.sync("PB1");
 
@@ -366,7 +447,7 @@ class PlatformBookingMirrorServiceTest {
         PlatformBooking seen = ticketed("C1");
         PlatformBooking live = seen.toBuilder().status(PlatformBookingStatus.CANCELLED).tenantBookingId("B-OLD").build();
         when(repository.findByIdForUpdate("PB1")).thenReturn(Optional.of(live));
-        when(tenantService.create(any(), anyList(), anyList())).thenReturn("B-NEW");
+        when(tenantService.ensure(any(), anyList(), any(), anyList())).thenReturn("B-NEW");
 
         service.sync("PB1");
 
@@ -377,7 +458,7 @@ class PlatformBookingMirrorServiceTest {
     @Test
     void aLongOrMissingErrorMessageIsCutOrKeptInTheAlert() {
         ticketed("C1");
-        when(tenantService.create(any(), anyList(), anyList())).thenThrow(new IllegalStateException("x".repeat(400)));
+        when(tenantService.ensure(any(), anyList(), any(), anyList())).thenThrow(new IllegalStateException("x".repeat(400)));
 
         service.sync("PB1");
 
@@ -389,7 +470,7 @@ class PlatformBookingMirrorServiceTest {
 
         PlatformBooking again = ticketed("C1");
         again.setMirrorStatus(MirrorStatus.PENDING);
-        org.mockito.Mockito.doThrow(new IllegalStateException()).when(tenantService).create(any(), anyList(), anyList());
+        org.mockito.Mockito.doThrow(new IllegalStateException()).when(tenantService).ensure(any(), anyList(), any(), anyList());
         service.sync("PB1");
         verify(notificationService, org.mockito.Mockito.times(2)).platformAlert(anyString(), body.capture());
         assertThat(body.getValue()).contains("IllegalStateException: null)");

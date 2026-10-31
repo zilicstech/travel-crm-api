@@ -14,6 +14,9 @@ public interface PlatformBookingTicketRepository extends JpaRepository<PlatformB
     @Query("SELECT COALESCE(MAX(t.seq), 0) FROM PlatformBookingTicket t WHERE t.platformBookingId = :bookingId")
     int maxSeq(@Param("bookingId") String bookingId);
 
+    /** The newest download, whose markup is the booking's markup. */
+    Optional<PlatformBookingTicket> findTopByPlatformBookingIdOrderBySeqDesc(String platformBookingId);
+
     List<PlatformBookingTicket> findByPlatformBookingIdAndTenantIdOrderBySeqDesc(String platformBookingId, String tenantId);
 
     /** A ticket id under another booking or agency is simply absent (404). */

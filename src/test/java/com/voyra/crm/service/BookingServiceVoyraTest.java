@@ -203,6 +203,37 @@ class BookingServiceVoyraTest {
     }
 
     @Test
+    void aPendingVoyraBookingNeverTakesAReferenceFromItsRequest() {
+        when(agentRepository.findByIdAndTenantId("A1", "T1")).thenReturn(Optional.of(Agent.builder().id("A1").name("Priya").build()));
+        when(clientRepository.findById("C1")).thenReturn(Optional.of(Client.builder().id("C1").name("Asha").build()));
+        when(leadServiceRepository.findById("S1")).thenReturn(Optional.of(LeadService.builder().id("S1").leadId("L1")
+                .type(ServiceType.FLIGHT).build()));
+        BookingCreateRequest r = request();
+        r.setPnr("PNR1");
+        r.setHotelConfirmationNo("HCN1");
+
+        platform(() -> bookingService.createVoyraPending(r, ticket(), "PB1"));
+
+        ArgumentCaptor<Booking> saved = ArgumentCaptor.forClass(Booking.class);
+        verify(bookingRepository, times(2)).save(saved.capture());
+        assertThat(saved.getValue().getPnr()).isNull();
+        assertThat(saved.getValue().getHotelConfirmationNo()).isNull();
+    }
+
+    @Test
+    void failOnAConfirmedBookingIsANoOp() {
+        Booking b = pending().bookingStatus(BookingStatus.CONFIRMED).leadId("L1").build();
+        locked(b);
+
+        platformRun(() -> bookingService.failVoyraBooking("B1"));
+
+        assertThat(b.getBookingStatus()).isEqualTo(BookingStatus.CONFIRMED);
+        assertThat(b.getCancelReason()).isNull();
+        verify(bookingRepository, never()).save(any());
+        verifyNoInteractions(auditService, leadTimelineService);
+    }
+
+    @Test
     void createVoyraPendingRefusesOutsideTheSystemActor() {
         assertThatThrownBy(() -> bookingService.createVoyraPending(request(), ticket(), "PB1"))
                 .isInstanceOf(IllegalStateException.class).hasMessage("Voyra bookings are written by the platform only");

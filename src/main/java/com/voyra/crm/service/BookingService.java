@@ -307,6 +307,8 @@ public class BookingService {
     @Transactional
     public String createVoyraPending(BookingCreateRequest request, BookingDocument voucher, String platformBookingId) {
         assertPlatform();
+        request.setPnr(null); // the reference comes with the ticket (confirmVoyraTicket)
+        request.setHotelConfirmationNo(null);
         BigDecimal cost = nzMoney(voucher.getNetCost());
         BigDecimal price = com.voyra.crm.util.MarkupMath.sellingPrice(cost, MarkupMode.FLAT, voucher.getMarkupValue());
         request.setNetCost(cost);
@@ -374,8 +376,8 @@ public class BookingService {
     @Transactional
     public void failVoyraBooking(String bookingId) {
         Booking booking = lockVoyra(bookingId);
-        if (booking.getBookingStatus() == BookingStatus.CANCELLED) {
-            return;
+        if (booking.getBookingStatus() != BookingStatus.PENDING) {
+            return; // already cancelled, or ticketed meanwhile (the ticket phase runs first)
         }
         Map<String, String> before = AuditSnapshot.of(booking, AUDITED);
         booking.setBookingStatus(BookingStatus.CANCELLED);

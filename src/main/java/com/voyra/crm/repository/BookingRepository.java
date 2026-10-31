@@ -46,6 +46,10 @@ public interface BookingRepository extends JpaRepository<Booking, String>, JpaSp
     /** The CRM mirror of a platform booking (at most one: the column is UNIQUE). */
     java.util.Optional<Booking> findByPlatformBookingId(String platformBookingId);
 
+    /** Serialises the mirror's ensure phase per platform booking until the transaction ends (pg_advisory_xact_lock returns void, hence the wrapper). */
+    @Query(value = "select 1 from (select pg_advisory_xact_lock(hashtext(:id))) l", nativeQuery = true)
+    int lockPlatformBooking(@Param("id") String platformBookingId);
+
     boolean existsByIdAndPlatformBookingIdIsNotNull(String id);
 
     /** Drives the auto-BOOKED/back-to-CONFIRMED transition: zero means nothing live remains. */

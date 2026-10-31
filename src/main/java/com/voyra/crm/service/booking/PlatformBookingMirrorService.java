@@ -18,14 +18,16 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.Assert;
 
+import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
- * Keeps the agency's read-only CRM mirror of a platform booking in line with it (spec 6 "Tenant side"): written once the
- * booking is TICKETED, cancelled once it is CANCELLED - only for a booking that names a CRM client. Runs after the
- * platform money committed and never touches it: a failure sets {@code mirror_status = FAILED}, records an event and
+ * Keeps the agency's read-only CRM mirror of a platform booking in line with it (unified bookings spec Part 2): PENDING
+ * from the moment the booking is sent, CONFIRMED and paid once ticketed, cancelled when it fails or is cancelled - only
+ * for a booking that names a CRM client. Runs after the platform money committed and never touches it: a failure sets {@code mirror_status = FAILED}, records an event and
  * alerts Voyra, and {@code PlatformBookingMirrorRepairJob} retries. The tenant writes run as the {@link SystemActor} in
  * {@link PlatformBookingMirrorTenantService}'s own {@code REQUIRES_NEW} transactions (blueprint 3.5).
  */
@@ -59,12 +61,19 @@ public class PlatformBookingMirrorService {
     record StoredPax(List<PaxInput> passengers) {
     }
 
-    /** Brings the mirror in line with the platform row. Idempotent, and never throws: the ticket is already paid for. */
+    /** The platform statuses the CRM shows; REVIEWING, HELD and ABORTED never have a CRM row, CANCELLING changes nothing. */
+    private static final Set<PlatformBookingStatus> MIRRORED = EnumSet.of(PlatformBookingStatus.BOOKING,
+            PlatformBookingStatus.UNKNOWN, PlatformBookingStatus.TICKETED, PlatformBookingStatus.FAILED, PlatformBookingStatus.CANCELLED);
+
+    /**
+     * Brings the mirror in line with the platform row by running the tenant phases in order, each a no-op when the CRM
+     * row already shows it: ensure (always), ticket (once ticketed, whatever the status now), fail, cancel. Idempotent,
+     * and never throws: the platform money already committed.
+     */
     public void sync(String platformBookingId) {
         PlatformBooking b = repository.findById(platformBookingId).orElse(null);
-        if (b == null || b.getClientId() == null || b.getMirrorStatus() == MirrorStatus.DONE
-                || (b.getStatus() != PlatformBookingStatus.TICKETED && b.getStatus() != PlatformBookingStatus.CANCELLED)) {
-            return; // no CRM client (a Starter agency's record is the platform row), already in line, or still moving
+        if (b == null || b.getClientId() == null || b.getMirrorStatus() == MirrorStatus.DONE || !MIRRORED.contains(b.getStatus())) {
+            return; // no CRM client (a Starter agency's record is the platform row), already in line, or nothing to show
         }
         PlatformBookingStatus acted = b.getStatus();
         try {
@@ -76,7 +85,13 @@ public class PlatformBookingMirrorService {
             List<PaxInput> stored = b.getPaxEnc() == null ? List.of() : paxCodec.decrypt(b.getPaxEnc(), StoredPax.class).passengers();
             List<PaxInput> pax = stored == null ? List.of() : stored;
             String bookingId = SystemActor.call(b.getTenantId(), () -> {
-                String id = hotel ? tenantService.createHotel(b, stay, pax) : tenantService.create(b, legs, pax);
+                String id = tenantService.ensure(b, legs, stay, pax);
+                if (b.getTicketedAt() != null) {
+                    tenantService.ticket(id, b, legs, pax);
+                }
+                if (acted == PlatformBookingStatus.FAILED) {
+                    tenantService.fail(id);
+                }
                 if (acted == PlatformBookingStatus.CANCELLED) {
                     tenantService.cancel(id, b);
                 }
