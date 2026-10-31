@@ -31,6 +31,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 @ExtendWith(MockitoExtension.class)
 class PlatformBookingPurgeTxServiceTest {
@@ -248,5 +249,69 @@ class PlatformBookingPurgeTxServiceTest {
         assertThat(redacted).containsEntry("passport", "[removed]").containsEntry("PassportNo", "[removed]")
                 .containsEntry("nationality", "[removed]").containsEntry("contactEmail", "[removed]").containsEntry("contact_phone", "[removed]")
                 .containsEntry("passportExpiryWarning", "soon").containsEntry("phoneCount", 2);
+    }
+
+    // ---------------------------------------------------------------- coverage: missing rows, undated travel, payload shapes
+
+    @Test
+    void aMissingBookingIsNotDue() {
+        given(bookings.findByIdForUpdate("b1")).willReturn(Optional.empty());
+
+        assertThat(service().purge("b1", NOW, DAYS)).isEqualTo(PurgeOutcome.NOT_DUE);
+        verify(bookings, never()).save(any());
+    }
+
+    @Test
+    void aTicketedBookingWithoutATravelDateCountsAYearFromTicketing() {
+        PlatformBooking ticketedLongAgo = booking(PlatformBookingStatus.TICKETED, daysAgo(600));
+        ticketedLongAgo.setItinerary(Map.of());
+        ticketedLongAgo.setTicketedAt(daysAgo(460));
+        stub(ticketedLongAgo);
+        assertThat(service().purge("b1", NOW, DAYS)).isEqualTo(PurgeOutcome.PURGED);
+
+        PlatformBooking createdOnly = booking(PlatformBookingStatus.TICKETED, daysAgo(400));
+        createdOnly.setItinerary(Map.of("tripInfos", List.of(Map.of("sI", List.of(Map.of("dt", "soon"))))));
+        stub(createdOnly);
+        assertThat(service().purge("b1", NOW, DAYS)).isEqualTo(PurgeOutcome.NOT_DUE);
+    }
+
+    @Test
+    void aHotelWithoutAStayFallsBackToTicketing() {
+        PlatformBooking b = booking(PlatformBookingStatus.TICKETED, daysAgo(500));
+        b.setProduct(PricingProduct.HOTEL);
+        b.setItinerary(null);
+        stub(b);
+
+        assertThat(service().purge("b1", NOW, DAYS)).isEqualTo(PurgeOutcome.PURGED);
+    }
+
+    @Test
+    void aClientBookingWhoseMirrorIsDoneIsPurged() {
+        PlatformBooking b = booking(PlatformBookingStatus.CANCELLED, daysAgo(200));
+        b.setClientId("c1");
+        b.setMirrorStatus(MirrorStatus.DONE);
+        stub(b);
+
+        assertThat(service().purge("b1", NOW, DAYS)).isEqualTo(PurgeOutcome.PURGED);
+        verifyNoInteractions(recorder, notifications);
+    }
+
+    @Test
+    void listsAreRedactedItemByItemAndNullsAndEmptyPayloadsAreLeftAsTheyAre() {
+        PlatformBooking b = booking(PlatformBookingStatus.ABORTED, daysAgo(200));
+        Map<String, Object> withList = new java.util.HashMap<>();
+        withList.put("travellers", List.of(Map.of("firstName", "Pax", "type", "ADULT"), "loose"));
+        withList.put("email", null);
+        withList.put("names", List.of("Pax One"));
+        PlatformBookingEvent listEvent = event("CONFIRM", withList, daysAgo(150));
+        PlatformBookingEvent noPayload = event("NOTE", null, daysAgo(150));
+        stub(b, listEvent, noPayload);
+
+        assertThat(service().purge("b1", NOW, DAYS)).isEqualTo(PurgeOutcome.PURGED);
+
+        assertThat(listEvent.getPayload().get("travellers")).isEqualTo(List.of(Map.of("firstName", "[removed]", "type", "ADULT"), "loose"));
+        assertThat(listEvent.getPayload()).containsEntry("email", null).containsEntry("names", List.of("Pax One"));
+        verify(events).save(listEvent);
+        verify(events, never()).save(noPayload);
     }
 }
