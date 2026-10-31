@@ -405,4 +405,96 @@ class PlatformBookingQueryServiceTest {
         given(bookings.summarize(any(), any(), any(), any(), any())).willReturn(List.of());
         assertThat(service().summary(d, d.plusDays(365)).getBookings()).isZero();
     }
+
+    // ---------------------------------------------------------------- coverage: admin list filters, odd rows
+
+    @Test
+    void anAgentOpensTheirOwnBooking() {
+        login("A1", UserType.AGENT, "T1");
+        given(bookings.findByIdAndTenantId("B1", "T1")).willReturn(Optional.of(booking("B1", "T1", "A1")));
+
+        assertThat(service().get("B1").getId()).isEqualTo("B1");
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void theAdminListFiltersByStatusAndAgencyNewestFirst() {
+        org.mockito.ArgumentCaptor<org.springframework.data.jpa.domain.Specification<PlatformBooking>> spec =
+                org.mockito.ArgumentCaptor.forClass(org.springframework.data.jpa.domain.Specification.class);
+        org.mockito.ArgumentCaptor<Pageable> pageable = org.mockito.ArgumentCaptor.forClass(Pageable.class);
+        given(bookings.findAll(spec.capture(), pageable.capture())).willAnswer(i -> new PageImpl<>(List.of(), i.getArgument(1), 0));
+
+        service().adminList(null, null, PlatformBookingStatus.FAILED, "T1");
+        service().adminList(1, 10, null, " ");
+        service().adminList(null, null, null, null);
+
+        assertThat(pageable.getAllValues().get(0).getPageNumber()).isZero();
+        assertThat(pageable.getAllValues().get(0).getSort().getOrderFor("createdAt").isDescending()).isTrue();
+        assertThat(pageable.getAllValues().get(1).getPageNumber()).isEqualTo(1);
+        jakarta.persistence.criteria.Root<PlatformBooking> root = org.mockito.Mockito.mock(jakarta.persistence.criteria.Root.class);
+        jakarta.persistence.criteria.CriteriaBuilder cb = org.mockito.Mockito.mock(jakarta.persistence.criteria.CriteriaBuilder.class);
+        jakarta.persistence.criteria.Path<Object> statusPath = org.mockito.Mockito.mock(jakarta.persistence.criteria.Path.class);
+        jakarta.persistence.criteria.Path<Object> tenantPath = org.mockito.Mockito.mock(jakarta.persistence.criteria.Path.class);
+        given(root.get("status")).willReturn(statusPath);
+        given(root.get("tenantId")).willReturn(tenantPath);
+
+        spec.getAllValues().get(0).toPredicate(root, null, cb);
+        spec.getAllValues().get(1).toPredicate(root, null, cb);
+        spec.getAllValues().get(2).toPredicate(root, null, cb);
+
+        org.mockito.Mockito.verify(cb).equal(statusPath, PlatformBookingStatus.FAILED);
+        org.mockito.Mockito.verify(cb).equal(tenantPath, "T1");
+        org.mockito.Mockito.verify(cb, org.mockito.Mockito.times(2)).and(new jakarta.persistence.criteria.Predicate[0]);
+    }
+
+    @Test
+    void anUnknownAdminBookingIs404() {
+        given(bookings.findById("NOPE")).willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service().adminGet("NOPE")).isInstanceOf(NotFoundException.class).hasMessage("Booking not found");
+    }
+
+    @Test
+    void anAgentWhoseIdIsTheAgencysIsNamedAsTheAgentNotTheOwner() {
+        given(agents.findAllById(List.of("T1"))).willReturn(List.of(Agent.builder().id("T1").name("Agent Same Id").build()));
+
+        PlatformBookingResponse r = service().view(booking("B1", "T1", "T1").toBuilder().clientId(null).build());
+
+        assertThat(r.getBookedByName()).isEqualTo("Agent Same Id");
+        org.mockito.Mockito.verifyNoInteractions(tenants);
+    }
+
+    @Test
+    void earningsWithoutCommissionOrTdsAndOddPassengersAndLegs() {
+        PlatformBooking noCommission = booking("B1", "T1", null).toBuilder().clientId(null).agencyCommission(null).build();
+        PlatformBooking noTds = noCommission.toBuilder().agencyCommission(new BigDecimal("80.00")).tds(null)
+                .paxEnc(paxCodec.encrypt(Map.of("passengers", "not a list"))).itinerary(null).build();
+        Map<String, Object> blankTitle = new java.util.HashMap<>(Map.of("type", "CHILD", "title", " ", "firstName", "Pax"));
+        PlatformBooking oddLegs = noCommission.toBuilder()
+                .paxEnc(paxCodec.encrypt(Map.of("passengers", List.of(blankTitle))))
+                .itinerary(Map.of("sI", List.of(Map.of("fD", Map.of("fN", "77"))))).build();
+
+        assertThat(service().view(noCommission).getAgencyEarns()).isNull();
+        PlatformBookingResponse r = service().view(noTds);
+        assertThat(r.getAgencyEarns()).isEqualByComparingTo("80.00");
+        assertThat(r.getPassengers()).isEmpty();
+        assertThat(r.getItinerary()).isEmpty();
+        PlatformBookingResponse odd = service().view(oddLegs);
+        assertThat(odd.getPassengers()).singleElement().satisfies(p -> assertThat(p.getName()).isEqualTo("Pax"));
+        assertThat(odd.getItinerary()).singleElement().satisfies(l -> assertThat(l.getFlightNumber()).isEqualTo("77"));
+    }
+
+    @Test
+    void aHotelStayWithUnreadableDatesHasNone() {
+        PlatformBooking b = booking("B1", "T1", "O1").toBuilder().product(PricingProduct.HOTEL)
+                .itinerary(Map.of("stay", Map.of("checkIn", "soon", "checkOut", 5))).build();
+
+        HotelStaySummary stay = service().hotel(b);
+
+        assertThat(stay.checkIn()).isNull();
+        assertThat(stay.checkOut()).isNull();
+        assertThat(stay.nights()).isNull();
+        assertThat(stay.rooms()).isNull();
+        assertThat(service().hotel(b.toBuilder().itinerary(null).build())).isNull();
+    }
 }

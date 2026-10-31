@@ -732,4 +732,135 @@ class PlatformBookingCancelTest {
         org.mockito.Mockito.verifyNoInteractions(provider);
         verifyNothingPosted();
     }
+
+    // ---------------------------------------------------------------- coverage: cancel refusals and settlement edges
+
+    @Test
+    void aQuoteInsideATransactionOrACancelWithoutAKeyIsRefused() {
+        TransactionSynchronizationManager.setActualTransactionActive(true);
+        try {
+            assertThatThrownBy(() -> service.cancelQuote(ID)).isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("cancelQuote must not run inside a transaction");
+        } finally {
+            TransactionSynchronizationManager.setActualTransactionActive(false);
+        }
+        assertThatThrownBy(() -> service.cancel(ID, null)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("An idempotency key is required to cancel a booking");
+        assertThatThrownBy(() -> service.cancel(ID, " ")).isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("An idempotency key is required to cancel a booking");
+        verifyNothingPosted();
+    }
+
+    @Test
+    void aRefusalWithoutTheSuppliersWordsRecordsTheFixedSentence() {
+        when(provider.cancelQuote("SB-1")).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
+        when(provider.cancel("SB-1")).thenReturn(new CancelResult(false, null, null));
+
+        assertThatThrownBy(() -> service.cancel(ID, "ck-1")).isInstanceOf(BookingConflictException.class);
+
+        assertThat(savedEvents.stream().filter(ev -> ev.getType().equals("CANCEL_REFUSED")).findFirst().orElseThrow().getPayload())
+                .containsEntry("message", AgencySupplierMessage.CANCEL_REFUSED);
+        assertThat(rows.get(ID).getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
+    }
+
+    @Test
+    void aRefusalForARowThatMovedOnLeavesItAlone() {
+        when(provider.cancelQuote("SB-1")).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
+        when(provider.cancel("SB-1")).thenAnswer(i -> {
+            rows.get(ID).setStatus(PlatformBookingStatus.CANCELLED); // an admin settled it meanwhile
+            return new CancelResult(false, null, "late");
+        });
+
+        assertThatThrownBy(() -> service.cancel(ID, "ck-1")).isInstanceOf(BookingConflictException.class);
+
+        assertThat(rows.get(ID).getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
+        assertThat(eventTypes()).doesNotContain("CANCEL_REFUSED");
+    }
+
+    @Test
+    void aBookingWithoutTdsRecallsTheWholeCommission() {
+        rows.get(ID).setTds(null);
+        supplierRefunds("4000.00");
+
+        service.cancel(ID, "ck-1");
+
+        verify(walletService).debitOrReceivable(T, WalletEntryType.COMMISSION_RECALL, new BigDecimal("100.00"),
+                "pb-recall:" + ID, REF, ID, ReceivableReason.CANCEL_NET_NEGATIVE);
+    }
+
+    @Test
+    void resolveCancelNeedsANoteAndAKnownBooking() {
+        loginAsPlatformAdmin();
+
+        assertThatThrownBy(() -> service.resolveCancel(ID, false, null, null)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("A note is required to resolve a cancellation");
+        assertThatThrownBy(() -> service.resolveCancel("NOPE", false, null, "note")).isInstanceOf(NotFoundException.class)
+                .hasMessage("Booking not found");
+    }
+
+    @Test
+    void aConfirmedCancelWithAnUnreadableRefundOnRecordCancelsWithoutPostingARefund() {
+        rows.get(ID).setStatus(PlatformBookingStatus.CANCELLING);
+        savedEvents.add(PlatformBookingEvent.builder().id("E-ACC").platformBookingId(ID).type("CANCEL_ACCEPTED")
+                .payload(Map.of("refund", "UNKNOWN")).createdAt(Instant.now()).build());
+
+        service.settleConfirmedCancel(ID);
+
+        assertThat(rows.get(ID).getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
+        verify(walletService, never()).credit(anyString(), eq(WalletEntryType.REFUND_CREDIT), any(), anyString(), anyString(), anyString(), anyString());
+        verify(notificationService, org.mockito.Mockito.atLeastOnce()).platformAlert(anyString(), anyString());
+    }
+
+    @Test
+    void aConfirmedCancelWithoutAnAcceptanceOrForASettledRowPostsNothing() {
+        service.settleConfirmedCancel(ID); // TICKETED: already settled elsewhere
+        assertThat(rows.get(ID).getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
+
+        rows.get(ID).setStatus(PlatformBookingStatus.CANCELLING);
+        service.settleConfirmedCancel(ID); // no CANCEL_ACCEPTED event: no refund on record
+        verifyNothingPosted();
+
+        assertThatThrownBy(() -> service.settleConfirmedCancel("NOPE")).isInstanceOf(NotFoundException.class)
+                .hasMessage("Booking not found");
+    }
+
+    @Test
+    void aHotelQuoteWithAnUnreadableDeadlineShowsNone() {
+        hotelRow();
+        rows.get(ID).setItinerary(new LinkedHashMap<>(Map.of("cancellationPolicy", "Refundable", "freeCancellationUntil", "soon")));
+        when(hotelProvider.cancelQuote("SB-1")).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
+
+        CancelPreview q = service.cancelQuote(ID);
+
+        assertThat(q.cancellationPolicy()).isEqualTo("Refundable");
+        assertThat(q.freeCancellationUntil()).isNull();
+    }
+
+    @Test
+    void aTripjackCancelTheSupplierAcceptsStaysCancellingUntilConfirmed() {
+        flightConfig.setProvider("tripjack");
+        rows.get(ID).setEnvironment(SupplierEnvironment.UAT);
+        supplierRefunds("4000.00");
+
+        PlatformBooking b = service.cancel(ID, "ck-1");
+
+        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
+        verifyNothingPosted();
+        assertThat(eventTypes()).contains("CANCEL_ACCEPTED");
+    }
+
+    @Test
+    void anAcceptedCancelForARowAnAdminPutBackMeanwhileIsNotSettled() {
+        when(provider.cancelQuote("SB-1")).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
+        when(provider.cancel("SB-1")).thenAnswer(i -> {
+            rows.get(ID).setStatus(PlatformBookingStatus.TICKETED); // resolved "not cancelled" while the call ran
+            return new CancelResult(true, new BigDecimal("4000.00"), "Cancelled");
+        });
+
+        PlatformBooking b = service.cancel(ID, "ck-1");
+
+        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
+        verifyNothingPosted();
+        verify(mirrorService, never()).sync(anyString());
+    }
 }

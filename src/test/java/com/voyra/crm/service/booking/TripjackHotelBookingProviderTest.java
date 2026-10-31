@@ -229,4 +229,189 @@ class TripjackHotelBookingProviderTest {
         assertThat(q).isNotNull();
         assertThat(q.value()).isEqualTo("tripjackRestClientBuilder");
     }
+
+    // ---------------------------------------------------------------- coverage: review shapes, sparse bookings, odd answers
+
+    @Test
+    void aReviewOfTheFirstListedOptionWithABlankIdOrBlankNotesAndSlabDeadline() {
+        server.expect(requestTo(BASE + "/hms/v3/hotel/review")).andRespond(withSuccess(
+                OK + ",\"bookingId\":\" \",\"option\":{\"pricing\":{\"totalPrice\":1}}}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(BASE + "/hms/v3/hotel/review")).andRespond(withSuccess(
+                OK + ",\"bookingId\":\"TJH2\",\"options\":[{\"pricing\":{\"totalPrice\":500},\"bookingNotes\":\" \","
+                        + "\"cancellation\":{\"isRefundable\":true,\"deadlineDateTime\":\"2026-11-01T10:00:00\",\"penalties\":["
+                        + "{\"amount\":0,\"to\":\"2026-11-20T12:00:00Z\"},{\"amount\":0,\"to\":\"\"},{\"amount\":100,\"to\":\"2026-11-25\"}]}}]}",
+                MediaType.APPLICATION_JSON));
+
+        assertThatThrownBy(this::review).isInstanceOf(SupplierException.class)
+                .hasMessage("Tripjack hotel review response is missing the review id or total");
+        FareReview r = review();
+
+        assertThat(r.reviewId()).isEqualTo("TJH2");
+        assertThat(r.fareRules()).isNull();
+        assertThat(r.itinerary().path("pricing").path("totalPrice").asInt()).isEqualTo(500);
+        assertThat(r.freeCancellationUntil()).isEqualTo(java.time.Instant.parse("2026-11-20T12:00:00Z"));
+    }
+
+    @Test
+    void aReviewWithoutAnOptionOrAReadableDeadlineHasNeither() {
+        server.expect(requestTo(BASE + "/hms/v3/hotel/review")).andRespond(withSuccess(
+                OK + ",\"bookingId\":\"TJH3\",\"options\":[]}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(BASE + "/hms/v3/hotel/review")).andRespond(withSuccess(
+                OK + ",\"bookingId\":\"TJH4\",\"option\":{\"pricing\":{\"totalPrice\":\"12x\"}}}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(BASE + "/hms/v3/hotel/review")).andRespond(withSuccess(
+                OK + ",\"bookingId\":\"TJH5\",\"option\":{\"pricing\":{\"totalPrice\":10},"
+                        + "\"cancellation\":{\"isRefundable\":true,\"deadlineDateTime\":\"next week\"}}}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(BASE + "/hms/v3/hotel/review")).andRespond(withSuccess(
+                OK + ",\"bookingId\":null,\"option\":{\"pricing\":{\"totalPrice\":10}}}", MediaType.APPLICATION_JSON));
+
+        assertThatThrownBy(this::review).isInstanceOf(SupplierException.class);
+        assertThatThrownBy(this::review).isInstanceOf(SupplierException.class);
+        FareReview r = review();
+        assertThat(r.freeCancellationUntil()).isNull();
+        assertThat(r.cancellationPolicy()).isEqualTo("Free cancellation until next week");
+        assertThatThrownBy(this::review).isInstanceOf(SupplierException.class);
+    }
+
+    @Test
+    void roomsWithoutChildAgesSendNoChildren() {
+        server.expect(requestTo(BASE + "/hms/v3/hotel/review")).andExpect(jsonPath("$.rooms[0].children").doesNotExist())
+                .andRespond(withSuccess(REVIEW_OK, MediaType.APPLICATION_JSON));
+        HotelRoomRequest noAges = new HotelRoomRequest(2, null);
+
+        assertThat(provider.review("opt-1", "100012", LocalDate.of(2026, 12, 1), LocalDate.of(2026, 12, 4), List.of(noAges)).reviewId())
+                .isEqualTo("TJH1");
+        server.verify();
+    }
+
+    @Test
+    void aBookingWithoutContactsRoomsOrAnyGuestStillSendsOneRoom() {
+        server.expect(requestTo(BASE + "/oms/v3/hotel/book"))
+                .andExpect(jsonPath("$.deliveryInfo.emails").isEmpty()).andExpect(jsonPath("$.deliveryInfo.contacts").isEmpty())
+                .andExpect(jsonPath("$.roomTravellerInfo.length()").value(1))
+                .andExpect(jsonPath("$.roomTravellerInfo[0].travellerInfo").isEmpty())
+                .andRespond(withSuccess(OK + "}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(BASE + "/oms/v3/hotel/book"))
+                .andExpect(jsonPath("$.roomTravellerInfo[0].travellerInfo[0].fN").value("Asha"))
+                .andExpect(jsonPath("$.roomTravellerInfo[0].travellerInfo[0].pan").doesNotExist())
+                .andRespond(withSuccess(OK + "}", MediaType.APPLICATION_JSON));
+        PaxDetail lead = new PaxDetail("ADULT", "Mr", "Asha", "Rao", null, null, null, null);
+
+        assertThat(provider.book(new BookRequest("TJH1", BigDecimal.TEN, List.of(), null, null, List.of(List.of()), "ABCDE1234F")).status())
+                .isEqualTo(SupplierBookingStatus.PENDING);
+        assertThat(provider.book(new BookRequest("TJH1", BigDecimal.TEN, List.of(lead), "pax-a@example.test", "0", null, null)).status())
+                .isEqualTo(SupplierBookingStatus.PENDING);
+        server.verify();
+    }
+
+    @Test
+    void a4xxOnBookIsARefusalWithoutEchoingTheBody() {
+        server.expect(requestTo(BASE + "/oms/v3/hotel/book")).andRespond(withStatus(org.springframework.http.HttpStatus.BAD_REQUEST)
+                .contentType(MediaType.APPLICATION_JSON).body("{\"errors\":[{\"errCode\":\"77\",\"message\":\"Invalid guest\"}]}"));
+
+        BookResult r = provider.book(request());
+
+        assertThat(r.status()).isEqualTo(SupplierBookingStatus.FAILED);
+        assertThat(r.message()).isEqualTo("Supplier refused (HTTP 400) 77: Invalid guest");
+    }
+
+    @Test
+    void anUnsuccessfulOrBlankBookingDetailsIsPending() {
+        server.expect(requestTo(BASE + "/oms/v3/hotel/booking-details")).andRespond(withSuccess(
+                "{\"status\":{\"success\":false},\"errors\":[{\"message\":\" \"}]}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(BASE + "/oms/v3/hotel/booking-details")).andRespond(withSuccess(
+                OK + ",\"itemInfos\":{\"HOTEL\":{\"confirmationNumber\":\" \",\"hotelInfo\":{\"confirmationNumber\":null}}},"
+                        + "\"order\":{\"confirmationNumber\":\"HC-9\"}}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(BASE + "/oms/v3/hotel/booking-details")).andRespond(withSuccess(OK + "}", MediaType.APPLICATION_JSON));
+
+        BookResult unsuccessful = provider.bookingDetails("TJH1");
+        BookResult orderConfirmation = provider.bookingDetails("TJH1");
+        BookResult nothing = provider.bookingDetails("TJH1");
+
+        assertThat(unsuccessful.status()).isEqualTo(SupplierBookingStatus.PENDING);
+        assertThat(unsuccessful.message()).isNull();
+        assertThat(orderConfirmation.pnr()).isEqualTo("HC-9");
+        assertThat(orderConfirmation.message()).isNull();
+        assertThat(nothing.pnr()).isNull();
+    }
+
+    @Test
+    void aQuoteOnAnEmptyAnswerOrANegativeRefundHasNoFigure() {
+        server.expect(requestTo(BASE + "/oms/v3/hotel/booking-details")).andRespond(withSuccess("  ", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(BASE + "/oms/v3/hotel/booking-details")).andRespond(withSuccess(
+                OK + ",\"order\":{\"status\":\"confirmed\"},\"cancellation\":{\"refundAmount\":-5}}", MediaType.APPLICATION_JSON));
+
+        CancelQuote empty = provider.cancelQuote("TJH1");
+        CancelQuote negative = provider.cancelQuote("TJH1");
+
+        assertThat(empty.refund()).isNull();
+        assertThat(empty.message()).isEqualTo("The supplier shows this booking as unknown");
+        assertThat(negative.refund()).isNull();
+    }
+
+    @Test
+    void aNegativeCancelRefundIsUnknown() {
+        server.expect(requestTo(BASE + "/oms/v3/hotel/cancel-booking")).andRespond(withSuccess(OK + ",\"totalRefundAmount\":-1}", MediaType.APPLICATION_JSON));
+
+        CancelResult r = provider.cancel("TJH1");
+
+        assertThat(r.accepted()).isTrue();
+        assertThat(r.refund()).isNull();
+    }
+
+    @Test
+    void prodCredentialsUseTheProdHostAndTransportFailuresAreClassified() {
+        org.mockito.Mockito.when(credentials.resolveActive(SupplierProvider.TRIPJACK)).thenReturn(
+                new ResolvedCredential(SupplierProvider.TRIPJACK, SupplierEnvironment.PROD, BASE, "prod-key", null));
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer prod = MockRestServiceServer.bindTo(builder).build();
+        TripjackHotelBookingProvider p = new TripjackHotelBookingProvider(credentials, builder, BASE, "https://prod-hms.example.test");
+        prod.expect(requestTo("https://prod-hms.example.test/oms/v3/hotel/booking-details")).andExpect(header("apikey", "prod-key"))
+                .andRespond(withStatus(org.springframework.http.HttpStatus.BAD_GATEWAY).body("x".repeat(250)));
+        prod.expect(requestTo("https://prod-hms.example.test/oms/v3/hotel/booking-details"))
+                .andRespond(req -> { throw new java.io.IOException("reset"); });
+        prod.expect(requestTo("https://prod-hms.example.test/oms/v3/hotel/booking-details"))
+                .andRespond(req -> { throw new org.springframework.web.client.RestClientException("converter"); });
+        prod.expect(requestTo("https://prod-hms.example.test/oms/v3/hotel/booking-details"))
+                .andRespond(withSuccess("<html>", MediaType.TEXT_HTML));
+
+        assertThatThrownBy(() -> p.bookingDetails("TJH1")).isInstanceOf(SupplierException.class)
+                .hasMessage("Tripjack hotel booking-details call failed (HTTP 502)");
+        assertThatThrownBy(() -> p.bookingDetails("TJH1")).isInstanceOf(SupplierException.class)
+                .isNotInstanceOf(com.voyra.crm.exception.SupplierTimeoutException.class).hasMessage("Tripjack hotel booking-details call failed");
+        assertThatThrownBy(() -> p.bookingDetails("TJH1")).isInstanceOf(SupplierException.class)
+                .hasMessage("Tripjack hotel booking-details call failed");
+        assertThatThrownBy(() -> p.bookingDetails("TJH1")).isInstanceOf(SupplierException.class)
+                .hasMessage("Tripjack hotel booking-details returned an unparseable response");
+        prod.verify();
+    }
+
+    @Test
+    void aRefundableRateWithoutADeadlineHasNoFreeUntilAndANullTotalIsMissing() {
+        server.expect(requestTo(BASE + "/hms/v3/hotel/review")).andRespond(withSuccess(
+                OK + ",\"bookingId\":\"TJH6\",\"option\":{\"pricing\":{\"totalPrice\":10},\"cancellation\":{\"isRefundable\":true}}}",
+                MediaType.APPLICATION_JSON));
+        server.expect(requestTo(BASE + "/hms/v3/hotel/review")).andRespond(withSuccess(
+                OK + ",\"bookingId\":\"TJH7\",\"option\":{\"pricing\":{\"totalPrice\":null}}}", MediaType.APPLICATION_JSON));
+
+        FareReview r = review();
+
+        assertThat(r.cancellationPolicy()).isEqualTo("Refundable");
+        assertThat(r.freeCancellationUntil()).isNull();
+        assertThatThrownBy(this::review).isInstanceOf(SupplierException.class);
+    }
+
+    @Test
+    void anEmptyRoomListBooksThePassengersAsOneRoomAndAnEmptyDetailsAnswerIsPending() {
+        server.expect(requestTo(BASE + "/oms/v3/hotel/book")).andExpect(jsonPath("$.roomTravellerInfo[0].travellerInfo[0].pan").value("ABCDE1234F"))
+                .andRespond(withSuccess(OK + "}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(BASE + "/oms/v3/hotel/booking-details")).andRespond(withSuccess("", MediaType.APPLICATION_JSON));
+        PaxDetail lead = new PaxDetail("ADULT", "Mr", "Asha", "Rao", null, null, null, null);
+
+        provider.book(new BookRequest("TJH1", BigDecimal.TEN, List.of(lead), null, null, List.of(), "ABCDE1234F"));
+        BookResult details = provider.bookingDetails("TJH1");
+
+        server.verify();
+        assertThat(details.status()).isEqualTo(SupplierBookingStatus.PENDING);
+        assertThat(details.message()).isNull();
+    }
 }

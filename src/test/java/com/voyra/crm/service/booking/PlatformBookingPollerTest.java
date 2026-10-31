@@ -48,6 +48,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -578,5 +579,120 @@ class PlatformBookingPollerTest {
         assertThat(rows.get("MC1").getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
         assertThat(savedEvents).filteredOn(e -> e.getType().equals("SUPPLIER_MISMATCH")).hasSize(3);
         assertThat(savedEvents).filteredOn(e -> e.getType().equals("CANCEL_OVERDUE")).isEmpty();
+    }
+
+    // ---------------------------------------------------------------- coverage: cancel polling and sweep edges
+
+    @Test
+    void aCancelAcceptedWithoutARecordedRequestIsPolledByItsReviewIdWhenItHasNoBookingId() {
+        config.setProvider("tripjack");
+        PlatformBooking b = acceptedCancel("C6", Instant.now().minus(1, ChronoUnit.HOURS));
+        b.setSupplierBookingId(null);
+        savedEvents.removeIf(e -> e.getPlatformBookingId().equals("C6") && e.getType().equals("CANCEL_REQUESTED"));
+        when(provider.bookingDetails("rv-C6")).thenThrow(new IllegalStateException("supplier down"));
+
+        poller.poll();
+
+        verify(provider).bookingDetails("rv-C6");
+        assertThat(rows.get("C6").getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
+        assertThat(rows.get("C6").getPollCount()).isEqualTo(1);
+        verify(walletService, never()).credit(any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void aFailingOverdueAlertDoesNotStopTheRun() {
+        config.setProvider("tripjack");
+        acceptedCancel("C7", Instant.now().minus(25, ChronoUnit.HOURS));
+        when(provider.bookingDetails("SB-C7"))
+                .thenReturn(new BookResult("SB-C7", SupplierBookingStatus.TICKETED, "PNR1", List.of(), "SUCCESS", null));
+        doThrow(new IllegalStateException("mail down")).when(notificationService).platformAlert(anyString(), anyString());
+
+        poller.poll();
+
+        assertThat(rows.get("C7").getPollCount()).isEqualTo(1);
+        assertThat(rows.get("C7").getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
+    }
+
+    @Test
+    void anOverdueCancelSettledInTheSameRunIsNotAlerted() {
+        config.setProvider("tripjack");
+        lenient().when(settings.voyraCancelFee()).thenReturn(BigDecimal.ZERO);
+        lenient().when(walletRepository.findByTenantId(T)).thenReturn(Optional.empty());
+        acceptedCancel("C8", Instant.now().minus(25, ChronoUnit.HOURS));
+        when(provider.bookingDetails("SB-C8"))
+                .thenReturn(new BookResult("SB-C8", SupplierBookingStatus.CANCELLED, "PNR1", List.of(), "CANCELLED", null));
+
+        poller.poll();
+
+        assertThat(rows.get("C8").getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
+        verify(notificationService, never()).platformAlert(contains("not confirmed"), anyString());
+        assertThat(savedEvents).filteredOn(e -> e.getType().equals("CANCEL_OVERDUE")).isEmpty();
+    }
+
+    @Test
+    void anOverdueAlertForAnEarlierAcceptanceDoesNotSilenceANewOne() {
+        config.setProvider("tripjack");
+        Instant accepted = Instant.now().minus(25, ChronoUnit.HOURS);
+        acceptedCancel("C9", accepted);
+        event("C9", "CANCEL_OVERDUE", accepted.minus(3, ChronoUnit.DAYS));
+        when(provider.bookingDetails("SB-C9"))
+                .thenReturn(new BookResult("SB-C9", SupplierBookingStatus.TICKETED, "PNR1", List.of(), "SUCCESS", null));
+
+        poller.poll();
+
+        verify(notificationService).platformAlert(contains("C9"), anyString());
+        assertThat(savedEvents).filteredOn(e -> e.getType().equals("CANCEL_OVERDUE")).hasSize(2);
+    }
+
+    @Test
+    void anOverdueCancelWhoseRowIsGoneIsNotAlerted() {
+        config.setProvider("tripjack");
+        acceptedCancel("C10", Instant.now().minus(25, ChronoUnit.HOURS));
+        when(provider.bookingDetails("SB-C10")).thenAnswer(i -> {
+            rows.remove("C10"); // deleted between the poll and the alert
+            return new BookResult("SB-C10", SupplierBookingStatus.TICKETED, "PNR1", List.of(), "SUCCESS", null);
+        });
+
+        poller.poll();
+
+        verify(notificationService, never()).platformAlert(anyString(), anyString());
+    }
+
+    @Test
+    void aBookingRowGoneBeforeItsPollIsRecordedIsLeftAlone() {
+        PlatformBooking b = bookingRow("G1", Instant.now());
+        when(provider.bookingDetails("rv-G1")).thenAnswer(i -> {
+            rows.remove("G1");
+            throw new IllegalStateException("no answer");
+        });
+
+        poller.poll();
+
+        assertThat(b.getPollCount()).isZero();
+        verify(walletService, never()).debitHeld(anyString(), any(), anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void anOldHeldRowAlreadySentIsNotSwept() {
+        PlatformBooking b = bookingRow("B2", Instant.now().minus(1, ChronoUnit.HOURS));
+        b.setStatus(PlatformBookingStatus.HELD);
+        event("B2", "HELD", Instant.now().minus(2, ChronoUnit.HOURS));
+
+        poller.poll();
+
+        assertThat(rows.get("B2").getStatus()).isEqualTo(PlatformBookingStatus.HELD);
+        verify(walletService, never()).releaseHold(any(), any());
+    }
+
+    @Test
+    void aFailingSweepOfOneExpiredReviewIsLoggedAndTheRunGoesOn() {
+        PlatformBooking expired = PlatformBooking.builder().id("RV1").tenantId(T).status(PlatformBookingStatus.REVIEWING).build();
+        when(bookingRepository.findExpiredReviews(any(), any())).thenReturn(List.of(expired));
+        when(bookingRepository.findByIdForUpdate("RV1")).thenThrow(new IllegalStateException("lock timeout"));
+
+        poller.poll();
+
+        verify(bookingRepository).findByIdForUpdate("RV1");
+        verify(walletService, never()).releaseHold(any(), any());
     }
 }

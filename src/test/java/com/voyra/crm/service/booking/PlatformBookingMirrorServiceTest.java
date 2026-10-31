@@ -288,4 +288,116 @@ class PlatformBookingMirrorServiceTest {
         verify(tenantService).cancel("B1", hotel);
         assertThat(hotel.getMirrorStatus()).isEqualTo(MirrorStatus.DONE);
     }
+
+    // ---------------------------------------------------------------- coverage: rows not ready, odd payloads, finish races
+
+    @Test
+    void aMissingRowOrOneStillMovingIsNotMirrored() {
+        when(repository.findById("NONE")).thenReturn(Optional.empty());
+        PlatformBooking b = ticketed("C1");
+        b.setStatus(PlatformBookingStatus.BOOKING);
+
+        service.sync("NONE");
+        service.sync("PB1");
+
+        verifyNoInteractions(tenantService);
+    }
+
+    @Test
+    void aBookingWithoutStoredPassengersIsMirroredWithNone() {
+        PlatformBooking b = ticketed("C1");
+        b.setPaxEnc(null);
+        when(tenantService.create(any(), anyList(), anyList())).thenReturn("B1");
+
+        service.sync("PB1");
+
+        verify(tenantService).create(eq(b), anyList(), eq(List.of()));
+        assertThat(b.getMirrorStatus()).isEqualTo(MirrorStatus.DONE);
+        assertThat(b.getTenantBookingId()).isEqualTo("B1");
+    }
+
+    @Test
+    void storedPassengersWithoutAListAreMirroredWithNone() {
+        PlatformBooking b = ticketed("C1");
+        b.setPaxEnc(paxCodec.encrypt(Map.of("contactEmail", "pax-a@example.test")));
+        when(tenantService.create(any(), anyList(), anyList())).thenReturn("B1");
+
+        service.sync("PB1");
+
+        verify(tenantService).create(eq(b), anyList(), eq(List.of()));
+    }
+
+    @Test
+    void aRowGoneBeforeTheOutcomeIsRecordedIsLeftAlone() {
+        PlatformBooking b = ticketed("C1");
+        when(repository.findByIdForUpdate("PB1")).thenReturn(Optional.empty());
+        when(tenantService.create(any(), anyList(), anyList())).thenThrow(new IllegalStateException("boom"));
+
+        service.sync("PB1");
+
+        verify(repository, never()).save(any());
+        verify(notificationService, never()).platformAlert(anyString(), anyString());
+    }
+
+    @Test
+    void aFailureAfterAConcurrentSyncFinishedTheMirrorIsNotRecorded() {
+        PlatformBooking seen = ticketed("C1");
+        PlatformBooking live = seen.toBuilder().mirrorStatus(MirrorStatus.DONE).tenantBookingId("B9").build();
+        when(repository.findByIdForUpdate("PB1")).thenReturn(Optional.of(live));
+        when(tenantService.create(any(), anyList(), anyList())).thenThrow(new IllegalStateException("duplicate"));
+
+        service.sync("PB1");
+
+        assertThat(live.getMirrorStatus()).isEqualTo(MirrorStatus.DONE);
+        verify(repository, never()).save(any());
+        verify(notificationService, never()).platformAlert(anyString(), anyString());
+    }
+
+    @Test
+    void aStatusChangeDuringCreateKeepsAnAlreadyKnownTenantBooking() {
+        PlatformBooking seen = ticketed("C1");
+        PlatformBooking live = seen.toBuilder().status(PlatformBookingStatus.CANCELLED).tenantBookingId("B-OLD").build();
+        when(repository.findByIdForUpdate("PB1")).thenReturn(Optional.of(live));
+        when(tenantService.create(any(), anyList(), anyList())).thenReturn("B-NEW");
+
+        service.sync("PB1");
+
+        assertThat(live.getTenantBookingId()).isEqualTo("B-OLD");
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    void aLongOrMissingErrorMessageIsCutOrKeptInTheAlert() {
+        ticketed("C1");
+        when(tenantService.create(any(), anyList(), anyList())).thenThrow(new IllegalStateException("x".repeat(400)));
+
+        service.sync("PB1");
+
+        org.mockito.ArgumentCaptor<String> body = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(notificationService).platformAlert(anyString(), body.capture());
+        assertThat(body.getValue()).contains("IllegalStateException: " + "x".repeat(300) + ")").doesNotContain("x".repeat(301));
+        assertThat(recorded).filteredOn(e -> e.getType().equals("MIRROR_FAILED")).singleElement()
+                .satisfies(e -> assertThat((String) e.getPayload().get("error")).hasSize(300));
+
+        PlatformBooking again = ticketed("C1");
+        again.setMirrorStatus(MirrorStatus.PENDING);
+        org.mockito.Mockito.doThrow(new IllegalStateException()).when(tenantService).create(any(), anyList(), anyList());
+        service.sync("PB1");
+        verify(notificationService, org.mockito.Mockito.times(2)).platformAlert(anyString(), body.capture());
+        assertThat(body.getValue()).contains("IllegalStateException: null)");
+    }
+
+    @Test
+    void aLeadWithoutAnAgentGivesNone() {
+        when(tenantService.leadAgent("T1", null, "L1")).thenReturn(Optional.empty());
+
+        assertThat(service.hasLeadAgent("T1", null, "L1")).isFalse();
+    }
+
+    @Test
+    void linksAreCheckedByTheTenantService() {
+        service.requireLinks("C1", "L1", "S1");
+
+        verify(tenantService).requireLinks("C1", "L1", "S1");
+    }
 }
