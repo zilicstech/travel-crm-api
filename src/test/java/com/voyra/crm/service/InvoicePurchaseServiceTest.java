@@ -105,4 +105,70 @@ class InvoicePurchaseServiceTest {
                 .hasMessage("PNR LVBJAY has no supplier bill - it needs a supplier and a cost");
         verify(invoiceDocumentService, never()).issue(any());
     }
+
+    @Test
+    void aRequestWithoutAPurchaseListIsAPlainGenerate() {
+        service.issue("I1", new InvoiceIssueRequest());
+        verify(invoiceDocumentService).issue("I1");
+        Mockito.verifyNoInteractions(invoiceLineItemRepository, bookingDocumentRepository, supplierInvoiceService);
+    }
+
+    @Test
+    void aVoucherGoneOrWithoutAReferenceIsNamedPlainly() {
+        when(invoiceLineItemRepository.findByInvoiceIdOrderBySortOrderAsc("I1"))
+                .thenReturn(List.of(InvoiceLineItem.builder().bookingDocumentId(null).build(), InvoiceLineItem.builder().bookingDocumentId("V1").build()));
+        when(bookingDocumentRepository.findById("V1")).thenReturn(Optional.empty(),
+                Optional.of(ticket.toBuilder().referenceNumber(null).supplierInvoiceId(null).build()));
+
+        assertThatThrownBy(() -> service.issue("I1", purchase("V1", null))).hasMessage("Voucher not found: V1");
+        assertThatThrownBy(() -> service.issue("I1", purchase("V1", null)))
+                .hasMessage("This voucher has no supplier bill - it needs a supplier and a cost");
+        verify(invoiceDocumentService, never()).issue(any());
+    }
+
+    /** Re-entering the commission the voucher already has changes nothing; a new mode or TDS rate is entered again. */
+    @Test
+    void onlyAChangedCommissionModeOrTdsRateIsEnteredAgain() {
+        onTheInvoice();
+        BookingDocument same = ticket.toBuilder().commissionMode(MarkupMode.PERCENT).commissionValue(new BigDecimal("5.0"))
+                .supplierTdsRate(new BigDecimal("2.00")).build();
+        BookingDocument otherMode = same.toBuilder().commissionMode(MarkupMode.FLAT).build();
+        BookingDocument otherTds = same.toBuilder().supplierTdsRate(new BigDecimal("5")).build();
+        BookingDocument noTds = same.toBuilder().supplierTdsRate(null).build();
+        when(bookingDocumentRepository.findById("V1")).thenReturn(Optional.of(same), Optional.of(otherMode),
+                Optional.of(otherTds), Optional.of(noTds));
+
+        service.issue("I1", purchase("V1", "5"));
+        verify(bookingDocumentService, never()).setCharges(any(), any(), any());
+        service.issue("I1", purchase("V1", "5"));
+        service.issue("I1", purchase("V1", "5"));
+        service.issue("I1", purchase("V1", "5"));
+        verify(bookingDocumentService, Mockito.times(3)).setCharges(Mockito.eq("B1"), Mockito.eq("V1"), any());
+        verify(supplierInvoiceService, Mockito.times(4)).confirmPurchase(Mockito.eq("SI1"), any(), any());
+    }
+
+    @Test
+    void aZeroCommissionMatchingNoneIsLeftAloneWhateverItsMode() {
+        onTheInvoice();
+        when(bookingDocumentRepository.findById("V1")).thenReturn(Optional.of(ticket));
+        InvoiceIssueRequest r = purchase("V1", "0");
+        r.getPurchases().get(0).setSupplierTdsRate(null);
+
+        service.issue("I1", r);
+
+        verify(bookingDocumentService, never()).setCharges(any(), any(), any());
+    }
+
+    @Test
+    void anUnchangedCommissionWithBothTdsRatesUnsetIsLeftAlone() {
+        onTheInvoice();
+        when(bookingDocumentRepository.findById("V1")).thenReturn(Optional.of(
+                ticket.toBuilder().commissionMode(MarkupMode.PERCENT).commissionValue(new BigDecimal("5")).build()));
+        InvoiceIssueRequest r = purchase("V1", "5");
+        r.getPurchases().get(0).setSupplierTdsRate(null);
+
+        service.issue("I1", r);
+
+        verify(bookingDocumentService, never()).setCharges(any(), any(), any());
+    }
 }
