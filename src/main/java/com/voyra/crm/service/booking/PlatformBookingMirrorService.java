@@ -95,8 +95,9 @@ public class PlatformBookingMirrorService {
             List<ItinerarySegment> legs = hotel ? List.of() : queryService.itinerary(b);
             List<PaxInput> stored = b.getPaxEnc() == null ? List.of() : paxCodec.decrypt(b.getPaxEnc(), StoredPax.class).passengers();
             List<PaxInput> pax = stored == null ? List.of() : stored;
-            // the FAILED move's own time: its event commits with the move
-            Instant failedAt = acted == PlatformBookingStatus.FAILED ? events.lastAt(platformBookingId, "FAILED").orElseGet(Instant::now) : null;
+            // the FAILED move's own time: its event commits with the move; an admin resolve records none, only resolved_failed_at
+            Instant failedAt = acted == PlatformBookingStatus.FAILED ? events.lastAt(platformBookingId, "FAILED")
+                    .or(() -> java.util.Optional.ofNullable(b.getResolvedFailedAt())).orElseGet(Instant::now) : null;
             String bookingId = SystemActor.call(b.getTenantId(), () -> {
                 String id = tenantService.ensure(b, legs, stay, pax);
                 if (b.getTicketedAt() != null) {

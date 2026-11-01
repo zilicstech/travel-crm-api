@@ -460,6 +460,19 @@ class PlatformBookingMirrorServiceTest {
         assertThat(b.getMirrorStatus()).isEqualTo(MirrorStatus.DONE);
     }
 
+    /** An admin who resolved the booking as FAILED recorded no FAILED event: the CRM cancel is dated on the resolve. */
+    @Test
+    void anAdminResolvedFailureIsDatedOnTheResolve() {
+        PlatformBooking b = at(PlatformBookingStatus.FAILED, false);
+        java.time.Instant resolved = java.time.Instant.now().minus(java.time.Duration.ofDays(3));
+        b.setResolvedFailedAt(resolved);
+        when(tenantService.ensure(any(), anyList(), any(), anyList())).thenReturn("B1");
+
+        service.sync("PB1");
+
+        verify(tenantService).fail("B1", resolved);
+    }
+
     @Test
     void syncAtFailedNeverPays() {
         at(PlatformBookingStatus.FAILED, false); // no FAILED event found: the guard falls back to now
