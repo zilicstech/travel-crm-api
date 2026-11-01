@@ -318,6 +318,23 @@ class PlatformSupplierCredentialServiceTest {
         assertThat(auditDetail(PlatformAuditAction.CREDENTIAL_SET).get("changed")).isEqualTo(List.of("products"));
     }
 
+    /** The real repository merges saveAll onto the managed rows it returned from the find; the audit must still see the change. */
+    @Test
+    void aSwitchOnlyChangeIsAuditedEvenWhenSaveMutatesTheManagedRows() {
+        PlatformSupplierProduct managed = row(PricingProduct.FLIGHT, true, true);
+        when(repository.findById("C1")).thenReturn(Optional.of(stored("old_key_1234")));
+        when(productRepository.findByCredentialIdIn(List.of("C1"))).thenReturn(List.of(managed));
+        when(productRepository.saveAll(anyList())).thenAnswer(i -> {
+            List<PlatformSupplierProduct> saved = i.getArgument(0);
+            saved.forEach(n -> managed.setBookingEnabled(n.isBookingEnabled()));
+            return saved;
+        });
+
+        service.update("C1", updateRequest("Tripjack", "https://api.tripjack.com", null, sw(PricingProduct.FLIGHT, true, false)));
+
+        assertThat(auditDetail(PlatformAuditAction.CREDENTIAL_SET).get("changed")).isEqualTo(List.of("products"));
+    }
+
     @Test
     void anUnchangedSaveChangesNothing() {
         PlatformSupplierCredential existing = stored("old_key_1234");

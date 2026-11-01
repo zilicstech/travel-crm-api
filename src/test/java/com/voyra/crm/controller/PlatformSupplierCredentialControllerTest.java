@@ -119,6 +119,17 @@ class PlatformSupplierCredentialControllerTest {
     }
 
     @Test
+    void aNullProductEntryIsABadRequest() throws Exception {
+        mockMvc.perform(post(BASE).with(user("root").roles("SUPER_ADMIN")).contentType(MediaType.APPLICATION_JSON)
+                        .content(BODY.replaceAll("\"products\":\\[.*\\]", "\"products\":[null]")))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(put(BASE + "/C1").with(user("root").roles("SUPER_ADMIN")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"T\",\"baseUrl\":\"https://api.tripjack.com\",\"products\":[null]}"))
+                .andExpect(status().isBadRequest());
+        verifyNoInteractions(credentialService);
+    }
+
+    @Test
     void productsEndpointIsGone() throws Exception {
         mockMvc.perform(put(BASE + "/C1/products").with(user("root").roles("SUPER_ADMIN"))
                         .contentType(MediaType.APPLICATION_JSON).content("[]"))

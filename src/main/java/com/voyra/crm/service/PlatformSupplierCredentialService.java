@@ -146,9 +146,10 @@ public class PlatformSupplierCredentialService {
             credential.setUpdatedBy(SecurityContextUtil.getCurrentUserOrThrow().userId());
             repository.save(credential);
         }
-        List<PlatformSupplierProduct> before = productRepository.findByCredentialIdIn(List.of(id));
+        // plain values: saveAll merges onto the managed rows, so comparing the entities afterwards would compare new with new
+        Map<PricingProduct, List<Boolean>> before = switches(productRepository.findByCredentialIdIn(List.of(id)));
         List<PlatformSupplierProduct> rows = syncProducts(id, wanted);
-        if (!sameSettings(before, rows)) changed.add("products");
+        if (!before.equals(switches(rows))) changed.add("products");
 
         audit(credential, changed, wanted);
         log.info("Platform supplier saved: provider={}, changed={}, by={}",
@@ -260,10 +261,8 @@ public class PlatformSupplierCredentialService {
         return out;
     }
 
-    private static boolean sameSettings(List<PlatformSupplierProduct> before, List<PlatformSupplierProduct> after) {
-        Function<List<PlatformSupplierProduct>, Map<PricingProduct, List<Boolean>>> view = rows -> rows.stream().collect(
-                Collectors.toMap(PlatformSupplierProduct::getProduct, p -> List.of(p.isSearchEnabled(), p.isBookingEnabled())));
-        return view.apply(before).equals(view.apply(after));
+    private static Map<PricingProduct, List<Boolean>> switches(List<PlatformSupplierProduct> rows) {
+        return rows.stream().collect(Collectors.toMap(PlatformSupplierProduct::getProduct, p -> List.of(p.isSearchEnabled(), p.isBookingEnabled())));
     }
 
     /** Names the changed fields, never the key. */

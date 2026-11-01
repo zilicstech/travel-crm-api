@@ -5,6 +5,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
+import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
@@ -32,7 +33,6 @@ public class PlatformSupplierUpdateRequest {
     private String apiKey;
 
     @NotEmpty(message = "Give at least one product")
-    @Valid
     @Schema(description = "Replaces the stored set: a product left out is removed")
-    private List<SupplierProductSettings> products;
+    private List<@NotNull @Valid SupplierProductSettings> products;
 }

@@ -35,7 +35,6 @@ public class PlatformSupplierCreateRequest {
     private String apiKey;
 
     @NotEmpty(message = "Give at least one product")
-    @Valid
     @Schema(description = "Search and booking switches per product")
-    private List<SupplierProductSettings> products;
+    private List<@NotNull @Valid SupplierProductSettings> products;
 }
