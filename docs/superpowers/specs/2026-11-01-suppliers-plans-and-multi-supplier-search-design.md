@@ -161,6 +161,9 @@ A rolling deploy runs two instances, so V37 adds and backfills but drops nothing
 13. A second mock supplier row is the end-to-end test of the multi-supplier page.
 
 ## Owner questions
+
+Approved by the owner on 2026-11-01 with the recommendations: one supplier per round trip, no hotel merging, toggles per product.
+
 1. Round trip: both legs on the supplier of the onward fare, chosen once. Confirm.
 2. Hotels: shown one row per supplier's hotel with the supplier name, no merging (recommended for now; the same hotel from two suppliers is two rows), or merged by name and city, which can merge two different hotels or split one?
 3. Toggles per product (recommended: Tripjack flights can take bookings while Tripjack hotels stay search-only), or the two toggles per supplier as described in the discussion?
