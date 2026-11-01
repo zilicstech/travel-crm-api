@@ -53,8 +53,6 @@ public interface PlatformBookingRepository extends JpaRepository<PlatformBooking
 
     List<PlatformBooking> findByStatusIn(Collection<PlatformBookingStatus> statuses);
 
-    long countByStatusInAndEnvironmentNot(Collection<PlatformBookingStatus> statuses, SupplierEnvironment environment);
-
     List<PlatformBooking> findByMirrorStatusIn(Collection<com.voyra.crm.enums.MirrorStatus> statuses);
 
     /**

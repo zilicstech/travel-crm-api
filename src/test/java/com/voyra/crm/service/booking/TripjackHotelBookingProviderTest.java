@@ -8,12 +8,8 @@ import com.voyra.crm.exception.SupplierException;
 import com.voyra.crm.exception.SupplierTimeoutException;
 import com.voyra.crm.models.ResolvedCredential;
 import com.voyra.crm.models.booking.*;
-import com.voyra.crm.service.PlatformSupplierCredentialService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
@@ -27,36 +23,33 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.Mockito.lenient;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.*;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 /** Bodies are guessed from the flight shapes and the hotel search response, not real fixtures - unverified until a hotel spike. */
-@ExtendWith(MockitoExtension.class)
 class TripjackHotelBookingProviderTest {
 
     private static final String BASE = "https://apitest.tripjack.com";
     private static final String OK = "{\"status\":{\"success\":true,\"httpStatus\":200}";
 
-    @Mock
-    private PlatformSupplierCredentialService credentials;
+    /** The supplier row every call is given. */
+    private static final ResolvedCredential ROW =
+            new ResolvedCredential("s1", "Tripjack", SupplierProvider.TRIPJACK, SupplierEnvironment.UAT, BASE, "test-key", null, null);
 
     private MockRestServiceServer server;
     private TripjackHotelBookingProvider provider;
 
     @BeforeEach
     void setUp() {
-        lenient().when(credentials.resolveActive(SupplierProvider.TRIPJACK)).thenReturn(
-                new ResolvedCredential("s1", "Tripjack", SupplierProvider.TRIPJACK, SupplierEnvironment.UAT, BASE, "test-key", null, null));
         RestClient.Builder builder = RestClient.builder();
         server = MockRestServiceServer.bindTo(builder).build();
-        provider = new TripjackHotelBookingProvider(credentials, builder, BASE, BASE);
+        provider = new TripjackHotelBookingProvider(builder, BASE, BASE);
     }
 
     private FareReview review() {
         return provider.review("opt-1", "100012", LocalDate.of(2026, 12, 1), LocalDate.of(2026, 12, 4),
-                List.of(new HotelRoomRequest(2, List.of(6)), new HotelRoomRequest(1, List.of())));
+                List.of(new HotelRoomRequest(2, List.of(6)), new HotelRoomRequest(1, List.of())), ROW);
     }
 
     private static final String REVIEW_OK = OK + ",\"bookingId\":\"TJH1\",\"option\":{\"pricing\":{\"totalPrice\":12000.5,\"baseRate\":10000,\"currency\":\"INR\"},"
@@ -118,7 +111,7 @@ class TripjackHotelBookingProviderTest {
                 .andExpect(jsonPath("$.roomTravellerInfo[0].travellerInfo[0].ti").value("Mr"))
                 .andExpect(jsonPath("$.deliveryInfo.emails[0]").value("a@b.com"))
                 .andRespond(withSuccess(OK + ",\"bookingId\":\"TJH1\"}", MediaType.APPLICATION_JSON));
-        BookResult r = provider.book(request());
+        BookResult r = provider.book(request(), ROW);
         server.verify();
         assertThat(r.status()).isEqualTo(SupplierBookingStatus.PENDING);
         assertThat(r.supplierBookingId()).isEqualTo("TJH1");
@@ -138,7 +131,7 @@ class TripjackHotelBookingProviderTest {
                 .andExpect(jsonPath("$.roomTravellerInfo[1].travellerInfo[0].pan").doesNotExist())
                 .andRespond(withSuccess(OK + ",\"bookingId\":\"TJH1\"}", MediaType.APPLICATION_JSON));
         provider.book(new BookRequest("TJH1", new BigDecimal("12000.50"), List.of(asha, ravi, meera), "a@b.com", "9999999999",
-                List.of(List.of(asha, ravi), List.of(meera)), "ABCDE1234F"));
+                List.of(List.of(asha, ravi), List.of(meera)), "ABCDE1234F"), ROW);
         server.verify();
     }
 
@@ -148,19 +141,19 @@ class TripjackHotelBookingProviderTest {
                 "{\"status\":{\"success\":false},\"errors\":[{\"message\":\"Insufficient deposit\"}]}", MediaType.APPLICATION_JSON));
         server.expect(requestTo(BASE + "/oms/v3/hotel/book")).andRespond(withSuccess("", MediaType.APPLICATION_JSON));
         server.expect(requestTo(BASE + "/oms/v3/hotel/book")).andRespond(withSuccess("{\"status\":{\"success\":\"no\"}}", MediaType.APPLICATION_JSON));
-        BookResult r = provider.book(request());
+        BookResult r = provider.book(request(), ROW);
         assertThat(r.status()).isEqualTo(SupplierBookingStatus.FAILED);
         assertThat(r.message()).isEqualTo("Insufficient deposit");
-        assertThatThrownBy(() -> provider.book(request())).isInstanceOf(SupplierException.class);
-        assertThatThrownBy(() -> provider.book(request())).isInstanceOf(SupplierException.class);
+        assertThatThrownBy(() -> provider.book(request(), ROW)).isInstanceOf(SupplierException.class);
+        assertThatThrownBy(() -> provider.book(request(), ROW)).isInstanceOf(SupplierException.class);
     }
 
     @Test
     void book_timeoutIsSupplierTimeoutAndHttpErrorIsPlain() {
         server.expect(requestTo(BASE + "/oms/v3/hotel/book")).andRespond(req -> { throw new SocketTimeoutException("Read timed out"); });
         server.expect(requestTo(BASE + "/oms/v3/hotel/book")).andRespond(withStatus(org.springframework.http.HttpStatus.BAD_GATEWAY));
-        assertThatThrownBy(() -> provider.book(request())).isInstanceOf(SupplierTimeoutException.class);
-        assertThatThrownBy(() -> provider.book(request())).isInstanceOf(SupplierException.class).isNotInstanceOf(SupplierTimeoutException.class);
+        assertThatThrownBy(() -> provider.book(request(), ROW)).isInstanceOf(SupplierTimeoutException.class);
+        assertThatThrownBy(() -> provider.book(request(), ROW)).isInstanceOf(SupplierException.class).isNotInstanceOf(SupplierTimeoutException.class);
     }
 
     @Test
@@ -170,12 +163,12 @@ class TripjackHotelBookingProviderTest {
         server.expect(requestTo(BASE + "/oms/v3/hotel/booking-details")).andRespond(withSuccess(OK + ",\"order\":{\"status\":\"ABORTED\"}}", MediaType.APPLICATION_JSON));
         server.expect(requestTo(BASE + "/oms/v3/hotel/booking-details")).andRespond(withSuccess(OK + ",\"order\":{\"status\":\"FAILED\"}}", MediaType.APPLICATION_JSON));
         server.expect(requestTo(BASE + "/oms/v3/hotel/booking-details")).andRespond(withSuccess(OK + ",\"order\":{\"status\":\"CANCELLED\"}}", MediaType.APPLICATION_JSON));
-        BookResult ok = provider.bookingDetails("TJH1");
+        BookResult ok = provider.bookingDetails("TJH1", ROW);
         assertThat(ok.status()).isEqualTo(SupplierBookingStatus.TICKETED);
         assertThat(ok.pnr()).isEqualTo("HC-778");
-        assertThat(provider.bookingDetails("TJH1").status()).isEqualTo(SupplierBookingStatus.PENDING);
-        assertThat(provider.bookingDetails("TJH1").status()).isEqualTo(SupplierBookingStatus.FAILED);
-        assertThat(provider.bookingDetails("TJH1").status()).isEqualTo(SupplierBookingStatus.CANCELLED);
+        assertThat(provider.bookingDetails("TJH1", ROW).status()).isEqualTo(SupplierBookingStatus.PENDING);
+        assertThat(provider.bookingDetails("TJH1", ROW).status()).isEqualTo(SupplierBookingStatus.FAILED);
+        assertThat(provider.bookingDetails("TJH1", ROW).status()).isEqualTo(SupplierBookingStatus.CANCELLED);
     }
 
     @Test
@@ -186,14 +179,14 @@ class TripjackHotelBookingProviderTest {
         server.expect(requestTo(BASE + "/oms/v3/hotel/cancel-booking")).andRespond(withSuccess(
                 "{\"status\":{\"success\":false},\"errors\":[{\"message\":\"Past deadline\"}]}", MediaType.APPLICATION_JSON));
         server.expect(requestTo(BASE + "/oms/v3/hotel/cancel-booking")).andRespond(withSuccess("", MediaType.APPLICATION_JSON));
-        assertThat(provider.cancel("TJH1").refund()).isEqualByComparingTo("12000");
-        CancelResult noRefund = provider.cancel("TJH1");
+        assertThat(provider.cancel("TJH1", ROW).refund()).isEqualByComparingTo("12000");
+        CancelResult noRefund = provider.cancel("TJH1", ROW);
         assertThat(noRefund.accepted()).isTrue();
         assertThat(noRefund.refund()).isNull();
-        CancelResult refused = provider.cancel("TJH1");
+        CancelResult refused = provider.cancel("TJH1", ROW);
         assertThat(refused.accepted()).isFalse();
         assertThat(refused.message()).isEqualTo("Past deadline");
-        assertThatThrownBy(() -> provider.cancel("TJH1")).isInstanceOf(SupplierException.class);
+        assertThatThrownBy(() -> provider.cancel("TJH1", ROW)).isInstanceOf(SupplierException.class);
     }
 
     /** The quote never calls cancel-booking (a guessed dry-run flag could really cancel): it reads booking-details. */
@@ -202,8 +195,8 @@ class TripjackHotelBookingProviderTest {
         server.expect(requestTo(BASE + "/oms/v3/hotel/booking-details"))
                 .andRespond(withSuccess(OK + ",\"order\":{\"status\":\"SUCCESS\"},\"cancellation\":{\"refundAmount\":8000}}", MediaType.APPLICATION_JSON));
         server.expect(requestTo(BASE + "/oms/v3/hotel/booking-details")).andRespond(withSuccess(OK + ",\"order\":{\"status\":\"SUCCESS\"}}", MediaType.APPLICATION_JSON));
-        assertThat(provider.cancelQuote("TJH1").refund()).isEqualByComparingTo("8000");
-        assertThat(provider.cancelQuote("TJH1").refund()).isNull();
+        assertThat(provider.cancelQuote("TJH1", ROW).refund()).isEqualByComparingTo("8000");
+        assertThat(provider.cancelQuote("TJH1", ROW).refund()).isNull();
         server.verify();
     }
 
@@ -214,10 +207,10 @@ class TripjackHotelBookingProviderTest {
                 .andRespond(withSuccess(OK + ",\"order\":{\"status\":\"CANCELLED\"},\"cancellation\":{\"refundAmount\":8000}}", MediaType.APPLICATION_JSON));
         server.expect(requestTo(BASE + "/oms/v3/hotel/booking-details"))
                 .andRespond(withSuccess(OK + ",\"cancellation\":{\"refundAmount\":8000}}", MediaType.APPLICATION_JSON));
-        CancelQuote cancelled = provider.cancelQuote("TJH1");
+        CancelQuote cancelled = provider.cancelQuote("TJH1", ROW);
         assertThat(cancelled.refund()).isNull();
         assertThat(cancelled.message()).contains("CANCELLED");
-        assertThat(provider.cancelQuote("TJH1").refund()).isNull();
+        assertThat(provider.cancelQuote("TJH1", ROW).refund()).isNull();
         server.verify();
     }
 
@@ -278,7 +271,7 @@ class TripjackHotelBookingProviderTest {
                 .andRespond(withSuccess(REVIEW_OK, MediaType.APPLICATION_JSON));
         HotelRoomRequest noAges = new HotelRoomRequest(2, null);
 
-        assertThat(provider.review("opt-1", "100012", LocalDate.of(2026, 12, 1), LocalDate.of(2026, 12, 4), List.of(noAges)).reviewId())
+        assertThat(provider.review("opt-1", "100012", LocalDate.of(2026, 12, 1), LocalDate.of(2026, 12, 4), List.of(noAges), ROW).reviewId())
                 .isEqualTo("TJH1");
         server.verify();
     }
@@ -296,9 +289,9 @@ class TripjackHotelBookingProviderTest {
                 .andRespond(withSuccess(OK + "}", MediaType.APPLICATION_JSON));
         PaxDetail lead = new PaxDetail("ADULT", "Mr", "Asha", "Rao", null, null, null, null);
 
-        assertThat(provider.book(new BookRequest("TJH1", BigDecimal.TEN, List.of(), null, null, List.of(List.of()), "ABCDE1234F")).status())
+        assertThat(provider.book(new BookRequest("TJH1", BigDecimal.TEN, List.of(), null, null, List.of(List.of()), "ABCDE1234F"), ROW).status())
                 .isEqualTo(SupplierBookingStatus.PENDING);
-        assertThat(provider.book(new BookRequest("TJH1", BigDecimal.TEN, List.of(lead), "pax-a@example.test", "0", null, null)).status())
+        assertThat(provider.book(new BookRequest("TJH1", BigDecimal.TEN, List.of(lead), "pax-a@example.test", "0", null, null), ROW).status())
                 .isEqualTo(SupplierBookingStatus.PENDING);
         server.verify();
     }
@@ -308,7 +301,7 @@ class TripjackHotelBookingProviderTest {
         server.expect(requestTo(BASE + "/oms/v3/hotel/book")).andRespond(withStatus(org.springframework.http.HttpStatus.BAD_REQUEST)
                 .contentType(MediaType.APPLICATION_JSON).body("{\"errors\":[{\"errCode\":\"77\",\"message\":\"Invalid guest\"}]}"));
 
-        BookResult r = provider.book(request());
+        BookResult r = provider.book(request(), ROW);
 
         assertThat(r.status()).isEqualTo(SupplierBookingStatus.FAILED);
         assertThat(r.message()).isEqualTo("Supplier refused (HTTP 400) 77: Invalid guest");
@@ -323,9 +316,9 @@ class TripjackHotelBookingProviderTest {
                         + "\"order\":{\"confirmationNumber\":\"HC-9\"}}", MediaType.APPLICATION_JSON));
         server.expect(requestTo(BASE + "/oms/v3/hotel/booking-details")).andRespond(withSuccess(OK + "}", MediaType.APPLICATION_JSON));
 
-        BookResult unsuccessful = provider.bookingDetails("TJH1");
-        BookResult orderConfirmation = provider.bookingDetails("TJH1");
-        BookResult nothing = provider.bookingDetails("TJH1");
+        BookResult unsuccessful = provider.bookingDetails("TJH1", ROW);
+        BookResult orderConfirmation = provider.bookingDetails("TJH1", ROW);
+        BookResult nothing = provider.bookingDetails("TJH1", ROW);
 
         assertThat(unsuccessful.status()).isEqualTo(SupplierBookingStatus.PENDING);
         assertThat(unsuccessful.message()).isNull();
@@ -340,19 +333,40 @@ class TripjackHotelBookingProviderTest {
         server.expect(requestTo(BASE + "/oms/v3/hotel/booking-details")).andRespond(withSuccess(
                 OK + ",\"order\":{\"status\":\"confirmed\"},\"cancellation\":{\"refundAmount\":-5}}", MediaType.APPLICATION_JSON));
 
-        CancelQuote empty = provider.cancelQuote("TJH1");
-        CancelQuote negative = provider.cancelQuote("TJH1");
+        CancelQuote empty = provider.cancelQuote("TJH1", ROW);
+        CancelQuote negative = provider.cancelQuote("TJH1", ROW);
 
         assertThat(empty.refund()).isNull();
         assertThat(empty.message()).isEqualTo("The supplier shows this booking as unknown");
         assertThat(negative.refund()).isNull();
     }
 
+    /** The key is the given row's; the hotel host follows that row's environment, not its flight base URL. */
+    @Test
+    void callsWithTheGivenRowsKeyAndHost() {
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer hosts = MockRestServiceServer.bindTo(builder).build();
+        TripjackHotelBookingProvider p = new TripjackHotelBookingProvider(builder, "https://uat-hms.example.test", "https://prod-hms.example.test");
+        ResolvedCredential live = new ResolvedCredential("s2", "Tripjack live", SupplierProvider.TRIPJACK, SupplierEnvironment.PROD,
+                "https://api.tripjack.com", "live-key", null, null);
+        hosts.expect(requestTo("https://prod-hms.example.test/oms/v3/hotel/booking-details")).andExpect(header("apikey", "live-key"))
+                .andRespond(withSuccess(OK + "}", MediaType.APPLICATION_JSON));
+        hosts.expect(requestTo("https://uat-hms.example.test/oms/v3/hotel/booking-details")).andExpect(header("apikey", "test-key"))
+                .andRespond(withSuccess(OK + "}", MediaType.APPLICATION_JSON));
+
+        p.bookingDetails("TJH1", live);
+        p.bookingDetails("TJH1", ROW);
+
+        hosts.verify();
+        assertThat(p.provider()).isEqualTo(SupplierProvider.TRIPJACK);
+        assertThat(p.cancelIsAsync()).isTrue();
+    }
+
     @Test
     void aNegativeCancelRefundIsUnknown() {
         server.expect(requestTo(BASE + "/oms/v3/hotel/cancel-booking")).andRespond(withSuccess(OK + ",\"totalRefundAmount\":-1}", MediaType.APPLICATION_JSON));
 
-        CancelResult r = provider.cancel("TJH1");
+        CancelResult r = provider.cancel("TJH1", ROW);
 
         assertThat(r.accepted()).isTrue();
         assertThat(r.refund()).isNull();
@@ -360,11 +374,11 @@ class TripjackHotelBookingProviderTest {
 
     @Test
     void prodCredentialsUseTheProdHostAndTransportFailuresAreClassified() {
-        org.mockito.Mockito.when(credentials.resolveActive(SupplierProvider.TRIPJACK)).thenReturn(
-                new ResolvedCredential("s1", "Tripjack", SupplierProvider.TRIPJACK, SupplierEnvironment.PROD, BASE, "prod-key", null, null));
+        ResolvedCredential live = new ResolvedCredential("s2", "Tripjack live", SupplierProvider.TRIPJACK, SupplierEnvironment.PROD,
+                "https://api.tripjack.com", "prod-key", null, null);
         RestClient.Builder builder = RestClient.builder();
         MockRestServiceServer prod = MockRestServiceServer.bindTo(builder).build();
-        TripjackHotelBookingProvider p = new TripjackHotelBookingProvider(credentials, builder, BASE, "https://prod-hms.example.test");
+        TripjackHotelBookingProvider p = new TripjackHotelBookingProvider(builder, BASE, "https://prod-hms.example.test");
         prod.expect(requestTo("https://prod-hms.example.test/oms/v3/hotel/booking-details")).andExpect(header("apikey", "prod-key"))
                 .andRespond(withStatus(org.springframework.http.HttpStatus.BAD_GATEWAY).body("x".repeat(250)));
         prod.expect(requestTo("https://prod-hms.example.test/oms/v3/hotel/booking-details"))
@@ -374,13 +388,13 @@ class TripjackHotelBookingProviderTest {
         prod.expect(requestTo("https://prod-hms.example.test/oms/v3/hotel/booking-details"))
                 .andRespond(withSuccess("<html>", MediaType.TEXT_HTML));
 
-        assertThatThrownBy(() -> p.bookingDetails("TJH1")).isInstanceOf(SupplierException.class)
+        assertThatThrownBy(() -> p.bookingDetails("TJH1", live)).isInstanceOf(SupplierException.class)
                 .hasMessage("Tripjack hotel booking-details call failed (HTTP 502)");
-        assertThatThrownBy(() -> p.bookingDetails("TJH1")).isInstanceOf(SupplierException.class)
+        assertThatThrownBy(() -> p.bookingDetails("TJH1", live)).isInstanceOf(SupplierException.class)
                 .isNotInstanceOf(com.voyra.crm.exception.SupplierTimeoutException.class).hasMessage("Tripjack hotel booking-details call failed");
-        assertThatThrownBy(() -> p.bookingDetails("TJH1")).isInstanceOf(SupplierException.class)
+        assertThatThrownBy(() -> p.bookingDetails("TJH1", live)).isInstanceOf(SupplierException.class)
                 .hasMessage("Tripjack hotel booking-details call failed");
-        assertThatThrownBy(() -> p.bookingDetails("TJH1")).isInstanceOf(SupplierException.class)
+        assertThatThrownBy(() -> p.bookingDetails("TJH1", live)).isInstanceOf(SupplierException.class)
                 .hasMessage("Tripjack hotel booking-details returned an unparseable response");
         prod.verify();
     }
@@ -407,8 +421,8 @@ class TripjackHotelBookingProviderTest {
         server.expect(requestTo(BASE + "/oms/v3/hotel/booking-details")).andRespond(withSuccess("", MediaType.APPLICATION_JSON));
         PaxDetail lead = new PaxDetail("ADULT", "Mr", "Asha", "Rao", null, null, null, null);
 
-        provider.book(new BookRequest("TJH1", BigDecimal.TEN, List.of(lead), null, null, List.of(), "ABCDE1234F"));
-        BookResult details = provider.bookingDetails("TJH1");
+        provider.book(new BookRequest("TJH1", BigDecimal.TEN, List.of(lead), null, null, List.of(), "ABCDE1234F"), ROW);
+        BookResult details = provider.bookingDetails("TJH1", ROW);
 
         server.verify();
         assertThat(details.status()).isEqualTo(SupplierBookingStatus.PENDING);

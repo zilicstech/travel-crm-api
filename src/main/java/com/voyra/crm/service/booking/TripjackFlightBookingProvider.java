@@ -9,11 +9,9 @@ import com.voyra.crm.exception.SupplierException;
 import com.voyra.crm.exception.SupplierTimeoutException;
 import com.voyra.crm.models.ResolvedCredential;
 import com.voyra.crm.models.booking.*;
-import com.voyra.crm.service.PlatformSupplierCredentialService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
@@ -28,7 +26,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Tripjack flight booking, behind {@code app.flight-booking.provider=tripjack}.
+ * Tripjack flight booking, on the base URL and key of the supplier row each call is given.
  *
  * <p><b>Unverified until the slice 0 spike.</b> Endpoints and field names come from the
  * B2B design spec section 7.3 (review, air/book, booking-details, farerule, amendment), not
@@ -38,23 +36,32 @@ import java.util.Map;
  * raw-string reads (Tripjack's content type is unreliable) and an {@code apikey} header that is never logged.
  */
 @Service
-@ConditionalOnProperty(name = "app.flight-booking.provider", havingValue = "tripjack")
 @RequiredArgsConstructor
 @Slf4j
 public class TripjackFlightBookingProvider implements FlightBookingProvider {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
-    private final PlatformSupplierCredentialService platformSupplierCredentialService;
     @Qualifier("tripjackRestClientBuilder")
     private final RestClient.Builder restClientBuilder;
 
     @Override
-    public FareReview review(List<String> offerIds, int adults, int children, int infants) {
+    public SupplierProvider provider() {
+        return SupplierProvider.TRIPJACK;
+    }
+
+    /** Tripjack accepts an amendment and cancels it later; the poller settles once booking-details says cancelled. */
+    @Override
+    public boolean cancelIsAsync() {
+        return true;
+    }
+
+    @Override
+    public FareReview review(List<String> offerIds, int adults, int children, int infants, ResolvedCredential supplier) {
         // a split round trip is one review of both price ids, so it is one supplier booking
         JsonNode res;
         try {
-            res = post("/fms/v1/review", Map.of("priceIds", offerIds), "review");
+            res = post(supplier, "/fms/v1/review", Map.of("priceIds", offerIds), "review");
         } catch (SupplierException e) {
             // Tripjack refuses a fare it can no longer sell with HTTP 400 (errCode 1000 "Requested flight is no longer available",
             // live 2026-10-30): that is an unavailable fare the agent can replace, not an unreachable supplier
@@ -79,11 +86,11 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
         log.info("Tripjack review ok: priceIds={}, bookingId={}, total={}, base={}, conditions={}", offerIds, reviewId, total,
                 decimal(fare.path("BF")), res.path("conditions").isMissingNode() ? "-" : res.path("conditions").toString());
         return new FareReview(reviewId, total, decimal(fare.path("BF")), "INR",
-                fareRules(reviewId), null, res.path("tripInfos").isMissingNode() ? null : res.path("tripInfos"));
+                fareRules(supplier, reviewId), null, res.path("tripInfos").isMissingNode() ? null : res.path("tripInfos"));
     }
 
     @Override
-    public BookResult book(BookRequest r) {
+    public BookResult book(BookRequest r, ResolvedCredential supplier) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("bookingId", r.reviewId());
         body.put("paymentInfos", List.of(Map.of("amount", r.totalFare())));
@@ -100,7 +107,7 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
                 r.email() != null && !r.email().isBlank(), r.phone() == null ? 0 : r.phone().replaceAll("\\D", "").length());
         JsonNode res;
         try {
-            res = post("/oms/v1/air/book", body, "book", false);
+            res = post(supplier, "/oms/v1/air/book", body, "book", false);
         } catch (SupplierException e) {
             String refusal = SupplierRefusal.of(e, log);
             if (refusal == null) {
@@ -124,8 +131,8 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
     }
 
     @Override
-    public BookResult bookingDetails(String supplierBookingId) {
-        JsonNode res = post("/oms/v1/booking-details", Map.of("bookingId", supplierBookingId), "booking-details");
+    public BookResult bookingDetails(String supplierBookingId, ResolvedCredential supplier) {
+        JsonNode res = post(supplier, "/oms/v1/booking-details", Map.of("bookingId", supplierBookingId), "booking-details");
         if (!succeeded(res)) {
             log.warn("Tripjack booking-details not successful: bookingId={}, message={}", supplierBookingId, message(res, "-"));
             return new BookResult(supplierBookingId, SupplierBookingStatus.PENDING, null, List.of(), message(res, null), null);
@@ -174,14 +181,14 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
     }
 
     @Override
-    public CancelQuote cancelQuote(String supplierBookingId) {
-        JsonNode res = post("/oms/v1/air/amendment/amendment-charges", amendmentBody(supplierBookingId), "cancel quote");
+    public CancelQuote cancelQuote(String supplierBookingId, ResolvedCredential supplier) {
+        JsonNode res = post(supplier, "/oms/v1/air/amendment/amendment-charges", amendmentBody(supplierBookingId), "cancel quote");
         return new CancelQuote(refundOf(res), message(res, null));
     }
 
     @Override
-    public CancelResult cancel(String supplierBookingId) {
-        JsonNode res = post("/oms/v1/air/amendment/submit-amendment", amendmentBody(supplierBookingId), "cancel");
+    public CancelResult cancel(String supplierBookingId, ResolvedCredential supplier) {
+        JsonNode res = post(supplier, "/oms/v1/air/amendment/submit-amendment", amendmentBody(supplierBookingId), "cancel");
         if (explicitlyFailed(res)) {
             return new CancelResult(false, null, message(res, null));
         }
@@ -192,9 +199,9 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
         return new CancelResult(true, refundOf(res), message(res, null));
     }
 
-    private String fareRules(String reviewId) {
+    private String fareRules(ResolvedCredential supplier, String reviewId) {
         try {
-            JsonNode res = post("/fms/v2/farerule", Map.of("id", reviewId, "flowType", "REVIEW"), "farerule");
+            JsonNode res = post(supplier, "/fms/v2/farerule", Map.of("id", reviewId, "flowType", "REVIEW"), "farerule");
             if (res == null) {
                 return null; // 200 with an empty body: the review goes on without fare rules
             }
@@ -263,16 +270,15 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
         return res == null ? null : decimal(res.path("totalRefundAmount"));
     }
 
-    private JsonNode post(String path, Object body, String what) {
-        return post(path, body, what, true);
+    private JsonNode post(ResolvedCredential supplier, String path, Object body, String what) {
+        return post(supplier, path, body, what, true);
     }
 
     /** {@code logBody=false} for calls whose error body may echo passenger data. */
-    private JsonNode post(String path, Object body, String what, boolean logBody) {
-        ResolvedCredential credential = platformSupplierCredentialService.resolveActive(SupplierProvider.TRIPJACK);
+    private JsonNode post(ResolvedCredential supplier, String path, Object body, String what, boolean logBody) {
         RestClient client = restClientBuilder.clone()
-                .baseUrl(credential.baseUrl())
-                .defaultHeader("apikey", credential.apiKey())
+                .baseUrl(supplier.baseUrl())
+                .defaultHeader("apikey", supplier.apiKey())
                 .build();
         String raw;
         long started = System.currentTimeMillis();

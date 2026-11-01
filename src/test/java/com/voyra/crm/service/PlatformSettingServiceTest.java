@@ -177,24 +177,10 @@ class PlatformSettingServiceTest {
         assertThat(legal.legalName()).isEqualTo("Voyra Travel Pvt Ltd");
     }
 
-    /** Owner ruling 2026-10-27: the live switch is off by default and one platform admin turns it on with a plain, audited write. */
+    /** The live switch is gone: suppliers are switched per row now, so the old key is refused like any unknown one. */
     @Test
-    void tripjackLiveReadyIsOffByDefaultAndOneAdminTurnsItOn() {
-        assertThat(service().tripjackLiveReady()).isFalse();
-        bad("tripjack_live_ready", "yes");
-        when(repository.findById("tripjack_live_ready"))
-                .thenReturn(Optional.of(PlatformSetting.builder().key("tripjack_live_ready").value("true").build()));
-        assertThat(service().tripjackLiveReady()).isTrue();
-    }
-
-    @Test
-    void tripjackLiveReadyCanAlwaysBeTurnedOffAndIsAudited() {
-        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
-                new CustomUserPrincipal("U1", "admin", UserType.SUPER_ADMIN, null), null));
-        when(repository.save(any(PlatformSetting.class))).thenAnswer(i -> i.getArgument(0));
-
-        service().set("tripjack_live_ready", "false");
-
-        verify(auditService).record(eq(PlatformAuditAction.SETTING_SET), eq("PLATFORM_SETTING"), eq("tripjack_live_ready"), any());
+    void tripjackLiveReadyIsAnUnknownSetting() {
+        assertThatThrownBy(() -> service().set("tripjack_live_ready", "true"))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Unknown setting: tripjack_live_ready");
     }
 }

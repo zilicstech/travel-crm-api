@@ -43,7 +43,8 @@ import java.util.stream.Collectors;
 /**
  * Voyra's platform-level supplier accounts: any number per integration, each with its search and booking switches per
  * product. Write-only: the key goes in encrypted (the same AES-256-GCM key as password retrieval) and comes out masked; the
- * only plaintext paths are {@link #resolveActive} (the providers) and {@link #resolve} (the test call), which no controller exposes.
+ * only plaintext paths are {@link #searchEnabled} and {@link #find} (the providers, through the supplier registry) and
+ * {@link #resolve} (the test call), which no controller exposes.
  */
 @Service
 @RequiredArgsConstructor
@@ -159,15 +160,7 @@ public class PlatformSupplierCredentialService {
         return toResponse(credential, rows);
     }
 
-    /** The only way a search or booking provider gets a key - resolved per call, so a key change applies to the next call. */
-    @Transactional(readOnly = true)
-    public ResolvedCredential resolveActive(SupplierProvider provider) {
-        PlatformSupplierCredential c = repository.findByProviderAndIsActiveTrue(provider)
-                .orElseThrow(() -> new IllegalStateException("Tripjack is not configured on the platform"));
-        return decrypt(c);
-    }
-
-    /** One row's key, active or not - only for the test call on that row. */
+    /** One row's key - only for the test call on that row. */
     @Transactional(readOnly = true)
     public ResolvedCredential resolve(String id) {
         return decrypt(require(id));

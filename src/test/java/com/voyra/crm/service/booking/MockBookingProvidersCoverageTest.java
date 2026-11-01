@@ -36,7 +36,7 @@ class MockBookingProvidersCoverageTest {
         r.setReturnFlightNumber("BA 9");
         r.setReturnDepartDate("2026-11-09");
 
-        var back = flights.review(r).itinerary().path("sI").get(1);
+        var back = flights.review(r, BookingSuppliers.S1).itinerary().path("sI").get(1);
 
         assertThat(back.path("fD").path("aI").path("name").asText()).isEqualTo("Back Air");
         assertThat(back.path("fD").path("aI").path("code").asText()).isEqualTo("BA");
@@ -55,7 +55,7 @@ class MockBookingProvidersCoverageTest {
         r.setOrigin(" ");
         r.setAirline("Onward Air");
 
-        var sI = flights.review(r).itinerary().path("sI");
+        var sI = flights.review(r, BookingSuppliers.S1).itinerary().path("sI");
 
         assertThat(sI.get(0).path("da").path("code").asText()).isEqualTo("DEL");
         assertThat(sI.get(1).path("fD").path("aI").path("name").asText()).isEqualTo("Onward Air");
@@ -68,24 +68,24 @@ class MockBookingProvidersCoverageTest {
         flightConfig.getMock().setPendingPolls(1);
         BookRequest req = new BookRequest("mock-rv-x", new BigDecimal("100.00"), List.of(), "pax-a@example.test", "0000000000");
 
-        String id = flights.book(req).supplierBookingId();
-        flights.book(req);
+        String id = flights.book(req, BookingSuppliers.S1).supplierBookingId();
+        flights.book(req, BookingSuppliers.S1);
 
-        assertThat(flights.bookingDetails(id).status()).isEqualTo(SupplierBookingStatus.PENDING);
-        assertThat(flights.bookingDetails(id).status()).isEqualTo(SupplierBookingStatus.TICKETED);
+        assertThat(flights.bookingDetails(id, BookingSuppliers.S1).status()).isEqualTo(SupplierBookingStatus.PENDING);
+        assertThat(flights.bookingDetails(id, BookingSuppliers.S1).status()).isEqualTo(SupplierBookingStatus.TICKETED);
     }
 
     @Test
     void aFlightIdWithoutAFareRefundsNothing() {
-        assertThat(flights.cancelQuote("review-id-after-timeout").refund()).isEqualByComparingTo("0.00");
-        assertThat(flights.cancelQuote("mock-bk-abc-notanumber").refund()).isEqualByComparingTo("0.00");
+        assertThat(flights.cancelQuote("review-id-after-timeout", BookingSuppliers.S1).refund()).isEqualByComparingTo("0.00");
+        assertThat(flights.cancelQuote("mock-bk-abc-notanumber", BookingSuppliers.S1).refund()).isEqualByComparingTo("0.00");
     }
 
     @Test
     void anUnknownHotelOptionIsPricedFromItsIdPerNightAndRoom() {
         LocalDate in = LocalDate.now().plusDays(30);
 
-        FareReview r = hotels.review("opt-x", "unknown-hotel", in, in.plusDays(2), ONE_ROOM);
+        FareReview r = hotels.review("opt-x", "unknown-hotel", in, in.plusDays(2), ONE_ROOM, BookingSuppliers.S1);
 
         long perNight = 3000 + Math.floorMod("opt-x".hashCode(), 5000);
         assertThat(r.totalFare()).isEqualByComparingTo(BigDecimal.valueOf(perNight * 2));
@@ -96,21 +96,21 @@ class MockBookingProvidersCoverageTest {
         hotelConfig.getMock().setPendingPolls(1);
         BookRequest req = new BookRequest("not-a-mock-review", new BigDecimal("50.00"), List.of(), "pax-a@example.test", "0000000000");
 
-        String id = hotels.book(req).supplierBookingId();
-        hotels.book(req);
+        String id = hotels.book(req, BookingSuppliers.S1).supplierBookingId();
+        hotels.book(req, BookingSuppliers.S1);
 
         assertThat(id).contains("-none-50.00");
-        assertThat(hotels.bookingDetails(id).status()).isEqualTo(SupplierBookingStatus.PENDING);
-        assertThat(hotels.bookingDetails(id).status()).isEqualTo(SupplierBookingStatus.TICKETED);
+        assertThat(hotels.bookingDetails(id, BookingSuppliers.S1).status()).isEqualTo(SupplierBookingStatus.PENDING);
+        assertThat(hotels.bookingDetails(id, BookingSuppliers.S1).status()).isEqualTo(SupplierBookingStatus.TICKETED);
         // "none" is no date, so nothing can be worked out to refund.
-        assertThat(hotels.cancelQuote(id).refund()).isNull();
-        assertThat(hotels.cancelQuote(id).message()).isNull();
+        assertThat(hotels.cancelQuote(id, BookingSuppliers.S1).refund()).isNull();
+        assertThat(hotels.cancelQuote(id, BookingSuppliers.S1).message()).isNull();
     }
 
     @Test
     void aHotelIdWithoutATotalConfirmsWithoutOne() {
-        assertThat(hotels.bookingDetails("mock-hbk-abc").amount()).isNull();
-        assertThat(hotels.bookingDetails("mock-hbk-abc-20261201-oops").amount()).isNull();
-        assertThat(hotels.bookingDetails("other-id").amount()).isNull();
+        assertThat(hotels.bookingDetails("mock-hbk-abc", BookingSuppliers.S1).amount()).isNull();
+        assertThat(hotels.bookingDetails("mock-hbk-abc-20261201-oops", BookingSuppliers.S1).amount()).isNull();
+        assertThat(hotels.bookingDetails("other-id", BookingSuppliers.S1).amount()).isNull();
     }
 }

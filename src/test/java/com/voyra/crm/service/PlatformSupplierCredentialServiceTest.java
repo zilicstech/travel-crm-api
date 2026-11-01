@@ -112,7 +112,7 @@ class PlatformSupplierCredentialServiceTest {
         return PlatformSupplierCredential.builder()
                 .id("C1").name("Tripjack").provider(SupplierProvider.TRIPJACK).environment(env).baseUrl(baseUrl)
                 .apiKeyEncrypted(PasswordEncryptionUtil.encrypt(plainKey, KEY))
-                .updatedAt(OLD).isActive(true).build();
+                .updatedAt(OLD).build();
     }
 
     private PlatformSupplierCredential stored(String plainKey) {
@@ -369,10 +369,10 @@ class PlatformSupplierCredentialServiceTest {
     }
 
     @Test
-    void resolveActiveReturnsDecryptedKey() {
-        when(repository.findByProviderAndIsActiveTrue(SupplierProvider.TRIPJACK)).thenReturn(Optional.of(stored("tj_live_key_9f3a")));
+    void findReturnsTheDecryptedKey() {
+        when(repository.findById("C1")).thenReturn(Optional.of(stored("tj_live_key_9f3a")));
 
-        ResolvedCredential credential = service.resolveActive(SupplierProvider.TRIPJACK);
+        ResolvedCredential credential = service.find("C1").orElseThrow();
 
         assertThat(credential.apiKey()).isEqualTo("tj_live_key_9f3a");
         assertThat(credential.environment()).isEqualTo(SupplierEnvironment.PROD);
@@ -381,7 +381,7 @@ class PlatformSupplierCredentialServiceTest {
     }
 
     @Test
-    void resolveByIdWorksForAnInactiveRow() {
+    void resolveByIdReturnsThatRowsKey() {
         when(repository.findById("C1")).thenReturn(Optional.of(stored("tj_off_key_1111")));
 
         assertThat(service.resolve("C1").apiKey()).isEqualTo("tj_off_key_1111");
@@ -391,20 +391,10 @@ class PlatformSupplierCredentialServiceTest {
     @Test
     void resolveRefusesAStoredHostOffTheAllowlist() {
         PlatformSupplierCredential old = stored("tj_live_key_9f3a", SupplierEnvironment.PROD, "https://attacker.example.com");
-        when(repository.findByProviderAndIsActiveTrue(SupplierProvider.TRIPJACK)).thenReturn(Optional.of(old));
         when(repository.findById("C1")).thenReturn(Optional.of(old));
 
-        assertThatThrownBy(() -> service.resolveActive(SupplierProvider.TRIPJACK)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.find("C1")).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> service.resolve("C1")).isInstanceOf(IllegalArgumentException.class);
-    }
-
-    @Test
-    void resolveActiveWithoutARowThrows() {
-        when(repository.findByProviderAndIsActiveTrue(SupplierProvider.TRIPJACK)).thenReturn(Optional.empty());
-
-        assertThatThrownBy(() -> service.resolveActive(SupplierProvider.TRIPJACK))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage("Tripjack is not configured on the platform");
     }
 
     @Test

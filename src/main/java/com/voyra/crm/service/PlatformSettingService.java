@@ -32,8 +32,6 @@ public class PlatformSettingService {
 
     static final String TDS_RATE = "tds_rate";
     static final String VOYRA_CANCEL_FEE = "voyra_cancel_fee";
-    /** Off until a platform admin turns it on (owner ruling 2026-10-27: one admin, audited); guards the Tripjack live switch. */
-    static final String TRIPJACK_LIVE_READY = "tripjack_live_ready";
     static final String PAX_RETENTION_DAYS = "pax_retention_days";
     static final String SKU_PRICES = "sku_prices";
     static final String FOUNDING_AGENCIES = "founding_agencies";
@@ -51,7 +49,6 @@ public class PlatformSettingService {
             Map.entry(SKU_PRICES, "{\"CRM_CORE\":2499,\"STAFF_SEATS\":399,\"ACCOUNTS_GST\":1999,\"REPORTS\":699,\"VISA\":499,\"SUITE\":4999,\"LITE\":2999}"),
             Map.entry(FOUNDING_AGENCIES, "[\"Voyra Global\"]"),
             Map.entry(PAX_RETENTION_DAYS, "90"),
-            Map.entry(TRIPJACK_LIVE_READY, "false"),
             Map.entry(VOYRA_LEGAL_NAME, ""),
             Map.entry(VOYRA_GSTIN, ""),
             Map.entry(VOYRA_ADDRESS, ""),
@@ -84,12 +81,6 @@ public class PlatformSettingService {
     @Transactional(readOnly = true)
     public int paxRetentionDays() {
         return Integer.parseInt(raw(PAX_RETENTION_DAYS));
-    }
-
-    /** Whether a platform admin has cleared Tripjack for live (PROD credential, Tripjack booking providers). */
-    @Transactional(readOnly = true)
-    public boolean tripjackLiveReady() {
-        return "true".equals(raw(TRIPJACK_LIVE_READY));
     }
 
     /** Monthly INR price per key of {@link #SKU_PRICE_KEYS}; annual billing is 10 of these. */
@@ -205,11 +196,6 @@ public class PlatformSettingService {
             case SUBSCRIPTION_SAC -> {
                 if (!v.matches("[0-9]{4,8}")) {
                     throw new IllegalArgumentException(key + " must be a 4-8 digit SAC code");
-                }
-            }
-            case TRIPJACK_LIVE_READY -> {
-                if (!v.equals("true") && !v.equals("false")) {
-                    throw new IllegalArgumentException(key + " must be true or false");
                 }
             }
             default -> { // founding_agencies: set() has already refused every key outside DEFAULTS

@@ -1,12 +1,13 @@
 package com.voyra.crm.service.booking;
 
 import com.voyra.crm.dto.HotelRoomRequest;
+import com.voyra.crm.enums.SupplierProvider;
 import com.voyra.crm.exception.FareUnavailableException;
 import com.voyra.crm.exception.SupplierTimeoutException;
+import com.voyra.crm.models.ResolvedCredential;
 import com.voyra.crm.models.booking.*;
 import com.voyra.crm.service.MockHotelSearchProvider;
 import lombok.RequiredArgsConstructor;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -27,14 +28,13 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Default hotel booking provider: fares come from {@link MockHotelSearchProvider} so a review prices a room exactly as
+ * The MOCK supplier's hotel booking provider (the supplier row is not read): fares come from {@link MockHotelSearchProvider} so a review prices a room exactly as
  * the detail page showed it, with the same switches as the flight mock. Free cancellation ends two days before
  * check-in; a cancel before then refunds the whole total, after it nothing. Ids carry what a refund needs (check-in
  * date, total) so a restart loses nothing.
  */
 @Service
 @RequiredArgsConstructor
-@ConditionalOnProperty(name = "app.hotel-booking.provider", havingValue = "mock", matchIfMissing = true)
 public class MockHotelBookingProvider implements HotelBookingProvider {
 
     private static final DateTimeFormatter DAY = DateTimeFormatter.BASIC_ISO_DATE;
@@ -47,7 +47,18 @@ public class MockHotelBookingProvider implements HotelBookingProvider {
     private final Map<String, Integer> pendingLeft = new ConcurrentHashMap<>();
 
     @Override
-    public FareReview review(String optionId, String hotelId, LocalDate checkIn, LocalDate checkOut, List<HotelRoomRequest> occupancy) {
+    public SupplierProvider provider() {
+        return SupplierProvider.MOCK;
+    }
+
+    @Override
+    public boolean cancelIsAsync() {
+        return false;
+    }
+
+    @Override
+    public FareReview review(String optionId, String hotelId, LocalDate checkIn, LocalDate checkOut, List<HotelRoomRequest> occupancy,
+                             ResolvedCredential supplier) {
         int rooms = occupancy.size(); // the mock search prices per room, whoever is in it - so does the review
         var mock = config.getMock();
         if (mock.isFareExpired()) {
@@ -68,7 +79,7 @@ public class MockHotelBookingProvider implements HotelBookingProvider {
     }
 
     @Override
-    public BookResult book(BookRequest r) {
+    public BookResult book(BookRequest r, ResolvedCredential supplier) {
         String id = bookingId(r.reviewId(), r.totalFare());
         if (config.getMock().isBookFail()) {
             return new BookResult(id, SupplierBookingStatus.FAILED, null, List.of(), "Mock: room sold out", null);
@@ -85,7 +96,7 @@ public class MockHotelBookingProvider implements HotelBookingProvider {
     }
 
     @Override
-    public BookResult bookingDetails(String supplierBookingId) {
+    public BookResult bookingDetails(String supplierBookingId, ResolvedCredential supplier) {
         int[] left = {0};
         pendingLeft.computeIfPresent(supplierBookingId, (k, v) -> {
             left[0] = v;
@@ -98,13 +109,13 @@ public class MockHotelBookingProvider implements HotelBookingProvider {
     }
 
     @Override
-    public CancelQuote cancelQuote(String supplierBookingId) {
+    public CancelQuote cancelQuote(String supplierBookingId, ResolvedCredential supplier) {
         BigDecimal refund = refund(supplierBookingId);
         return new CancelQuote(refund, refund == null ? null : "Mock refund: " + (refund.signum() > 0 ? "full total, before the free-cancellation deadline" : "nothing, past the free-cancellation deadline"));
     }
 
     @Override
-    public CancelResult cancel(String supplierBookingId) {
+    public CancelResult cancel(String supplierBookingId, ResolvedCredential supplier) {
         if (config.getMock().isCancelTimeout()) {
             throw new SupplierTimeoutException("Mock supplier timed out on cancel", null);
         }

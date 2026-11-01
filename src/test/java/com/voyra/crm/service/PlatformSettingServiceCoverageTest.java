@@ -85,12 +85,10 @@ class PlatformSettingServiceCoverageTest {
     @Test
     void readersFallBackToDefaultsOrUseStoredValues() {
         stored("voyra_cancel_fee", "150");
-        stored("tripjack_live_ready", "true");
 
         assertThat(service.voyraCancelFee()).isEqualByComparingTo("150");
         assertThat(service.tdsRate()).isEqualByComparingTo("0");
         assertThat(service.paxRetentionDays()).isEqualTo(90);
-        assertThat(service.tripjackLiveReady()).isTrue();
         assertThat(service.subscriptionSac()).isEqualTo("998314");
         assertThat(service.skuPrices()).containsKeys("CRM_CORE", "SUITE", "LITE");
         assertThat(service.foundingAgencies()).containsExactly("Voyra Global");
@@ -167,7 +165,6 @@ class PlatformSettingServiceCoverageTest {
         bad("voyra_gstin", "NOTAGSTIN", "15-character GSTIN");
         bad("voyra_state_code", "2x", "2-digit GST state code");
         bad("subscription_sac", "12", "4-8 digit SAC");
-        bad("tripjack_live_ready", "yes", "true or false");
         verify(repository, never()).save(any());
     }
 
@@ -181,7 +178,7 @@ class PlatformSettingServiceCoverageTest {
                 new String[]{"voyra_cancel_fee", "100"}, new String[]{"pax_retention_days", "30"},
                 new String[]{"voyra_legal_name", "Voyra"}, new String[]{"voyra_address", "Mumbai"},
                 new String[]{"voyra_gstin", "27AAACV1234F1Z5"}, new String[]{"voyra_state_code", "27"},
-                new String[]{"subscription_sac", "998314"}, new String[]{"tripjack_live_ready", "false"}, new String[]{"tripjack_live_ready", "true"},
+                new String[]{"subscription_sac", "998314"},
                 new String[]{"founding_agencies", "[\"Voyra Global\",\"QA Agency\"]"},
                 new String[]{"sku_prices", "{\"CRM_CORE\":1,\"STAFF_SEATS\":1,\"ACCOUNTS_GST\":1,\"REPORTS\":1,\"VISA\":1,\"SUITE\":1,\"LITE\":0}"}
         )) {

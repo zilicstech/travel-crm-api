@@ -1,14 +1,14 @@
 package com.voyra.crm.service.booking;
 
 import com.voyra.crm.dto.HotelRoomRequest;
+import com.voyra.crm.models.ResolvedCredential;
 import com.voyra.crm.models.booking.*;
 
 import java.time.LocalDate;
 import java.util.List;
 
 /**
- * Supplier abstraction for booking hotel rooms, selected by {@code app.hotel-booking.provider}
- * (mock default | tripjack). Same contract as {@link FlightBookingProvider}: {@link #book} is sent at most once
+ * Supplier abstraction for booking hotel rooms, one bean per {@link com.voyra.crm.enums.SupplierProvider}. Same contract as {@link FlightBookingProvider}: {@link #book} is sent at most once
  * per review id and a transport timeout surfaces as {@code SupplierTimeoutException}; {@code TICKETED} means confirmed.
  */
 public interface HotelBookingProvider extends BookingSupplier {
@@ -19,5 +19,6 @@ public interface HotelBookingProvider extends BookingSupplier {
      *
      * @throws com.voyra.crm.exception.FareUnavailableException when the room is gone
      */
-    FareReview review(String optionId, String hotelId, LocalDate checkIn, LocalDate checkOut, List<HotelRoomRequest> rooms);
+    FareReview review(String optionId, String hotelId, LocalDate checkIn, LocalDate checkOut, List<HotelRoomRequest> rooms,
+                      ResolvedCredential supplier);
 }

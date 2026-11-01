@@ -10,7 +10,6 @@ import com.voyra.crm.dto.PlatformBookingConfirmRequest;
 import com.voyra.crm.dto.PlatformBookingReviewResponse;
 import com.voyra.crm.entity.Agent;
 import com.voyra.crm.entity.PlatformBooking;
-import com.voyra.crm.entity.PlatformSupplierCredential;
 import com.voyra.crm.entity.Tenant;
 import com.voyra.crm.entity.Wallet;
 import com.voyra.crm.entity.WalletEntry;
@@ -23,7 +22,6 @@ import com.voyra.crm.enums.ReceivableReason;
 import com.voyra.crm.enums.ServiceType;
 import com.voyra.crm.enums.SupplierEnvironment;
 import com.voyra.crm.enums.Sku;
-import com.voyra.crm.enums.SupplierProvider;
 import com.voyra.crm.enums.TenantStatus;
 import com.voyra.crm.enums.WalletEntryType;
 import com.voyra.crm.enums.WalletStatus;
@@ -33,6 +31,7 @@ import com.voyra.crm.exception.NotFoundException;
 import com.voyra.crm.exception.ReceivableDueException;
 import com.voyra.crm.exception.SupplierException;
 import com.voyra.crm.exception.SupplierTimeoutException;
+import com.voyra.crm.models.ResolvedCredential;
 import com.voyra.crm.models.booking.BookRequest;
 import com.voyra.crm.models.booking.BookResult;
 import com.voyra.crm.models.booking.CancelQuote;
@@ -42,7 +41,6 @@ import com.voyra.crm.models.booking.PaxDetail;
 import com.voyra.crm.models.booking.SupplierBookingStatus;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.PlatformBookingRepository;
-import com.voyra.crm.repository.PlatformSupplierCredentialRepository;
 import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.repository.WalletEntryRepository;
 import com.voyra.crm.repository.WalletRepository;
@@ -56,6 +54,7 @@ import com.voyra.crm.service.PlatformAuditService;
 import com.voyra.crm.service.PlatformSettingService;
 import com.voyra.crm.service.WalletService;
 import com.voyra.crm.util.PaxTypeCalculator;
+import com.voyra.crm.util.SupplierIds;
 import com.voyra.crm.util.UniqueIdResolver;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.access.AccessDeniedException;
@@ -85,19 +84,18 @@ public class PlatformBookingService {
     private static final String PAX_MIX = "paxMix";
     /** Pricing-snapshot key of the travel date (flight: first departure, hotel: check-in) the age check runs against. */
     private static final String TRAVEL_DATE = "travelDate";
-    /** Event marking that Voyra was alerted about a row the configured supplier does not serve (once per row). */
+    /** Event marking that Voyra was alerted about a row its supplier no longer serves (once per row). */
     static final String SUPPLIER_MISMATCH = "SUPPLIER_MISMATCH";
     static final String NOT_SERVED_MESSAGE = "This booking can't be changed right now. Voyra has been notified.";
 
     private final PlatformBookingRepository bookingRepository;
-    private final BookingProviderRegistry providers;
+    private final SupplierRegistry registry;
     private final AgencyPriceQuoter quoter;
     private final AgencyPricingService pricingService;
     private final WalletService walletService;
     private final WalletRepository walletRepository;
     private final TenantRepository tenantRepository;
     private final AgentRepository agentRepository;
-    private final PlatformSupplierCredentialRepository credentialRepository;
     private final NotificationService notificationService;
     private final PlatformBookingEventRecorder events;
     private final PaxCodec paxCodec;
@@ -113,25 +111,24 @@ public class PlatformBookingService {
     @org.springframework.beans.factory.annotation.Value("${app.platform-booking.confirm-wait-seconds:30}")
     private long confirmWaitSeconds;
 
-    public PlatformBookingService(PlatformBookingRepository bookingRepository, BookingProviderRegistry providers,
+    public PlatformBookingService(PlatformBookingRepository bookingRepository, SupplierRegistry registry,
                                   AgencyPriceQuoter quoter,
                                   AgencyPricingService pricingService, WalletService walletService,
                                   WalletRepository walletRepository, TenantRepository tenantRepository,
-                                  AgentRepository agentRepository, PlatformSupplierCredentialRepository credentialRepository,
+                                  AgentRepository agentRepository,
                                   NotificationService notificationService, PlatformBookingEventRecorder events,
                                   PaxCodec paxCodec, ObjectMapper objectMapper, PlatformTransactionManager transactionManager,
                                   WalletEntryRepository walletEntryRepository, PlatformAuditService platformAuditService,
                                   PlatformSettingService settings, PlatformBookingMirrorService mirrorService,
                                   EntitlementService entitlementService) {
         this.bookingRepository = bookingRepository;
-        this.providers = providers;
+        this.registry = registry;
         this.quoter = quoter;
         this.pricingService = pricingService;
         this.walletService = walletService;
         this.walletRepository = walletRepository;
         this.tenantRepository = tenantRepository;
         this.agentRepository = agentRepository;
-        this.credentialRepository = credentialRepository;
         this.notificationService = notificationService;
         this.events = events;
         this.paxCodec = paxCodec;
@@ -225,20 +222,26 @@ public class PlatformBookingService {
     private static final BigDecimal PRICE_CHANGE_TOLERANCE = new BigDecimal("0.02");
 
     /**
-     * Re-prices the offer (a split round trip: onward and return together, as one booking) with the supplier and stamps a
-     * REVIEWING row; every refusal happens before the supplier call.
+     * Re-prices the offer (a split round trip: onward and return together, as one booking) with the supplier the offer
+     * came from and stamps a REVIEWING row on that supplier; every refusal happens before the supplier call. The request's
+     * offer ids arrive namespaced by supplier and leave for the supplier without it.
      */
     public PlatformBookingReviewResponse review(FlightReviewRequest request) {
         CustomUserPrincipal principal = requireBooker(PricingProduct.FLIGHT);
-        ReviewEnv env = admit(principal, PricingProduct.FLIGHT, request.getClientId(),
+        SupplierIds.Scoped onward = scoped(request.getOfferId());
+        request.setOfferId(onward.id());
+        if (request.getReturnOfferId() != null && !request.getReturnOfferId().isBlank()) {
+            request.setReturnOfferId(sameSupplier(onward, scoped(request.getReturnOfferId()), "Both legs must be on one supplier"));
+        }
+        ResolvedCredential supplier = admit(principal, PricingProduct.FLIGHT, onward.supplierId(), request.getClientId(),
                 request.getServiceId(), request.getLeadId());
-        log.info("Flight review start: tenant={}, offerId={}, returnOfferId={}, pax={}/{}/{}, environment={}, searchedFare={}",
-                principal.tenantId(), request.getOfferId(), request.getReturnOfferId(), request.getAdults(), request.getChildren(),
-                request.getInfants(), env.environment(), request.getSearchDisplayedFare());
-        FareReview fare = providers.flights().review(request);
+        log.info("Flight review start: tenant={}, supplier={}, offerId={}, returnOfferId={}, pax={}/{}/{}, environment={}, searchedFare={}",
+                principal.tenantId(), supplier.id(), request.getOfferId(), request.getReturnOfferId(), request.getAdults(), request.getChildren(),
+                request.getInfants(), supplier.environment(), request.getSearchDisplayedFare());
+        FareReview fare = registry.flightBooking(supplier.provider()).review(request, supplier);
         Map<String, Object> itinerary = itineraryMap(fare.itinerary());
         java.time.LocalDate travelDate = firstDeparture(itinerary);
-        return stampReview(principal, PricingProduct.FLIGHT, env, fare, request.getClientId(),
+        return stampReview(principal, PricingProduct.FLIGHT, supplier, fare, request.getClientId(),
                 request.getLeadId(), request.getServiceId(), request.getAdults() + request.getChildren() + request.getInfants(),
                 itinerary, request.getSearchDisplayedFare(),
                 Map.of("adults", request.getAdults(), "children", request.getChildren(), "infants", request.getInfants()),
@@ -257,22 +260,44 @@ public class PlatformBookingService {
         if (request.getCheckIn().isBefore(com.voyra.crm.util.FinancialYear.today())) { // India's today, not the server's
             throw new IllegalArgumentException("Check-in can't be in the past");
         }
-        ReviewEnv env = admit(principal, PricingProduct.HOTEL, request.getClientId(),
+        SupplierIds.Scoped hotel = scoped(request.getHotelId());
+        request.setHotelId(hotel.id());
+        request.setOptionId(sameSupplier(hotel, scoped(request.getOptionId()), "The hotel and the room must be on one supplier"));
+        ResolvedCredential supplier = admit(principal, PricingProduct.HOTEL, hotel.supplierId(), request.getClientId(),
                 request.getServiceId(), request.getLeadId());
-        FareReview fare = providers.hotels().review(request.getOptionId(), request.getHotelId(), request.getCheckIn(),
-                request.getCheckOut(), request.getRooms());
+        FareReview fare = registry.hotelBooking(supplier.provider()).review(request.getOptionId(), request.getHotelId(), request.getCheckIn(),
+                request.getCheckOut(), request.getRooms(), supplier);
         int guests = request.getRooms().stream()
                 .mapToInt(r -> r.getAdults() + (r.getChildAges() == null ? 0 : r.getChildAges().size())).sum();
-        return stampReview(principal, PricingProduct.HOTEL, env, fare, request.getClientId(), request.getLeadId(),
+        return stampReview(principal, PricingProduct.HOTEL, supplier, fare, request.getClientId(), request.getLeadId(),
                 request.getServiceId(), guests, hotelItinerary(request, fare), request.getSearchDisplayedFare(), null, request.getCheckIn());
     }
 
-    private record ReviewEnv(SupplierEnvironment environment, String credentialId) {
+    /** A search id split into its supplier and that supplier's own id; an id with no namespace is a stale offer (400). */
+    private static SupplierIds.Scoped scoped(String id) {
+        return SupplierIds.parse(id).orElseThrow(PlatformBookingService::offerUnavailable);
     }
 
-    /** Every refusal a review makes before the supplier is asked; returns the environment the booking runs in. */
-    private ReviewEnv admit(CustomUserPrincipal principal, PricingProduct product, String clientId,
-                           String serviceId, String leadId) {
+    /** The second id's own part, when it is on the first id's supplier (else 400). */
+    private static String sameSupplier(SupplierIds.Scoped first, SupplierIds.Scoped second, String message) {
+        if (!first.supplierId().equals(second.supplierId())) {
+            throw new BookingRequestException("MIXED_SUPPLIERS", message);
+        }
+        return second.id();
+    }
+
+    private static BookingRequestException offerUnavailable() {
+        return new BookingRequestException("OFFER_UNAVAILABLE", "This fare is no longer available; search again");
+    }
+
+    private static BookingConflictException notBookable(ResolvedCredential supplier) {
+        return new BookingConflictException("SUPPLIER_NOT_BOOKABLE",
+                supplier.name() + " is not taking bookings right now; pick another supplier", Map.of());
+    }
+
+    /** Every refusal a review makes before the supplier is asked; returns the supplier row the booking runs on. */
+    private ResolvedCredential admit(CustomUserPrincipal principal, PricingProduct product, String supplierId, String clientId,
+                                     String serviceId, String leadId) {
         String tenantId = principal.tenantId();
         pricingService.requireInForce(tenantId, product);
         Tenant tenant = tenantRepository.findById(tenantId).orElseThrow(() -> new NotFoundException("Agency not found"));
@@ -286,16 +311,14 @@ public class PlatformBookingService {
             throw new ReceivableDueException();
         }
         mirrorService.requireLinks(clientId, leadId, serviceId);
-        if (providers.isMock(product)) {
-            return new ReviewEnv(SupplierEnvironment.MOCK, null);
+        ResolvedCredential supplier = registry.find(supplierId).orElseThrow(PlatformBookingService::offerUnavailable);
+        if (!registry.bookable(supplierId, product)) {
+            throw notBookable(supplier);
         }
-        PlatformSupplierCredential credential = credentialRepository.findByProviderAndIsActiveTrue(SupplierProvider.TRIPJACK)
-                .orElseThrow(() -> new IllegalStateException("Tripjack is not configured on the platform"));
-        requireLiveAllowed(credential.getEnvironment());
-        return new ReviewEnv(credential.getEnvironment(), credential.getId());
+        return supplier;
     }
 
-    private PlatformBookingReviewResponse stampReview(CustomUserPrincipal principal, PricingProduct product, ReviewEnv env,
+    private PlatformBookingReviewResponse stampReview(CustomUserPrincipal principal, PricingProduct product, ResolvedCredential supplier,
                                                       FareReview fare, String clientId, String leadId, String serviceId,
                                                       int paxCount, Map<String, Object> itinerary, BigDecimal searched,
                                                       Map<String, Integer> paxMix, java.time.LocalDate travelDate) {
@@ -314,8 +337,8 @@ public class PlatformBookingService {
                 .leadId(leadId)
                 .serviceId(serviceId)
                 .status(PlatformBookingStatus.REVIEWING)
-                .environment(env.environment())
-                .credentialId(env.credentialId())
+                .environment(supplier.environment())
+                .credentialId(supplier.id())
                 .supplierReviewId(fare.reviewId())
                 .gross(fare.totalFare())
                 .base(fare.baseFare())
@@ -384,7 +407,7 @@ public class PlatformBookingService {
         log.info("Platform booking {} sending book: product={}, environment={}, displayed={}, gross={}, pax={}", bookingId,
                 booking.getProduct(), booking.getEnvironment(), booking.getDisplayed(), booking.getGross(), request.getPassengers().size());
         try {
-            result = providers.supplierFor(booking).book(bookRequest(booking, request));
+            result = registry.supplierFor(booking).book(bookRequest(booking, request));
         } catch (RuntimeException e) {
             // outcome unknown (timeout, 5xx, empty body): never release the hold or retry book - the poller asks bookingDetails
             log.warn("Book call for platform booking {} gave no clean answer: {}", bookingId, e.getClass().getSimpleName());
@@ -413,7 +436,7 @@ public class PlatformBookingService {
                 break;
             }
             try {
-                booking = applySupplierResult(bookingId, providers.supplierFor(booking).bookingDetails(supplierId(booking)));
+                booking = applySupplierResult(bookingId, registry.supplierFor(booking).bookingDetails(supplierId(booking)));
             } catch (RuntimeException e) {
                 log.warn("Booking details for platform booking {} not available yet: {}", bookingId, e.getClass().getSimpleName());
             }
@@ -487,7 +510,7 @@ public class PlatformBookingService {
         requireCancellable(b);
         requireServed(b);
         BigDecimal fee = settings.voyraCancelFee();
-        BigDecimal refund = refundOf(providers.supplierFor(b).cancelQuote(supplierId(b)).refund(), b.getDisplayed(), fee);
+        BigDecimal refund = refundOf(registry.supplierFor(b).cancelQuote(supplierId(b)).refund(), b.getDisplayed(), fee);
         BigDecimal recall = recallOf(b);
         Map<String, Object> it = b.getProduct() == PricingProduct.HOTEL && b.getItinerary() != null ? b.getItinerary() : Map.of();
         return new CancelPreview(refund, recall, refund == null ? null : refund.subtract(recall), fee, refund == null,
@@ -514,7 +537,7 @@ public class PlatformBookingService {
             throw new IllegalArgumentException("An idempotency key is required to cancel a booking");
         }
         CustomUserPrincipal principal = requireBooker();
-        // checked before the claim so a refused row stays TICKETED; a row's environment and the provider never change while running
+        // checked before the claim so a refused row stays TICKETED
         PlatformBooking current = actedOn(principal, bookingRepository.findByIdAndTenantId(bookingId, principal.tenantId()));
         if (current.getStatus() == PlatformBookingStatus.TICKETED) {
             requireServed(current);
@@ -524,7 +547,7 @@ public class PlatformBookingService {
             return claim.booking();
         }
         String supplierId = supplierId(claim.booking());
-        BookingSupplier provider = providers.supplierFor(claim.booking());
+        SupplierRegistry.BoundSupplier provider = registry.supplierFor(claim.booking());
         BigDecimal fee = settings.voyraCancelFee();
         CancelQuote quote;
         try {
@@ -564,8 +587,8 @@ public class PlatformBookingService {
         accepted.put("refund", result.refund() == null ? "UNKNOWN" : result.refund().toPlainString());
         accepted.put("message", String.valueOf(result.message()));
         tx.executeWithoutResult(s -> events.record(bookingId, "CANCEL_ACCEPTED", accepted));
-        if (claim.booking().getEnvironment() != SupplierEnvironment.MOCK) { // booked with Tripjack, whatever the provider is now
-            // Tripjack only accepts the amendment here; the booking stays CANCELLING and nothing is posted until
+        if (provider.cancelIsAsync()) {
+            // e.g. Tripjack only accepts the amendment here; the booking stays CANCELLING and nothing is posted until
             // the poller sees bookingDetails say cancelled (settleConfirmedCancel). The mock settles at once.
             return claim.booking();
         }
@@ -795,10 +818,16 @@ public class PlatformBookingService {
         if (b.getStatus() != PlatformBookingStatus.REVIEWING) {
             throw new IllegalStateException("This booking was already confirmed");
         }
-        requireLiveAllowed(b.getEnvironment()); // switched off since the review: stays REVIEWING, the sweep expires it
-        if (!providers.serves(b)) {
+        if (!registry.serves(b)) {
             alertNotServed(b);
             return new Held(b, notServed(), false); // returned, not thrown, so the alert's event commits
+        }
+        ResolvedCredential supplier = registry.supplierFor(b).credential();
+        if (!registry.bookable(supplier.id(), b.getProduct())) {
+            throw notBookable(supplier); // switched off since the review: stays REVIEWING, the sweep expires it
+        }
+        if (supplier.updatedAt().isAfter(b.getCreatedAt())) {
+            throw reviewExpired(b.getProduct()); // the row's name, URL or key changed since the review (a switch edit does not count)
         }
         if (bookingRepository.findByIdempotencyKey(request.getIdempotencyKey()).isPresent()) {
             throw new IllegalStateException("This confirmation key was already used for another booking");
@@ -1025,17 +1054,9 @@ public class PlatformBookingService {
         return b;
     }
 
-    /** Kill switch: with tripjack_live_ready off no new live booking is reviewed or confirmed; rows already sent keep settling. */
-    private void requireLiveAllowed(SupplierEnvironment environment) {
-        if (environment == SupplierEnvironment.PROD && !settings.tripjackLiveReady()) {
-            throw new BookingConflictException("LIVE_BOOKINGS_PAUSED",
-                    "Booking through Voyra is paused for now - please try again later or contact Voyra", Map.of());
-        }
-    }
-
-    /** Refuses (409) a booking the configured provider did not book, after alerting Voyra once; no supplier call, no money. */
+    /** Refuses (409) a booking its supplier no longer serves, after alerting Voyra once; no supplier call, no money. */
     private void requireServed(PlatformBooking b) {
-        if (!providers.serves(b)) {
+        if (!registry.serves(b)) {
             tx.executeWithoutResult(s -> bookingRepository.findByIdForUpdate(b.getId()).ifPresent(this::alertNotServed));
             throw notServed();
         }
@@ -1046,21 +1067,24 @@ public class PlatformBookingService {
     }
 
     /**
-     * The provider configured now is not the one this row was booked with (mock vs Tripjack): alerts Voyra once per row,
-     * marked by a SUPPLIER_MISMATCH event, in the caller's transaction (the row locked). Also used by the poller.
+     * The supplier row this booking was reviewed on is missing, its integration is not in this build, or the row is in
+     * another environment: alerts Voyra once per row, marked by a SUPPLIER_MISMATCH event, in the caller's transaction
+     * (the row locked). Also used by the poller.
      */
     void alertNotServed(PlatformBooking b) {
         if (events.lastPayload(b.getId(), SUPPLIER_MISMATCH).isPresent()) {
             return;
         }
-        String configured = providers.isMock(b.getProduct()) ? "the mock" : "Tripjack";
-        events.record(b.getId(), SUPPLIER_MISMATCH, Map.of("environment", b.getEnvironment().name(), "status", b.getStatus().name(),
-                "configured", configured));
-        notificationService.platformAlert("Booking " + b.getId() + " is not served by the configured supplier",
-                "Booking " + b.getId() + " (agency " + b.getTenantId() + ", " + b.getStatus() + ") was booked in the " + b.getEnvironment()
-                        + " environment, but the " + b.getProduct() + " booking provider configured now is " + configured
-                        + ". Voyra will not ask the supplier about it or move money for it until the matching provider is configured "
-                        + "again - restore it, or check with the supplier and resolve the booking.");
+        Map<String, Object> detail = new LinkedHashMap<>();
+        detail.put("environment", b.getEnvironment().name());
+        detail.put("status", b.getStatus().name());
+        detail.put("credentialId", b.getCredentialId());
+        events.record(b.getId(), SUPPLIER_MISMATCH, detail);
+        notificationService.platformAlert("Booking " + b.getId() + " is not served by its supplier",
+                "Booking " + b.getId() + " (agency " + b.getTenantId() + ", " + b.getStatus() + ", " + b.getProduct() + ") was booked on supplier "
+                        + b.getCredentialId() + " in the " + b.getEnvironment() + " environment, but that supplier is missing, not in this build, "
+                        + "or in another environment. Voyra will not ask the supplier about it or move money for it - check with the "
+                        + "supplier and resolve the booking.");
     }
 
     private static String priceWord(PricingProduct product) {
