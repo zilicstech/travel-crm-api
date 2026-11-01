@@ -57,10 +57,10 @@ class EntitlementServiceCoverageTest {
     }
 
     @Test
-    void aCustomPlanWithNoSkuListHasNothing() {
-        Entitlements e = EntitlementService.compute(sub(SubscriptionPlan.CUSTOM, SubscriptionStatus.ACTIVE).skus(null).seats(4).build(), NOW);
-        assertThat(e.skus()).isEmpty();
-        assertThat(e.seats()).isZero();
+    void aLitePlanWithNoStoredSkuListStillHasItsSkus() {
+        Entitlements e = EntitlementService.compute(sub(SubscriptionPlan.LITE, SubscriptionStatus.ACTIVE).skus(null).seats(4).build(), NOW);
+        assertThat(e.skus()).isEqualTo(EntitlementService.LITE_SKUS);
+        assertThat(e.seats()).isEqualTo(7);
     }
 
     @Test

@@ -97,7 +97,7 @@ class AgentSeatLimitTest {
 
     @Test
     void zeroSeatsSaysTheAddOnIsNeeded() {
-        when(entitlementService.resolve("T1")).thenReturn(new Entitlements(SubscriptionPlan.CUSTOM, null, Set.of(Sku.STAFF_SEATS), 0, false, null));
+        when(entitlementService.resolve("T1")).thenReturn(new Entitlements(SubscriptionPlan.LITE, null, Set.of(Sku.STAFF_SEATS), 0, false, null));
         assertThatThrownBy(() -> agentService.createAgent(request()))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("Staff logins need the Staff seats add-on — add it in Subscription");

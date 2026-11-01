@@ -10,6 +10,7 @@ import com.voyra.crm.enums.Sku;
 import com.voyra.crm.enums.SubscriptionPlan;
 import com.voyra.crm.enums.SubscriptionStatus;
 import com.voyra.crm.exception.NotFoundException;
+import com.voyra.crm.models.PlanPrices;
 import com.voyra.crm.models.VoyraLegal;
 import com.voyra.crm.repository.SubscriptionInvoiceRepository;
 import com.voyra.crm.repository.SubscriptionRepository;
@@ -44,7 +45,7 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * Voyra's subscription invoices (spec §5.2, §7.6): lines priced from {@code sku_prices}, GST 18 %, numbered
+ * Voyra's subscription invoices (spec §5.2, §7.6): lines priced from the prices frozen on the subscription row, GST 18 %, numbered
  * {@code VOY-SUB-<yyyy>-<seq>}, a stored PDF; settled by the gateway webhook or by an admin (bank), or voided.
  * Paying moves the agency onto a paid plan (waiver cleared, ACTIVE, the paid period) and refreshes the
  * entitlement cache in the same method. Never touches a wallet: subscriptions are billed outside it.
@@ -108,30 +109,24 @@ public class SubscriptionBillingService {
     // ---- arithmetic
 
     /** One line per SKU (Suite and Lite: the plan price incl. its seats, plus extra seats); money as plain strings so JSONB keeps it exact. */
-    public static List<Map<String, Object>> lines(Subscription s, Map<String, BigDecimal> prices) {
+    public static List<Map<String, Object>> lines(Subscription s) {
         int months = s.getBillingCycle() == BillingCycle.ANNUAL ? ANNUAL_MONTHS_BILLED : 1;
         int seats = s.getSeats() == null ? 0 : s.getSeats();
         List<Map<String, Object>> lines = new ArrayList<>();
         if (s.getPlan() == SubscriptionPlan.SUITE || s.getPlan() == SubscriptionPlan.LITE) {
             lines.add(s.getPlan() == SubscriptionPlan.SUITE
-                    ? line("SUITE", "Voyra Premium (" + EntitlementService.SUITE_INCLUDED_SEATS + " staff seats included)", 1, prices, months)
-                    : line("LITE", "Voyra CRM Lite (" + EntitlementService.LITE_INCLUDED_SEATS + " staff seats included)", 1, prices, months));
+                    ? line("SUITE", "Voyra Premium (" + EntitlementService.SUITE_INCLUDED_SEATS + " staff seats included)", 1, s.getPlanPriceMonthly(), s, months)
+                    : line("LITE", "Voyra CRM Lite (" + EntitlementService.LITE_INCLUDED_SEATS + " staff seats included)", 1, s.getPlanPriceMonthly(), s, months));
             if (seats > 0) {
-                lines.add(line(Sku.STAFF_SEATS.name(), "Extra staff seats", seats, prices, months));
-            }
-        } else if (s.getPlan() == SubscriptionPlan.CUSTOM && s.getSkus() != null) {
-            for (Sku sku : Sku.values()) {
-                if (!s.getSkus().contains(sku.name())) {
-                    continue;
-                }
-                if (sku != Sku.STAFF_SEATS) {
-                    lines.add(line(sku.name(), label(sku), 1, prices, months));
-                } else if (seats > 0) {
-                    lines.add(line(sku.name(), label(sku), seats, prices, months));
-                }
+                lines.add(line(Sku.STAFF_SEATS.name(), "Extra staff seats", seats, s.getSeatPriceMonthly(), s, months));
             }
         }
         return lines;
+    }
+
+    private static BigDecimal total(List<Map<String, Object>> lines) {
+        return lines.stream().map(l -> new BigDecimal((String) l.get("amount")))
+                .reduce(BigDecimal.ZERO, BigDecimal::add).setScale(2, RoundingMode.HALF_UP);
     }
 
     static BigDecimal gst(BigDecimal amount) {
@@ -159,9 +154,8 @@ public class SubscriptionBillingService {
 
     /** Caller holds the subscription row lock inside a transaction. The number is allocated in that transaction (no gaps). */
     SubscriptionInvoice issue(Subscription s, Instant start, Instant now) {
-        List<Map<String, Object>> lines = lines(s, settingService.skuPrices());
-        BigDecimal amount = lines.stream().map(l -> new BigDecimal((String) l.get("amount")))
-                .reduce(BigDecimal.ZERO, BigDecimal::add).setScale(2, RoundingMode.HALF_UP);
+        List<Map<String, Object>> lines = lines(s);
+        BigDecimal amount = total(lines);
         if (amount.signum() <= 0) {
             throw new IllegalStateException("Nothing to bill: the plan has no paid SKUs");
         }
@@ -212,7 +206,7 @@ public class SubscriptionBillingService {
         // an open invoice (e.g. from raiseNow after READ_ONLY) already covers the agency; a stale period must not get a second one
         if (invoiceRepository.findFirstByTenantIdAndStatusOrderByDueAtAsc(s.getTenantId(), ISSUED).isPresent()
                 || invoiceRepository.existsByTenantIdAndPeriodStartAndStatusIn(s.getTenantId(), s.getPeriodEnd(), List.of(ISSUED, PAID))
-                || lines(s, settingService.skuPrices()).isEmpty()) {
+                || total(lines(s)).signum() <= 0) {
             return Optional.empty();
         }
         return Optional.of(issue(s, s.getPeriodEnd(), now));
@@ -254,11 +248,11 @@ public class SubscriptionBillingService {
         return toResponse(issued);
     }
 
-    /** Upgrade order: Basic < Lite = Custom < Premium (Suite). */
+    /** Upgrade order: Basic < Lite < Premium (Suite). */
     static int rank(SubscriptionPlan plan) {
         return switch (plan) {
             case STARTER -> 0;
-            case LITE, CUSTOM -> 1;
+            case LITE -> 1;
             case SUITE -> 2;
         };
     }
@@ -295,11 +289,14 @@ public class SubscriptionBillingService {
                 invoiceRepository.save(o);
                 rerenderPdfAfterCommit(o.getId());
             }
+            PlanPrices prices = settingService.planPrices();
             Subscription priced = Subscription.builder().tenantId(tenantId).plan(wanted)
+                    .planPriceMonthly(prices.monthly(wanted)).seatPriceMonthly(prices.staffSeats())
                     .seats(s.getPlan() == SubscriptionPlan.STARTER || s.getSeats() == null ? 0 : s.getSeats())
                     .billingCycle(s.getBillingCycle()).build();
             SubscriptionInvoice issued = issue(priced, now, now);
             issued.setTargetPlan(wanted);
+            issued.getBillingDetails().put("seatPriceMonthly", prices.staffSeats().setScale(2, RoundingMode.HALF_UP).toPlainString());
             return invoiceRepository.save(issued);
         });
         ensurePdfQuietly(inv.getId());
@@ -396,6 +393,13 @@ public class SubscriptionBillingService {
         if (inv.getTargetPlan() != null) {  // a paid upgrade: the new plan from this invoice's period, any trial over
             s.setPlan(inv.getTargetPlan());
             s.setSkus(EntitlementService.planSkus(inv.getTargetPlan()));
+            String planSku = inv.getTargetPlan().name();
+            s.setPlanPriceMonthly(inv.getLines().stream().filter(l -> planSku.equals(l.get("sku"))).findFirst()
+                    .map(l -> new BigDecimal((String) l.get("unitPrice")))
+                    .orElseThrow(() -> new IllegalStateException("Upgrade invoice " + inv.getNumber() + " has no " + planSku + " line")));
+            if (inv.getBillingDetails().get("seatPriceMonthly") != null) {
+                s.setSeatPriceMonthly(new BigDecimal((String) inv.getBillingDetails().get("seatPriceMonthly")));
+            }
             s.setTrialEndsAt(null);
             s.setPeriodStart(inv.getPeriodStart());
             s.setPeriodEnd(inv.getPeriodEnd());
@@ -519,10 +523,9 @@ public class SubscriptionBillingService {
         return SERIES + "-" + year + "-" + seq;
     }
 
-    private static Map<String, Object> line(String sku, String description, int quantity, Map<String, BigDecimal> prices, int months) {
-        BigDecimal unit = prices.get(sku);
+    private static Map<String, Object> line(String sku, String description, int quantity, BigDecimal unit, Subscription s, int months) {
         if (unit == null) {
-            throw new IllegalStateException("No price for " + sku + " in the sku_prices setting");
+            throw new IllegalStateException("No frozen price for " + sku + " on subscription " + s.getId());
         }
         Map<String, Object> line = new LinkedHashMap<>();
         line.put("sku", sku);
@@ -532,15 +535,5 @@ public class SubscriptionBillingService {
         line.put("months", months);
         line.put("amount", unit.multiply(BigDecimal.valueOf((long) quantity * months)).setScale(2, RoundingMode.HALF_UP).toPlainString());
         return line;
-    }
-
-    private static String label(Sku sku) {
-        return switch (sku) {
-            case CRM_CORE -> "CRM Core";
-            case STAFF_SEATS -> "Staff seats";
-            case ACCOUNTS_GST -> "Accounts & GST";
-            case REPORTS -> "Reports";
-            case VISA -> "Visa desk";
-        };
     }
 }

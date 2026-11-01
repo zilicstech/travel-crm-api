@@ -75,6 +75,7 @@ class SubscriptionServiceTest {
                 .updatedAt(Instant.now()).build();
         lenient().when(subscriptionRepository.findByTenantIdForUpdate("T1")).thenReturn(Optional.of(sub));
         lenient().when(subscriptionRepository.findByTenantId("T1")).thenReturn(Optional.of(sub));
+        lenient().when(settingService.planPrices()).thenReturn(todaysPrices());
         lenient().when(entitlementService.refresh("T1")).thenReturn(new Entitlements(SubscriptionPlan.SUITE,
                 SubscriptionStatus.ACTIVE, EnumSet.allOf(Sku.class), 5, false, null));
     }
@@ -84,21 +85,117 @@ class SubscriptionServiceTest {
         SecurityContextHolder.clearContext();
     }
 
-    private SubscriptionUpdateRequest update(SubscriptionPlan plan, List<Sku> skus, int seats, BillingCycle cycle) {
+    private SubscriptionUpdateRequest update(SubscriptionPlan plan, int seats, BillingCycle cycle) {
         SubscriptionUpdateRequest r = new SubscriptionUpdateRequest();
         r.setPlan(plan);
-        r.setSkus(skus);
         r.setSeats(seats);
         r.setBillingCycle(cycle);
         return r;
     }
 
-    @Test
-    void updateChangesThePlanRefreshesTheCacheAndAudits() {
-        service.update("T1", update(SubscriptionPlan.CUSTOM, List.of(Sku.CRM_CORE, Sku.STAFF_SEATS), 3, BillingCycle.ANNUAL));
+    private static com.voyra.crm.models.PlanPrices todaysPrices() {
+        return new com.voyra.crm.models.PlanPrices(new BigDecimal("3499"), new BigDecimal("5999"), new BigDecimal("449"));
+    }
 
-        assertThat(sub.getPlan()).isEqualTo(SubscriptionPlan.CUSTOM);
-        assertThat(sub.getSkus()).containsExactly("CRM_CORE", "STAFF_SEATS");
+    /** A LITE row whose prices were frozen at 2999 / 399, with no open waiver. */
+    private void liteRowFrozenAt2999() {
+        sub.setPlan(SubscriptionPlan.LITE);
+        sub.setWaivedReason(null);
+        sub.setPeriodEnd(Instant.now().minus(Duration.ofDays(1)));
+        sub.setPlanPriceMonthly(new BigDecimal("2999.00"));
+        sub.setSeatPriceMonthly(new BigDecimal("399.00"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void changingThePlanFreezesTodaysPlansTabPrices() {
+        liteRowFrozenAt2999();
+        when(settingService.planPrices()).thenReturn(todaysPrices());
+
+        service.update("T1", update(SubscriptionPlan.SUITE, 0, BillingCycle.MONTHLY));
+
+        assertThat(sub.getPlanPriceMonthly()).isEqualByComparingTo("5999");
+        assertThat(sub.getSeatPriceMonthly()).isEqualByComparingTo("449");
+        org.mockito.ArgumentCaptor<Map<String, Object>> audit = org.mockito.ArgumentCaptor.forClass(Map.class);
+        verify(auditService).record(eq(PlatformAuditAction.SUBSCRIPTION_CHANGE), eq("TENANT"), eq("T1"), audit.capture());
+        assertThat((Map<String, Object>) audit.getValue().get("before")).containsEntry("planPriceMonthly", "2999.00")
+                .containsEntry("seatPriceMonthly", "399.00");
+        assertThat((Map<String, Object>) audit.getValue().get("after")).containsEntry("planPriceMonthly", "5999.00")
+                .containsEntry("seatPriceMonthly", "449.00");
+    }
+
+    @Test
+    void freezingRoundsAStoredPriceWithMoreThanTwoDecimals() {
+        liteRowFrozenAt2999();
+        when(settingService.planPrices()).thenReturn(new com.voyra.crm.models.PlanPrices(
+                new BigDecimal("2999.995"), new BigDecimal("5999.994"), new BigDecimal("449.005")));
+
+        service.update("T1", update(SubscriptionPlan.SUITE, 0, BillingCycle.MONTHLY));
+
+        assertThat(sub.getPlanPriceMonthly()).isEqualTo(new BigDecimal("5999.99"));
+        assertThat(sub.getSeatPriceMonthly()).isEqualTo(new BigDecimal("449.01"));
+    }
+
+    @Test
+    void changingOnlySeatsOrCycleKeepsTheFrozenPrices() {
+        liteRowFrozenAt2999();
+
+        service.update("T1", update(SubscriptionPlan.LITE, 2, BillingCycle.ANNUAL));
+
+        assertThat(sub.getPlanPriceMonthly()).isEqualByComparingTo("2999");
+        assertThat(sub.getSeatPriceMonthly()).isEqualByComparingTo("399");
+        verify(settingService, never()).planPrices();
+    }
+
+    @Test
+    void movingToBasicFreezesZeroAndTodaysSeatPrice() {
+        liteRowFrozenAt2999();
+        when(settingService.planPrices()).thenReturn(todaysPrices());
+
+        service.update("T1", update(SubscriptionPlan.STARTER, 0, BillingCycle.MONTHLY));
+
+        assertThat(sub.getPlanPriceMonthly()).isEqualByComparingTo("0");
+        assertThat(sub.getSeatPriceMonthly()).isEqualByComparingTo("449");
+    }
+
+    @Test
+    void extendTrialFreezesSuitePricesWhenItChangesThePlan() {
+        TrialExtendRequest r = new TrialExtendRequest();
+        r.setDays(14);
+        liteRowFrozenAt2999();
+        when(settingService.planPrices()).thenReturn(todaysPrices());
+        service.extendTrial("T1", r);
+        assertThat(sub.getPlanPriceMonthly()).isEqualByComparingTo("5999");
+        assertThat(sub.getSeatPriceMonthly()).isEqualByComparingTo("449");
+
+        sub.setPlanPriceMonthly(new BigDecimal("4500.00"));
+        sub.setSeatPriceMonthly(new BigDecimal("399.00"));
+        service.extendTrial("T1", r);  // already Suite: keeps what it was frozen at
+        assertThat(sub.getPlanPriceMonthly()).isEqualByComparingTo("4500");
+        assertThat(sub.getSeatPriceMonthly()).isEqualByComparingTo("399");
+    }
+
+    @Test
+    void agencyViewShowsTheFrozenPriceAndTodaysUpgradePrices() {
+        signIn("T1");
+        liteRowFrozenAt2999();
+        when(entitlementService.resolve("T1")).thenReturn(new Entitlements(SubscriptionPlan.LITE, SubscriptionStatus.ACTIVE,
+                EnumSet.noneOf(Sku.class), 3, false, null));
+        when(settingService.planPrices()).thenReturn(todaysPrices());
+
+        AgencySubscriptionResponse r = service.agencyView();
+
+        assertThat(r.getCurrentPlanPriceMonthly()).isEqualByComparingTo("2999");
+        assertThat(r.getPlanPrices()).containsExactly(Map.entry("LITE", new BigDecimal("3499")), Map.entry("SUITE", new BigDecimal("5999")));
+    }
+
+    @Test
+    void updateStoresThePlansOwnSkus() {
+        when(settingService.planPrices()).thenReturn(todaysPrices());
+        service.update("T1", update(SubscriptionPlan.LITE, 3, BillingCycle.ANNUAL));
+
+        assertThat(sub.getPlan()).isEqualTo(SubscriptionPlan.LITE);
+        assertThat(sub.getSkus()).isEqualTo(EntitlementService.planSkus(SubscriptionPlan.LITE));
         assertThat(sub.getSeats()).isEqualTo(3);
         assertThat(sub.getBillingCycle()).isEqualTo(BillingCycle.ANNUAL);
         InOrder order = inOrder(subscriptionRepository, entitlementService, auditService);
@@ -114,7 +211,7 @@ class SubscriptionServiceTest {
         sub.setPeriodStart(null);
         sub.setPeriodEnd(null);
 
-        service.update("T1", update(SubscriptionPlan.SUITE, List.of(), 0, BillingCycle.MONTHLY));
+        service.update("T1", update(SubscriptionPlan.SUITE, 0, BillingCycle.MONTHLY));
 
         assertThat(sub.getPeriodStart()).isNotNull();
         assertThat(sub.getPeriodEnd()).isNotNull();
@@ -123,18 +220,18 @@ class SubscriptionServiceTest {
 
     @Test
     void suiteStoresEverySkuAndStarterNone() {
-        service.update("T1", update(SubscriptionPlan.STARTER, List.of(Sku.VISA), 4, BillingCycle.MONTHLY));
+        service.update("T1", update(SubscriptionPlan.STARTER, 4, BillingCycle.MONTHLY));
         assertThat(sub.getSkus()).isEmpty();
         assertThat(sub.getSeats()).isZero();
 
-        service.update("T1", update(SubscriptionPlan.SUITE, List.of(), 2, BillingCycle.MONTHLY));
+        service.update("T1", update(SubscriptionPlan.SUITE, 2, BillingCycle.MONTHLY));
         assertThat(sub.getSkus()).hasSize(Sku.values().length);
         assertThat(sub.getSeats()).isEqualTo(2);
     }
 
     @Test
     void liteStoresItsFourSkusWhateverTheRequestSays() {
-        service.update("T1", update(SubscriptionPlan.LITE, List.of(Sku.ACCOUNTS_GST), 1, BillingCycle.MONTHLY));
+        service.update("T1", update(SubscriptionPlan.LITE, 1, BillingCycle.MONTHLY));
         assertThat(sub.getPlan()).isEqualTo(SubscriptionPlan.LITE);
         assertThat(sub.getSkus()).containsExactly("CRM_CORE", "STAFF_SEATS", "REPORTS", "VISA");
         assertThat(sub.getSeats()).isEqualTo(1);
@@ -142,7 +239,7 @@ class SubscriptionServiceTest {
 
     @Test
     void updateRejectsNegativeSeats() {
-        assertThatThrownBy(() -> service.update("T1", update(SubscriptionPlan.SUITE, List.of(), -1, BillingCycle.MONTHLY)))
+        assertThatThrownBy(() -> service.update("T1", update(SubscriptionPlan.SUITE, -1, BillingCycle.MONTHLY)))
                 .isInstanceOf(IllegalArgumentException.class);
         verify(subscriptionRepository, never()).save(any());
     }
@@ -205,11 +302,11 @@ class SubscriptionServiceTest {
         given(invoiceRepository.findFirstByTenantIdAndStatusOrderByDueAtAsc("T1", "ISSUED")).willReturn(Optional.of(
                 SubscriptionInvoice.builder().id("I1").tenantId("T1").number("VOY-SUB-2026-7").build()));
 
-        assertThatThrownBy(() -> service.update("T1", update(SubscriptionPlan.SUITE, List.of(), 2, BillingCycle.MONTHLY)))
+        assertThatThrownBy(() -> service.update("T1", update(SubscriptionPlan.SUITE, 2, BillingCycle.MONTHLY)))
                 .isInstanceOf(IllegalStateException.class).hasMessage("Void or settle invoice VOY-SUB-2026-7 before changing the plan");
         verify(subscriptionRepository, never()).save(any());
 
-        service.update("T1", update(SubscriptionPlan.SUITE, List.of(), 0, BillingCycle.MONTHLY));  // nothing changes
+        service.update("T1", update(SubscriptionPlan.SUITE, 0, BillingCycle.MONTHLY));  // nothing changes
         verify(subscriptionRepository).save(sub);
     }
 
@@ -311,7 +408,7 @@ class SubscriptionServiceTest {
 
     @Test
     void auditIsRecordedBeforeTheCacheRefresh() {
-        service.update("T1", update(SubscriptionPlan.SUITE, List.of(), 1, BillingCycle.MONTHLY));
+        service.update("T1", update(SubscriptionPlan.SUITE, 1, BillingCycle.MONTHLY));
         InOrder order = inOrder(auditService, entitlementService);
         order.verify(auditService).record(eq(PlatformAuditAction.SUBSCRIPTION_CHANGE), any(), any(), any());
         order.verify(entitlementService).refresh("T1");
@@ -331,19 +428,12 @@ class SubscriptionServiceTest {
     }
 
     @Test
-    void customSeatsNeedTheStaffSeatsSku() {
-        assertThatThrownBy(() -> service.update("T1", update(SubscriptionPlan.CUSTOM, List.of(Sku.CRM_CORE), 2, BillingCycle.MONTHLY)))
-                .isInstanceOf(IllegalArgumentException.class).hasMessage("Add the Staff seats SKU to give seats");
-        verify(subscriptionRepository, never()).save(any());
-    }
-
-    @Test
     void updateWaiveAndExtendTrialAllLockTheRow() {
         SubscriptionWaiveRequest w = new SubscriptionWaiveRequest();
         w.setReason(WaivedReason.COMPLIMENTARY);
         TrialExtendRequest t = new TrialExtendRequest();
         t.setDays(7);
-        service.update("T1", update(SubscriptionPlan.SUITE, List.of(), 0, BillingCycle.MONTHLY));
+        service.update("T1", update(SubscriptionPlan.SUITE, 0, BillingCycle.MONTHLY));
         service.waive("T1", w);
         sub.setWaivedReason(null);
         service.extendTrial("T1", t);
@@ -363,7 +453,7 @@ class SubscriptionServiceTest {
     void movingToStarterResetsStatusTrialPeriodAndWaiver() {
         sub.setStatus(SubscriptionStatus.READ_ONLY);
         sub.setTrialEndsAt(Instant.now().minusSeconds(60));
-        service.update("T1", update(SubscriptionPlan.STARTER, List.of(), 0, BillingCycle.MONTHLY));
+        service.update("T1", update(SubscriptionPlan.STARTER, 0, BillingCycle.MONTHLY));
         assertThat(sub.getStatus()).isEqualTo(SubscriptionStatus.ACTIVE);
         assertThat(sub.getTrialEndsAt()).isNull();
         assertThat(sub.getPeriodStart()).isNull();
@@ -407,37 +497,28 @@ class SubscriptionServiceTest {
     }
 
     @Test
-    void anExpiredWaiverIsNotShownAsWaivedAndOnlyPricedPlansAreOffered() {
+    void anExpiredWaiverIsNotShownAsWaived() {
         signIn("T1");
         sub.setPeriodEnd(Instant.now().minus(Duration.ofDays(2)));
         when(entitlementService.resolve("T1")).thenReturn(new Entitlements(SubscriptionPlan.SUITE, SubscriptionStatus.READ_ONLY,
                 EnumSet.allOf(Sku.class), 5, true, null));
-        when(settingService.skuPrices()).thenReturn(Map.of("LITE", new BigDecimal("2999"), "CRM_CORE", new BigDecimal("2499")));
+        when(settingService.planPrices()).thenReturn(todaysPrices());
 
         AgencySubscriptionResponse r = service.agencyView();
 
         assertThat(r.isWaived()).isFalse();
         assertThat(r.getWaivedLabel()).isNull();
         assertThat(r.isReadOnly()).isTrue();
-        assertThat(r.getPlanPrices()).containsExactly(Map.entry("LITE", new BigDecimal("2999")));
 
         sub.setWaivedReason(null);
         assertThat(service.agencyView().isWaived()).isFalse();
     }
 
     @Test
-    void seatsAreRequiredAndCustomWithoutAnySkusHasNone() {
-        SubscriptionUpdateRequest noSeats = update(SubscriptionPlan.SUITE, List.of(), 0, BillingCycle.MONTHLY);
+    void seatsAreRequired() {
+        SubscriptionUpdateRequest noSeats = update(SubscriptionPlan.SUITE, 0, BillingCycle.MONTHLY);
         noSeats.setSeats(null);
         assertThatThrownBy(() -> service.update("T1", noSeats)).hasMessage("seats cannot be negative");
-
-        SubscriptionUpdateRequest seatsNoSkus = update(SubscriptionPlan.CUSTOM, null, 2, BillingCycle.MONTHLY);
-        assertThatThrownBy(() -> service.update("T1", seatsNoSkus)).hasMessage("Add the Staff seats SKU to give seats");
-
-        service.update("T1", update(SubscriptionPlan.CUSTOM, null, 0, BillingCycle.MONTHLY));
-        assertThat(sub.getSkus()).isEmpty();
-        service.update("T1", update(SubscriptionPlan.CUSTOM, List.of(Sku.VISA, Sku.VISA), 0, BillingCycle.MONTHLY));
-        assertThat(sub.getSkus()).containsExactly("VISA");
     }
 
     @Test
@@ -445,9 +526,9 @@ class SubscriptionServiceTest {
         when(invoiceRepository.findFirstByTenantIdAndStatusOrderByDueAtAsc("T1", "ISSUED")).thenReturn(Optional.of(
                 SubscriptionInvoice.builder().number("VOY-SUB-2026-3").build()));
         List<Sku> all = List.of(Sku.values());
-        assertThatThrownBy(() -> service.update("T1", update(SubscriptionPlan.SUITE, all, 1, BillingCycle.MONTHLY)))
+        assertThatThrownBy(() -> service.update("T1", update(SubscriptionPlan.SUITE, 1, BillingCycle.MONTHLY)))
                 .hasMessage("Void or settle invoice VOY-SUB-2026-3 before changing the plan");
-        assertThatThrownBy(() -> service.update("T1", update(SubscriptionPlan.SUITE, all, 0, BillingCycle.ANNUAL)))
+        assertThatThrownBy(() -> service.update("T1", update(SubscriptionPlan.SUITE, 0, BillingCycle.ANNUAL)))
                 .hasMessage("Void or settle invoice VOY-SUB-2026-3 before changing the plan");
         verify(subscriptionRepository, never()).save(any());
     }
@@ -459,20 +540,20 @@ class SubscriptionServiceTest {
         Instant start = Instant.parse("2026-09-01T00:00:00Z");
         sub.setPeriodStart(start);
         sub.setPeriodEnd(null);
-        service.update("T1", update(SubscriptionPlan.SUITE, List.of(), 0, BillingCycle.MONTHLY));
+        service.update("T1", update(SubscriptionPlan.SUITE, 0, BillingCycle.MONTHLY));
         assertThat(sub.getPeriodStart()).isEqualTo(start);
         assertThat(sub.getPeriodEnd()).isNotNull();
 
         sub.setStatus(SubscriptionStatus.TRIAL);
         sub.setPeriodEnd(null);
-        service.update("T1", update(SubscriptionPlan.SUITE, List.of(), 0, BillingCycle.MONTHLY));
+        service.update("T1", update(SubscriptionPlan.SUITE, 0, BillingCycle.MONTHLY));
         assertThat(sub.getPeriodEnd()).isNull();
 
         Instant end = Instant.parse("2026-12-01T00:00:00Z");
         sub.setStatus(SubscriptionStatus.ACTIVE);
         sub.setPeriodStart(null);
         sub.setPeriodEnd(end);
-        service.update("T1", update(SubscriptionPlan.SUITE, List.of(), 0, BillingCycle.MONTHLY));
+        service.update("T1", update(SubscriptionPlan.SUITE, 0, BillingCycle.MONTHLY));
         assertThat(sub.getPeriodStart()).isNotNull();
         assertThat(sub.getPeriodEnd()).isEqualTo(end);
     }
@@ -512,7 +593,7 @@ class SubscriptionServiceTest {
         Instant end = Instant.parse("2026-11-01T00:00:00Z");
         sub.setPeriodStart(start);
         sub.setPeriodEnd(end);
-        service.update("T1", update(SubscriptionPlan.SUITE, List.of(), 0, BillingCycle.MONTHLY));
+        service.update("T1", update(SubscriptionPlan.SUITE, 0, BillingCycle.MONTHLY));
         assertThat(sub.getPeriodStart()).isEqualTo(start);
         assertThat(sub.getPeriodEnd()).isEqualTo(end);
     }

@@ -60,14 +60,18 @@ class PlatformAgencySubscriptionControllerTest {
     @Test
     void superAdminReadsAndChanges() throws Exception {
         given(service.adminView("T1")).willReturn(SubscriptionAdminResponse.builder().plan(SubscriptionPlan.SUITE).build());
-        given(service.update(eq("T1"), any())).willReturn(SubscriptionAdminResponse.builder().plan(SubscriptionPlan.CUSTOM).build());
+        given(service.update(eq("T1"), any())).willReturn(SubscriptionAdminResponse.builder().plan(SubscriptionPlan.LITE).build());
 
         mockMvc.perform(get("/api/platform/agencies/T1/subscription").with(as(UserType.SUPER_ADMIN)))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.plan").value("SUITE"));
         mockMvc.perform(put("/api/platform/agencies/T1/subscription").with(as(UserType.SUPER_ADMIN))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"plan\":\"CUSTOM\",\"skus\":[\"CRM_CORE\"],\"seats\":1,\"billingCycle\":\"MONTHLY\"}"))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.plan").value("CUSTOM"));
+                        .content("{\"plan\":\"LITE\",\"skus\":[\"CRM_CORE\"],\"seats\":1,\"billingCycle\":\"MONTHLY\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.plan").value("LITE"));
+        mockMvc.perform(put("/api/platform/agencies/T1/subscription").with(as(UserType.SUPER_ADMIN))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"plan\":\"CUSTOM\",\"seats\":1,\"billingCycle\":\"MONTHLY\"}"))
+                .andExpect(status().isBadRequest());
         mockMvc.perform(post("/api/platform/agencies/T1/subscription/waive").with(as(UserType.SUPER_ADMIN))
                         .contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"COMPLIMENTARY\"}"))
                 .andExpect(status().isOk());

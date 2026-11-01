@@ -76,7 +76,7 @@ public class SubscriptionInvoice {
     @Column(name = "sac_code", length = 8)
     private String sacCode;
 
-    /** Frozen at issue: {seller: {legalName, gstin, address, stateCode}, buyer: {name, gstin, address, stateCode}}. */
+    /** Frozen at issue: {seller: {legalName, gstin, address, stateCode}, buyer: {name, gstin, address, stateCode}}; an upgrade invoice also carries seatPriceMonthly. */
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "billing_details", nullable = false, columnDefinition = "jsonb")
     @Builder.Default

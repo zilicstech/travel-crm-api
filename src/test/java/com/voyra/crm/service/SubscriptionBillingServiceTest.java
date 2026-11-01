@@ -4,6 +4,7 @@ import com.voyra.crm.dto.SubscriptionInvoiceResponse;
 import com.voyra.crm.entity.Subscription;
 import com.voyra.crm.entity.SubscriptionInvoice;
 import com.voyra.crm.entity.Tenant;
+import com.voyra.crm.models.PlanPrices;
 import com.voyra.crm.models.VoyraLegal;
 import com.voyra.crm.enums.BillingCycle;
 import com.voyra.crm.enums.PlatformAuditAction;
@@ -28,6 +29,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -39,6 +41,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -47,10 +50,6 @@ import static org.mockito.Mockito.verifyNoInteractions;
 
 @ExtendWith(MockitoExtension.class)
 class SubscriptionBillingServiceTest {
-
-    private static final Map<String, BigDecimal> PRICES = Map.of("CRM_CORE", new BigDecimal("2499"), "STAFF_SEATS",
-            new BigDecimal("399"), "ACCOUNTS_GST", new BigDecimal("1999"), "REPORTS", new BigDecimal("699"), "VISA",
-            new BigDecimal("499"), "SUITE", new BigDecimal("4999"), "LITE", new BigDecimal("2999"));
 
     @Mock private SubscriptionRepository subscriptionRepository;
     @Mock private SubscriptionInvoiceRepository invoiceRepository;
@@ -69,7 +68,7 @@ class SubscriptionBillingServiceTest {
     void setUp() {
         service = new SubscriptionBillingService(subscriptionRepository, invoiceRepository, tenantRepository, settingService,
                 entitlementService, auditService, notificationService, fileStorageService, jdbcTemplate, transactionManager);
-        lenient().when(settingService.skuPrices()).thenReturn(PRICES);
+        lenient().when(settingService.planPrices()).thenReturn(new PlanPrices(new BigDecimal("2999"), new BigDecimal("4999"), new BigDecimal("399")));
         lenient().when(settingService.voyraLegal()).thenReturn(new VoyraLegal("Voyra Travel Pvt Ltd", "27AAACV1234F1Z5", "Andheri, Mumbai", "27"));
         lenient().when(settingService.subscriptionSac()).thenReturn("998314");
         lenient().when(invoiceRepository.save(any(SubscriptionInvoice.class))).thenAnswer(i -> i.getArgument(0));
@@ -79,7 +78,8 @@ class SubscriptionBillingServiceTest {
     private static Subscription suite(int extraSeats, BillingCycle cycle) {
         return Subscription.builder().id("S1").tenantId("T1").plan(SubscriptionPlan.SUITE)
                 .skus(EnumSet.allOf(Sku.class).stream().map(Enum::name).toList()).seats(extraSeats)
-                .status(SubscriptionStatus.ACTIVE).billingCycle(cycle).updatedAt(Instant.now()).build();
+                .status(SubscriptionStatus.ACTIVE).billingCycle(cycle).updatedAt(Instant.now())
+                .planPriceMonthly(new BigDecimal("4999")).seatPriceMonthly(new BigDecimal("399")).build();
     }
 
     private static BigDecimal amount(Map<String, Object> line) {
@@ -102,7 +102,7 @@ class SubscriptionBillingServiceTest {
     @Test
     void suiteMonthlyIsTheSuitePricePlusExtraSeatsWithGstAt18Percent() {
         Subscription s = suite(2, BillingCycle.MONTHLY);
-        List<Map<String, Object>> lines = SubscriptionBillingService.lines(s, PRICES);
+        List<Map<String, Object>> lines = SubscriptionBillingService.lines(s);
 
         assertThat(lines).hasSize(2);
         assertThat(lines.get(0)).containsEntry("sku", "SUITE").containsEntry("quantity", 1).containsEntry("months", 1);
@@ -119,8 +119,9 @@ class SubscriptionBillingServiceTest {
 
     @Test
     void liteIsTheLitePriceWithThreeSeatsIncludedPlusExtraSeats() {
-        Subscription s = suite(1, BillingCycle.MONTHLY).toBuilder().plan(SubscriptionPlan.LITE).build();
-        List<Map<String, Object>> lines = SubscriptionBillingService.lines(s, PRICES);
+        Subscription s = suite(1, BillingCycle.MONTHLY).toBuilder().plan(SubscriptionPlan.LITE)
+                .planPriceMonthly(new BigDecimal("2999")).build();
+        List<Map<String, Object>> lines = SubscriptionBillingService.lines(s);
 
         assertThat(lines).hasSize(2);
         assertThat(lines.get(0)).containsEntry("sku", "LITE").containsEntry("description", "Voyra CRM Lite (3 staff seats included)");
@@ -130,16 +131,16 @@ class SubscriptionBillingServiceTest {
 
     @Test
     void annualIsTenMonthlyPricesForTwelveMonths() {
-        Subscription s = suite(0, BillingCycle.ANNUAL).toBuilder().plan(SubscriptionPlan.CUSTOM)
-                .skus(List.of("CRM_CORE", "STAFF_SEATS", "VISA")).seats(3).build();
+        Subscription s = suite(0, BillingCycle.ANNUAL).toBuilder().plan(SubscriptionPlan.LITE).seats(3)
+                .planPriceMonthly(new BigDecimal("2999")).build();
         Instant start = Instant.parse("2026-11-01T00:00:00Z");
 
         SubscriptionInvoice inv = service.issue(s, start, start);
 
-        // (2499 + 3 x 399 + 499) x 10 = 41950
-        assertThat(inv.getAmount()).isEqualByComparingTo("41950.00");
-        assertThat(inv.getGst()).isEqualByComparingTo("7551.00");
-        assertThat(inv.getTotal()).isEqualByComparingTo("49501.00");
+        // (2999 + 3 x 399) x 10 = 41960
+        assertThat(inv.getAmount()).isEqualByComparingTo("41960.00");
+        assertThat(inv.getGst()).isEqualByComparingTo("7552.80");
+        assertThat(inv.getTotal()).isEqualByComparingTo("49512.80");
         assertThat(inv.getLines()).allSatisfy(l -> assertThat(l).containsEntry("months", 10));
         assertThat(inv.getPeriodEnd()).isEqualTo(start.atZone(ZoneId.of("Asia/Kolkata")).plusMonths(12).toInstant());
     }
@@ -151,8 +152,8 @@ class SubscriptionBillingServiceTest {
     }
 
     @Test
-    void customWithoutSkusHasNothingToBill() {
-        Subscription s = suite(0, BillingCycle.MONTHLY).toBuilder().plan(SubscriptionPlan.CUSTOM).skus(List.of()).build();
+    void aBasicPlanHasNothingToInvoice() {
+        Subscription s = suite(0, BillingCycle.MONTHLY).toBuilder().plan(SubscriptionPlan.STARTER).build();
         assertThatThrownBy(() -> service.issue(s, Instant.now(), Instant.now())).isInstanceOf(IllegalStateException.class);
     }
 
@@ -362,7 +363,7 @@ class SubscriptionBillingServiceTest {
     @Test
     void pdfIsRenderedAndStoredOnceThenServedFromStorage() {
         SubscriptionInvoice inv = issued("ISSUED");
-        inv.setLines(SubscriptionBillingService.lines(suite(1, BillingCycle.MONTHLY), PRICES));
+        inv.setLines(SubscriptionBillingService.lines(suite(1, BillingCycle.MONTHLY)));
         given(fileStorageService.store(eq("platform"), eq("subscription-invoices/T1"), eq("I1"), any())).willReturn("key1");
 
         SubscriptionBillingService.InvoicePdf pdf = service.pdf("T1", "I1");
@@ -554,6 +555,7 @@ class SubscriptionBillingServiceTest {
         s.setWaivedReason(WaivedReason.COMPLIMENTARY);
         SubscriptionInvoice inv = issued("ISSUED");
         inv.setTargetPlan(SubscriptionPlan.SUITE);
+        inv.setLines(List.of(Map.of("sku", "SUITE", "unitPrice", "4999.00")));
 
         assertThat(service.markPaid("I1", "pay_up")).isTrue();
 
@@ -583,29 +585,105 @@ class SubscriptionBillingServiceTest {
 
     @Test
     void aSuiteWithNoExtraSeatsIsOneLineAndNullSeatsCountAsNone() {
-        assertThat(SubscriptionBillingService.lines(suite(0, BillingCycle.MONTHLY), PRICES)).hasSize(1);
+        assertThat(SubscriptionBillingService.lines(suite(0, BillingCycle.MONTHLY))).hasSize(1);
         Subscription nullSeats = suite(0, BillingCycle.MONTHLY).toBuilder().seats(null).build();
-        assertThat(SubscriptionBillingService.lines(nullSeats, PRICES)).extracting(l -> l.get("sku")).containsExactly("SUITE");
+        assertThat(SubscriptionBillingService.lines(nullSeats)).extracting(l -> l.get("sku")).containsExactly("SUITE");
     }
 
     @Test
-    void aCustomPlanNamesEachSkuAndSkipsSeatsItDoesNotHold() {
-        Subscription all = suite(2, BillingCycle.MONTHLY).toBuilder().plan(SubscriptionPlan.CUSTOM).build();
-        List<Map<String, Object>> lines = SubscriptionBillingService.lines(all, PRICES);
-        assertThat(lines).extracting(l -> l.get("description"))
-                .containsExactly("CRM Core", "Staff seats", "Accounts & GST", "Reports", "Visa desk");
-        assertThat(lines.get(1)).containsEntry("quantity", 2);
-
-        Subscription noSeats = all.toBuilder().seats(0).build();
-        assertThat(SubscriptionBillingService.lines(noSeats, PRICES)).extracting(l -> l.get("sku")).doesNotContain("STAFF_SEATS");
-        Subscription basic = all.toBuilder().plan(SubscriptionPlan.STARTER).build();
-        assertThat(SubscriptionBillingService.lines(basic, PRICES)).isEmpty();
+    void aMissingFrozenPriceIsRefused() {
+        Subscription s = suite(0, BillingCycle.MONTHLY).toBuilder().planPriceMonthly(null).build();
+        assertThatThrownBy(() -> SubscriptionBillingService.lines(s))
+                .isInstanceOf(IllegalStateException.class).hasMessage("No frozen price for SUITE on subscription S1");
     }
 
     @Test
-    void aSkuWithoutAPriceIsRefused() {
-        assertThatThrownBy(() -> SubscriptionBillingService.lines(suite(0, BillingCycle.MONTHLY), Map.of()))
-                .isInstanceOf(IllegalStateException.class).hasMessage("No price for SUITE in the sku_prices setting");
+    void linesBillTheFrozenPricesNotTheSetting() {
+        Subscription s = suite(2, BillingCycle.MONTHLY).toBuilder().planPriceMonthly(new BigDecimal("4500")).seatPriceMonthly(new BigDecimal("350")).build();
+        List<Map<String, Object>> lines = SubscriptionBillingService.lines(s);
+        assertThat(amount(lines.get(0))).isEqualByComparingTo("4500");
+        assertThat(lines.get(1)).containsEntry("unitPrice", "350.00").containsEntry("quantity", 2);
+        assertThat(service.issue(s, Instant.parse("2026-11-01T00:00:00Z"), Instant.parse("2026-11-01T00:00:00Z")).getAmount())
+                .isEqualByComparingTo("5200.00");
+        verify(settingService, never()).planPrices();
+    }
+
+    @Test
+    void aZeroPricedPlanRaisesNoRenewal() {
+        Subscription s = suite(0, BillingCycle.MONTHLY).toBuilder().plan(SubscriptionPlan.LITE)
+                .planPriceMonthly(BigDecimal.ZERO).seatPriceMonthly(new BigDecimal("399")).periodEnd(Instant.now()).build();
+        assertThat(service.raiseRenewal(s, Instant.now())).isEmpty();
+        verify(invoiceRepository, never()).save(any());
+    }
+
+    @Test
+    void anUpgradeIsPricedAtTodaysPlansTabPricesAndStampsTheSeatPrice() {
+        Subscription s = starter();
+        given(settingService.planPrices()).willReturn(new PlanPrices(new BigDecimal("3499"), new BigDecimal("5999"), new BigDecimal("449")));
+
+        service.raiseUpgrade("T1", SubscriptionPlan.LITE);
+
+        ArgumentCaptor<SubscriptionInvoice> saved = ArgumentCaptor.forClass(SubscriptionInvoice.class);
+        verify(invoiceRepository, atLeastOnce()).save(saved.capture());   // issue saves, then the upgrade stamp is saved
+        SubscriptionInvoice inv = saved.getValue();
+        assertThat(inv.getLines().get(0)).containsEntry("sku", "LITE").containsEntry("unitPrice", "3499.00")
+                .containsEntry("description", "Voyra CRM Lite (3 staff seats included)");
+        assertThat(inv.getBillingDetails()).containsEntry("seatPriceMonthly", "449.00");
+        assertThat(inv.getTargetPlan()).isEqualTo(SubscriptionPlan.LITE);
+        assertThat(s.getPlan()).isEqualTo(SubscriptionPlan.STARTER);
+    }
+
+    private SubscriptionInvoice upgradeInvoice(List<Map<String, Object>> lines, Map<String, Object> details) {
+        SubscriptionInvoice inv = issued("ISSUED");
+        inv.setTargetPlan(SubscriptionPlan.SUITE);
+        inv.setLines(lines);
+        inv.setBillingDetails(details);
+        return inv;
+    }
+
+    @Test
+    void payingAnUpgradeFreezesTheInvoicesOwnPrices() {
+        Subscription s = starter();
+        upgradeInvoice(List.of(Map.of("sku", "SUITE", "unitPrice", "5999.00")), new HashMap<>(Map.of("seatPriceMonthly", "449.00")));
+
+        service.markPaid("I1", "pay_up");
+
+        assertThat(s.getPlanPriceMonthly()).isEqualByComparingTo("5999.00");
+        assertThat(s.getSeatPriceMonthly()).isEqualByComparingTo("449.00");
+        verify(settingService, never()).planPrices();
+    }
+
+    @Test
+    void payingAnOldUpgradeInvoiceWithoutTheSeatStampKeepsTheSeatPrice() {
+        Subscription s = starter();
+        s.setSeatPriceMonthly(new BigDecimal("399"));
+        upgradeInvoice(List.of(Map.of("sku", "SUITE", "unitPrice", "5999.00")), new HashMap<>());
+
+        service.markPaid("I1", "pay_up");
+
+        assertThat(s.getPlanPriceMonthly()).isEqualByComparingTo("5999.00");
+        assertThat(s.getSeatPriceMonthly()).isEqualByComparingTo("399");
+    }
+
+    @Test
+    void anUpgradeInvoiceWithoutItsPlanLineFailsLoudly() {
+        starter();
+        upgradeInvoice(List.of(), new HashMap<>());
+        assertThatThrownBy(() -> service.markPaid("I1", "pay_up")).isInstanceOf(IllegalStateException.class)
+                .hasMessage("Upgrade invoice VOY-SUB-2026-1 has no SUITE line");
+    }
+
+    @Test
+    void payingARenewalLeavesTheFrozenPricesAlone() {
+        Subscription s = starter();
+        s.setPlanPriceMonthly(new BigDecimal("2999"));
+        s.setSeatPriceMonthly(new BigDecimal("399"));
+        issued("ISSUED");
+
+        service.markPaid("I1", "pay_r");
+
+        assertThat(s.getPlanPriceMonthly()).isEqualByComparingTo("2999");
+        assertThat(s.getSeatPriceMonthly()).isEqualByComparingTo("399");
     }
 
     @Test
@@ -695,7 +773,7 @@ class SubscriptionBillingServiceTest {
 
     @Test
     void anUpgradeMustBeToLiteOrSuiteOfAKnownSubscriptionAndCarriesHeldSeats() {
-        assertThatThrownBy(() -> service.raiseUpgrade("T1", SubscriptionPlan.CUSTOM))
+        assertThatThrownBy(() -> service.raiseUpgrade("T1", SubscriptionPlan.STARTER))
                 .isInstanceOf(IllegalArgumentException.class).hasMessage("Choose LITE or SUITE");
         given(subscriptionRepository.findByTenantIdForUpdate("T9")).willReturn(Optional.empty());
         assertThatThrownBy(() -> service.raiseUpgrade("T9", SubscriptionPlan.SUITE))
@@ -837,9 +915,7 @@ class SubscriptionBillingServiceTest {
     }
 
     @Test
-    void aCustomPlanWithNoSkuListAndABasicRenewalHaveNothingToBill() {
-        Subscription custom = suite(0, BillingCycle.MONTHLY).toBuilder().plan(SubscriptionPlan.CUSTOM).skus(null).build();
-        assertThat(SubscriptionBillingService.lines(custom, PRICES)).isEmpty();
+    void aBasicRenewalHasNothingToBill() {
         Subscription basic = suite(0, BillingCycle.MONTHLY).toBuilder().plan(SubscriptionPlan.STARTER).periodEnd(Instant.now()).build();
         assertThat(service.raiseRenewal(basic, Instant.now())).isEmpty();
         verify(invoiceRepository, never()).save(any());

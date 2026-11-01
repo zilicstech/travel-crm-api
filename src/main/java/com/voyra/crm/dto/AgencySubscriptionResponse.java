@@ -19,7 +19,7 @@ import java.util.Set;
 @Schema(description = "The agency's own subscription: plan, seats, period and invoices")
 public class AgencySubscriptionResponse {
 
-    @Schema(description = "STARTER, LITE, CUSTOM or SUITE")
+    @Schema(description = "STARTER, LITE or SUITE")
     private SubscriptionPlan plan;
 
     @Schema(description = "SKUs usable now")
@@ -60,4 +60,7 @@ public class AgencySubscriptionResponse {
 
     @Schema(description = "Monthly price before GST of each plan the owner can upgrade to: LITE and SUITE")
     private Map<String, BigDecimal> planPrices;
+
+    @Schema(description = "Monthly price before GST this agency is billed for its plan, frozen when the plan was set; 0 on Voyra Basic")
+    private BigDecimal currentPlanPriceMonthly;
 }

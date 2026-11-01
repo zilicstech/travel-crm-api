@@ -14,6 +14,7 @@ import com.voyra.crm.enums.SubscriptionStatus;
 import com.voyra.crm.enums.WaivedReason;
 import com.voyra.crm.exception.NotFoundException;
 import com.voyra.crm.models.Entitlements;
+import com.voyra.crm.models.PlanPrices;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.SubscriptionInvoiceRepository;
 import com.voyra.crm.repository.SubscriptionRepository;
@@ -25,6 +26,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -87,7 +89,7 @@ public class SubscriptionService {
                 .waived(waived).waivedLabel(waived ? WAIVER_LABELS.get(s.getWaivedReason()) : null)
                 .invoices(invoiceRepository.findByTenantIdAndStatusNotOrderByCreatedAtDesc(tenantId, "DRAFT").stream()
                         .map(SubscriptionBillingService::toResponse).toList())
-                .planPrices(planPrices())
+                .planPrices(planPrices()).currentPlanPriceMonthly(s.getPlanPriceMonthly())
                 .build();
     }
 
@@ -100,25 +102,17 @@ public class SubscriptionService {
         return billingService.raiseUpgrade(tenantId, plan);
     }
 
-    /** Plan, SKUs, seats and cycle. A waiver is a separate switch and stays as it is. */
+    /** Plan (its own SKUs), seats and cycle. A waiver is a separate switch and stays as it is. */
     @Transactional
     public SubscriptionAdminResponse update(String tenantId, SubscriptionUpdateRequest request) {
         if (request.getSeats() == null || request.getSeats() < 0) {
             throw new IllegalArgumentException("seats cannot be negative");
         }
-        if (request.getPlan() == SubscriptionPlan.CUSTOM && request.getSeats() > 0
-                && (request.getSkus() == null || !request.getSkus().contains(Sku.STAFF_SEATS))) {
-            throw new IllegalArgumentException("Add the Staff seats SKU to give seats");
-        }
         Subscription s = loadForUpdate(tenantId);
         SubscriptionPlan plan = request.getPlan();
-        List<String> skus = switch (plan) {
-            case CUSTOM -> request.getSkus() == null ? List.<String>of()
-                    : request.getSkus().stream().distinct().map(Enum::name).toList();
-            case SUITE, LITE, STARTER -> EntitlementService.planSkus(plan);
-        };
+        List<String> skus = EntitlementService.planSkus(plan);
         int newSeats = plan == SubscriptionPlan.STARTER ? 0 : request.getSeats();
-        boolean changes = plan != s.getPlan() || !skus.equals(s.getSkus()) || newSeats != s.getSeats()
+        boolean changes = plan != s.getPlan() || newSeats != s.getSeats()
                 || request.getBillingCycle() != s.getBillingCycle();
         if (changes) {  // an open invoice was priced on the old plan
             invoiceRepository.findFirstByTenantIdAndStatusOrderByDueAtAsc(tenantId, "ISSUED").ifPresent(open -> {
@@ -126,7 +120,11 @@ public class SubscriptionService {
             });
         }
         Map<String, Object> before = Map.of("plan", s.getPlan().name(), "skus", s.getSkus(), "seats", s.getSeats(),
-                "billingCycle", s.getBillingCycle().name());
+                "billingCycle", s.getBillingCycle().name(), "planPriceMonthly", s.getPlanPriceMonthly().toPlainString(),
+                "seatPriceMonthly", s.getSeatPriceMonthly().toPlainString());
+        if (plan != s.getPlan()) {
+            freezePrices(s, plan);
+        }
         s.setPlan(plan);
         s.setSkus(skus);
         s.setSeats(plan == SubscriptionPlan.STARTER ? 0 : request.getSeats());
@@ -149,7 +147,8 @@ public class SubscriptionService {
         s.setUpdatedAt(Instant.now());
         subscriptionRepository.save(s);
         auditService.record(PlatformAuditAction.SUBSCRIPTION_CHANGE, "TENANT", tenantId, Map.of("before", before,
-                "after", Map.of("plan", plan.name(), "skus", skus, "seats", s.getSeats(), "billingCycle", s.getBillingCycle().name())));
+                "after", Map.of("plan", plan.name(), "skus", skus, "seats", s.getSeats(), "billingCycle", s.getBillingCycle().name(),
+                "planPriceMonthly", s.getPlanPriceMonthly().toPlainString(), "seatPriceMonthly", s.getSeatPriceMonthly().toPlainString())));
         Entitlements fresh = entitlementService.refresh(tenantId);
         return adminView(s, fresh);
     }
@@ -196,6 +195,9 @@ public class SubscriptionService {
         Instant base = s.getStatus() == SubscriptionStatus.TRIAL && s.getTrialEndsAt() != null && s.getTrialEndsAt().isAfter(now)
                 ? s.getTrialEndsAt() : now;
         Instant end = base.plus(Duration.ofDays(request.getDays()));
+        if (s.getPlan() != SubscriptionPlan.SUITE) {
+            freezePrices(s, SubscriptionPlan.SUITE);
+        }
         s.setPlan(SubscriptionPlan.SUITE);
         s.setSkus(Arrays.stream(Sku.values()).map(Enum::name).toList());
         s.setStatus(SubscriptionStatus.TRIAL);
@@ -235,15 +237,19 @@ public class SubscriptionService {
         });
     }
 
-    /** What the upgrade cards show: each paid plan's monthly price before GST, from sku_prices. */
+    /** Freezes today's Plans-tab prices for {@code plan} on the row; the agency keeps them until its plan changes. */
+    private void freezePrices(Subscription s, SubscriptionPlan plan) {
+        PlanPrices prices = settingService.planPrices();
+        s.setPlanPriceMonthly(prices.monthly(plan).setScale(2, RoundingMode.HALF_UP));
+        s.setSeatPriceMonthly(prices.staffSeats().setScale(2, RoundingMode.HALF_UP));
+    }
+
+    /** What the upgrade cards show: Lite and Premium monthly price before GST, as set on the Plans tab. */
     private Map<String, BigDecimal> planPrices() {
-        Map<String, BigDecimal> prices = settingService.skuPrices();
+        PlanPrices prices = settingService.planPrices();
         Map<String, BigDecimal> shown = new java.util.LinkedHashMap<>();
-        for (String plan : List.of("LITE", "SUITE")) {
-            if (prices.get(plan) != null) {
-                shown.put(plan, prices.get(plan));
-            }
-        }
+        shown.put("LITE", prices.lite());
+        shown.put("SUITE", prices.suite());
         return shown;
     }
 }

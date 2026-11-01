@@ -54,6 +54,7 @@ import com.voyra.crm.controller.PlatformBookingController;
 import com.voyra.crm.controller.PlatformInquiryController;
 import com.voyra.crm.controller.PlatformPricingRuleController;
 import com.voyra.crm.controller.PlatformAgencySubscriptionController;
+import com.voyra.crm.controller.PlatformPlanController;
 import com.voyra.crm.controller.PlatformSettingController;
 import com.voyra.crm.controller.PlatformSupplierCredentialController;
 import com.voyra.crm.controller.PlatformTopupController;
@@ -134,6 +135,7 @@ public final class ControllerSkuTable {
             entry(PlatformPricingRuleController.class, NEVER_GATED),
             entry(PlatformInquiryController.class, NEVER_GATED),
             entry(PlatformSettingController.class, NEVER_GATED),
+            entry(PlatformPlanController.class, NEVER_GATED),
             entry(PlatformSupplierCredentialController.class, NEVER_GATED),
             entry(PlatformTopupController.class, NEVER_GATED),
             entry(PlatformWalletController.class, NEVER_GATED),

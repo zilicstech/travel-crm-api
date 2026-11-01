@@ -1,10 +1,12 @@
 package com.voyra.crm.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.voyra.crm.dto.PlatformSettingResponse;
 import com.voyra.crm.entity.PlatformSetting;
 import com.voyra.crm.enums.PlatformAuditAction;
+import com.voyra.crm.models.PlanPrices;
 import com.voyra.crm.repository.PlatformSettingRepository;
 import com.voyra.crm.security.SecurityContextUtil;
 import com.voyra.crm.util.ValidationPatterns;
@@ -22,7 +24,6 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 /** Platform-wide settings read by the pricing engine. Typed getters fall back to the seeded defaults. */
 @Slf4j
@@ -41,7 +42,7 @@ public class PlatformSettingService {
     static final String VOYRA_STATE_CODE = "voyra_state_code";
     static final String SUBSCRIPTION_SAC = "subscription_sac";
     /** Monthly INR, excl. GST: one per SKU (STAFF_SEATS per seat) plus SUITE (5 seats included) and LITE (3 seats included). */
-    private static final Set<String> SKU_PRICE_KEYS = Set.of("CRM_CORE", "STAFF_SEATS", "ACCOUNTS_GST", "REPORTS", "VISA", "SUITE", "LITE");
+    static final List<String> PLAN_PRICE_KEYS = List.of("LITE", "SUITE", "STAFF_SEATS");
 
     private static final Map<String, String> DEFAULTS = Map.ofEntries(
             Map.entry(TDS_RATE, "0"),
@@ -83,10 +84,18 @@ public class PlatformSettingService {
         return Integer.parseInt(raw(PAX_RETENTION_DAYS));
     }
 
-    /** Monthly INR price per key of {@link #SKU_PRICE_KEYS}; annual billing is 10 of these. */
+    /** Lite, Premium and extra-seat prices from sku_prices; other keys in the row are ignored. */
     @Transactional(readOnly = true)
-    public Map<String, BigDecimal> skuPrices() {
-        return readJson(SKU_PRICES, raw(SKU_PRICES), new TypeReference<>() { });
+    public PlanPrices planPrices() {
+        JsonNode root = readJson(SKU_PRICES, raw(SKU_PRICES), new TypeReference<>() { });
+        List<BigDecimal> found = PLAN_PRICE_KEYS.stream().map(k -> {
+            JsonNode n = root.get(k);
+            if (n == null || !n.isNumber()) {
+                throw new IllegalStateException("sku_prices has no price for " + k);
+            }
+            return n.decimalValue();
+        }).toList();
+        return new PlanPrices(found.get(0), found.get(1), found.get(2));
     }
 
     /** Agency names (matched to tenant.agency_name, ignoring case) that never pay for Suite. */
@@ -172,11 +181,20 @@ public class PlatformSettingService {
                 }
             }
             case SKU_PRICES -> {
-                Map<String, BigDecimal> prices = readJson(key, v, new TypeReference<>() { });
-                if (prices == null || !prices.keySet().equals(SKU_PRICE_KEYS) || prices.values().stream()
-                        .anyMatch(p -> p == null || p.signum() < 0 || p.compareTo(BigDecimal.valueOf(1_000_000)) > 0)) {
-                    throw new IllegalArgumentException(key + " needs exactly " + SKU_PRICE_KEYS.stream().sorted().toList()
-                            + ", each a monthly INR price between 0 and 1000000");
+                String message = key + " needs LITE, SUITE and STAFF_SEATS, each a monthly INR price above 0 and at most 1000000, with at most two decimals";
+                JsonNode root;
+                try {
+                    root = readJson(key, v, new TypeReference<>() { });
+                } catch (IllegalArgumentException e) {
+                    throw new IllegalArgumentException(message, e);
+                }
+                for (String k : PLAN_PRICE_KEYS) {
+                    JsonNode n = root.get(k);
+                    if (n == null || !n.isNumber() || n.decimalValue().signum() <= 0
+                            || n.decimalValue().compareTo(BigDecimal.valueOf(1_000_000)) > 0
+                            || n.decimalValue().stripTrailingZeros().scale() > 2) {
+                        throw new IllegalArgumentException(message);
+                    }
                 }
             }
             case VOYRA_LEGAL_NAME -> requireLength(key, v, 200);
