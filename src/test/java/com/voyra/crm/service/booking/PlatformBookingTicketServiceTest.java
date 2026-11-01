@@ -37,7 +37,6 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
-import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -423,8 +422,9 @@ class PlatformBookingTicketServiceTest {
         assertThat(d.watermarkCancelled()).isFalse();
         assertThat(d.watermarkTest()).isTrue();
         assertThat(d.facts().directions()).hasSize(1);
-        assertThat(d.passengers()).containsExactly(new ETicketPdfRenderer.PaxRow("Mr Rahul Sharma", "ADULT", LocalDate.of(1990, 4, 12),
-                "N1234567", "IN", LocalDate.of(2031, 1, 31), "DEL-BOM", "ABC123", "098-1"));
+        // the stored passport, nationality and dates never reach the renderer
+        assertThat(d.passengers()).containsExactly(new ETicketPdfRenderer.PaxRow("Mr Rahul Sharma", "ADULT", "DEL-BOM", "ABC123", "098-1"));
+        assertThat(d.passengers().toString()).doesNotContain("N1234567", "1990", "2031");
     }
 
     /** A round trip with two passengers: each row takes its own passenger's and sector's ticket and PNR; the flat list is never used. */

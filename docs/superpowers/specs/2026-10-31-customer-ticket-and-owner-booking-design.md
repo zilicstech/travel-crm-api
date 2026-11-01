@@ -82,6 +82,10 @@ A4 portrait, OpenPDF, in the style of the existing renderers in `util/`, one PDF
 5. **Passengers table**, one row per passenger per direction: name (title, first, last), type, date of birth,
    passport number, nationality, passport expiry, sector (e.g. DEL-BOM), PNR, ticket number, baggage (check-in and
    cabin, from the supplier fare detail). Missing values print "-", never "null".
+   **Superseded 2026-11-01 (owner ruling, ticket redesign):** the ticket prints no date of birth, passport number,
+   nationality or passport expiry, and the service no longer reads them for the PDF. Passengers show name, type,
+   sector (only when the trip has more than one direction), PNR and ticket number; baggage, fare type, cabin and
+   refundability sit on each direction's flight card. Amounts use Indian digit grouping ("INR 3,811.40").
 6. **Fare details**: base fare, taxes, fees and charges (or the lines above), total. INR.
 7. **Important information**: a short fixed list (valid photo ID / passport, reach the airport in time, check-in
    closes before departure, web check-in, baggage rules are the airline's, changes and cancellations through the

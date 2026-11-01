@@ -2,7 +2,6 @@ package com.voyra.crm.service.booking;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.voyra.crm.dto.PaxInput;
 import com.voyra.crm.dto.TicketDownloadResponse;
 import com.voyra.crm.entity.PlatformBooking;
 import com.voyra.crm.entity.PlatformBookingTicket;
@@ -46,8 +45,8 @@ import java.util.Objects;
 
 /**
  * Customer e-ticket downloads of a ticketed platform flight. Each download is a record (markup, fare lines and total
- * frozen at that moment); the PDF is rebuilt from the booking on every open and never stored, because it holds passport
- * data the DPDP purge must be able to erase. Logs ids and amounts only.
+ * frozen at that moment); the PDF is rebuilt from the booking on every open and never stored, because it holds passenger
+ * names the DPDP purge must be able to erase. Logs ids and amounts only.
  */
 @Service
 @RequiredArgsConstructor
@@ -69,9 +68,16 @@ public class PlatformBookingTicketService {
     public record TicketPdf(byte[] bytes, String filename) {
     }
 
-    /** How pax_enc is stored by confirm: {passengers, contactEmail, contactPhone}; only the passengers are read. */
+    /**
+     * How pax_enc is stored by confirm: {passengers, contactEmail, contactPhone}. Only what the ticket prints is read
+     * (name and type); passport, nationality and dates of birth are never mapped (owner ruling 2026-11-01).
+     */
     @JsonIgnoreProperties(ignoreUnknown = true)
-    record StoredPax(List<PaxInput> passengers) {
+    record StoredPax(List<PrintedPax> passengers) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record PrintedPax(String type, String title, String firstName, String lastName) {
     }
 
     /**
@@ -176,7 +182,7 @@ public class PlatformBookingTicketService {
 
     /** One row per passenger per direction, in the booking's passenger order (the order ticket_details' paxIndex counts in). */
     private List<ETicketPdfRenderer.PaxRow> passengers(PlatformBooking b, TicketFacts facts) {
-        List<PaxInput> pax = paxCodec.decrypt(b.getPaxEnc(), StoredPax.class).passengers();
+        List<PrintedPax> pax = paxCodec.decrypt(b.getPaxEnc(), StoredPax.class).passengers();
         List<TicketLine> lines = b.getTicketDetails() == null ? List.of()
                 : b.getTicketDetails().stream().map(l -> objectMapper.convertValue(l, TicketLine.class)).toList();
         boolean oneDirection = facts.directions().size() == 1;
@@ -184,10 +190,10 @@ public class PlatformBookingTicketService {
         List<String> flat = oneDirection && b.getTicketNumbers() != null ? b.getTicketNumbers() : List.of();
         List<ETicketPdfRenderer.PaxRow> out = new ArrayList<>();
         for (int i = 0; i < pax.size(); i++) {
-            PaxInput p = pax.get(i);
+            PrintedPax p = pax.get(i);
             for (Direction dir : facts.directions()) {
-                out.add(new ETicketPdfRenderer.PaxRow(PlatformBookingQueryService.fullName(p.getTitle(), p.getFirstName(), p.getLastName()),
-                        p.getType(), p.getDob(), p.getPassportNo(), p.getNationality(), p.getPassportExpiry(), dir.key(),
+                out.add(new ETicketPdfRenderer.PaxRow(PlatformBookingQueryService.fullName(p.title(), p.firstName(), p.lastName()),
+                        p.type(), dir.key(),
                         pnr(i, dir.key(), lines, b.getPnr()), TicketFacts.ticketNumber(i, dir.key(), lines, flat, pax.size())));
             }
         }
