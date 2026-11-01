@@ -53,13 +53,20 @@ public interface PlatformBookingRepository extends JpaRepository<PlatformBooking
 
     List<PlatformBooking> findByMirrorStatusIn(Collection<com.voyra.crm.enums.MirrorStatus> statuses);
 
-    /** Agencies with a booking for a client that has no CRM booking (made without CRM Core): the backfill's candidates. */
-    @Query("select distinct b.tenantId from PlatformBooking b where b.mirrorStatus = com.voyra.crm.enums.MirrorStatus.NONE "
-            + "and b.clientId is not null and b.status in :statuses")
+    /**
+     * The backfill's candidates: a booking for a client, deferred (NONE) because the agency had no CRM Core. Only rows
+     * queued since unified bookings (a MIRROR_QUEUED event): an older row with no CRM booking was never meant to have one.
+     */
+    String UNMIRRORED = "from PlatformBooking b where b.mirrorStatus = com.voyra.crm.enums.MirrorStatus.NONE "
+            + "and b.clientId is not null and b.status in :statuses and exists (select 1 from PlatformBookingEvent e "
+            + "where e.platformBookingId = b.id and e.type = 'MIRROR_QUEUED')";
+
+    @Query("select distinct b.tenantId " + UNMIRRORED)
     List<String> findTenantsWithUnmirroredBookings(@Param("statuses") Collection<PlatformBookingStatus> statuses);
 
-    List<PlatformBooking> findByTenantIdAndMirrorStatusAndClientIdIsNotNullAndStatusIn(
-            String tenantId, com.voyra.crm.enums.MirrorStatus mirrorStatus, Collection<PlatformBookingStatus> statuses);
+    @Query("select b " + UNMIRRORED + " and b.tenantId = :tenantId")
+    List<PlatformBooking> findUnmirroredBookings(@Param("tenantId") String tenantId,
+                                                 @Param("statuses") Collection<PlatformBookingStatus> statuses);
 
     List<PlatformBooking> findByTenantIdOrderByCreatedAtDesc(String tenantId, Pageable pageable);
 

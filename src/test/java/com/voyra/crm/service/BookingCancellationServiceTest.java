@@ -702,6 +702,18 @@ class BookingCancellationServiceTest {
         assertThatThrownBy(() -> service.markChecked("B1")).hasMessageContaining("Already cross-checked");
     }
 
+    /** A booking Voyra could not complete moved no money: the cross-check is refused, not recorded. */
+    @Test
+    void aFailCancelledVoyraBookingCannotBeCrossChecked() {
+        Booking b = booking(BookingStatus.CANCELLED);
+        b.setPlatformBookingId("PB1");
+        b.setCancelledBy(com.voyra.crm.security.SystemActor.USER_ID);
+
+        assertThatThrownBy(() -> service.markChecked("B1")).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("nothing to cross-check");
+        assertThat(b.getRefundCheckedAt()).isNull();
+    }
+
     /** BUG-MO-14: refunds settled, but the client has not paid the cancellation-charges invoice yet. */
     @Test
     void crossCheckWaitsForTheCancellationChargesToBePaid() {

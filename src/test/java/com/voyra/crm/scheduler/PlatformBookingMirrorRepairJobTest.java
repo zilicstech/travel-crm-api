@@ -41,7 +41,7 @@ class PlatformBookingMirrorRepairJobTest {
         when(repository.findTenantsWithUnmirroredBookings(PlatformBookingMirrorService.MIRRORED)).thenReturn(List.of("BASIC", "LITE"));
         plan("BASIC", false);
         plan("LITE", true);
-        when(repository.findByTenantIdAndMirrorStatusAndClientIdIsNotNullAndStatusIn("LITE", MirrorStatus.NONE, PlatformBookingMirrorService.MIRRORED))
+        when(repository.findUnmirroredBookings("LITE", PlatformBookingMirrorService.MIRRORED))
                 .thenReturn(List.of(PlatformBooking.builder().id("PB1").build(), PlatformBooking.builder().id("PB2").build()));
         doThrow(new IllegalStateException("unexpected")).when(mirrorService).backfill("PB1");
 
@@ -49,8 +49,7 @@ class PlatformBookingMirrorRepairJobTest {
 
         verify(mirrorService).backfill("PB1");
         verify(mirrorService).backfill("PB2");
-        verify(repository, org.mockito.Mockito.never()).findByTenantIdAndMirrorStatusAndClientIdIsNotNullAndStatusIn(
-                org.mockito.ArgumentMatchers.eq("BASIC"), any(), any());
+        verify(repository, org.mockito.Mockito.never()).findUnmirroredBookings(org.mockito.ArgumentMatchers.eq("BASIC"), any());
     }
 
     @Test

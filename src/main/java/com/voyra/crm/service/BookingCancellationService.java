@@ -399,6 +399,9 @@ public class BookingCancellationService {
     public BookingResponse markChecked(String bookingId) {
         lock(bookingId);
         Booking booking = cancelled(bookingId);
+        if (BookingService.isFailCancelled(booking)) {
+            throw new IllegalStateException("Voyra could not complete this booking and nothing was charged, so there is nothing to cross-check");
+        }
         if (!settled(booking) || booking.getSupplierRefundClaimAmount() != null) {
             throw new IllegalStateException("Settle both the customer and the supplier refund before cross-checking");
         }

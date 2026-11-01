@@ -50,8 +50,7 @@ public class PlatformBookingMirrorRepairJob {
             if (!entitlementService.resolve(tenantId).skus().contains(Sku.CRM_CORE)) {
                 continue;
             }
-            for (PlatformBooking b : repository.findByTenantIdAndMirrorStatusAndClientIdIsNotNullAndStatusIn(
-                    tenantId, MirrorStatus.NONE, PlatformBookingMirrorService.MIRRORED)) {
+            for (PlatformBooking b : repository.findUnmirroredBookings(tenantId, PlatformBookingMirrorService.MIRRORED)) {
                 try {
                     mirrorService.backfill(b.getId());
                 } catch (RuntimeException e) {
