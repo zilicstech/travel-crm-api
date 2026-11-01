@@ -123,7 +123,7 @@ public final class FlightResultPaging {
         List<FlightOfferResponse> sorted = new ArrayList<>(fares);
         sorted.sort(Comparator.<FlightOfferResponse, Boolean>comparing(f -> !(f.isBookable() && f.getSupplierId() != null
                         && bookingSupplierIds.contains(f.getSupplierId())))
-                .thenComparing(FlightResultPaging::shown)
+                .thenComparing(FlightResultPaging::shown, Comparator.nullsLast(Comparator.naturalOrder()))
                 .thenComparing(FlightOfferResponse::getSupplierName, Comparator.nullsLast(Comparator.naturalOrder())));
         FlightOfferResponse lead = sorted.get(0);
         return FlightGroupResponse.builder()

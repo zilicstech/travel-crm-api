@@ -16,6 +16,7 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -127,6 +128,102 @@ class SupplierFanOutTest {
         SupplierFanOut.Result<String> result = fanOut.run(List.of(supplier("a", "A")), s -> List.of(String.valueOf(MDC.get("requestId"))));
 
         assertThat(result.answers()).containsExactly("null");
+    }
+
+    @Test
+    void aHungSupplierNeverStarvesAnotherSupplier() {
+        CountDownLatch hang = new CountDownLatch(1);
+        AtomicInteger hungCalls = new AtomicInteger();
+        SupplierFanOut shared = new SupplierFanOut(new ThreadPoolExecutor(8, 8, 0, TimeUnit.MILLISECONDS, new java.util.concurrent.ArrayBlockingQueue<>(64)),
+                Duration.ofMillis(300));
+        try {
+            for (int search = 0; search < 10; search++) {
+                SupplierFanOut.Result<String> result = shared.run(List.of(supplier("h", "Hung"), supplier("f", "Fast")), s -> {
+                    if (s.id().equals("h")) {
+                        hungCalls.incrementAndGet();
+                        await(hang);
+                    }
+                    return List.of(s.id());
+                });
+
+                assertThat(result.failed()).as("search %d", search).containsExactly("Hung");
+                assertThat(result.answers()).as("search %d", search).containsExactly("f");
+            }
+            assertThat(hungCalls).hasValue(4); // at most half the pool is ever held by one supplier
+        } finally {
+            hang.countDown();
+            shared.shutdown();
+        }
+    }
+
+    @Test
+    void aSupplierOverItsCapIsFailedAtOnceAndServedAgainOnceItsCallsReturn() throws Exception {
+        CountDownLatch hang = new CountDownLatch(1);
+        AtomicInteger hungCalls = new AtomicInteger();
+        SupplierFanOut shared = new SupplierFanOut(Executors.newFixedThreadPool(8), Duration.ofMillis(100));
+        try {
+            for (int search = 0; search < 4; search++) {
+                shared.run(List.of(supplier("h", "Hung")), s -> {
+                    hungCalls.incrementAndGet();
+                    await(hang);
+                    return List.of(s.id());
+                });
+            }
+            try (LogCapture log = new LogCapture(SupplierFanOut.class)) {
+                SupplierFanOut.Result<String> over = shared.run(List.of(supplier("h", "Hung"), supplier("f", "Fast")), s -> List.of(s.id()));
+
+                assertThat(over.failed()).containsExactly("Hung");
+                assertThat(over.answers()).containsExactly("f");
+                assertThat(log.lines()).containsExactly("WARN Supplier Hung search failed: SupplierBusyException");
+            }
+            assertThat(hungCalls).hasValue(4);
+
+            hang.countDown();
+            SupplierFanOut.Result<String> recovered = null;
+            for (int attempt = 0; attempt < 50 && (recovered == null || !recovered.failed().isEmpty()); attempt++) {
+                sleep(20);
+                recovered = shared.run(List.of(supplier("h", "Hung")), s -> List.of(s.id()));
+            }
+            assertThat(recovered.answers()).containsExactly("h");
+        } finally {
+            hang.countDown();
+            shared.shutdown();
+        }
+    }
+
+    @Test
+    void aTaskStillQueuedAtTheDeadlineNeverCallsItsSupplier() throws Exception {
+        CountDownLatch hang = new CountDownLatch(1);
+        AtomicInteger queuedCalls = new AtomicInteger();
+        ThreadPoolExecutor single = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS, new java.util.concurrent.ArrayBlockingQueue<>(4));
+        SupplierFanOut quick = new SupplierFanOut(single, Duration.ofMillis(100));
+        try {
+            SupplierFanOut.Result<String> result = quick.run(List.of(supplier("a", "Hung"), supplier("b", "Queued")), s -> {
+                if (s.id().equals("a")) {
+                    await(hang);
+                } else {
+                    queuedCalls.incrementAndGet();
+                }
+                return List.of(s.id());
+            });
+            assertThat(result.failed()).containsExactly("Hung", "Queued");
+
+            hang.countDown();
+            single.shutdown();
+            assertThat(single.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(queuedCalls).hasValue(0);
+        } finally {
+            hang.countDown();
+            quick.shutdown();
+        }
+    }
+
+    private static void await(CountDownLatch latch) {
+        try {
+            latch.await(10, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private static void sleep(long ms) {

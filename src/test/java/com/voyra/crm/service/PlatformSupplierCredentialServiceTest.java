@@ -418,8 +418,29 @@ class PlatformSupplierCredentialServiceTest {
         PlatformSupplierCredential old = stored("tj_live_key_9f3a", SupplierEnvironment.PROD, "https://attacker.example.com");
         when(repository.findById("C1")).thenReturn(Optional.of(old));
 
-        assertThatThrownBy(() -> service.find("C1")).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> service.resolve("C1")).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void findTreatsAnUnreadableRowAsNoSupplier() {
+        PlatformSupplierCredential old = stored("tj_live_key_9f3a", SupplierEnvironment.PROD, "https://attacker.example.com");
+        when(repository.findById("C1")).thenReturn(Optional.of(old));
+
+        try (com.voyra.crm.support.LogCapture log = new com.voyra.crm.support.LogCapture(PlatformSupplierCredentialService.class)) {
+            assertThat(service.find("C1")).isEmpty();
+            assertThat(log.lines()).containsExactly("WARN Supplier Tripjack cannot be used: IllegalArgumentException");
+        }
+    }
+
+    @Test
+    void listShowsPlainDotsForAKeyThatCannotBeDecryptedAndKeepsTheOtherRows() {
+        PlatformSupplierCredential bad = stored("k").toBuilder().id("C2").name("Bad")
+                .apiKeyEncrypted(PasswordEncryptionUtil.encrypt("tj_live_key_9f3a", "b3RoZXItdGVzdC1hZXMta2V5LTMyLWJ5dGVzLWxvbmc=")).build();
+        when(repository.findAllByOrderByNameAsc()).thenReturn(List.of(bad, stored("tj_live_key_9f3a")));
+        when(productRepository.findByCredentialIdIn(List.of("C2", "C1"))).thenReturn(List.of());
+
+        assertThat(service.list()).extracting(r -> r.getName() + " " + r.getMaskedApiKey())
+                .containsExactly("Bad ••••••", "Tripjack ••••••9f3a");
     }
 
     @Test
@@ -490,7 +511,7 @@ class PlatformSupplierCredentialServiceTest {
 
         try (com.voyra.crm.support.LogCapture log = new com.voyra.crm.support.LogCapture(PlatformSupplierCredentialService.class)) {
             assertThat(service.searchEnabled(PricingProduct.FLIGHT)).extracting(ResolvedCredential::name).containsExactly("Good");
-            assertThat(log.lines()).containsExactly("WARN Supplier Bad cannot be used for search: IllegalArgumentException");
+            assertThat(log.lines()).containsExactly("WARN Supplier Bad cannot be used: IllegalArgumentException");
         }
     }
 

@@ -96,6 +96,21 @@ class FlightResultPagingTest {
     }
 
     @Test
+    void aFareWithNoPriceAtAllSortsLastInsteadOfFailingThePage() {
+        FlightOfferResponse priced = supplied("s1", "A", "6E", "206", "5000", true, false, null);
+        FlightOfferResponse unpriced = supplied("s2", "B", "6E", "206", "5000", true, false, null);
+        unpriced.setDisplayedFare(null);
+        unpriced.setTotalPrice(null);
+        unpriced.setPrice(null);
+        FlightGroupResponse group = FlightResultPaging.group(List.of(unpriced, priced)).get(0);
+
+        FlightGroupResponse g = FlightResultPaging.summarise(group, group.getFares(), Set.of());
+
+        assertThat(g.getFares()).containsExactly(priced, unpriced);
+        assertThat(g.getCheapestPrice()).isEqualByComparingTo("5000");
+    }
+
+    @Test
     void aDifferentDayOrDirectionIsAnotherRow() {
         FlightOfferResponse base = supplied("s1", "A", "6E", "206", "5000", true, false, null);
         FlightOfferResponse nextDay = supplied("s2", "B", "6E", "206", "5000", true, false, null);

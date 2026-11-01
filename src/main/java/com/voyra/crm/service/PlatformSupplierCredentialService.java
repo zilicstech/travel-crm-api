@@ -169,23 +169,17 @@ public class PlatformSupplierCredentialService {
     /** Every supplier with search switched on for the product, by name. */
     @Transactional(readOnly = true)
     public List<ResolvedCredential> searchEnabled(PricingProduct product) {
-        List<ResolvedCredential> out = new ArrayList<>();
-        repository.findAllById(productRepository.findByProductAndSearchEnabledTrue(product).stream()
+        return repository.findAllById(productRepository.findByProductAndSearchEnabledTrue(product).stream()
                         .map(PlatformSupplierProduct::getCredentialId).toList()).stream()
                 .sorted(Comparator.comparing(PlatformSupplierCredential::getName))
-                .forEach(c -> {
-                    try {
-                        out.add(decrypt(c));
-                    } catch (RuntimeException e) { // one unreadable row must not stop the others from answering
-                        log.warn("Supplier {} cannot be used for search: {}", c.getName(), e.getClass().getSimpleName());
-                    }
-                });
-        return out;
+                .flatMap(c -> usable(c).stream())
+                .toList();
     }
 
+    /** The row, or nothing when it does not exist or cannot be used (then it is not served). */
     @Transactional(readOnly = true)
     public Optional<ResolvedCredential> find(String id) {
-        return repository.findById(id).map(this::decrypt);
+        return repository.findById(id).flatMap(this::usable);
     }
 
     /** Ids of the suppliers open for booking the product. */
@@ -232,6 +226,16 @@ public class PlatformSupplierCredentialService {
         return new ResolvedCredential(c.getId(), c.getName(), c.getProvider(), c.getEnvironment(), c.getBaseUrl(), plainKey(c),
                 c.getUserIdEncrypted() != null ? PasswordEncryptionUtil.decrypt(c.getUserIdEncrypted(), encryptionKey) : null,
                 c.getUpdatedAt());
+    }
+
+    /** One unreadable row (off-list host, key that no longer decrypts) must not stop the others from answering. */
+    private Optional<ResolvedCredential> usable(PlatformSupplierCredential c) {
+        try {
+            return Optional.of(decrypt(c));
+        } catch (RuntimeException e) {
+            log.warn("Supplier {} cannot be used: {}", c.getName(), e.getClass().getSimpleName());
+            return Optional.empty();
+        }
     }
 
     /** A blank stored key (the migrated mock row) means no key. */
@@ -300,7 +304,12 @@ public class PlatformSupplierCredentialService {
     }
 
     private PlatformSupplierCredentialResponse toResponse(PlatformSupplierCredential c, List<PlatformSupplierProduct> products) {
-        String key = plainKey(c);
+        String key;
+        try {
+            key = plainKey(c);
+        } catch (RuntimeException e) { // listed with plain dots, so the admin can still see and re-key the row
+            key = "";
+        }
         return PlatformSupplierCredentialResponse.builder()
                 .id(c.getId())
                 .name(c.getName())
