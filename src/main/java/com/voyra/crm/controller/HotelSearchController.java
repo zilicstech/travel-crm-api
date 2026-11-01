@@ -1,7 +1,6 @@
 package com.voyra.crm.controller;
 
 import com.voyra.crm.dto.HotelSearchQuery;
-import com.voyra.crm.service.HotelSearchProvider;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -29,7 +28,6 @@ import java.util.List;
 @PreAuthorize("hasAnyRole('AGENCY_OWNER', 'AGENT')")
 public class HotelSearchController {
 
-    private final HotelSearchProvider hotelSearchProvider;
     private final com.voyra.crm.service.HotelSearchService hotelSearchService;
 
     @PostMapping("/search")
@@ -51,6 +49,6 @@ public class HotelSearchController {
     @Operation(summary = "Photos, stars and address for listed hotels", description = "Asked after a search is shown, a page "
             + "of hotel ids at a time, so the list never waits on the supplier's content call.")
     public ResponseEntity<List<com.voyra.crm.dto.HotelThumbnailResponse>> thumbnails(@Valid @RequestBody com.voyra.crm.dto.HotelThumbnailsRequest request) {
-        return ResponseEntity.ok(hotelSearchProvider.thumbnails(request.getHotelIds()));
+        return ResponseEntity.ok(hotelSearchService.thumbnails(request.getHotelIds()));
     }
 }

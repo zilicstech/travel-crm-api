@@ -4,6 +4,7 @@ import com.voyra.crm.enums.PricingProduct;
 import com.voyra.crm.enums.SupplierProvider;
 import com.voyra.crm.models.ResolvedCredential;
 import com.voyra.crm.service.FlightSearchProvider;
+import com.voyra.crm.service.HotelSearchProvider;
 import com.voyra.crm.service.PlatformSupplierCredentialService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -24,17 +25,20 @@ public class SupplierRegistry {
 
     private final PlatformSupplierCredentialService suppliers;
     private final Map<SupplierProvider, FlightSearchProvider> flightSearch = new EnumMap<>(SupplierProvider.class);
+    private final Map<SupplierProvider, HotelSearchProvider> hotelSearch = new EnumMap<>(SupplierProvider.class);
     private final Set<String> warned = ConcurrentHashMap.newKeySet();
 
-    public SupplierRegistry(PlatformSupplierCredentialService suppliers, List<FlightSearchProvider> flightSearch) {
+    public SupplierRegistry(PlatformSupplierCredentialService suppliers, List<FlightSearchProvider> flightSearch,
+                            List<HotelSearchProvider> hotelSearch) {
         this.suppliers = suppliers;
         flightSearch.forEach(p -> this.flightSearch.put(p.provider(), p));
+        hotelSearch.forEach(p -> this.hotelSearch.put(p.provider(), p));
     }
 
     /** Suppliers with search on for the product whose integration is in this build (others are skipped, warned once per row). */
     public List<ResolvedCredential> searchable(PricingProduct product) {
         return suppliers.searchEnabled(product).stream().filter(s -> {
-            boolean present = product != PricingProduct.FLIGHT || flightSearch.containsKey(s.provider());
+            boolean present = (product == PricingProduct.FLIGHT ? flightSearch.containsKey(s.provider()) : hotelSearch.containsKey(s.provider()));
             if (!present && warned.add(s.id())) {
                 log.warn("Supplier {} ({}) is on for {} search but this build has no {} integration; skipped",
                         s.name(), s.provider(), product, s.provider());
@@ -47,6 +51,14 @@ public class SupplierRegistry {
         FlightSearchProvider found = flightSearch.get(provider);
         if (found == null) {
             throw new IllegalStateException("No flight search integration for " + provider);
+        }
+        return found;
+    }
+
+    public HotelSearchProvider hotelSearch(SupplierProvider provider) {
+        HotelSearchProvider found = hotelSearch.get(provider);
+        if (found == null) {
+            throw new IllegalStateException("No hotel search integration for " + provider);
         }
         return found;
     }

@@ -5,7 +5,9 @@ import com.voyra.crm.enums.SupplierEnvironment;
 import com.voyra.crm.enums.SupplierProvider;
 import com.voyra.crm.models.ResolvedCredential;
 import com.voyra.crm.service.FlightSearchProvider;
+import com.voyra.crm.service.HotelSearchProvider;
 import com.voyra.crm.service.MockFlightSearchProvider;
+import com.voyra.crm.service.MockHotelSearchProvider;
 import com.voyra.crm.service.PlatformSupplierCredentialService;
 import com.voyra.crm.support.LogCapture;
 import org.junit.jupiter.api.Test;
@@ -23,7 +25,8 @@ class SupplierRegistryTest {
 
     private final PlatformSupplierCredentialService suppliers = mock(PlatformSupplierCredentialService.class);
     private final FlightSearchProvider mockProvider = new MockFlightSearchProvider();
-    private final SupplierRegistry registry = new SupplierRegistry(suppliers, List.of(mockProvider));
+    private final HotelSearchProvider mockHotel = new MockHotelSearchProvider();
+    private final SupplierRegistry registry = new SupplierRegistry(suppliers, List.of(mockProvider), List.of(mockHotel));
 
     private static ResolvedCredential row(String id, String name, SupplierProvider provider) {
         return new ResolvedCredential(id, name, provider, provider == SupplierProvider.MOCK ? SupplierEnvironment.MOCK : SupplierEnvironment.UAT,
@@ -44,11 +47,23 @@ class SupplierRegistryTest {
     }
 
     @Test
-    void hotelRowsAreNotFilteredByTheFlightIntegrations() {
-        ResolvedCredential tripjack = row("s2", "Tripjack", SupplierProvider.TRIPJACK);
-        when(suppliers.searchEnabled(PricingProduct.HOTEL)).thenReturn(List.of(tripjack));
+    void hotelRowsAreFilteredByTheHotelIntegrationsAndWarnOnce() {
+        ResolvedCredential mock = row("s1", "Mock supplier", SupplierProvider.MOCK);
+        when(suppliers.searchEnabled(PricingProduct.HOTEL)).thenReturn(List.of(mock, row("s2", "Tripjack", SupplierProvider.TRIPJACK)));
 
-        assertThat(registry.searchable(PricingProduct.HOTEL)).containsExactly(tripjack);
+        try (LogCapture log = new LogCapture(SupplierRegistry.class)) {
+            assertThat(registry.searchable(PricingProduct.HOTEL)).containsExactly(mock);
+            assertThat(registry.searchable(PricingProduct.HOTEL)).containsExactly(mock);
+
+            assertThat(log.lines()).containsExactly("WARN Supplier Tripjack (TRIPJACK) is on for HOTEL search but this build has no TRIPJACK integration; skipped");
+        }
+    }
+
+    @Test
+    void hotelSearchFindsTheIntegrationOrFails() {
+        assertThat(registry.hotelSearch(SupplierProvider.MOCK)).isSameAs(mockHotel);
+        assertThatThrownBy(() -> registry.hotelSearch(SupplierProvider.TRIPJACK))
+                .isInstanceOf(IllegalStateException.class).hasMessage("No hotel search integration for TRIPJACK");
     }
 
     @Test

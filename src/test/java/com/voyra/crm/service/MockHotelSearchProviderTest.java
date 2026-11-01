@@ -13,6 +13,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 class MockHotelSearchProviderTest {
 
     private final MockHotelSearchProvider provider = new MockHotelSearchProvider();
+    private final com.voyra.crm.models.ResolvedCredential cred = new com.voyra.crm.models.ResolvedCredential("s1", "Mock supplier",
+            com.voyra.crm.enums.SupplierProvider.MOCK, com.voyra.crm.enums.SupplierEnvironment.MOCK, "mock://local", "", null, null);
+
+    @Test
+    void isTheMockIntegration() {
+        assertThat(provider.provider()).isEqualTo(com.voyra.crm.enums.SupplierProvider.MOCK);
+    }
 
     private HotelSearchQuery query(int rooms) {
         HotelSearchQuery query = new HotelSearchQuery();
@@ -26,8 +33,8 @@ class MockHotelSearchProviderTest {
 
     @Test
     void search_returnsTheSameOffersForTheSameQuery() {
-        List<HotelOfferResponse> first = provider.search(query(1));
-        List<HotelOfferResponse> second = provider.search(query(1));
+        List<HotelOfferResponse> first = provider.search(query(1), cred);
+        List<HotelOfferResponse> second = provider.search(query(1), cred);
 
         assertThat(first).hasSize(4);
         assertThat(first).usingRecursiveComparison().isEqualTo(second);
@@ -35,8 +42,8 @@ class MockHotelSearchProviderTest {
 
     @Test
     void search_pricesScaleWithNightsAndRooms() {
-        HotelOfferResponse oneRoom = provider.search(query(1)).get(0);
-        HotelOfferResponse twoRooms = provider.search(query(2)).get(0);
+        HotelOfferResponse oneRoom = provider.search(query(1), cred).get(0);
+        HotelOfferResponse twoRooms = provider.search(query(2), cred).get(0);
 
         assertThat(oneRoom.getNights()).isEqualTo(3);
         assertThat(twoRooms.getPrice()).isEqualByComparingTo(oneRoom.getPrice().multiply(java.math.BigDecimal.valueOf(2)));
@@ -44,20 +51,20 @@ class MockHotelSearchProviderTest {
 
     @Test
     void search_echoesTheRequestedCity() {
-        List<HotelOfferResponse> offers = provider.search(query(1));
+        List<HotelOfferResponse> offers = provider.search(query(1), cred);
         assertThat(offers).allMatch(o -> o.getCity().equals("Phuket"));
     }
 
     @Test
     void eachOfferOpensAHotelPageWithItsPhotosAndThreeRoomOptions() {
-        HotelOfferResponse offer = provider.search(query(1)).get(0);
+        HotelOfferResponse offer = provider.search(query(1), cred).get(0);
         assertThat(offer.getHotelId()).isNotBlank();
         // The photo follows the list, as with the real supplier.
         assertThat(offer.getImageUrl()).isNull();
-        assertThat(provider.thumbnails(List.of(offer.getHotelId(), "unknown")))
+        assertThat(provider.thumbnails(List.of(offer.getHotelId(), "unknown"), cred))
                 .singleElement().satisfies(t -> assertThat(t.getImageUrl()).isNotBlank());
 
-        com.voyra.crm.dto.HotelDetailResponse d = provider.detail(offer.getHotelId(), query(1));
+        com.voyra.crm.dto.HotelDetailResponse d = provider.detail(offer.getHotelId(), query(1), cred);
         assertThat(d.getName()).isEqualTo(offer.getHotelName());
         assertThat(d.getImages()).hasSizeGreaterThan(5);
         assertThat(d.getOptions()).hasSize(3);
@@ -67,14 +74,14 @@ class MockHotelSearchProviderTest {
 
     @Test
     void anUnknownHotelHasNoPage() {
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> provider.detail("mock-gone", query(1)))
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> provider.detail("mock-gone", query(1), cred))
                 .isInstanceOf(com.voyra.crm.exception.NotFoundException.class)
                 .hasMessage("This hotel is no longer in the search - search again");
     }
 
     @Test
     void aNonRefundableHotelsStandardRoomSaysSoAndUpgradesStayRefundable() {
-        com.voyra.crm.dto.HotelDetailResponse d = provider.detail("mock-ibis-budget", query(0));
+        com.voyra.crm.dto.HotelDetailResponse d = provider.detail("mock-ibis-budget", query(0), cred);
         assertThat(d.getOptions().get(0).isRefundable()).isFalse();
         assertThat(d.getOptions().get(0).getCancellationPolicy()).isEqualTo("Non-refundable");
         assertThat(d.getOptions().get(1).getCancellationPolicy()).isEqualTo("Free cancellation until 48 hours before check-in");

@@ -62,9 +62,9 @@ class MockHotelBookingProviderTest {
         q.setAdults(3);
         q.setChildren(1);
         q.setChildAges(List.of(6));
-        for (HotelOfferResponse offer : search.search(q)) {
+        for (HotelOfferResponse offer : search.search(q, null)) {
             assertThat(offer.getBaseFare()).isEqualByComparingTo(offer.getPrice().multiply(new BigDecimal("0.82")).setScale(2, RoundingMode.HALF_UP));
-            for (HotelDetailResponse.RoomOption o : search.detail(offer.getHotelId(), q).getOptions()) {
+            for (HotelDetailResponse.RoomOption o : search.detail(offer.getHotelId(), q, null).getOptions()) {
                 FareReview r = provider.review(o.getOptionId(), offer.getHotelId(), IN, OUT, TWO_ROOMS);
                 assertThat(r.totalFare()).as(o.getOptionId()).isEqualByComparingTo(o.getPrice());
                 assertThat(r.baseFare()).as(o.getOptionId()).isEqualByComparingTo(o.getBaseFare());
