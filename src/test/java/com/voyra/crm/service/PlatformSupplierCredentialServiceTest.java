@@ -465,6 +465,21 @@ class PlatformSupplierCredentialServiceTest {
     }
 
     @Test
+    void searchEnabledSkipsAnUnreadableRowAndKeepsTheOthers() {
+        PlatformSupplierCredential bad = stored("kb").toBuilder().id("C2").name("Bad").baseUrl("https://evil.example.com").build();
+        PlatformSupplierCredential good = stored("ka").toBuilder().id("C3").name("Good").build();
+        when(productRepository.findByProductAndSearchEnabledTrue(PricingProduct.FLIGHT))
+                .thenReturn(List.of(row(PricingProduct.FLIGHT, true, false).toBuilder().credentialId("C2").build(),
+                        row(PricingProduct.FLIGHT, true, false).toBuilder().credentialId("C3").build()));
+        when(repository.findAllById(List.of("C2", "C3"))).thenReturn(List.of(bad, good));
+
+        try (com.voyra.crm.support.LogCapture log = new com.voyra.crm.support.LogCapture(PlatformSupplierCredentialService.class)) {
+            assertThat(service.searchEnabled(PricingProduct.FLIGHT)).extracting(ResolvedCredential::name).containsExactly("Good");
+            assertThat(log.lines()).containsExactly("WARN Supplier Bad cannot be used for search: IllegalArgumentException");
+        }
+    }
+
+    @Test
     void findResolvesOneRowOrNothing() {
         when(repository.findById("C1")).thenReturn(Optional.of(stored("k")));
         when(repository.findById("nope")).thenReturn(Optional.empty());

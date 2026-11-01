@@ -62,9 +62,13 @@ public class SupplierRegistry {
     /** Names, never keys, so "why does search show nothing" is answerable from the startup log. */
     @EventListener(ApplicationReadyEvent.class)
     void logSuppliers() {
-        for (PricingProduct product : PricingProduct.values()) {
-            suppliers.searchEnabled(product).forEach(s -> log.info("Supplier {} ({}, {}) has {} search on",
-                    s.name(), s.provider(), s.environment(), product));
+        try {
+            for (PricingProduct product : PricingProduct.values()) {
+                suppliers.searchEnabled(product).forEach(s -> log.info("Supplier {} ({}, {}) has {} search on",
+                        s.name(), s.provider(), s.environment(), product));
+            }
+        } catch (RuntimeException e) { // a log line must never stop the app starting
+            log.warn("Could not list the enabled suppliers at startup: {}", e.getClass().getSimpleName());
         }
     }
 }

@@ -36,6 +36,27 @@ class FlightSearchControllerTest {
     private FlightSearchService flightSearchService;
 
     @Test
+    void offersAndPagesCarryTheirSupplierOnTheWire() throws Exception {
+        FlightOfferResponse offer = FlightOfferResponse.builder().offerId("s1:o1").supplierId("s1").supplierName("Mock supplier").build();
+        when(flightSearchService.search(any())).thenReturn(List.of(offer));
+        when(flightSearchService.searchPage(any())).thenReturn(com.voyra.crm.dto.FlightSearchPageResponse.builder()
+                .flights(List.of(com.voyra.crm.dto.FlightGroupResponse.builder().fares(List.of(offer)).build()))
+                .suppliersFailed(List.of("Tripjack")).build());
+        String body = "{\"origin\":\"BLR\",\"destination\":\"GOI\",\"departDate\":\"2026-11-25\",\"adults\":1}";
+        mockMvc.perform(post("/api/flights/search").with(SecurityMockMvcRequestPostProcessors.user("o").roles("AGENCY_OWNER"))
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(jsonPath("$[0].offerId").value("s1:o1"))
+                .andExpect(jsonPath("$[0].supplierId").value("s1"))
+                .andExpect(jsonPath("$[0].supplierName").value("Mock supplier"));
+        mockMvc.perform(post("/api/flights/search/paged").with(SecurityMockMvcRequestPostProcessors.user("o").roles("AGENCY_OWNER"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"query\":" + body + "}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.flights[0].fares[0].supplierId").value("s1"))
+                .andExpect(jsonPath("$.flights[0].fares[0].supplierName").value("Mock supplier"))
+                .andExpect(jsonPath("$.suppliersFailed[0]").value("Tripjack"));
+    }
+
+    @Test
     void agencyJsonNeverCarriesVoyraEarningsOrBase() throws Exception {
         when(flightSearchService.search(any())).thenReturn(List.of(FlightOfferResponse.builder().offerId("o1")
                 .totalPrice(new BigDecimal("5000")).baseFare(new BigDecimal("4000")).publishedFare(new BigDecimal("5000"))

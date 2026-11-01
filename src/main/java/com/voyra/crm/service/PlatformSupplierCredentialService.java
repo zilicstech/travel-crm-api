@@ -176,10 +176,18 @@ public class PlatformSupplierCredentialService {
     /** Every supplier with search switched on for the product, by name. */
     @Transactional(readOnly = true)
     public List<ResolvedCredential> searchEnabled(PricingProduct product) {
-        return repository.findAllById(productRepository.findByProductAndSearchEnabledTrue(product).stream()
+        List<ResolvedCredential> out = new ArrayList<>();
+        repository.findAllById(productRepository.findByProductAndSearchEnabledTrue(product).stream()
                         .map(PlatformSupplierProduct::getCredentialId).toList()).stream()
                 .sorted(Comparator.comparing(PlatformSupplierCredential::getName))
-                .map(this::decrypt).toList();
+                .forEach(c -> {
+                    try {
+                        out.add(decrypt(c));
+                    } catch (RuntimeException e) { // one unreadable row must not stop the others from answering
+                        log.warn("Supplier {} cannot be used for search: {}", c.getName(), e.getClass().getSimpleName());
+                    }
+                });
+        return out;
     }
 
     @Transactional(readOnly = true)

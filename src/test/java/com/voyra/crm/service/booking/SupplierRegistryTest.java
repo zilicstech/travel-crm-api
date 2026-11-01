@@ -69,6 +69,17 @@ class SupplierRegistryTest {
     }
 
     @Test
+    void startupLoggingSurvivesAnUnreadableSupplier() {
+        when(suppliers.searchEnabled(PricingProduct.FLIGHT)).thenThrow(new IllegalStateException("secret-key-123"));
+
+        try (LogCapture log = new LogCapture(SupplierRegistry.class)) {
+            registry.logSuppliers();
+
+            assertThat(log.lines()).containsExactly("WARN Could not list the enabled suppliers at startup: IllegalStateException");
+        }
+    }
+
+    @Test
     void startupLogsEachEnabledRowByNameAndNeverTheKey() {
         when(suppliers.searchEnabled(PricingProduct.FLIGHT)).thenReturn(List.of(row("s1", "Mock supplier", SupplierProvider.MOCK)));
         when(suppliers.searchEnabled(PricingProduct.HOTEL)).thenReturn(List.of());
