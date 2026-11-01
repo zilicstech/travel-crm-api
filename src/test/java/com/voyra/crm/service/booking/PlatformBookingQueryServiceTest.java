@@ -56,12 +56,13 @@ class PlatformBookingQueryServiceTest {
     @Mock private AgentRepository agents;
     @Mock private ClientRepository clients;
     @Mock private com.voyra.crm.repository.PlatformBookingTicketRepository tickets;
+    @Mock private com.voyra.crm.repository.PlatformSupplierCredentialRepository credentials;
 
     private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
     private final PaxCodec paxCodec = new PaxCodec(objectMapper, KEY);
 
     private PlatformBookingQueryService service() {
-        return new PlatformBookingQueryService(bookings, events, tenants, agents, clients, paxCodec, objectMapper, tickets);
+        return new PlatformBookingQueryService(bookings, events, tenants, agents, clients, paxCodec, objectMapper, tickets, credentials);
     }
 
     @AfterEach
@@ -137,6 +138,24 @@ class PlatformBookingQueryServiceTest {
 
         assertThat(r.getPublishedFare()).isEqualByComparingTo("5000.00");
         assertThat(r.getDisplayedFare()).isEqualByComparingTo("4500.00");
+    }
+
+    @Test
+    void agencyAndAdminViewsNameTheSupplierInOneLookup() {
+        login("O1", UserType.AGENCY_OWNER, "T1");
+        PlatformBooking a = booking("B1", "T1", "O1").toBuilder().credentialId("S1").build();
+        PlatformBooking b = booking("B2", "T1", "O1").toBuilder().credentialId("S1").build();
+        PlatformBooking c = booking("B3", "T1", "O1").toBuilder().credentialId("S2").build();
+        given(credentials.findAllById(any())).willReturn(List.of(
+                com.voyra.crm.entity.PlatformSupplierCredential.builder().id("S1").name("Tripjack").build(),
+                com.voyra.crm.entity.PlatformSupplierCredential.builder().id("S2").name("Mock supplier").build()));
+        given(bookings.findByTenantId(eq("T1"), any(Pageable.class))).willReturn(new PageImpl<>(List.of(a, b, c)));
+
+        assertThat(service().list(0, 25).getContent()).extracting(PlatformBookingResponse::getSupplierName)
+                .containsExactly("Tripjack", "Tripjack", "Mock supplier");
+        verify(credentials).findAllById(List.of("S1", "S2"));
+
+        assertThat(service().adminView(c).getSupplierName()).isEqualTo("Mock supplier");
     }
 
     // ---- the current markup: the newer of the newest ticket download and the newest Set markup ----

@@ -81,6 +81,17 @@ class PlatformBookingControllerTest {
     }
 
     @Test
+    void agencyBookingJsonNamesTheSupplierAndHidesItsId() throws Exception {
+        given(queryService.list(any(), any())).willReturn(PagedResponse.<PlatformBookingResponse>builder().content(List.of(
+                PlatformBookingResponse.builder().id("B1").supplierName("Mock supplier").build())).build());
+
+        mockMvc.perform(get("/api/platform-bookings").with(as(UserType.AGENCY_OWNER)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.content[0].supplierName").value("Mock supplier"))
+                .andExpect(jsonPath("$.content[0].credentialId").doesNotExist())
+                .andExpect(jsonPath("$.content[0].voyraNet").doesNotExist());
+    }
+
+    @Test
     void flightReviewWithoutAClientIs400() throws Exception {
         mockMvc.perform(post("/api/platform-bookings/flights/review").with(as(UserType.AGENT))
                         .contentType(MediaType.APPLICATION_JSON).content("{\"offerId\":\"o1\",\"adults\":1}"))
