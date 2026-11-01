@@ -3,6 +3,7 @@ package com.voyra.crm.service;
 import com.voyra.crm.dto.AgencyProfileResponse;
 import com.voyra.crm.dto.AgencyProfileUpdateRequest;
 import com.voyra.crm.entity.Tenant;
+import com.voyra.crm.enums.PlatformAuditAction;
 import com.voyra.crm.exception.NotFoundException;
 import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.security.SecurityContextUtil;
@@ -15,6 +16,8 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
+
+import java.util.Map;
 
 /**
  * The signed-in owner's own agency profile - the fields Account/Settings needs that
@@ -31,6 +34,7 @@ public class AgencyProfileService {
 
     private final TenantRepository tenantRepository;
     private final FileStorageService fileStorageService;
+    private final PlatformAuditService platformAuditService;
 
     /** Not a DTO - unpacked into an image response by the controller. */
     public record Logo(Resource resource, String contentType) {
@@ -106,8 +110,21 @@ public class AgencyProfileService {
     /** Owner: PNG, JPEG or WebP up to 1 MB replaces the logo; the previous logo file is deleted. */
     @Transactional
     public AgencyProfileResponse uploadLogo(MultipartFile file) {
+        return storeLogo(SecurityContextUtil.getCurrentUserOrThrow().userId(), file);
+    }
+
+    /** Platform admin: the same upload for any agency (404 when unknown), recorded in the platform audit log. */
+    @Transactional
+    public AgencyProfileResponse uploadLogoForAgency(String tenantId, MultipartFile file) {
+        AgencyProfileResponse response = storeLogo(tenantId, file);
+        platformAuditService.record(PlatformAuditAction.AGENCY_LOGO_SET, "TENANT", tenantId, Map.of());
+        return response;
+    }
+
+    private AgencyProfileResponse storeLogo(String tenantId, MultipartFile file) {
         UploadValidator.assertLogo(file);
-        Tenant tenant = findOwnTenant();
+        Tenant tenant = tenantRepository.findById(tenantId)
+                .orElseThrow(() -> new NotFoundException("Agency not found: " + tenantId));
         String previous = tenant.getLogoKey();
         tenant.setLogoKey(fileStorageService.store(tenant.getId(), LOGO_CATEGORY, tenant.getId(), file));
         tenantRepository.save(tenant);

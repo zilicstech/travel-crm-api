@@ -2,26 +2,32 @@ package com.voyra.crm.controller;
 
 import com.voyra.crm.dto.AgencyCreateRequest;
 import com.voyra.crm.dto.AgencyCreateResponse;
+import com.voyra.crm.dto.AgencyProfileResponse;
 import com.voyra.crm.dto.AgencyResponse;
 import com.voyra.crm.dto.AgencyUpdateRequest;
 import com.voyra.crm.dto.CredentialsResponse;
 import com.voyra.crm.dto.PasswordResetRequest;
 import com.voyra.crm.dto.TenantStatusUpdateRequest;
+import com.voyra.crm.service.AgencyProfileService;
 import com.voyra.crm.service.AgencyService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 
@@ -34,6 +40,7 @@ import java.util.List;
 public class PlatformAgencyController {
 
     private final AgencyService agencyService;
+    private final AgencyProfileService agencyProfileService;
 
     @PostMapping
     @Operation(summary = "Onboard a new Agency", description = "Creates the Agency, the Owner login, and provisions the tenant schema.")
@@ -71,6 +78,12 @@ public class PlatformAgencyController {
     public ResponseEntity<AgencyResponse> updateAgency(@PathVariable String id,
                                                         @Valid @RequestBody AgencyUpdateRequest request) {
         return ResponseEntity.ok(agencyService.updateAgency(id, request));
+    }
+
+    @PutMapping(value = "/{id}/logo", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @Operation(summary = "Upload or replace an Agency's logo", description = "PNG, JPG or WEBP (checked by content), at most 1 MB. Audited.")
+    public ResponseEntity<AgencyProfileResponse> uploadLogo(@PathVariable String id, @RequestParam("file") MultipartFile file) {
+        return ResponseEntity.ok(agencyProfileService.uploadLogoForAgency(id, file));
     }
 
     @PostMapping("/{id}/reset-password")

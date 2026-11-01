@@ -34,6 +34,7 @@ class AgencyProfileServiceTest {
 
     @Mock private TenantRepository tenantRepository;
     @Mock private FileStorageService fileStorageService;
+    @Mock private PlatformAuditService platformAuditService;
     @InjectMocks private AgencyProfileService service;
 
     private final Tenant tenant = Tenant.builder().id("T1").agencyName("Desert Trips").baseCurrencyCode("AED").build();
@@ -135,5 +136,34 @@ class AgencyProfileServiceTest {
         AgencyProfileService.Logo logo = service.logo();
         assertThat(logo.contentType()).isEqualTo("image/jpeg");
         assertThat(logo.resource()).isSameAs(img);
+    }
+
+    // ---- platform admin sets an agency's logo
+
+    @Test
+    void aPlatformAdminSetsAnAgencysLogoWithTheSameRulesAndItIsAudited() {
+        Tenant other = Tenant.builder().id("T2").agencyName("Sea Trips").logoKey("tenant_t2/logo/T2/old.png").build();
+        when(tenantRepository.findById("T2")).thenReturn(Optional.of(other));
+        MockMultipartFile png = file("logo.png", PNG);
+        when(fileStorageService.store("T2", "logo", "T2", png)).thenReturn("tenant_t2/logo/T2/new.png");
+
+        var r = service.uploadLogoForAgency("T2", png);
+
+        assertThat(other.getLogoKey()).isEqualTo("tenant_t2/logo/T2/new.png");
+        assertThat(r.isHasLogo()).isTrue();
+        verify(fileStorageService).delete("tenant_t2/logo/T2/old.png");
+        verify(platformAuditService).record(com.voyra.crm.enums.PlatformAuditAction.AGENCY_LOGO_SET, "TENANT", "T2", java.util.Map.of());
+        assertThatThrownBy(() -> service.uploadLogoForAgency("T2", file("logo.png", "text".getBytes())))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void anUnknownAgencysLogoIsNotFoundAndNothingIsStoredOrAudited() {
+        when(tenantRepository.findById("NOPE")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.uploadLogoForAgency("NOPE", file("logo.png", PNG)))
+                .isInstanceOf(com.voyra.crm.exception.NotFoundException.class);
+        verify(fileStorageService, never()).store(any(), any(), any(), any());
+        verify(platformAuditService, never()).record(any(), any(), any(), any());
     }
 }
