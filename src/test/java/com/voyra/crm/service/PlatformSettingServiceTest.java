@@ -136,11 +136,7 @@ class PlatformSettingServiceTest {
     }
 
     @Test
-    void skuPricesAndFoundingAgenciesDefaultToTheSpec() {
-        Map<String, java.math.BigDecimal> prices = service().skuPrices();
-        assertThat(prices).containsOnlyKeys("CRM_CORE", "STAFF_SEATS", "ACCOUNTS_GST", "REPORTS", "VISA", "SUITE", "LITE");
-        assertThat(prices.get("SUITE")).isEqualByComparingTo("4999");
-        assertThat(prices.get("STAFF_SEATS")).isEqualByComparingTo("399");
+    void foundingAgenciesDefaultToTheSpec() {
         assertThat(service().foundingAgencies()).containsExactly("Voyra Global");
     }
 

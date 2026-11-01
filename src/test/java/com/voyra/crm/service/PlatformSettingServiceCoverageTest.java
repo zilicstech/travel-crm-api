@@ -95,7 +95,6 @@ class PlatformSettingServiceCoverageTest {
         assertThat(service.subscriptionSac()).isEqualTo("998314");
         assertThat(service.referenceFareBasket(PricingProduct.HOTEL)).extracting(f -> f.label())
                 .containsExactly("Budget 3*", "Mid 4*", "Premium 5*");
-        assertThat(service.skuPrices()).containsKeys("CRM_CORE", "SUITE", "LITE");
         assertThat(service.foundingAgencies()).containsExactly("Voyra Global");
     }
 

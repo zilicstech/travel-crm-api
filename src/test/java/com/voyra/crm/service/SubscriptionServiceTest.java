@@ -75,6 +75,7 @@ class SubscriptionServiceTest {
                 .updatedAt(Instant.now()).build();
         lenient().when(subscriptionRepository.findByTenantIdForUpdate("T1")).thenReturn(Optional.of(sub));
         lenient().when(subscriptionRepository.findByTenantId("T1")).thenReturn(Optional.of(sub));
+        lenient().when(settingService.planPrices()).thenReturn(todaysPrices());
         lenient().when(entitlementService.refresh("T1")).thenReturn(new Entitlements(SubscriptionPlan.SUITE,
                 SubscriptionStatus.ACTIVE, EnumSet.allOf(Sku.class), 5, false, null));
     }
@@ -92,8 +93,93 @@ class SubscriptionServiceTest {
         return r;
     }
 
+    private static com.voyra.crm.models.PlanPrices todaysPrices() {
+        return new com.voyra.crm.models.PlanPrices(new BigDecimal("3499"), new BigDecimal("5999"), new BigDecimal("449"));
+    }
+
+    /** A LITE row whose prices were frozen at 2999 / 399, with no open waiver. */
+    private void liteRowFrozenAt2999() {
+        sub.setPlan(SubscriptionPlan.LITE);
+        sub.setWaivedReason(null);
+        sub.setPeriodEnd(Instant.now().minus(Duration.ofDays(1)));
+        sub.setPlanPriceMonthly(new BigDecimal("2999.00"));
+        sub.setSeatPriceMonthly(new BigDecimal("399.00"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void changingThePlanFreezesTodaysPlansTabPrices() {
+        liteRowFrozenAt2999();
+        when(settingService.planPrices()).thenReturn(todaysPrices());
+
+        service.update("T1", update(SubscriptionPlan.SUITE, 0, BillingCycle.MONTHLY));
+
+        assertThat(sub.getPlanPriceMonthly()).isEqualByComparingTo("5999");
+        assertThat(sub.getSeatPriceMonthly()).isEqualByComparingTo("449");
+        org.mockito.ArgumentCaptor<Map<String, Object>> audit = org.mockito.ArgumentCaptor.forClass(Map.class);
+        verify(auditService).record(eq(PlatformAuditAction.SUBSCRIPTION_CHANGE), eq("TENANT"), eq("T1"), audit.capture());
+        assertThat((Map<String, Object>) audit.getValue().get("before")).containsEntry("planPriceMonthly", "2999.00")
+                .containsEntry("seatPriceMonthly", "399.00");
+        assertThat((Map<String, Object>) audit.getValue().get("after")).containsEntry("planPriceMonthly", "5999.00")
+                .containsEntry("seatPriceMonthly", "449.00");
+    }
+
+    @Test
+    void changingOnlySeatsOrCycleKeepsTheFrozenPrices() {
+        liteRowFrozenAt2999();
+
+        service.update("T1", update(SubscriptionPlan.LITE, 2, BillingCycle.ANNUAL));
+
+        assertThat(sub.getPlanPriceMonthly()).isEqualByComparingTo("2999");
+        assertThat(sub.getSeatPriceMonthly()).isEqualByComparingTo("399");
+        verify(settingService, never()).planPrices();
+    }
+
+    @Test
+    void movingToBasicFreezesZeroAndTodaysSeatPrice() {
+        liteRowFrozenAt2999();
+        when(settingService.planPrices()).thenReturn(todaysPrices());
+
+        service.update("T1", update(SubscriptionPlan.STARTER, 0, BillingCycle.MONTHLY));
+
+        assertThat(sub.getPlanPriceMonthly()).isEqualByComparingTo("0");
+        assertThat(sub.getSeatPriceMonthly()).isEqualByComparingTo("449");
+    }
+
+    @Test
+    void extendTrialFreezesSuitePricesWhenItChangesThePlan() {
+        TrialExtendRequest r = new TrialExtendRequest();
+        r.setDays(14);
+        liteRowFrozenAt2999();
+        when(settingService.planPrices()).thenReturn(todaysPrices());
+        service.extendTrial("T1", r);
+        assertThat(sub.getPlanPriceMonthly()).isEqualByComparingTo("5999");
+        assertThat(sub.getSeatPriceMonthly()).isEqualByComparingTo("449");
+
+        sub.setPlanPriceMonthly(new BigDecimal("4500.00"));
+        sub.setSeatPriceMonthly(new BigDecimal("399.00"));
+        service.extendTrial("T1", r);  // already Suite: keeps what it was frozen at
+        assertThat(sub.getPlanPriceMonthly()).isEqualByComparingTo("4500");
+        assertThat(sub.getSeatPriceMonthly()).isEqualByComparingTo("399");
+    }
+
+    @Test
+    void agencyViewShowsTheFrozenPriceAndTodaysUpgradePrices() {
+        signIn("T1");
+        liteRowFrozenAt2999();
+        when(entitlementService.resolve("T1")).thenReturn(new Entitlements(SubscriptionPlan.LITE, SubscriptionStatus.ACTIVE,
+                EnumSet.noneOf(Sku.class), 3, false, null));
+        when(settingService.planPrices()).thenReturn(todaysPrices());
+
+        AgencySubscriptionResponse r = service.agencyView();
+
+        assertThat(r.getCurrentPlanPriceMonthly()).isEqualByComparingTo("2999");
+        assertThat(r.getPlanPrices()).containsExactly(Map.entry("LITE", new BigDecimal("3499")), Map.entry("SUITE", new BigDecimal("5999")));
+    }
+
     @Test
     void updateStoresThePlansOwnSkus() {
+        when(settingService.planPrices()).thenReturn(todaysPrices());
         service.update("T1", update(SubscriptionPlan.LITE, 3, BillingCycle.ANNUAL));
 
         assertThat(sub.getPlan()).isEqualTo(SubscriptionPlan.LITE);
@@ -399,19 +485,18 @@ class SubscriptionServiceTest {
     }
 
     @Test
-    void anExpiredWaiverIsNotShownAsWaivedAndOnlyPricedPlansAreOffered() {
+    void anExpiredWaiverIsNotShownAsWaived() {
         signIn("T1");
         sub.setPeriodEnd(Instant.now().minus(Duration.ofDays(2)));
         when(entitlementService.resolve("T1")).thenReturn(new Entitlements(SubscriptionPlan.SUITE, SubscriptionStatus.READ_ONLY,
                 EnumSet.allOf(Sku.class), 5, true, null));
-        when(settingService.skuPrices()).thenReturn(Map.of("LITE", new BigDecimal("2999"), "CRM_CORE", new BigDecimal("2499")));
+        when(settingService.planPrices()).thenReturn(todaysPrices());
 
         AgencySubscriptionResponse r = service.agencyView();
 
         assertThat(r.isWaived()).isFalse();
         assertThat(r.getWaivedLabel()).isNull();
         assertThat(r.isReadOnly()).isTrue();
-        assertThat(r.getPlanPrices()).containsExactly(Map.entry("LITE", new BigDecimal("2999")));
 
         sub.setWaivedReason(null);
         assertThat(service.agencyView().isWaived()).isFalse();

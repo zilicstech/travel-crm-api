@@ -120,12 +120,6 @@ public class PlatformSettingService {
         return "true".equals(raw(TRIPJACK_LIVE_READY));
     }
 
-    /** Monthly INR price per key of the stored sku_prices; annual billing is 10 of these. */
-    @Transactional(readOnly = true)
-    public Map<String, BigDecimal> skuPrices() {
-        return readJson(SKU_PRICES, raw(SKU_PRICES), new TypeReference<>() { });
-    }
-
     /** Lite, Premium and extra-seat prices from sku_prices; other keys in the row are ignored. */
     @Transactional(readOnly = true)
     public PlanPrices planPrices() {
