@@ -6,7 +6,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 
 /** The selling price from a cost and a markup - the server-side twin of the frontend's {@code withMarkup}:
- *  rounded to the whole rupee, since a customer-facing price with paise reads as a pricing bug. */
+ *  kept to the paisa, never rounded to the rupee (owner ruling 2026-11-01: amounts must be exact). */
 public final class MarkupMath {
 
     private static final BigDecimal HUNDRED = new BigDecimal("100");
@@ -18,6 +18,6 @@ public final class MarkupMath {
         BigDecimal c = cost != null ? cost : BigDecimal.ZERO;
         BigDecimal v = value != null ? value : BigDecimal.ZERO;
         BigDecimal price = mode == MarkupMode.FLAT ? c.add(v) : c.add(c.multiply(v).divide(HUNDRED, 10, RoundingMode.HALF_UP));
-        return price.setScale(0, RoundingMode.HALF_UP);
+        return price.setScale(2, RoundingMode.HALF_UP);
     }
 }

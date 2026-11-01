@@ -450,11 +450,11 @@ class BookingServiceVoyraTest {
 
         assertThat(voucher.getMarkupMode()).isEqualTo(MarkupMode.FLAT);
         assertThat(voucher.getMarkupValue()).isEqualByComparingTo("800.40");
-        assertThat(voucher.getSellingPrice()).isEqualByComparingTo("10800");
+        assertThat(voucher.getSellingPrice()).isEqualByComparingTo("10800.40");
         assertThat(voucher.getNetCost()).isEqualByComparingTo("10000");
         assertThat(voucher.getSupplierInvoiceId()).isEqualTo("SI1");
-        assertThat(b.getSellingPrice()).isEqualByComparingTo("10800");
-        assertThat(b.getProfit()).isEqualByComparingTo("800");
+        assertThat(b.getSellingPrice()).isEqualByComparingTo("10800.40");
+        assertThat(b.getProfit()).isEqualByComparingTo("800.40");
         assertThat(b.getMarkupMode()).isEqualTo(MarkupMode.FLAT);
         assertThat(b.getMarkupValue()).isEqualByComparingTo("800.40");
         assertThat(b.getNetCost()).isEqualByComparingTo("10000");
@@ -521,7 +521,7 @@ class BookingServiceVoyraTest {
         verifyNoInteractions(bookingAccountingSync); // a MANUAL payment status is left alone
     }
 
-    /** The same markup again (or one that rounds to the same price) changes nothing and is never refused. */
+    /** The same markup again changes nothing and is never refused (prices keep their paise, so 500.40 would move it). */
     @Test
     void repriceToTheSamePriceWritesNothing() {
         Booking b = confirmed().build();
@@ -529,7 +529,7 @@ class BookingServiceVoyraTest {
         locked(b, voucher);
 
         platformRun(() -> bookingService.repriceVoyraMarkup("B1", new BigDecimal("500")));
-        platformRun(() -> bookingService.repriceVoyraMarkup("B1", new BigDecimal("500.40")));
+        platformRun(() -> bookingService.repriceVoyraMarkup("B1", new BigDecimal("500.00")));
 
         assertThat(voucher.getMarkupValue()).isEqualByComparingTo("500");
         verify(bookingRepository, never()).save(any());

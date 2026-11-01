@@ -674,7 +674,7 @@ class LeadServiceCoverageTest {
 
         ProposalItemResponse out = leadService.addProposalItem("L1", r);
 
-        assertThat(out.getSellingPrice()).isEqualByComparingTo("113");
+        assertThat(out.getSellingPrice()).isEqualByComparingTo("112.50");
         verify(leadProposalRepository, never()).saveAll(List.of());
         verify(leadProposalRepository, org.mockito.Mockito.times(2)).findByLeadId("L1");
     }

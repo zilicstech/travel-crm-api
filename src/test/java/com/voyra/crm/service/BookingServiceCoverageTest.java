@@ -550,7 +550,7 @@ class BookingServiceCoverageTest {
         assertThat(voucher.getValue().getSupplierInvoiceId()).isEqualTo("SI1");
         assertThat(voucher.getValue().getCreatedBy()).isEqualTo("A1");
         assertThat(voucher.getValue().getPurchaseCurrency()).isNull();
-        verify(clientCreditService).assertWithinLimit("C1", new BigDecimal("1200"), false);
+        verify(clientCreditService).assertWithinLimit("C1", new BigDecimal("1200.00"), false);
     }
 
     @Test
@@ -575,7 +575,7 @@ class BookingServiceCoverageTest {
         BookingResponse response = bookingService.logBooking(r, "D1", "k", "v.pdf", "application/pdf",
                 BookingDocumentType.E_TICKET, "PNR1", pricing);
 
-        assertThat(response.getSellingPrice()).isEqualByComparingTo("1096");
+        assertThat(response.getSellingPrice()).isEqualByComparingTo("1095.60");
         assertThat(response.getPnr()).isEqualTo("PNR1");
         assertThat(response.getBookingStatus()).isEqualTo(BookingStatus.CONFIRMED);
         ArgumentCaptor<BookingDocument> voucher = ArgumentCaptor.forClass(BookingDocument.class);
@@ -583,7 +583,7 @@ class BookingServiceCoverageTest {
         assertThat(voucher.getValue().getMarkupMode()).isEqualTo(MarkupMode.PERCENT);
         assertThat(voucher.getValue().getPurchaseCurrency()).isEqualTo("USD");
         assertThat(voucher.getValue().getPurchasePrice()).isEqualByComparingTo("12");
-        verify(clientCreditService).assertWithinLimit("C1", new BigDecimal("1096"), true);
+        verify(clientCreditService).assertWithinLimit("C1", new BigDecimal("1095.60"), true);
     }
 
     @Test
@@ -1087,7 +1087,7 @@ class BookingServiceCoverageTest {
         assertThat(b.getMarkupMode()).isEqualTo(MarkupMode.FLAT);
         assertThat(b.getHotelConfirmationNo()).isEqualTo("HCONF-9");
         assertThat(v.getSupplierInvoiceId()).isEqualTo("SI2");
-        verify(clientCreditService).assertWithinLimit("C1", new BigDecimal("900"), true);
+        verify(clientCreditService).assertWithinLimit("C1", new BigDecimal("900.00"), true);
         verify(accountingChangeAlertRepository).saveAll(any());
         verify(bookingAccountingSync).syncPayment("B1");
     }
