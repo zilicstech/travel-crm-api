@@ -55,6 +55,13 @@ class EntitlementServiceTest {
     }
 
     @Test
+    void newBasicFreezesZeroPrices() {
+        Subscription s = EntitlementService.newBasic("S1", "T1", NOW);
+        assertThat(s.getPlanPriceMonthly()).isEqualByComparingTo("0");
+        assertThat(s.getSeatPriceMonthly()).isEqualByComparingTo("0");
+    }
+
+    @Test
     void suiteActiveUnlocksEverySkuWithFiveSeatsPlusExtras() {
         Entitlements e = EntitlementService.compute(sub(SubscriptionPlan.SUITE, SubscriptionStatus.ACTIVE).seats(3).build(), NOW);
         assertThat(e.skus()).isEqualTo(ALL);

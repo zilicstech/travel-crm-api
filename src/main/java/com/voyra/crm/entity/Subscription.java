@@ -18,6 +18,7 @@ import lombok.Setter;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 
@@ -42,18 +43,28 @@ public class Subscription {
     @Column(name = "plan", nullable = false, length = 8)
     private SubscriptionPlan plan;
 
-    /** Sku names; read only for CUSTOM (SUITE is every SKU, STARTER none). */
+    /** Sku names, stored for every plan (STARTER none). */
     @JdbcTypeCode(SqlTypes.ARRAY)
     @Column(name = "skus", nullable = false, columnDefinition = "text[]")
     private List<String> skus;
 
-    /** SUITE: extra seats on top of the 5 included; CUSTOM: all seats. */
+    /** Extra seats on top of the seats the plan includes (LITE 3, SUITE 5). */
     @Column(name = "seats", nullable = false)
     private Integer seats;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 10)
     private SubscriptionStatus status;
+
+    /** Frozen plan price a month; billing reads this, not the current price list. */
+    @Builder.Default
+    @Column(name = "plan_price_monthly", nullable = false, precision = 12, scale = 2)
+    private BigDecimal planPriceMonthly = BigDecimal.ZERO;
+
+    /** Frozen price of one extra seat a month. */
+    @Builder.Default
+    @Column(name = "seat_price_monthly", nullable = false, precision = 12, scale = 2)
+    private BigDecimal seatPriceMonthly = BigDecimal.ZERO;
 
     @Column(name = "period_start")
     private Instant periodStart;

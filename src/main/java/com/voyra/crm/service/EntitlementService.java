@@ -18,6 +18,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Arrays;
@@ -111,6 +112,8 @@ public class EntitlementService {
                 .plan(SubscriptionPlan.STARTER)
                 .skus(List.of())
                 .seats(0)
+                .planPriceMonthly(BigDecimal.ZERO)
+                .seatPriceMonthly(BigDecimal.ZERO)
                 .status(SubscriptionStatus.ACTIVE)
                 .periodStart(now)
                 .billingCycle(BillingCycle.MONTHLY)
