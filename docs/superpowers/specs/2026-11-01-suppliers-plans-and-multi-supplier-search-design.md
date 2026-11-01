@@ -30,18 +30,18 @@ Three changes the owner wants shipped together, as fast as possible:
 ## Part 1: Suppliers in the database
 
 ### Data: migration V37 (expand only)
-A rolling deploy runs two instances, so V37 adds and backfills but drops nothing; V38, shipped with the next release, drops what this release stopped reading (`is_active`, `commission_estimate_pct`, `allow_above_earned`, the retired setting rows). The entities stop mapping those columns now; every one of them is nullable or has a default, so the new code can insert without them.
+A rolling deploy runs two instances, so V37 (suppliers) and V38 (subscriptions, Part 3) add and backfill but drop nothing; V39, shipped with the next release, drops what this release stopped reading (`is_active`, `commission_estimate_pct`, `allow_above_earned`, the retired setting rows). The entities stop mapping those columns now; every one of them is nullable or has a default, so the new code can insert without them.
 
 - `platform_supplier_credential`
   - drop `UNIQUE(provider)` and the partial index `uq_platform_supplier_credential_active`; add `UNIQUE (lower(name))`. Several rows per integration are allowed (a second account; a second mock row for QA).
   - `base_url` becomes editable within the row's environment (see Guards).
-  - insert a row `name = 'Mock supplier', provider = 'MOCK', environment = 'MOCK', base_url = 'mock://local'`, key encrypted from a fixed string, both products, every toggle off; set `credential_id` to it on every `platform_booking` with `environment = 'MOCK'` and `credential_id IS NULL`. Rows from before this change then resolve their supplier like any other.
+  - insert a row `name = 'Mock supplier', provider = 'MOCK', environment = 'MOCK', base_url = 'mock://local'`, key encrypted from a fixed string, both products, every toggle off; set `credential_id` to it on every `platform_booking` with `environment = 'MOCK'` and `credential_id IS NULL`. (Migration numbering: V37 is this part, V38 is Part 3, so the two streams never share a file.) Rows from before this change then resolve their supplier like any other.
 - `platform_supplier_product`
   - add `search_enabled BOOLEAN NOT NULL DEFAULT false`, `booking_enabled BOOLEAN NOT NULL DEFAULT false`. Toggles are per supplier and product (owner question 3): Tripjack flights can take bookings while Tripjack hotels, whose integration is unverified, stay search-only.
   - backfill: every toggle **off**. SQL cannot see which provider each deployment ran from its environment variables, so after deploy the admin switches on what that environment searched and booked before (deploy note 2). Locally the seed script does it.
-- `pricing_rule.allow_above_earned` stops being read (dropped in V38).
-- `platform_setting`: the keys `tripjack_live_ready`, `commission_estimate_pct`, `discount_base`, `reference_fare_basket`, `reference_fare_basket_hotel` stop being read (rows deleted in V38). `tds_rate` stays (see TDS). `platform_setting_request` (V28) stays as history.
-- `subscription`: see Part 3.
+- `pricing_rule.allow_above_earned` stops being read (dropped in V39).
+- `platform_setting`: the keys `tripjack_live_ready`, `commission_estimate_pct`, `discount_base`, `reference_fare_basket`, `reference_fare_basket_hotel` stop being read (rows deleted in V39). `tds_rate` stays (see TDS). `platform_setting_request` (V28) stays as history.
+- `subscription`: migration V38, see Part 3.
 - V37 refuses to run (RAISE EXCEPTION, as V34 does) when a database would change money silently: a COMMISSION rule with `allow_above_earned = false` and `pct` above its product's `commission_estimate_pct` (the local database has none), or `discount_base <> 'GROSS'`. The admin fixes the data first.
 - `SupplierProvider` gains `MOCK`. `SupplierEnvironment` keeps `MOCK`, `UAT`, `PROD`.
 
@@ -109,16 +109,16 @@ A rolling deploy runs two instances, so V37 adds and backfills but drops nothing
 
 ### Plans tab
 - `GET /api/platform/plans` → `{ LITE: 2999, SUITE: 4999, STAFF_SEATS: 399 }` (monthly, INR, ex-GST). `PUT /api/platform/plans` with the same shape; each > 0, two decimals; audited `PLAN_PRICES_SET` with old and new values. New `PlatformPlanController`, NEVER_GATED.
-- Stored in the existing `sku_prices` setting; the service reads and validates only `LITE`, `SUITE`, `STAFF_SEATS` and ignores other keys (V38 rewrites the stored JSON).
+- Stored in the existing `sku_prices` setting; the service reads and validates only `LITE`, `SUITE`, `STAFF_SEATS` and ignores other keys (V39 rewrites the stored JSON).
 - Screen: three rows (Voyra CRM Lite, Voyra Premium, Extra seat per month), each a rupee input, Save, and the note "Annual billing is 10 months. Changing a price affects new subscriptions and upgrades only; agencies already on a plan keep their price."
 - `GET /api/agency/subscription` keeps `planPrices` (LITE, SUITE, for the upgrade dialog) and adds `currentPlanPriceMonthly` (the frozen price) so the agency's own plan card shows what it is billed. The upgrade dialog shows the open upgrade invoice's amount when one exists.
 
 ### Custom plan removed
-- `SubscriptionPlan` becomes `STARTER`, `LITE`, `SUITE`. V37 converts every CUSTOM subscription: SUITE when its skus include `ACCOUNTS_GST`, else LITE; `seats = CASE WHEN 'STAFF_SEATS' = ANY(skus) THEN GREATEST(seats - included, 0) ELSE 0 END`; `skus` rewritten to the plan's fixed list; the plan CHECK constraint rewritten. The migration logs each converted agency with its old and new plan. An open ISSUED invoice keeps its CUSTOM lines and settles into the converted plan when paid. (Local database: one CUSTOM row becomes LITE.)
+- `SubscriptionPlan` becomes `STARTER`, `LITE`, `SUITE`. V38 converts every CUSTOM subscription: SUITE when its skus include `ACCOUNTS_GST`, else LITE; `seats = CASE WHEN 'STAFF_SEATS' = ANY(skus) THEN GREATEST(seats - included, 0) ELSE 0 END`; `skus` rewritten to the plan's fixed list; the plan CHECK constraint rewritten. The migration logs each converted agency with its old and new plan. An open ISSUED invoice keeps its CUSTOM lines and settles into the converted plan when paid. (Local database: one CUSTOM row becomes LITE.)
 - `SubscriptionUpdateRequest` loses `skus`; `EntitlementService` and `SubscriptionBillingService.lines` lose their CUSTOM branches; the admin subscription card loses the Custom option and the SKU checkboxes; `tierOf` loses the CUSTOM case.
 
 ### Frozen price
-- `subscription` gains `plan_price_monthly NUMERIC(12,2) NOT NULL` and `seat_price_monthly NUMERIC(12,2) NOT NULL`. V37 backfills them with what the agency pays today: the plan price for LITE and SUITE, the sum of its SKU prices for a converted CUSTOM row (its renewal does not change), 0 for STARTER; the seat price from `sku_prices.STAFF_SEATS`.
+- `subscription` gains `plan_price_monthly NUMERIC(12,2) NOT NULL` and `seat_price_monthly NUMERIC(12,2) NOT NULL`. V38 backfills them with what the agency pays today: the plan price for LITE and SUITE, the sum of its SKU prices for a converted CUSTOM row (its renewal does not change), 0 for STARTER; the seat price from `sku_prices.STAFF_SEATS`.
 - They are set whenever the plan changes, from the Plans-tab prices at that moment: admin `PUT .../subscription` with a different plan, and `extendTrial` (which sets SUITE). A paid upgrade invoice freezes the unit amounts of its own lines at `settle`, never the setting, so the agency renews at the price it paid. An admin change of seats or cycle alone keeps the frozen prices.
 - `SubscriptionBillingService.lines` bills `plan_price_monthly × months` plus `extra seats × seat_price_monthly × months`; `raiseUpgrade` prices the invoice at the current Plans-tab prices and names the plan. Waived and complimentary subscriptions carry prices too; they are never billed.
 
@@ -140,7 +140,7 @@ A rolling deploy runs two instances, so V37 adds and backfills but drops nothing
 - Matrix rows and `CLAUDE.md` sections updated: the slice 3, 5 and 6 bullets that mention the env properties, the live switch, P&L, statements and Custom.
 
 ### Deploy notes
-1. V37 is expand-only; V38 (next release) drops the retired columns and setting rows. Take a backup before each.
+1. V37 and V38 are expand-only; V39 (next release) drops the retired columns and setting rows. Take a backup before each.
 2. After V37 every supplier toggle is **off**. Before switching traffic, read each environment's `FLIGHT_SUPPLIER`, `HOTEL_SUPPLIER`, `FLIGHT_BOOKING_PROVIDER`, `HOTEL_BOOKING_PROVIDER` and `tripjack_live_ready`, then set the Tripjack row's product toggles to match through the Suppliers tab, and remove the four variables from the Cloud Run service (they are ignored). Production today runs PROD Tripjack search for flights with live bookings paused: set Flight search on, Flight booking off until you want it on; leave Hotel off (its Tripjack integration is unverified).
 3. Count PROD rows in HELD, BOOKING, UNKNOWN or CANCELLING before the deploy; they keep settling through their supplier, but confirm the Tripjack row's environment is PROD first.
 4. V37 refuses on a capped commission rule above its estimate or a `discount_base` of BASE; fix the data and rerun.
@@ -154,7 +154,7 @@ A rolling deploy runs two instances, so V37 adds and backfills but drops nothing
 6. P&L, statement and setting-request tables stay; screens and endpoints go.
 7. Supplier-scoped ids are namespaced `<supplierId>:<id>`.
 8. V37 refuses while a capped commission rule exceeds its estimate, so no earnings move at deploy.
-9. Expand-only V37; drops in V38.
+9. Expand-only V37 and V38; drops in V39.
 10. Seat price frozen with the plan price; upgrades and admin plan changes take the current prices; a paid upgrade freezes what the invoice charged.
 11. CUSTOM rows convert by ACCOUNTS_GST and keep today's bill.
 12. Every toggle backfilled off; the admin switches on per environment after deploy.
