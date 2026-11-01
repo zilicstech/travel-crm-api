@@ -130,16 +130,15 @@ class SubscriptionBillingServiceTest {
 
     @Test
     void annualIsTenMonthlyPricesForTwelveMonths() {
-        Subscription s = suite(0, BillingCycle.ANNUAL).toBuilder().plan(SubscriptionPlan.CUSTOM)
-                .skus(List.of("CRM_CORE", "STAFF_SEATS", "VISA")).seats(3).build();
+        Subscription s = suite(0, BillingCycle.ANNUAL).toBuilder().plan(SubscriptionPlan.LITE).seats(3).build();
         Instant start = Instant.parse("2026-11-01T00:00:00Z");
 
         SubscriptionInvoice inv = service.issue(s, start, start);
 
-        // (2499 + 3 x 399 + 499) x 10 = 41950
-        assertThat(inv.getAmount()).isEqualByComparingTo("41950.00");
-        assertThat(inv.getGst()).isEqualByComparingTo("7551.00");
-        assertThat(inv.getTotal()).isEqualByComparingTo("49501.00");
+        // (2999 + 3 x 399) x 10 = 41960
+        assertThat(inv.getAmount()).isEqualByComparingTo("41960.00");
+        assertThat(inv.getGst()).isEqualByComparingTo("7552.80");
+        assertThat(inv.getTotal()).isEqualByComparingTo("49512.80");
         assertThat(inv.getLines()).allSatisfy(l -> assertThat(l).containsEntry("months", 10));
         assertThat(inv.getPeriodEnd()).isEqualTo(start.atZone(ZoneId.of("Asia/Kolkata")).plusMonths(12).toInstant());
     }
@@ -151,8 +150,8 @@ class SubscriptionBillingServiceTest {
     }
 
     @Test
-    void customWithoutSkusHasNothingToBill() {
-        Subscription s = suite(0, BillingCycle.MONTHLY).toBuilder().plan(SubscriptionPlan.CUSTOM).skus(List.of()).build();
+    void aBasicPlanHasNothingToInvoice() {
+        Subscription s = suite(0, BillingCycle.MONTHLY).toBuilder().plan(SubscriptionPlan.STARTER).build();
         assertThatThrownBy(() -> service.issue(s, Instant.now(), Instant.now())).isInstanceOf(IllegalStateException.class);
     }
 
@@ -589,20 +588,6 @@ class SubscriptionBillingServiceTest {
     }
 
     @Test
-    void aCustomPlanNamesEachSkuAndSkipsSeatsItDoesNotHold() {
-        Subscription all = suite(2, BillingCycle.MONTHLY).toBuilder().plan(SubscriptionPlan.CUSTOM).build();
-        List<Map<String, Object>> lines = SubscriptionBillingService.lines(all, PRICES);
-        assertThat(lines).extracting(l -> l.get("description"))
-                .containsExactly("CRM Core", "Staff seats", "Accounts & GST", "Reports", "Visa desk");
-        assertThat(lines.get(1)).containsEntry("quantity", 2);
-
-        Subscription noSeats = all.toBuilder().seats(0).build();
-        assertThat(SubscriptionBillingService.lines(noSeats, PRICES)).extracting(l -> l.get("sku")).doesNotContain("STAFF_SEATS");
-        Subscription basic = all.toBuilder().plan(SubscriptionPlan.STARTER).build();
-        assertThat(SubscriptionBillingService.lines(basic, PRICES)).isEmpty();
-    }
-
-    @Test
     void aSkuWithoutAPriceIsRefused() {
         assertThatThrownBy(() -> SubscriptionBillingService.lines(suite(0, BillingCycle.MONTHLY), Map.of()))
                 .isInstanceOf(IllegalStateException.class).hasMessage("No price for SUITE in the sku_prices setting");
@@ -695,7 +680,7 @@ class SubscriptionBillingServiceTest {
 
     @Test
     void anUpgradeMustBeToLiteOrSuiteOfAKnownSubscriptionAndCarriesHeldSeats() {
-        assertThatThrownBy(() -> service.raiseUpgrade("T1", SubscriptionPlan.CUSTOM))
+        assertThatThrownBy(() -> service.raiseUpgrade("T1", SubscriptionPlan.STARTER))
                 .isInstanceOf(IllegalArgumentException.class).hasMessage("Choose LITE or SUITE");
         given(subscriptionRepository.findByTenantIdForUpdate("T9")).willReturn(Optional.empty());
         assertThatThrownBy(() -> service.raiseUpgrade("T9", SubscriptionPlan.SUITE))
@@ -837,9 +822,7 @@ class SubscriptionBillingServiceTest {
     }
 
     @Test
-    void aCustomPlanWithNoSkuListAndABasicRenewalHaveNothingToBill() {
-        Subscription custom = suite(0, BillingCycle.MONTHLY).toBuilder().plan(SubscriptionPlan.CUSTOM).skus(null).build();
-        assertThat(SubscriptionBillingService.lines(custom, PRICES)).isEmpty();
+    void aBasicRenewalHasNothingToBill() {
         Subscription basic = suite(0, BillingCycle.MONTHLY).toBuilder().plan(SubscriptionPlan.STARTER).periodEnd(Instant.now()).build();
         assertThat(service.raiseRenewal(basic, Instant.now())).isEmpty();
         verify(invoiceRepository, never()).save(any());

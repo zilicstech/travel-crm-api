@@ -26,7 +26,6 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
  * Resolves what an agency may use from its subscription (spec §8), cached in TenantCache.
@@ -42,12 +41,12 @@ public class EntitlementService {
     /** CRM Lite: everything except Accounts and GST. */
     public static final Set<Sku> LITE_SKUS = java.util.Collections.unmodifiableSet(EnumSet.of(Sku.CRM_CORE, Sku.STAFF_SEATS, Sku.REPORTS, Sku.VISA));
 
-    /** The SKU names stored for a fixed plan (Suite: every SKU, Lite: LITE_SKUS, Starter: none); CUSTOM keeps its own list. */
+    /** The SKU names stored for a fixed plan (Suite: every SKU, Lite: LITE_SKUS, Starter: none). */
     public static List<String> planSkus(SubscriptionPlan plan) {
         return switch (plan) {
             case SUITE -> Arrays.stream(Sku.values()).map(Enum::name).toList();
             case LITE -> LITE_SKUS.stream().map(Enum::name).toList();
-            case STARTER, CUSTOM -> List.of();
+            case STARTER -> List.of();
         };
     }
     static final Duration CACHE_TTL = Duration.ofMinutes(2);
@@ -156,27 +155,9 @@ public class EntitlementService {
         Instant accessEndsAt = waived ? waiverEnd : trialRunning && !readOnly ? trialEnd : null;
 
         int extra = s.getSeats() == null ? 0 : s.getSeats();
-        Set<Sku> skus = switch (s.getPlan()) {
-            case SUITE -> EnumSet.allOf(Sku.class);
-            case LITE -> LITE_SKUS;
-            // STARTER returned above; it shares CUSTOM's arm only so a new plan still fails to compile here.
-            case CUSTOM, STARTER -> parse(s.getSkus());
-        };
-        int seats = switch (s.getPlan()) {
-            case SUITE -> SUITE_INCLUDED_SEATS + extra;
-            case LITE -> LITE_INCLUDED_SEATS + extra;
-            case CUSTOM, STARTER -> skus.contains(Sku.STAFF_SEATS) ? extra : 0;
-        };
+        // STARTER returned above, so the plan is LITE or SUITE here.
+        Set<Sku> skus = s.getPlan() == SubscriptionPlan.SUITE ? EnumSet.allOf(Sku.class) : LITE_SKUS;
+        int seats = (s.getPlan() == SubscriptionPlan.SUITE ? SUITE_INCLUDED_SEATS : LITE_INCLUDED_SEATS) + extra;
         return new Entitlements(s.getPlan(), s.getStatus(), skus, seats, readOnly, accessEndsAt);
-    }
-
-    /** Unknown names are skipped, so a renamed SKU never breaks resolution. */
-    private static Set<Sku> parse(List<String> names) {
-        if (names == null) {
-            return Set.of();
-        }
-        Set<String> known = Arrays.stream(Sku.values()).map(Enum::name).collect(Collectors.toSet());
-        return names.stream().filter(known::contains).map(Sku::valueOf)
-                .collect(Collectors.toCollection(() -> EnumSet.noneOf(Sku.class)));
     }
 }

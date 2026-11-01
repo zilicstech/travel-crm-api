@@ -17,13 +17,13 @@ import java.util.Set;
 @Schema(description = "An agency's subscription as the platform admin sees it")
 public class SubscriptionAdminResponse {
 
-    @Schema(description = "STARTER, LITE, CUSTOM or SUITE")
+    @Schema(description = "STARTER, LITE or SUITE")
     private SubscriptionPlan plan;
 
     @Schema(description = "SKUs usable now")
     private Set<Sku> skus;
 
-    @Schema(description = "Extra seats stored on the subscription (SUITE: on top of 5; CUSTOM: all)", example = "3")
+    @Schema(description = "Extra seats stored on the subscription (SUITE: on top of 5; LITE: on top of 3)", example = "3")
     private int extraSeats;
 
     @Schema(description = "Staff logins allowed now", example = "8")

@@ -119,17 +119,6 @@ public class SubscriptionBillingService {
             if (seats > 0) {
                 lines.add(line(Sku.STAFF_SEATS.name(), "Extra staff seats", seats, prices, months));
             }
-        } else if (s.getPlan() == SubscriptionPlan.CUSTOM && s.getSkus() != null) {
-            for (Sku sku : Sku.values()) {
-                if (!s.getSkus().contains(sku.name())) {
-                    continue;
-                }
-                if (sku != Sku.STAFF_SEATS) {
-                    lines.add(line(sku.name(), label(sku), 1, prices, months));
-                } else if (seats > 0) {
-                    lines.add(line(sku.name(), label(sku), seats, prices, months));
-                }
-            }
         }
         return lines;
     }
@@ -254,11 +243,11 @@ public class SubscriptionBillingService {
         return toResponse(issued);
     }
 
-    /** Upgrade order: Basic < Lite = Custom < Premium (Suite). */
+    /** Upgrade order: Basic < Lite < Premium (Suite). */
     static int rank(SubscriptionPlan plan) {
         return switch (plan) {
             case STARTER -> 0;
-            case LITE, CUSTOM -> 1;
+            case LITE -> 1;
             case SUITE -> 2;
         };
     }
@@ -532,15 +521,5 @@ public class SubscriptionBillingService {
         line.put("months", months);
         line.put("amount", unit.multiply(BigDecimal.valueOf((long) quantity * months)).setScale(2, RoundingMode.HALF_UP).toPlainString());
         return line;
-    }
-
-    private static String label(Sku sku) {
-        return switch (sku) {
-            case CRM_CORE -> "CRM Core";
-            case STAFF_SEATS -> "Staff seats";
-            case ACCOUNTS_GST -> "Accounts & GST";
-            case REPORTS -> "Reports";
-            case VISA -> "Visa desk";
-        };
     }
 }

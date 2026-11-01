@@ -100,25 +100,17 @@ public class SubscriptionService {
         return billingService.raiseUpgrade(tenantId, plan);
     }
 
-    /** Plan, SKUs, seats and cycle. A waiver is a separate switch and stays as it is. */
+    /** Plan (its own SKUs), seats and cycle. A waiver is a separate switch and stays as it is. */
     @Transactional
     public SubscriptionAdminResponse update(String tenantId, SubscriptionUpdateRequest request) {
         if (request.getSeats() == null || request.getSeats() < 0) {
             throw new IllegalArgumentException("seats cannot be negative");
         }
-        if (request.getPlan() == SubscriptionPlan.CUSTOM && request.getSeats() > 0
-                && (request.getSkus() == null || !request.getSkus().contains(Sku.STAFF_SEATS))) {
-            throw new IllegalArgumentException("Add the Staff seats SKU to give seats");
-        }
         Subscription s = loadForUpdate(tenantId);
         SubscriptionPlan plan = request.getPlan();
-        List<String> skus = switch (plan) {
-            case CUSTOM -> request.getSkus() == null ? List.<String>of()
-                    : request.getSkus().stream().distinct().map(Enum::name).toList();
-            case SUITE, LITE, STARTER -> EntitlementService.planSkus(plan);
-        };
+        List<String> skus = EntitlementService.planSkus(plan);
         int newSeats = plan == SubscriptionPlan.STARTER ? 0 : request.getSeats();
-        boolean changes = plan != s.getPlan() || !skus.equals(s.getSkus()) || newSeats != s.getSeats()
+        boolean changes = plan != s.getPlan() || newSeats != s.getSeats()
                 || request.getBillingCycle() != s.getBillingCycle();
         if (changes) {  // an open invoice was priced on the old plan
             invoiceRepository.findFirstByTenantIdAndStatusOrderByDueAtAsc(tenantId, "ISSUED").ifPresent(open -> {

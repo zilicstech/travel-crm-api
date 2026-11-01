@@ -47,7 +47,7 @@ public class AgencySubscriptionController {
 
     @PostMapping("/upgrade")
     @Operation(summary = "Upgrade to a higher plan: raise its invoice to pay now",
-            description = "LITE or SUITE, higher than the current plan (STARTER < LITE = CUSTOM < SUITE), else 400. Returns the "
+            description = "LITE or SUITE, higher than the current plan (STARTER < LITE < SUITE), else 400. Returns the "
                     + "ISSUED invoice; pay it with /invoices/{id}/pay. The plan switches only when it is paid. The same plan again "
                     + "returns the open upgrade invoice; another plan replaces it. 409 while a renewal invoice is unpaid.")
     public ResponseEntity<SubscriptionInvoiceResponse> upgrade(@Valid @RequestBody SubscriptionUpgradeRequest request) {

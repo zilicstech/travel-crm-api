@@ -121,19 +121,16 @@ class EntitlementServiceTest {
     }
 
     @Test
-    void customUnlocksOnlyTheListedSkusAndItsSeats() {
-        Entitlements e = EntitlementService.compute(sub(SubscriptionPlan.CUSTOM, SubscriptionStatus.ACTIVE)
-                .skus(List.of("CRM_CORE", "VISA", "NOT_A_SKU")).seats(2).build(), NOW);
-        assertThat(e.skus()).containsExactlyInAnyOrder(Sku.CRM_CORE, Sku.VISA);
-        assertThat(e.seats()).isZero(); // seats only count with the STAFF_SEATS SKU
-        assertThat(e.readOnly()).isFalse();
-    }
+    void liteAndSuiteIgnoreTheStoredSkuList() {
+        Entitlements lite = EntitlementService.compute(sub(SubscriptionPlan.LITE, SubscriptionStatus.ACTIVE)
+                .skus(List.of("VISA")).seats(2).build(), NOW);
+        assertThat(lite.skus()).containsExactlyInAnyOrder(Sku.CRM_CORE, Sku.STAFF_SEATS, Sku.REPORTS, Sku.VISA);
+        assertThat(lite.seats()).isEqualTo(5);
+        assertThat(lite.readOnly()).isFalse();
 
-    @Test
-    void customSeatsCountOnlyWithTheStaffSeatsSku() {
-        Entitlements e = EntitlementService.compute(sub(SubscriptionPlan.CUSTOM, SubscriptionStatus.ACTIVE)
-                .skus(List.of("CRM_CORE", "STAFF_SEATS")).seats(2).build(), NOW);
-        assertThat(e.seats()).isEqualTo(2);
+        Entitlements suite = EntitlementService.compute(sub(SubscriptionPlan.SUITE, SubscriptionStatus.ACTIVE)
+                .skus(List.of()).build(), NOW);
+        assertThat(suite.skus()).isEqualTo(ALL);
     }
 
     @Test
@@ -154,10 +151,9 @@ class EntitlementServiceTest {
 
     @Test
     void readOnlyKeepsTheSkusForReadsButFlagsWrites() {
-        Entitlements e = EntitlementService.compute(sub(SubscriptionPlan.CUSTOM, SubscriptionStatus.READ_ONLY)
-                .skus(List.of("REPORTS")).build(), NOW);
+        Entitlements e = EntitlementService.compute(sub(SubscriptionPlan.LITE, SubscriptionStatus.READ_ONLY).build(), NOW);
         assertThat(e.readOnly()).isTrue();
-        assertThat(e.skus()).containsExactly(Sku.REPORTS);
+        assertThat(e.skus()).isEqualTo(EntitlementService.LITE_SKUS);
     }
 
     @Test
@@ -235,10 +231,10 @@ class EntitlementServiceTest {
     @Test
     void aConcurrentlyCreatedRowWinsOverOurTrial() {
         when(subscriptionRepository.findByTenantId("T1")).thenReturn(Optional.empty(),
-                Optional.of(sub(SubscriptionPlan.CUSTOM, SubscriptionStatus.ACTIVE).skus(List.of("VISA")).build()));
+                Optional.of(sub(SubscriptionPlan.LITE, SubscriptionStatus.ACTIVE).build()));
         when(subscriptionRepository.saveAndFlush(any(Subscription.class))).thenThrow(new DataIntegrityViolationException("dup"));
 
-        assertThat(entitlementService.resolve("T1").skus()).isEqualTo(Set.of(Sku.VISA));
+        assertThat(entitlementService.resolve("T1").skus()).isEqualTo(EntitlementService.LITE_SKUS);
     }
 
     @Test
@@ -248,7 +244,7 @@ class EntitlementServiceTest {
         assertThat(entitlementService.publicLinksAvailable("T1")).isTrue();
         TenantCache.putEntitlements("T1", new Entitlements(SubscriptionPlan.SUITE, SubscriptionStatus.READ_ONLY, ALL, 5, true, null));
         assertThat(entitlementService.publicLinksAvailable("T1")).isFalse();
-        TenantCache.putEntitlements("T1", new Entitlements(SubscriptionPlan.CUSTOM, SubscriptionStatus.ACTIVE, Set.of(Sku.VISA), 0, false, null));
+        TenantCache.putEntitlements("T1", new Entitlements(SubscriptionPlan.LITE, SubscriptionStatus.ACTIVE, Set.of(Sku.VISA), 0, false, null));
         assertThat(entitlementService.publicLinksAvailable("T1")).isFalse();
         TenantCache.putEntitlements("T1", new Entitlements(SubscriptionPlan.STARTER, SubscriptionStatus.ACTIVE, Set.of(), 0, false, null));
         assertThat(entitlementService.publicLinksAvailable("T1")).isFalse();

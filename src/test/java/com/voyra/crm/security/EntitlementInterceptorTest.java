@@ -105,7 +105,7 @@ class EntitlementInterceptorTest {
 
     private void entitled(Set<Sku> skus, boolean readOnly) {
         when(entitlementService.resolve(TENANT)).thenReturn(new Entitlements(
-                skus.isEmpty() ? SubscriptionPlan.STARTER : SubscriptionPlan.CUSTOM,
+                skus.isEmpty() ? SubscriptionPlan.STARTER : SubscriptionPlan.LITE,
                 readOnly ? SubscriptionStatus.READ_ONLY : SubscriptionStatus.ACTIVE, skus, 0, readOnly, null));
     }
 
