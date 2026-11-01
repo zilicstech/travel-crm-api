@@ -72,6 +72,7 @@ class PlatformBookingTicketServiceTest {
     @Mock private PlatformBookingMirrorService mirrorService;
     @Mock private com.voyra.crm.repository.SubscriptionRepository subscriptions;
     @Mock private org.springframework.transaction.PlatformTransactionManager transactionManager;
+    @Mock private com.voyra.crm.repository.BookingRepository crmBookings;
 
     private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
     private final PaxCodec paxCodec = new PaxCodec(objectMapper, KEY);
@@ -82,7 +83,7 @@ class PlatformBookingTicketServiceTest {
     void setUp() {
         service = new PlatformBookingTicketService(new PlatformBookingQueryService(bookings, events, tenants, agents, clients, paxCodec, objectMapper, tickets),
                 bookings, tickets, tenants, authorResolver, logoLoader, paxCodec, objectMapper,
-                new com.voyra.crm.service.EntitlementService(subscriptions, transactionManager), mirrorService, transactionManager);
+                new com.voyra.crm.service.EntitlementService(subscriptions, transactionManager), mirrorService, transactionManager, crmBookings);
         com.voyra.crm.cache.TenantCache.remove("T1");
     }
 
@@ -397,6 +398,23 @@ class PlatformBookingTicketServiceTest {
         assertThat(d.total()).isEqualByComparingTo("5000.00");
     }
 
+    /** The reference is the agency's own CRM booking number, never the platform's internal id. */
+    @Test
+    void pdfReferenceIsTheCrmBookingNumber() {
+        owner();
+        PlatformBooking b = booking("T1");
+        b.setTenantBookingId("CRM1");
+        stored(b);
+        service.create("B1", null);
+        PlatformBookingTicket t = saved.get(0);
+        openable(t);
+        given(crmBookings.findById("CRM1")).willReturn(java.util.Optional.of(com.voyra.crm.entity.Booking.builder().id("CRM1").bookingNumber(31L).build()));
+
+        ETicketPdfRenderer.ETicketData d = rendered(() -> service.pdf("B1", t.getId()));
+
+        assertThat(d.bookingReference()).isEqualTo("BK00000031");
+    }
+
     @Test
     void pdfPrintsTheAgencyTheBookingAndEachPassenger() {
         owner();
@@ -416,7 +434,7 @@ class PlatformBookingTicketServiceTest {
         assertThat(d.phone()).isEqualTo("999");
         assertThat(d.address()).isEqualTo("1 Main Rd");
         assertThat(d.agencyLogo()).isSameAs(logo);
-        assertThat(d.bookingId()).isEqualTo("B1");
+        assertThat(d.bookingReference()).isNull(); // no CRM booking (Basic): the PNR is the reference
         assertThat(d.issuedAt()).isEqualTo(TICKETED_AT);
         assertThat(d.statusText()).isEqualTo("Confirmed");
         assertThat(d.watermarkCancelled()).isFalse();

@@ -76,7 +76,7 @@ public final class ETicketPdfRenderer {
     private static final Color RED = new Color(0xB4, 0x23, 0x18);
 
     public record ETicketData(String agencyName, String email, String phone, String address, byte[] agencyLogo,
-                              String bookingId, Instant issuedAt, String statusText, boolean watermarkCancelled,
+                              String bookingReference, Instant issuedAt, String statusText, boolean watermarkCancelled,
                               boolean watermarkTest, TicketFacts facts, List<PaxRow> passengers,
                               List<FareLine> fare, BigDecimal total) {
     }
@@ -186,13 +186,23 @@ public final class ETicketPdfRenderer {
             });
         }
         t.addCell(pnr);
-        PdfPCell ref = bandCell("Booking reference");
-        ref.addElement(para(dash(d.bookingId()), FontFactory.getFont(FontFactory.COURIER, 8, INK), Element.ALIGN_LEFT));
+        // the agency's own booking number; a Basic agency has none, so the PNR is the reference
+        PdfPCell ref = d.bookingReference() == null ? blankBandCell() : bandCell("Booking reference");
+        if (d.bookingReference() != null) {
+            ref.addElement(para(d.bookingReference(), font(true, 11, INK), Element.ALIGN_LEFT));
+        }
         t.addCell(ref);
         PdfPCell status = bandCell("Status");
         status.addElement(para(dash(d.statusText()), font(true, 11, d.watermarkCancelled() ? RED : TEAL_DARK), Element.ALIGN_LEFT));
         t.addCell(status);
         return t;
+    }
+
+    private static PdfPCell blankBandCell() {
+        PdfPCell c = new PdfPCell();
+        c.setBorder(0);
+        c.setBackgroundColor(TINT);
+        return c;
     }
 
     private static PdfPCell bandCell(String label) {

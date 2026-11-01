@@ -14,12 +14,14 @@ import com.voyra.crm.exception.BookingConflictException;
 import com.voyra.crm.exception.NotFoundException;
 import com.voyra.crm.models.Entitlements;
 import com.voyra.crm.models.booking.TicketLine;
+import com.voyra.crm.repository.BookingRepository;
 import com.voyra.crm.repository.PlatformBookingRepository;
 import com.voyra.crm.repository.PlatformBookingTicketRepository;
 import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.service.AgencyLogoLoader;
 import com.voyra.crm.security.SystemActor;
 import com.voyra.crm.service.AuthorResolver;
+import com.voyra.crm.service.BookingService;
 import com.voyra.crm.service.EntitlementService;
 import com.voyra.crm.service.booking.ticket.Direction;
 import com.voyra.crm.service.booking.ticket.FareLine;
@@ -42,6 +44,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Customer e-ticket downloads of a ticketed platform flight. Each download is a record (markup, fare lines and total
@@ -64,6 +67,7 @@ public class PlatformBookingTicketService {
     private final EntitlementService entitlementService;
     private final PlatformBookingMirrorService mirrorService;
     private final PlatformTransactionManager transactionManager;
+    private final BookingRepository crmBookingRepository;
 
     public record TicketPdf(byte[] bytes, String filename) {
     }
@@ -170,7 +174,7 @@ public class PlatformBookingTicketService {
         TicketFacts facts = TicketFacts.from(b.getItinerary(), b.getPricingSnapshot());
         boolean ticketed = b.getStatus() == PlatformBookingStatus.TICKETED;
         byte[] pdf = ETicketPdfRenderer.render(new ETicketPdfRenderer.ETicketData(agency.getAgencyName(), agency.getContactEmail(),
-                agency.getContactPhone(), agency.getAddress(), agencyLogoLoader.load(agency), b.getId(),
+                agency.getContactPhone(), agency.getAddress(), agencyLogoLoader.load(agency), reference(b),
                 b.getTicketedAt() != null ? b.getTicketedAt() : b.getCreatedAt(),
                 ticketed ? "Confirmed" : b.getStatus() == PlatformBookingStatus.CANCELLING ? "Cancellation in progress" : "Cancelled",
                 !ticketed, b.getEnvironment() != SupplierEnvironment.PROD, facts,
@@ -203,6 +207,12 @@ public class PlatformBookingTicketService {
     private static String pnr(int pax, String sector, List<TicketLine> lines, String fallback) {
         return lines.stream().filter(l -> l.paxIndex() == pax && Objects.equals(l.sector(), sector) && l.pnr() != null)
                 .map(TicketLine::pnr).findFirst().orElse(fallback);
+    }
+
+    /** The agency's CRM booking number (BK00000031) when it has one; null on Basic, where the PNR is the reference. */
+    private String reference(PlatformBooking b) {
+        return Optional.ofNullable(b.getTenantBookingId()).flatMap(crmBookingRepository::findById)
+                .map(crm -> BookingService.bookingRef(crm.getBookingNumber())).orElse(null);
     }
 
     /** e-ticket-<first PNR, non-alphanumerics as _, or the booking id>-<seq>.pdf */

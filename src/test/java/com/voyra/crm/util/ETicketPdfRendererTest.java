@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class ETicketPdfRendererTest {
 
-    private static final String UUID = "3f2b9c1e-7a4d-4e0b-9c2f-1d5e8a6b7c90";
+    private static final String UUID = "BK00000031"; // the CRM booking number the service passes as the reference
     private static final Segment SEG = new Segment("6E", "IndiGo", "6E-123", "DEL", "Delhi", "3", "Indira Gandhi",
             "BOM", "Mumbai", "2", "Chhatrapati Shivaji", "2026-11-05T06:15", "2026-11-05T08:25", 130);
     private static final Segment BACK_SEG = new Segment("SG", "SpiceJet", "SG-8170", "BOM", "Mumbai", "1", null,
@@ -102,7 +102,7 @@ class ETicketPdfRendererTest {
         ETicketData d = new ETicketData(null, null, null, null, null, null, null, null, false, false,
                 new TicketFacts(List.of(BARE), Map.of(), List.of()), List.of(new PaxRow(null, null, null, null, null)),
                 null, null);
-        assertThat(text(d)).doesNotContain("null").contains("-");
+        assertThat(text(d)).doesNotContain("null").doesNotContain("Booking reference").contains("-"); // no CRM booking: no reference cell
         // no facts at all, and a segment-less direction, also render
         assertThat(text(data(List.of(), null, false, false, null))).doesNotContain("null");
         assertThat(text(data(null, null, false, false,
