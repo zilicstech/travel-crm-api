@@ -336,6 +336,31 @@ class PlatformSupplierCredentialServiceTest {
     }
 
     @Test
+    void updateAcceptsTheSameProviderAndEditsTheUrlWithinTheEnvironment() {
+        PlatformSupplierCredential existing = stored("old_key_1234", SupplierEnvironment.UAT, "https://apitest.tripjack.com");
+        when(repository.findById("C1")).thenReturn(Optional.of(existing));
+        when(productRepository.findByCredentialIdIn(List.of("C1"))).thenReturn(List.of(row(PricingProduct.FLIGHT, true, true)));
+        PlatformSupplierUpdateRequest r = updateRequest("Tripjack", "https://apitest.tripjack.com/", null, sw(PricingProduct.FLIGHT, true, true));
+        r.setProvider(SupplierProvider.TRIPJACK);
+        service.update("C1", r);
+        verify(repository, never()).save(any());
+
+        existing.setBaseUrl("https://old.example");
+        service.update("C1", r);
+        assertThat(existing.getBaseUrl()).isEqualTo("https://apitest.tripjack.com");
+    }
+
+    @Test
+    void aSearchSwitchChangeOnAnExistingRowIsSaved() {
+        when(repository.findById("C1")).thenReturn(Optional.of(stored("old_key_1234")));
+        when(productRepository.findByCredentialIdIn(List.of("C1"))).thenReturn(List.of(row(PricingProduct.FLIGHT, true, true)));
+
+        service.update("C1", updateRequest("Tripjack", "https://api.tripjack.com", null, sw(PricingProduct.FLIGHT, false, true)));
+
+        assertThat(auditDetail(PlatformAuditAction.CREDENTIAL_SET).get("changed")).isEqualTo(List.of("products"));
+    }
+
+    @Test
     void anUnchangedSaveChangesNothing() {
         PlatformSupplierCredential existing = stored("old_key_1234");
         when(repository.findById("C1")).thenReturn(Optional.of(existing));

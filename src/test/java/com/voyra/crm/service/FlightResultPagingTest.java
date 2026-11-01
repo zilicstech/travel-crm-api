@@ -175,6 +175,40 @@ class FlightResultPagingTest {
     }
 
     @Test
+    void aLegWithOnlyAnAirlineNameKeepsItsOwnAndAnEmptyLegListFallsBackToTheOffer() {
+        FlightOfferResponse named = offer("IndiGo", "6E1", 6, "5000", 0, "2h", true, FlightDirection.COMBO);
+        named.setLegs(List.of(FlightLegResponse.builder().airline("Air India").flightNumber("101").build()));
+        FlightOfferResponse empty = offer("IndiGo", "6E1", 6, "5000", 0, "2h", true, FlightDirection.ONWARD);
+        empty.setLegs(List.of());
+
+        assertThat(FlightResultPaging.groupKey(named)).startsWith("AIR INDIA|101|");
+        assertThat(FlightResultPaging.groupKey(empty)).startsWith("IN|61|");
+    }
+
+    @Test
+    void aBookableFareWithoutASupplierIdSortsAfterOneOnASupplierTakingBookings() {
+        FlightOfferResponse orphan = supplied(null, null, "6E", "206", "4000", true, false, null);
+        FlightOfferResponse taking = supplied("s1", "A", "6E", "206", "5000", true, false, null);
+        FlightGroupResponse g = FlightResultPaging.group(List.of(orphan, taking)).get(0);
+
+        assertThat(FlightResultPaging.summarise(g, g.getFares(), Set.of("s1")).getFares()).containsExactly(taking, orphan);
+    }
+
+    @Test
+    void aRoundTripWithAComboBesideAnOnwardOrWithOnlyReturnsIsSplit() {
+        FlightSearchPageRequest r = req();
+        r.getQuery().setReturnDate(LocalDate.of(2026, 12, 5));
+        FlightOfferResponse combo = supplied("s1", "A", "6E", "206", "9000", true, false, FlightDirection.COMBO);
+        FlightOfferResponse onward = supplied("s2", "B", "AI", "101", "4000", true, false, null);
+        FlightOfferResponse ret = supplied("s2", "B", "AI", "102", "4100", true, false, FlightDirection.RETURN);
+
+        assertThat(FlightResultPaging.page(FlightResultPaging.group(List.of(combo, onward)), r, NONE).getTripType())
+                .isEqualTo(FlightSearchTripType.ROUND_TRIP_SPLIT);
+        assertThat(FlightResultPaging.page(FlightResultPaging.group(List.of(ret)), r, NONE).getTripType())
+                .isEqualTo(FlightSearchTripType.ROUND_TRIP_SPLIT);
+    }
+
+    @Test
     void thePageListsTheSuppliersInTheResultWithTheirBookingState() {
         List<FlightGroupResponse> groups = FlightResultPaging.group(List.of(
                 supplied("s2", "Mock supplier 2", "6E", "206", "5200", true, false, null),
