@@ -26,6 +26,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -239,8 +240,8 @@ public class SubscriptionService {
     /** Freezes today's Plans-tab prices for {@code plan} on the row; the agency keeps them until its plan changes. */
     private void freezePrices(Subscription s, SubscriptionPlan plan) {
         PlanPrices prices = settingService.planPrices();
-        s.setPlanPriceMonthly(prices.monthly(plan).setScale(2));
-        s.setSeatPriceMonthly(prices.staffSeats().setScale(2));
+        s.setPlanPriceMonthly(prices.monthly(plan).setScale(2, RoundingMode.HALF_UP));
+        s.setSeatPriceMonthly(prices.staffSeats().setScale(2, RoundingMode.HALF_UP));
     }
 
     /** What the upgrade cards show: Lite and Premium monthly price before GST, as set on the Plans tab. */

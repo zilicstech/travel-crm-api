@@ -15,11 +15,14 @@ BEGIN
         plan_price_monthly = CASE plan WHEN 'LITE' THEN (p ->> 'LITE')::numeric
                                        WHEN 'SUITE' THEN (p ->> 'SUITE')::numeric ELSE 0 END
     WHERE plan <> 'CUSTOM';
+    FOR r IN SELECT tenant_id, plan FROM subscription WHERE plan IN ('LITE','SUITE') AND plan_price_monthly = 0 LOOP
+        RAISE WARNING 'V38: agency % on % has a zero plan price (sku_prices % was 0)', r.tenant_id, r.plan, r.plan;
+    END LOOP;
     FOR r IN SELECT id, tenant_id, skus, seats FROM subscription WHERE plan = 'CUSTOM' FOR UPDATE LOOP
         target := CASE WHEN 'ACCOUNTS_GST' = ANY (r.skus) THEN 'SUITE' ELSE 'LITE' END;
         included := CASE target WHEN 'SUITE' THEN 5 ELSE 3 END;
         -- today's renewal, unchanged: the non-seat SKUs plus the seats the plan now includes
-        price := COALESCE((SELECT SUM((p ->> s)::numeric) FROM unnest(r.skus) s WHERE s <> 'STAFF_SEATS' AND p ? s), 0)
+        price := COALESCE((SELECT SUM((p ->> s)::numeric) FROM (SELECT DISTINCT unnest(r.skus) AS s) u WHERE s <> 'STAFF_SEATS' AND p ? s), 0)
                + CASE WHEN 'STAFF_SEATS' = ANY (r.skus) THEN LEAST(r.seats, included) * seat ELSE 0 END;
         UPDATE subscription SET plan = target,
             seats = CASE WHEN 'STAFF_SEATS' = ANY (r.skus) THEN GREATEST(r.seats - included, 0) ELSE 0 END,
@@ -27,6 +30,9 @@ BEGIN
                                ELSE ARRAY['CRM_CORE','STAFF_SEATS','REPORTS','VISA'] END,
             plan_price_monthly = price, seat_price_monthly = seat, updated_at = now()
         WHERE id = r.id;
+        IF price = 0 THEN
+            RAISE WARNING 'V38: agency % converted from CUSTOM to % at a zero plan price, it will not be billed', r.tenant_id, target;
+        END IF;
         RAISE NOTICE 'V38: agency % moved from CUSTOM % (% seats) to % at % a month', r.tenant_id, r.skus, r.seats, target, price;
     END LOOP;
 END $$;

@@ -125,6 +125,18 @@ class SubscriptionServiceTest {
     }
 
     @Test
+    void freezingRoundsAStoredPriceWithMoreThanTwoDecimals() {
+        liteRowFrozenAt2999();
+        when(settingService.planPrices()).thenReturn(new com.voyra.crm.models.PlanPrices(
+                new BigDecimal("2999.995"), new BigDecimal("5999.994"), new BigDecimal("449.005")));
+
+        service.update("T1", update(SubscriptionPlan.SUITE, 0, BillingCycle.MONTHLY));
+
+        assertThat(sub.getPlanPriceMonthly()).isEqualTo(new BigDecimal("5999.99"));
+        assertThat(sub.getSeatPriceMonthly()).isEqualTo(new BigDecimal("449.01"));
+    }
+
+    @Test
     void changingOnlySeatsOrCycleKeepsTheFrozenPrices() {
         liteRowFrozenAt2999();
 

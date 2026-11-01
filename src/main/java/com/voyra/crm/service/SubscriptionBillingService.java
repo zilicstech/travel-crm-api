@@ -45,7 +45,7 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * Voyra's subscription invoices (spec §5.2, §7.6): lines priced from {@code sku_prices}, GST 18 %, numbered
+ * Voyra's subscription invoices (spec §5.2, §7.6): lines priced from the prices frozen on the subscription row, GST 18 %, numbered
  * {@code VOY-SUB-<yyyy>-<seq>}, a stored PDF; settled by the gateway webhook or by an admin (bank), or voided.
  * Paying moves the agency onto a paid plan (waiver cleared, ACTIVE, the paid period) and refreshes the
  * entitlement cache in the same method. Never touches a wallet: subscriptions are billed outside it.
