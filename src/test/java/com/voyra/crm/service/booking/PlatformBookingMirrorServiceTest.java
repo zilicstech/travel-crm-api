@@ -60,6 +60,7 @@ class PlatformBookingMirrorServiceTest {
     @Mock private PlatformBookingQueryService queryService;
     @Mock private NotificationService notificationService;
     @Mock private PlatformTransactionManager transactionManager;
+    @Mock private com.voyra.crm.service.EntitlementService entitlementService;
 
     private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
     private final PaxCodec paxCodec = new PaxCodec(objectMapper, KEY);
@@ -69,7 +70,8 @@ class PlatformBookingMirrorServiceTest {
     @BeforeEach
     void setUp() {
         service = new PlatformBookingMirrorService(repository, tenantService, queryService, paxCodec,
-                new PlatformBookingEventRecorder(eventRepository, paxCodec), notificationService, transactionManager);
+                new PlatformBookingEventRecorder(eventRepository, paxCodec), notificationService, entitlementService, transactionManager);
+        crmCore(true);
         when(eventRepository.save(any())).thenAnswer(i -> {
             recorded.add(i.getArgument(0));
             return i.getArgument(0);
@@ -77,6 +79,70 @@ class PlatformBookingMirrorServiceTest {
         when(repository.save(any())).thenAnswer(i -> i.getArgument(0));
         when(queryService.itinerary(any())).thenReturn(List.of(
                 new ItinerarySegment("DEL", "BOM", "2026-12-02T09:00", "2026-12-02T11:10", "IndiGo", "6E-201")));
+    }
+
+    private void crmCore(boolean on) {
+        when(entitlementService.resolve("T1")).thenReturn(new com.voyra.crm.models.Entitlements(com.voyra.crm.enums.SubscriptionPlan.SUITE,
+                com.voyra.crm.enums.SubscriptionStatus.ACTIVE, on ? java.util.EnumSet.allOf(com.voyra.crm.enums.Sku.class) : java.util.Set.of(),
+                5, false, null));
+    }
+
+    /** A Basic agency keeps no CRM booking: nothing is written and the row waits as NONE for a backfill. */
+    @Test
+    void aBasicAgencyGetsNoCrmBooking() {
+        PlatformBooking b = ticketed("C1");
+        crmCore(false);
+
+        service.sync("PB1");
+
+        verifyNoInteractions(tenantService);
+        assertThat(b.getMirrorStatus()).isEqualTo(MirrorStatus.NONE);
+    }
+
+    /** An agency that dropped CRM Core still keeps the CRM booking it already has in line. */
+    @Test
+    void aCrmBookingMadeBeforeADowngradeStaysInLine() {
+        PlatformBooking b = ticketed("C1");
+        b.setTenantBookingId("B1");
+        crmCore(false);
+        when(tenantService.ensure(any(), anyList(), any(), anyList())).thenReturn("B1");
+
+        service.sync("PB1");
+
+        verify(tenantService).ticket(eq("B1"), eq(b), anyList(), anyList());
+        assertThat(b.getMirrorStatus()).isEqualTo(MirrorStatus.DONE);
+    }
+
+    /** Once the agency has CRM Core, an earlier booking is queued and synced, showing it as it is now. */
+    @Test
+    void backfillQueuesAndSyncsAnEarlierBooking() {
+        PlatformBooking b = ticketed("C1");
+        b.setMirrorStatus(MirrorStatus.NONE);
+        when(tenantService.ensure(any(), anyList(), any(), anyList())).thenReturn("B1");
+
+        service.backfill("PB1");
+
+        assertThat(recorded).extracting(PlatformBookingEvent::getType).startsWith("MIRROR_QUEUED");
+        verify(tenantService).ticket(eq("B1"), eq(b), anyList(), anyList());
+        assertThat(b.getMirrorStatus()).isEqualTo(MirrorStatus.DONE);
+        assertThat(b.getTenantBookingId()).isEqualTo("B1");
+    }
+
+    /** Only a row still NONE, with a client, at a status the CRM shows. */
+    @Test
+    void backfillLeavesOtherRowsAlone() {
+        PlatformBooking b = ticketed("C1");
+        b.setMirrorStatus(MirrorStatus.FAILED);
+        service.backfill("PB1");
+        b.setMirrorStatus(MirrorStatus.NONE);
+        b.setClientId(null);
+        service.backfill("PB1");
+        b.setClientId("C1");
+        b.setStatus(PlatformBookingStatus.HELD);
+        service.backfill("PB1");
+
+        verifyNoInteractions(tenantService);
+        assertThat(recorded).isEmpty();
     }
 
     @AfterEach

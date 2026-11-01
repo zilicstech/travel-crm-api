@@ -26,7 +26,32 @@ class PlatformBookingMirrorRepairJobTest {
     @Mock private PlatformBookingRepository repository;
     @Mock private PlatformBookingMirrorService mirrorService;
     @Mock private com.voyra.crm.repository.PlatformBookingEventRepository eventRepository;
+    @Mock private com.voyra.crm.service.EntitlementService entitlementService;
     @InjectMocks private PlatformBookingMirrorRepairJob job;
+
+    private void plan(String tenantId, boolean crmCore) {
+        when(entitlementService.resolve(tenantId)).thenReturn(new com.voyra.crm.models.Entitlements(com.voyra.crm.enums.SubscriptionPlan.SUITE,
+                com.voyra.crm.enums.SubscriptionStatus.ACTIVE, crmCore ? EnumSet.allOf(com.voyra.crm.enums.Sku.class) : java.util.Set.of(),
+                5, false, null));
+    }
+
+    /** An agency that gained CRM Core gets its earlier bookings backfilled; a Basic agency's stay as they are; one bad row never stops it. */
+    @Test
+    void backfillsOnlyAgenciesWithCrmCore() {
+        when(repository.findTenantsWithUnmirroredBookings(PlatformBookingMirrorService.MIRRORED)).thenReturn(List.of("BASIC", "LITE"));
+        plan("BASIC", false);
+        plan("LITE", true);
+        when(repository.findByTenantIdAndMirrorStatusAndClientIdIsNotNullAndStatusIn("LITE", MirrorStatus.NONE, PlatformBookingMirrorService.MIRRORED))
+                .thenReturn(List.of(PlatformBooking.builder().id("PB1").build(), PlatformBooking.builder().id("PB2").build()));
+        doThrow(new IllegalStateException("unexpected")).when(mirrorService).backfill("PB1");
+
+        job.run();
+
+        verify(mirrorService).backfill("PB1");
+        verify(mirrorService).backfill("PB2");
+        verify(repository, org.mockito.Mockito.never()).findByTenantIdAndMirrorStatusAndClientIdIsNotNullAndStatusIn(
+                org.mockito.ArgumentMatchers.eq("BASIC"), any(), any());
+    }
 
     @Test
     void repairJobRetriesFailedMirrors() {

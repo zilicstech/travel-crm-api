@@ -53,6 +53,14 @@ public interface PlatformBookingRepository extends JpaRepository<PlatformBooking
 
     List<PlatformBooking> findByMirrorStatusIn(Collection<com.voyra.crm.enums.MirrorStatus> statuses);
 
+    /** Agencies with a booking for a client that has no CRM booking (made without CRM Core): the backfill's candidates. */
+    @Query("select distinct b.tenantId from PlatformBooking b where b.mirrorStatus = com.voyra.crm.enums.MirrorStatus.NONE "
+            + "and b.clientId is not null and b.status in :statuses")
+    List<String> findTenantsWithUnmirroredBookings(@Param("statuses") Collection<PlatformBookingStatus> statuses);
+
+    List<PlatformBooking> findByTenantIdAndMirrorStatusAndClientIdIsNotNullAndStatusIn(
+            String tenantId, com.voyra.crm.enums.MirrorStatus mirrorStatus, Collection<PlatformBookingStatus> statuses);
+
     List<PlatformBooking> findByTenantIdOrderByCreatedAtDesc(String tenantId, Pageable pageable);
 
     Page<PlatformBooking> findByTenantId(String tenantId, Pageable pageable);

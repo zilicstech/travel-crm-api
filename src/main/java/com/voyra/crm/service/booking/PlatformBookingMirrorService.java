@@ -8,8 +8,10 @@ import com.voyra.crm.entity.PlatformBooking;
 import com.voyra.crm.enums.MirrorStatus;
 import com.voyra.crm.enums.PlatformBookingStatus;
 import com.voyra.crm.enums.PricingProduct;
+import com.voyra.crm.enums.Sku;
 import com.voyra.crm.repository.PlatformBookingRepository;
 import com.voyra.crm.security.SystemActor;
+import com.voyra.crm.service.EntitlementService;
 import com.voyra.crm.service.NotificationService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -28,7 +30,8 @@ import java.util.Set;
 /**
  * Keeps the agency's read-only CRM mirror of a platform booking in line with it (unified bookings spec Part 2): PENDING
  * from the moment the booking is sent, CONFIRMED and paid once ticketed, cancelled when it fails or is cancelled - only
- * for a booking that names a CRM client. Runs after the platform money committed and never touches it: a failure sets {@code mirror_status = FAILED}, records an event and
+ * for a booking that names a CRM client, in an agency with CRM Core (a Basic agency's record is the platform row; its
+ * bookings are backfilled once it gains CRM Core). Runs after the platform money committed and never touches it: a failure sets {@code mirror_status = FAILED}, records an event and
  * alerts Voyra, and {@code PlatformBookingMirrorRepairJob} retries. The tenant writes run as the {@link SystemActor} in
  * {@link PlatformBookingMirrorTenantService}'s own {@code REQUIRES_NEW} transactions (blueprint 3.5).
  */
@@ -42,18 +45,20 @@ public class PlatformBookingMirrorService {
     private final PaxCodec paxCodec;
     private final PlatformBookingEventRecorder events;
     private final NotificationService notificationService;
+    private final EntitlementService entitlementService;
     private final TransactionTemplate tx;
 
     public PlatformBookingMirrorService(PlatformBookingRepository repository, PlatformBookingMirrorTenantService tenantService,
                                         PlatformBookingQueryService queryService, PaxCodec paxCodec,
                                         PlatformBookingEventRecorder events, NotificationService notificationService,
-                                        PlatformTransactionManager transactionManager) {
+                                        EntitlementService entitlementService, PlatformTransactionManager transactionManager) {
         this.repository = repository;
         this.tenantService = tenantService;
         this.queryService = queryService;
         this.paxCodec = paxCodec;
         this.events = events;
         this.notificationService = notificationService;
+        this.entitlementService = entitlementService;
         this.tx = new TransactionTemplate(transactionManager);
     }
 
@@ -63,7 +68,7 @@ public class PlatformBookingMirrorService {
     }
 
     /** The platform statuses the CRM shows; REVIEWING, HELD and ABORTED never have a CRM row, CANCELLING changes nothing. */
-    private static final Set<PlatformBookingStatus> MIRRORED = EnumSet.of(PlatformBookingStatus.BOOKING,
+    public static final Set<PlatformBookingStatus> MIRRORED = EnumSet.of(PlatformBookingStatus.BOOKING,
             PlatformBookingStatus.UNKNOWN, PlatformBookingStatus.TICKETED, PlatformBookingStatus.FAILED, PlatformBookingStatus.CANCELLED);
 
     /**
@@ -74,7 +79,11 @@ public class PlatformBookingMirrorService {
     public void sync(String platformBookingId) {
         PlatformBooking b = repository.findById(platformBookingId).orElse(null);
         if (b == null || b.getClientId() == null || b.getMirrorStatus() == MirrorStatus.DONE || !MIRRORED.contains(b.getStatus())) {
-            return; // no CRM client (a Starter agency's record is the platform row), already in line, or nothing to show
+            return; // no CRM client, already in line, or nothing to show
+        }
+        if (b.getTenantBookingId() == null && !crmCore(b.getTenantId())) {
+            defer(platformBookingId);
+            return;
         }
         PlatformBookingStatus acted = b.getStatus();
         try {
@@ -103,6 +112,37 @@ public class PlatformBookingMirrorService {
             log.warn("CRM mirror of platform booking {} failed: {}", platformBookingId, e.toString());
             finish(platformBookingId, acted, null, e);
         }
+    }
+
+    /**
+     * An agency that has gained CRM Core gets the CRM booking of an earlier booking made without it (Basic keeps none):
+     * queued like a status move, then synced, so the CRM booking shows the booking as it is now. Only a row still NONE.
+     */
+    public void backfill(String platformBookingId) {
+        boolean queued = Boolean.TRUE.equals(tx.execute(s -> repository.findByIdForUpdate(platformBookingId)
+                .filter(r -> r.getMirrorStatus() == MirrorStatus.NONE && r.getClientId() != null && MIRRORED.contains(r.getStatus()))
+                .map(r -> {
+                    r.setMirrorStatus(MirrorStatus.PENDING);
+                    repository.save(r);
+                    events.record(platformBookingId, "MIRROR_QUEUED", Map.of("status", r.getStatus().name(), "backfill", true));
+                    return true;
+                }).orElse(false)));
+        if (queued) {
+            sync(platformBookingId);
+        }
+    }
+
+    private boolean crmCore(String tenantId) {
+        return entitlementService.resolve(tenantId).skus().contains(Sku.CRM_CORE);
+    }
+
+    /** No CRM Core and no CRM booking yet: nothing is written and the row waits as NONE for {@link #backfill}. */
+    private void defer(String id) {
+        tx.executeWithoutResult(s -> repository.findByIdForUpdate(id).ifPresent(r -> {
+            r.setMirrorStatus(MirrorStatus.NONE);
+            repository.save(r);
+        }));
+        log.info("CRM mirror of platform booking {} deferred: the agency has no CRM Core", id);
     }
 
     /**

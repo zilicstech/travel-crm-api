@@ -385,3 +385,16 @@ without CRM Core and mirror ticketed rows on upgrade) is listed as an owner ques
     ticketed it.
 11. The CRM write behind a ticket download is skipped on Basic and READ_ONLY plans and runs on SUSPENDED.
 12. An agent sees the Voyra card only on bookings they made themselves (`platformBookedBy`).
+
+## Owner ruling 2026-11-01: no CRM record on Basic
+
+The owner replaced the Basic consequence above (Part 1) and the personal-data ruling: a Basic agency has one bookings
+tab and gets no CRM record of a Voyra booking; subscribing brings the CRM features to the same bookings, not a second
+list. The mirror's `sync` writes nothing for a row with no CRM booking in an agency without CRM Core and leaves
+`mirror_status` NONE. Once the agency has CRM Core, the repair job (every 10 minutes) backfills each of its rows still
+NONE with a client at BOOKING, UNKNOWN, TICKETED, FAILED or CANCELLED: queued like a status move and synced, so the
+CRM booking shows the booking as it is now (ticketed: confirmed with the supplier bill paid; cancelled: the CRM
+cancel; failed: cancelled, nothing charged). Costs: up to 10 minutes after an upgrade before the earlier bookings show;
+a booking whose passengers were purged comes in without traveller names; a CRM agency's failed bookings from before
+unified bookings (never mirrored) are backfilled as cancelled, nothing charged. A CRM booking that already exists stays
+in line after a downgrade.
