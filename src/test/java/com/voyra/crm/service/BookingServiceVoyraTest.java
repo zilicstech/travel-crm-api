@@ -62,6 +62,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -165,8 +166,12 @@ class BookingServiceVoyraTest {
         }
     }
 
+    /** When the platform booking was made: 01:30 on 25 Oct in India, still 24 Oct in UTC, days before this run. */
+    private static final java.time.Instant BOOKED = java.time.Instant.parse("2026-10-24T20:00:00Z");
+    private static final LocalDate TICKETED_ON = LocalDate.of(2026, 10, 26);
+
     private void billDrafted(String id) {
-        when(supplierInvoiceService.draftForVoucher(any(), anyString(), anyString(), any(), any(), any(), any(), any()))
+        when(supplierInvoiceService.draftForVoucher(any(), anyString(), anyString(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(SupplierInvoiceResponse.builder().id(id).build());
     }
 
@@ -179,7 +184,7 @@ class BookingServiceVoyraTest {
                 .type(ServiceType.FLIGHT).build()));
         BookingDocument voucher = ticket();
 
-        String id = platform(() -> bookingService.createVoyraPending(request(), voucher, "PB1"));
+        String id = platform(() -> bookingService.createVoyraPending(request(), voucher, "PB1", BOOKED));
 
         ArgumentCaptor<Booking> saved = ArgumentCaptor.forClass(Booking.class);
         verify(bookingRepository, times(2)).save(saved.capture());
@@ -193,6 +198,8 @@ class BookingServiceVoyraTest {
         assertThat(b.getMarkupMode()).isEqualTo(MarkupMode.FLAT);
         assertThat(b.getMarkupValue()).isEqualByComparingTo("500");
         assertThat(b.getPnr()).isNull();
+        assertThat(b.getBookingDate()).isEqualTo(LocalDate.of(2026, 10, 25)); // the day in India it was booked
+        assertThat(b.getCreatedDate()).isEqualTo(java.time.LocalDateTime.ofInstant(BOOKED, java.time.ZoneId.systemDefault()));
         assertThat(voucher.getBookingId()).isEqualTo(id);
         assertThat(voucher.getSellingPrice()).isEqualByComparingTo("10500");
         assertThat(voucher.getVendorId()).isEqualTo("V1");
@@ -212,7 +219,7 @@ class BookingServiceVoyraTest {
         r.setPnr("PNR1");
         r.setHotelConfirmationNo("HCN1");
 
-        platform(() -> bookingService.createVoyraPending(r, ticket(), "PB1"));
+        platform(() -> bookingService.createVoyraPending(r, ticket(), "PB1", BOOKED));
 
         ArgumentCaptor<Booking> saved = ArgumentCaptor.forClass(Booking.class);
         verify(bookingRepository, times(2)).save(saved.capture());
@@ -225,7 +232,7 @@ class BookingServiceVoyraTest {
         Booking b = pending().bookingStatus(BookingStatus.CONFIRMED).leadId("L1").build();
         locked(b);
 
-        platformRun(() -> bookingService.failVoyraBooking("B1"));
+        platformRun(() -> bookingService.failVoyraBooking("B1", BOOKED));
 
         assertThat(b.getBookingStatus()).isEqualTo(BookingStatus.CONFIRMED);
         assertThat(b.getCancelReason()).isNull();
@@ -235,11 +242,11 @@ class BookingServiceVoyraTest {
 
     @Test
     void createVoyraPendingRefusesOutsideTheSystemActor() {
-        assertThatThrownBy(() -> bookingService.createVoyraPending(request(), ticket(), "PB1"))
+        assertThatThrownBy(() -> bookingService.createVoyraPending(request(), ticket(), "PB1", BOOKED))
                 .isInstanceOf(IllegalStateException.class).hasMessage("Voyra bookings are written by the platform only");
-        assertThatThrownBy(() -> bookingService.confirmVoyraTicket("B1", "PNR9", null, v -> { }))
+        assertThatThrownBy(() -> bookingService.confirmVoyraTicket("B1", "PNR9", null, TICKETED_ON, v -> { }))
                 .isInstanceOf(IllegalStateException.class).hasMessage("Voyra bookings are written by the platform only");
-        assertThatThrownBy(() -> bookingService.failVoyraBooking("B1"))
+        assertThatThrownBy(() -> bookingService.failVoyraBooking("B1", BOOKED))
                 .isInstanceOf(IllegalStateException.class).hasMessage("Voyra bookings are written by the platform only");
         verifyNoInteractions(bookingRepository);
     }
@@ -254,12 +261,12 @@ class BookingServiceVoyraTest {
         when(leadServiceRepository.findById("S1")).thenReturn(Optional.of(LeadService.builder().id("S1").leadId("L1")
                 .type(ServiceType.FLIGHT).assignedAgentId("A1").assignedAgentName("Priya").build()));
 
-        String bill = platform(() -> bookingService.confirmVoyraTicket("B1", "PNR9", "098-1",
+        String bill = platform(() -> bookingService.confirmVoyraTicket("B1", "PNR9", "098-1", TICKETED_ON,
                 v -> v.setIssuedDate(LocalDate.of(2026, 11, 1))));
 
         assertThat(bill).isEqualTo("SI1");
         verify(supplierInvoiceService, times(1)).draftForVoucher(b, "V1", "PNR9", "INR", new BigDecimal("10000"),
-                BigDecimal.ONE, BigDecimal.ZERO, BigDecimal.ZERO);
+                BigDecimal.ONE, BigDecimal.ZERO, BigDecimal.ZERO, TICKETED_ON); // the bill is dated the ticketing day
         verify(leadTimelineService).record("L1", "S1", LeadTimelineEventType.BOOKING_LOGGED,
                 "Voyra Platform booking logged (PNR9)");
         verify(serviceBookingStatusSync).onBookingLogged("S1", "A1", "Priya");
@@ -282,12 +289,12 @@ class BookingServiceVoyraTest {
         locked(b, voucher);
         billDrafted("SI1");
 
-        assertThat(platform(() -> bookingService.confirmVoyraTicket("B1", "HCN1", null, v -> { }))).isEqualTo("SI1");
-        assertThat(platform(() -> bookingService.confirmVoyraTicket("B1", "HCN1", null, v -> { }))).isEqualTo("SI1");
+        assertThat(platform(() -> bookingService.confirmVoyraTicket("B1", "HCN1", null, TICKETED_ON, v -> { }))).isEqualTo("SI1");
+        assertThat(platform(() -> bookingService.confirmVoyraTicket("B1", "HCN1", null, TICKETED_ON, v -> { }))).isEqualTo("SI1");
         b.setBookingStatus(BookingStatus.COMPLETED);
-        assertThat(platform(() -> bookingService.confirmVoyraTicket("B1", "HCN1", null, v -> { }))).isEqualTo("SI1");
+        assertThat(platform(() -> bookingService.confirmVoyraTicket("B1", "HCN1", null, TICKETED_ON, v -> { }))).isEqualTo("SI1");
 
-        verify(supplierInvoiceService, times(1)).draftForVoucher(any(), any(), any(), any(), any(), any(), any(), any());
+        verify(supplierInvoiceService, times(1)).draftForVoucher(any(), any(), any(), any(), any(), any(), any(), any(), any());
         assertThat(b.getHotelConfirmationNo()).isEqualTo("HCN1");
         verifyNoInteractions(leadTimelineService, serviceBookingStatusSync);
     }
@@ -297,13 +304,13 @@ class BookingServiceVoyraTest {
         Booking b = pending().leadId("L1").serviceId("S1").build();
         locked(b);
 
-        platformRun(() -> bookingService.failVoyraBooking("B1"));
-        platformRun(() -> bookingService.failVoyraBooking("B1"));
+        platformRun(() -> bookingService.failVoyraBooking("B1", BOOKED));
+        platformRun(() -> bookingService.failVoyraBooking("B1", BOOKED));
 
         assertThat(b.getBookingStatus()).isEqualTo(BookingStatus.CANCELLED);
         assertThat(b.getCancelReason()).isEqualTo(FAIL_REASON);
         assertThat(b.getCancelledBy()).isEqualTo("system");
-        assertThat(b.getCancelledAt()).isNotNull();
+        assertThat(b.getCancelledAt()).isEqualTo(java.time.LocalDateTime.ofInstant(BOOKED, java.time.ZoneId.systemDefault()));
         assertThat(b.getRefundState()).isEqualTo(RefundState.NOT_APPLICABLE);
         assertThat(b.getCancellationType()).isNull();
         assertThat(b.getRefundAmount()).isNull();
@@ -327,9 +334,9 @@ class BookingServiceVoyraTest {
         BookingDocument voucher = ticket();
         locked(b, voucher);
         billDrafted("SI1");
-        platformRun(() -> bookingService.failVoyraBooking("B1"));
+        platformRun(() -> bookingService.failVoyraBooking("B1", BOOKED));
 
-        platform(() -> bookingService.confirmVoyraTicket("B1", "PNR9", null, v -> { }));
+        platform(() -> bookingService.confirmVoyraTicket("B1", "PNR9", null, TICKETED_ON, v -> { }));
 
         assertThat(b.getBookingStatus()).isEqualTo(BookingStatus.CONFIRMED);
         assertThat(b.getCancelReason()).isNull();
@@ -339,7 +346,7 @@ class BookingServiceVoyraTest {
         assertThat(BookingService.isFailCancelled(b)).isFalse();
         verify(leadTimelineService).record("L1", null, LeadTimelineEventType.BOOKING_LOGGED,
                 "Voyra ticketed this booking after all");
-        verify(supplierInvoiceService, times(1)).draftForVoucher(any(), any(), any(), any(), any(), any(), any(), any());
+        verify(supplierInvoiceService, times(1)).draftForVoucher(any(), any(), any(), any(), any(), any(), any(), any(), eq(TICKETED_ON));
         verify(auditService, times(2)).recordUpdate(any(), any(), any(), any());
     }
 
@@ -349,8 +356,8 @@ class BookingServiceVoyraTest {
         locked(b, ticket());
         billDrafted("SI1");
 
-        platformRun(() -> bookingService.failVoyraBooking("B1"));
-        platform(() -> bookingService.confirmVoyraTicket("B1", "PNR9", null, v -> { }));
+        platformRun(() -> bookingService.failVoyraBooking("B1", BOOKED));
+        platform(() -> bookingService.confirmVoyraTicket("B1", "PNR9", null, TICKETED_ON, v -> { }));
 
         assertThat(b.getBookingStatus()).isEqualTo(BookingStatus.CONFIRMED);
         verifyNoInteractions(leadTimelineService);
@@ -371,7 +378,7 @@ class BookingServiceVoyraTest {
         BookingDocument voucher = ticket();
         voucher.setSupplierInvoiceId("SI0");
         locked(cancelled, voucher);
-        assertThat(platform(() -> bookingService.confirmVoyraTicket("B1", "PNR9", null, v -> { }))).isEqualTo("SI0");
+        assertThat(platform(() -> bookingService.confirmVoyraTicket("B1", "PNR9", null, TICKETED_ON, v -> { }))).isEqualTo("SI0");
         assertThat(cancelled.getBookingStatus()).isEqualTo(BookingStatus.CANCELLED);
         verifyNoInteractions(supplierInvoiceService);
     }
@@ -379,11 +386,11 @@ class BookingServiceVoyraTest {
     @Test
     void voyraWritesRefuseAMissingBookingOrTicket() {
         when(bookingRepository.findByIdForUpdate("B9")).thenReturn(Optional.empty());
-        assertThatThrownBy(() -> platformRun(() -> bookingService.failVoyraBooking("B9")))
+        assertThatThrownBy(() -> platformRun(() -> bookingService.failVoyraBooking("B9", BOOKED)))
                 .isInstanceOf(NotFoundException.class).hasMessage("Booking not found: B9");
 
         locked(pending().build(), BookingDocument.builder().id("D0").docType(BookingDocumentType.OTHER).build());
-        assertThatThrownBy(() -> platform(() -> bookingService.confirmVoyraTicket("B1", "PNR9", null, v -> { })))
+        assertThatThrownBy(() -> platform(() -> bookingService.confirmVoyraTicket("B1", "PNR9", null, TICKETED_ON, v -> { })))
                 .isInstanceOf(IllegalStateException.class).hasMessage("This Voyra booking has no ticket or voucher");
     }
 

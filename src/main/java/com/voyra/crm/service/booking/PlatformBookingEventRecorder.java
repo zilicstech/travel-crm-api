@@ -28,6 +28,11 @@ public class PlatformBookingEventRecorder {
                 .build());
     }
 
+    /** When the latest event of {@code type} on the booking was recorded. */
+    public Optional<Instant> lastAt(String bookingId, String type) {
+        return repository.findFirstByPlatformBookingIdAndTypeOrderByCreatedAtDesc(bookingId, type).map(PlatformBookingEvent::getCreatedAt);
+    }
+
     /** Payload of the latest event of {@code type} on the booking (as stored, i.e. redacted). */
     public Optional<Map<String, Object>> lastPayload(String bookingId, String type) {
         return repository.findFirstByPlatformBookingIdAndTypeOrderByCreatedAtDesc(bookingId, type).map(PlatformBookingEvent::getPayload);

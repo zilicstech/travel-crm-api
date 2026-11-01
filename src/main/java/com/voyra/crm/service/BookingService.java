@@ -302,10 +302,11 @@ public class BookingService {
 
     /**
      * The CRM mirror of a Voyra booking still being booked: PENDING, priced from {@code voucher} (cost plus a flat
-     * markup), with no reference, no supplier bill and no word to the lead or its service until it is ticketed.
+     * markup), with no reference, no supplier bill and no word to the lead or its service until it is ticketed. Dated
+     * {@code bookedAt}, when the platform booking was made, however much later the mirror is written.
      */
     @Transactional
-    public String createVoyraPending(BookingCreateRequest request, BookingDocument voucher, String platformBookingId) {
+    public String createVoyraPending(BookingCreateRequest request, BookingDocument voucher, String platformBookingId, java.time.Instant bookedAt) {
         assertPlatform();
         request.setPnr(null); // the reference comes with the ticket (confirmVoyraTicket)
         request.setHotelConfirmationNo(null);
@@ -317,6 +318,8 @@ public class BookingService {
         request.setMarkupValue(voucher.getMarkupValue());
         Booking booking = insertBooking(request, false);
         booking.setPlatformBookingId(platformBookingId);
+        booking.setBookingDate(com.voyra.crm.util.FinancialYear.dateOf(bookedAt));
+        booking.setCreatedDate(wallClock(bookedAt));
         bookingRepository.save(booking);
         voucher.setBookingId(booking.getId());
         voucher.setReferenceNumber(null);
@@ -330,11 +333,12 @@ public class BookingService {
     /**
      * Voyra ticketed it: the booking takes its reference, its voucher is described and drafts its supplier bill, the
      * lead's service is marked booked and the booking is CONFIRMED (a fail-cancelled one is revived first). Any row
-     * already past PENDING is left as it is (a later sync of a confirmed or really cancelled mirror).
+     * already past PENDING is left as it is (a later sync of a confirmed or really cancelled mirror). The bill is dated
+     * {@code ticketedOn}, the day Voyra ticketed it.
      * @return the voucher's supplier bill id
      */
     @Transactional
-    public String confirmVoyraTicket(String bookingId, String reference, String ticketNo,
+    public String confirmVoyraTicket(String bookingId, String reference, String ticketNo, LocalDate ticketedOn,
                                      java.util.function.Consumer<BookingDocument> describe) {
         Booking booking = lockVoyra(bookingId);
         BookingDocument voucher = bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc(bookingId).stream()
@@ -349,7 +353,7 @@ public class BookingService {
         booking.setTicketNo(ticketNo);
         voucher.setReferenceNumber(referenceOf(booking)); // as cut to the column by setReference
         describe.accept(voucher);
-        voucher.setSupplierInvoiceId(draftVoucherBill(booking, voucher, voucher.getVendorId(), nzMoney(voucher.getNetCost())));
+        voucher.setSupplierInvoiceId(draftVoucherBill(booking, voucher, voucher.getVendorId(), nzMoney(voucher.getNetCost()), ticketedOn));
         if (revive) {
             booking.setCancelReason(null);
             booking.setCancelledAt(null);
@@ -372,9 +376,12 @@ public class BookingService {
         return voucher.getSupplierInvoiceId();
     }
 
-    /** Voyra could not book it: CANCELLED with the fixed reason and no money; the lead's service was never booked, so it is left alone. */
+    /**
+     * Voyra could not book it: CANCELLED at {@code failedAt} (when the platform booking failed) with the fixed reason and no
+     * money; the lead's service was never booked, so it is left alone.
+     */
     @Transactional
-    public void failVoyraBooking(String bookingId) {
+    public void failVoyraBooking(String bookingId, java.time.Instant failedAt) {
         Booking booking = lockVoyra(bookingId);
         if (booking.getBookingStatus() != BookingStatus.PENDING) {
             return; // already cancelled, or ticketed meanwhile (the ticket phase runs first)
@@ -382,7 +389,7 @@ public class BookingService {
         Map<String, String> before = AuditSnapshot.of(booking, AUDITED);
         booking.setBookingStatus(BookingStatus.CANCELLED);
         booking.setCancelReason(VOYRA_FAIL_REASON);
-        booking.setCancelledAt(LocalDateTime.now());
+        booking.setCancelledAt(wallClock(failedAt));
         booking.setCancelledBy(com.voyra.crm.security.SystemActor.USER_ID);
         booking.setRefundState(RefundState.NOT_APPLICABLE);
         touch(booking);
@@ -434,6 +441,11 @@ public class BookingService {
         auditService.recordUpdate(AuditEntityType.BOOKING, booking.getId(), labelFor(booking),
                 AuditSnapshot.diff(before, AuditSnapshot.of(booking, AUDITED)));
         syncPaymentIfInvoiced(booking);
+    }
+
+    /** {@code instant} on the server's wall clock, as {@link LocalDateTime#now()} reads it for the booking's other timestamps. */
+    static LocalDateTime wallClock(java.time.Instant instant) {
+        return LocalDateTime.ofInstant(instant, java.time.ZoneId.systemDefault());
     }
 
     /** A Voyra booking the platform has not ticketed yet: no client money moves until it is confirmed. */
@@ -878,11 +890,11 @@ public class BookingService {
 
     /** The status half of a cancellation: audit, timeline and the lead service's status. The
      *  money half is BookingCancellationService's, which calls this inside its own transaction. */
-    void markCancelled(Booking booking, String reason) {
+    void markCancelled(Booking booking, String reason, LocalDateTime cancelledAt) {
         Map<String, String> before = AuditSnapshot.of(booking, AUDITED);
         booking.setBookingStatus(BookingStatus.CANCELLED);
         booking.setCancelReason(reason);
-        booking.setCancelledAt(LocalDateTime.now());
+        booking.setCancelledAt(cancelledAt);
         booking.setCancelledBy(SecurityContextUtil.getCurrentUserOrThrow().userId());
         List<AuditChange> changes = AuditSnapshot.diff(before, AuditSnapshot.of(booking, AUDITED));
         touch(booking);
@@ -1069,7 +1081,7 @@ public class BookingService {
             booking.setBookingStatus(BookingStatus.CONFIRMED);
         }
         if (cost.signum() > 0) {
-            voucher.setSupplierInvoiceId(draftVoucherBill(booking, voucher, vendorId, cost));
+            voucher.setSupplierInvoiceId(draftVoucherBill(booking, voucher, vendorId, cost, LocalDate.now()));
         }
         List<AuditChange> changes = AuditSnapshot.diff(before, AuditSnapshot.of(booking, AUDITED));
         touch(booking);
@@ -1082,10 +1094,10 @@ public class BookingService {
     }
 
     /** The bill is in what the supplier charged: the voucher's purchase currency at its rate, else base. @return its id */
-    private String draftVoucherBill(Booking booking, BookingDocument voucher, String vendorId, BigDecimal cost) {
+    private String draftVoucherBill(Booking booking, BookingDocument voucher, String vendorId, BigDecimal cost, LocalDate billDate) {
         return supplierInvoiceService.draftForVoucher(booking, vendorId, voucher.getReferenceNumber(),
                 voucher.getPurchaseCurrency(), voucher.getPurchaseCurrency() != null ? voucher.getPurchasePrice() : cost,
-                voucher.getPurchaseRate(), voucher.getCommission(), voucher.getSupplierTds()).getId();
+                voucher.getPurchaseRate(), voucher.getCommission(), voucher.getSupplierTds(), billDate).getId();
     }
 
     /** Once invoiced, a voucher added or taken off changes what is still to collect - and so the payment status. */

@@ -112,9 +112,9 @@ class PlatformBookingMirrorTenantServiceTest {
                 .thenReturn(Optional.of(Vendor.builder().id("V-VOYRA").name("Voyra Platform").isActive(true).isSystem(true).build()));
         when(exchangeRateProvider.resolve(eq("INR"), eq("INR"), any()))
                 .thenReturn(new ResolvedExchangeRate(BigDecimal.ONE, FxRateSource.INR_IDENTITY, LocalDate.now()));
-        when(bookingService.createVoyraPending(any(), any(), anyString())).thenReturn("B1");
-        when(bookingService.confirmVoyraTicket(eq("B1"), any(), any(), any())).thenAnswer(i -> {
-            i.<Consumer<BookingDocument>>getArgument(3).accept(ticket);
+        when(bookingService.createVoyraPending(any(), any(), anyString(), any())).thenReturn("B1");
+        when(bookingService.confirmVoyraTicket(eq("B1"), any(), any(), any(), any())).thenAnswer(i -> {
+            i.<Consumer<BookingDocument>>getArgument(4).accept(ticket);
             return "SI1";
         });
         when(bookingRepository.findByIdForUpdate("B1")).thenReturn(Optional.of(booking));
@@ -132,10 +132,17 @@ class PlatformBookingMirrorTenantServiceTest {
         });
     }
 
+    /** The platform's own times, days before the sync and each just past midnight in India (still the day before in UTC). */
+    private static final Instant CREATED_AT = Instant.parse("2026-10-24T20:00:00Z");
+    private static final Instant TICKETED_AT = Instant.parse("2026-10-25T19:00:00Z");
+    private static final LocalDate TICKETED_ON = LocalDate.of(2026, 10, 26);
+    private static final Instant CANCELLED_AT = Instant.parse("2026-10-27T20:30:00Z");
+    private static final LocalDate CANCELLED_ON = LocalDate.of(2026, 10, 28);
+
     private static PlatformBooking platformBooking() {
         return PlatformBooking.builder().id("PB1").tenantId("T1").clientId("C1").bookedBy("A1").leadId("L1").serviceId("S1")
                 .product(com.voyra.crm.enums.PricingProduct.FLIGHT).status(PlatformBookingStatus.TICKETED)
-                .ticketedAt(Instant.parse("2026-11-01T10:00:00Z")).pnr("ABC123").ticketNumbers(List.of("0981", "0982"))
+                .createdAt(CREATED_AT).ticketedAt(TICKETED_AT).cancelledAt(CANCELLED_AT).pnr("ABC123").ticketNumbers(List.of("0981", "0982"))
                 .displayed(new BigDecimal("5400.00")).gross(new BigDecimal("5500.00")).base(new BigDecimal("4500.00"))
                 .build();
     }
@@ -152,13 +159,13 @@ class PlatformBookingMirrorTenantServiceTest {
 
     private BookingCreateRequest pendingRequest() {
         ArgumentCaptor<BookingCreateRequest> request = ArgumentCaptor.forClass(BookingCreateRequest.class);
-        verify(bookingService).createVoyraPending(request.capture(), any(), eq("PB1"));
+        verify(bookingService).createVoyraPending(request.capture(), any(), eq("PB1"), any());
         return request.getValue();
     }
 
     private BookingDocument pendingVoucher() {
         ArgumentCaptor<BookingDocument> voucher = ArgumentCaptor.forClass(BookingDocument.class);
-        verify(bookingService).createVoyraPending(any(), voucher.capture(), eq("PB1"));
+        verify(bookingService).createVoyraPending(any(), voucher.capture(), eq("PB1"), any());
         return voucher.getValue();
     }
 
@@ -173,6 +180,8 @@ class PlatformBookingMirrorTenantServiceTest {
         String id = service.ensure(platformBooking(), roundTrip(), null, pax());
 
         assertThat(id).isEqualTo("B1");
+        verify(bookingService).createVoyraPending(any(), any(), eq("PB1"), eq(CREATED_AT)); // dated when it was booked
+        verify(exchangeRateProvider).resolve("INR", "INR", LocalDate.of(2026, 10, 25));
         BookingCreateRequest r = pendingRequest();
         assertThat(r.getType()).isEqualTo(BookingType.FLIGHT);
         assertThat(r.getClientId()).isEqualTo("C1");
@@ -205,7 +214,7 @@ class PlatformBookingMirrorTenantServiceTest {
         assertThat(v.getReferenceNumber()).isNull();
         assertThat(v.getIssuedDate()).isNull();
         assertThat(v.getCreatedBy()).isEqualTo("system");
-        verify(bookingService, never()).confirmVoyraTicket(any(), any(), any(), any());
+        verify(bookingService, never()).confirmVoyraTicket(any(), any(), any(), any(), any());
         verify(supplierPaymentService, never()).pay(any());
     }
 
@@ -252,11 +261,11 @@ class PlatformBookingMirrorTenantServiceTest {
         assertThat(PlatformBookingMirrorTenantService.markupInr(pb, BigDecimal.ZERO)).isEqualByComparingTo("0");
     }
 
-    /** A USD-base agency buys in INR at today's rate; the markup is the published fare in base minus the cost in base. */
+    /** A USD-base agency buys in INR at the booking day's rate; the markup is the published fare in base minus the cost in base. */
     @Test
-    void aNonInrAgencyEnsuresAtTodaysRate() {
+    void aNonInrAgencyEnsuresAtTheBookingDaysRate() {
         org.mockito.Mockito.doReturn("USD").when(baseCurrency).code();
-        when(exchangeRateProvider.resolve(eq("INR"), eq("USD"), any()))
+        when(exchangeRateProvider.resolve("INR", "USD", LocalDate.of(2026, 10, 25)))
                 .thenReturn(new ResolvedExchangeRate(new BigDecimal("0.012"), FxRateSource.MANUAL, LocalDate.now()));
 
         service.ensure(platformBooking(), roundTrip(), null, pax());
@@ -277,7 +286,7 @@ class PlatformBookingMirrorTenantServiceTest {
         order.verify(bookingRepository).lockPlatformBooking("PB1");
         order.verify(bookingRepository).findByPlatformBookingId("PB1");
         assertThat(service.ensure(hotelBooking(), List.of(), null, pax())).isEqualTo("B1"); // a retry never needs the stay again
-        verify(bookingService, never()).createVoyraPending(any(), any(), any());
+        verify(bookingService, never()).createVoyraPending(any(), any(), any(), any());
         verify(vendorRepository, never()).findByIsSystemTrueAndIsActiveTrue();
     }
 
@@ -287,7 +296,7 @@ class PlatformBookingMirrorTenantServiceTest {
 
         assertThatThrownBy(() -> service.ensure(platformBooking(), roundTrip(), null, pax()))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("no active Voyra Platform vendor");
-        verify(bookingService, never()).createVoyraPending(any(), any(), any());
+        verify(bookingService, never()).createVoyraPending(any(), any(), any(), any());
     }
 
     // ---------------------------------------------------------------- ticket
@@ -296,8 +305,8 @@ class PlatformBookingMirrorTenantServiceTest {
     void ticketDescribesTheTicketAndPaysFromTheVoyraWallet() {
         service.ticket("B1", platformBooking(), roundTrip(), pax());
 
-        verify(bookingService).confirmVoyraTicket(eq("B1"), eq("ABC123"), eq("0981, 0982"), any());
-        assertThat(ticket.getIssuedDate()).isEqualTo(LocalDate.now());
+        verify(bookingService).confirmVoyraTicket(eq("B1"), eq("ABC123"), eq("0981, 0982"), eq(TICKETED_ON), any()); // the bill's date
+        assertThat(ticket.getIssuedDate()).isEqualTo(TICKETED_ON);
         assertThat(ticket.getLegs()).hasSize(2);
         assertThat(ticket.getTravellers()).extracting(t -> t.getName() + "/" + t.getPaxType() + "/" + t.getMemberId())
                 .containsExactly("Mr Rahul Sharma/ADULT/M1", "Anya Sharma/CHILD/null");
@@ -310,6 +319,7 @@ class PlatformBookingMirrorTenantServiceTest {
         assertThat(pay.getValue().getSupplierInvoiceId()).isEqualTo("SI1");
         assertThat(pay.getValue().getAmount()).isEqualByComparingTo("5400.00");
         assertThat(pay.getValue().getInstrumentRef()).isEqualTo("ABC123");
+        assertThat(pay.getValue().getPaidOn()).isEqualTo(TICKETED_ON); // its journal and voucher number follow paidOn
         assertThat(pay.getValue().getSettlementFxRate()).isEqualByComparingTo("1"); // no voucher found: the INR identity
     }
 
@@ -383,7 +393,7 @@ class PlatformBookingMirrorTenantServiceTest {
     void theTicketPhasePricesTheCurrentMarkup() {
         Booking pending = Booking.builder().id("B1").bookingStatus(BookingStatus.PENDING).build();
         when(bookingRepository.findById("B1")).thenReturn(Optional.of(pending));
-        when(bookingService.confirmVoyraTicket(eq("B1"), any(), any(), any())).thenAnswer(i -> {
+        when(bookingService.confirmVoyraTicket(eq("B1"), any(), any(), any(), any())).thenAnswer(i -> {
             pending.setBookingStatus(BookingStatus.CONFIRMED);
             return "SI1";
         });
@@ -409,16 +419,16 @@ class PlatformBookingMirrorTenantServiceTest {
 
     @Test
     void aTicketWithoutAnApprovableBillIsNotPaid() {
-        when(bookingService.confirmVoyraTicket(eq("B1"), any(), any(), any())).thenReturn(null);
+        when(bookingService.confirmVoyraTicket(eq("B1"), any(), any(), any(), any())).thenReturn(null);
         assertThatThrownBy(() -> service.ticket("B1", platformBooking(), roundTrip(), pax()))
                 .isInstanceOf(IllegalStateException.class).hasMessage("The mirror's supplier bill was not drafted");
 
-        when(bookingService.confirmVoyraTicket(eq("B1"), any(), any(), any())).thenReturn("SI-GONE");
+        when(bookingService.confirmVoyraTicket(eq("B1"), any(), any(), any(), any())).thenReturn("SI-GONE");
         when(supplierInvoiceRepository.findById("SI-GONE")).thenReturn(Optional.empty());
         assertThatThrownBy(() -> service.ticket("B1", platformBooking(), roundTrip(), pax()))
                 .isInstanceOf(IllegalStateException.class).hasMessage("The mirror's supplier bill was not drafted");
 
-        when(bookingService.confirmVoyraTicket(eq("B1"), any(), any(), any())).thenReturn("SI1");
+        when(bookingService.confirmVoyraTicket(eq("B1"), any(), any(), any(), any())).thenReturn("SI1");
         when(supplierInvoiceService.approveForBooking(eq("SI1"), anyString())).thenReturn(SupplierInvoiceResponse.builder()
                 .id("SI1").status(SupplierInvoiceStatus.PENDING_APPROVAL).build());
         assertThatThrownBy(() -> service.ticket("B1", platformBooking(), roundTrip(), pax()))
@@ -428,9 +438,9 @@ class PlatformBookingMirrorTenantServiceTest {
 
     @Test
     void failCancelsThroughTheBookingService() {
-        service.fail("B1");
+        service.fail("B1", CREATED_AT);
 
-        verify(bookingService).failVoyraBooking("B1");
+        verify(bookingService).failVoyraBooking("B1", CREATED_AT);
     }
 
     // ---------------------------------------------------------------- concurrency (Review Focus 1)
@@ -452,12 +462,12 @@ class PlatformBookingMirrorTenantServiceTest {
             return 1;
         });
         when(bookingRepository.findByPlatformBookingId("PB1")).thenAnswer(i -> Optional.ofNullable(row.get()));
-        when(bookingService.createVoyraPending(any(), any(), eq("PB1"))).thenAnswer(i -> {
+        when(bookingService.createVoyraPending(any(), any(), eq("PB1"), any())).thenAnswer(i -> {
             assertThat(bothAsked.await(5, TimeUnit.SECONDS)).isTrue();
             row.set(Booking.builder().id("B1").bookingStatus(BookingStatus.PENDING).build());
             return "B1";
         });
-        when(bookingService.confirmVoyraTicket(eq("B1"), any(), any(), any())).thenAnswer(i -> {
+        when(bookingService.confirmVoyraTicket(eq("B1"), any(), any(), any(), any())).thenAnswer(i -> {
             rowLock.lock();
             if (row.get().getBookingStatus() == BookingStatus.PENDING) {
                 row.get().setBookingStatus(BookingStatus.CONFIRMED);
@@ -490,7 +500,7 @@ class PlatformBookingMirrorTenantServiceTest {
         } finally {
             pool.shutdownNow();
         }
-        verify(bookingService, times(1)).createVoyraPending(any(), any(), any());
+        verify(bookingService, times(1)).createVoyraPending(any(), any(), any(), any());
         verify(supplierPaymentService, times(1)).pay(any());
     }
 
@@ -558,8 +568,8 @@ class PlatformBookingMirrorTenantServiceTest {
 
         service.ticket("B1", hotelBooking(), List.of(), pax());
 
-        verify(bookingService).confirmVoyraTicket(eq("B1"), eq("HC-778"), eq(null), any());
-        assertThat(ticket.getIssuedDate()).isEqualTo(LocalDate.now());
+        verify(bookingService).confirmVoyraTicket(eq("B1"), eq("HC-778"), eq(null), eq(TICKETED_ON), any());
+        assertThat(ticket.getIssuedDate()).isEqualTo(TICKETED_ON);
         assertThat(ticket.getDetails()).containsExactly(java.util.Map.entry("hotelName", "Sea Breeze Resort"));
         assertThat(ticket.getLegs()).isNull();
         assertThat(ticket.getTravellers()).isNull();
@@ -623,7 +633,7 @@ class PlatformBookingMirrorTenantServiceTest {
             assertThatThrownBy(() -> service.ensure(pb, List.of(), s, pax()))
                     .isInstanceOf(IllegalStateException.class).hasMessage("Platform booking PB1 has no stay to mirror");
         }
-        verify(bookingService, never()).createVoyraPending(any(), any(), any());
+        verify(bookingService, never()).createVoyraPending(any(), any(), any(), any());
     }
 
     @Test
@@ -691,12 +701,13 @@ class PlatformBookingMirrorTenantServiceTest {
         service.cancel("B1", pb);
 
         ArgumentCaptor<BookingCancelRequest> request = ArgumentCaptor.forClass(BookingCancelRequest.class);
-        verify(cancellationService).cancel(eq("B1"), request.capture());
+        verify(cancellationService).cancel(eq("B1"), request.capture(),
+                eq(java.time.LocalDateTime.ofInstant(CANCELLED_AT, java.time.ZoneId.systemDefault())), eq(CANCELLED_ON));
         assertThat(request.getValue().getType()).isEqualTo(CancellationType.CANCELLATION);
         assertThat(request.getValue().getAirlineCharge()).isEqualByComparingTo("0");
         assertThat(request.getValue().getSupplierCharge()).isEqualByComparingTo("1400.00"); // displayed - refund
         assertThat(request.getValue().getAgencyFee()).isEqualByComparingTo("0");
-        verify(cancellationService).recordVoyraWalletRefund("B1", new BigDecimal("4000.00"));
+        verify(cancellationService).recordVoyraWalletRefund("B1", new BigDecimal("4000.00"), CANCELLED_ON);
     }
 
     /** Two syncs at once (the request hook and a repair job on another instance): the second waits on the lock, sees CANCELLED. */
@@ -710,8 +721,8 @@ class PlatformBookingMirrorTenantServiceTest {
         service.cancel("B1", pb);
 
         verify(bookingRepository).findByIdForUpdate("B1");
-        verify(cancellationService, never()).cancel(anyString(), any());
-        verify(cancellationService, never()).recordVoyraWalletRefund(anyString(), any());
+        verify(cancellationService, never()).cancel(anyString(), any(), any(), any());
+        verify(cancellationService, never()).recordVoyraWalletRefund(anyString(), any(), any());
     }
 
     @Test
@@ -723,7 +734,7 @@ class PlatformBookingMirrorTenantServiceTest {
 
         org.mockito.InOrder order = org.mockito.Mockito.inOrder(bookingRepository, cancellationService);
         order.verify(bookingRepository).findByIdForUpdate("B1");
-        order.verify(cancellationService).cancel(eq("B1"), any());
+        order.verify(cancellationService).cancel(eq("B1"), any(), any(), any());
         verify(bookingRepository, never()).findById("B1");
     }
 
@@ -740,9 +751,9 @@ class PlatformBookingMirrorTenantServiceTest {
         service.cancel("B1", pb);
 
         ArgumentCaptor<BookingCancelRequest> request = ArgumentCaptor.forClass(BookingCancelRequest.class);
-        verify(cancellationService).cancel(eq("B1"), request.capture());
+        verify(cancellationService).cancel(eq("B1"), request.capture(), any(), any());
         assertThat(request.getValue().getSupplierCharge()).isEqualByComparingTo("16.80"); // 1400 INR at 0.012
-        verify(cancellationService).recordVoyraWalletRefund("B1", new BigDecimal("48.00"));
+        verify(cancellationService).recordVoyraWalletRefund("B1", new BigDecimal("48.00"), CANCELLED_ON);
     }
 
     /** Rate 0.5: displayed 1.02 buys 0.51, refund 1.01 is 0.51 (0.505 up); rounding the 0.01 kept separately gave 0.01 and a refund bigger than the bill. */
@@ -759,9 +770,9 @@ class PlatformBookingMirrorTenantServiceTest {
         service.cancel("B1", pb);
 
         ArgumentCaptor<BookingCancelRequest> request = ArgumentCaptor.forClass(BookingCancelRequest.class);
-        verify(cancellationService).cancel(eq("B1"), request.capture());
+        verify(cancellationService).cancel(eq("B1"), request.capture(), any(), any());
         assertThat(request.getValue().getSupplierCharge()).isEqualByComparingTo("0.00");
-        verify(cancellationService).recordVoyraWalletRefund("B1", new BigDecimal("0.51"));
+        verify(cancellationService).recordVoyraWalletRefund("B1", new BigDecimal("0.51"), CANCELLED_ON);
     }
 
     @Test
@@ -796,9 +807,9 @@ class PlatformBookingMirrorTenantServiceTest {
         org.mockito.InOrder order = org.mockito.Mockito.inOrder(bookingRepository, cancellationService);
         order.verify(bookingRepository).findByIdForUpdate("B1");
         ArgumentCaptor<BookingCancelRequest> request = ArgumentCaptor.forClass(BookingCancelRequest.class);
-        order.verify(cancellationService).cancel(eq("B1"), request.capture());
+        order.verify(cancellationService).cancel(eq("B1"), request.capture(), any(), any());
         assertThat(request.getValue().getSupplierCharge()).isEqualByComparingTo("16.80"); // 1400 INR at 0.012
-        verify(cancellationService).recordVoyraWalletRefund("B1", new BigDecimal("48.00"));
+        verify(cancellationService).recordVoyraWalletRefund("B1", new BigDecimal("48.00"), CANCELLED_ON);
     }
 
     /** Slice 3 minor 5: a review's client, lead and service must exist in the caller's tenant, and the agent must reach them. */
@@ -860,7 +871,7 @@ class PlatformBookingMirrorTenantServiceTest {
         pb.setCancelRefund(null);
         assertThatThrownBy(() -> service.cancel("B1", pb)).isInstanceOf(IllegalStateException.class)
                 .hasMessage("Platform booking PB1 was cancelled without a refund figure - settle the mirror by hand");
-        verify(cancellationService, never()).cancel(anyString(), any());
+        verify(cancellationService, never()).cancel(anyString(), any(), any(), any());
     }
 
     @Test
@@ -874,9 +885,9 @@ class PlatformBookingMirrorTenantServiceTest {
         service.cancel("B1", pb);
 
         ArgumentCaptor<BookingCancelRequest> request = ArgumentCaptor.forClass(BookingCancelRequest.class);
-        verify(cancellationService).cancel(eq("B1"), request.capture());
+        verify(cancellationService).cancel(eq("B1"), request.capture(), any(), any());
         assertThat(request.getValue().getSupplierCharge()).isEqualByComparingTo("5400.00");
-        verify(cancellationService, never()).recordVoyraWalletRefund(anyString(), any());
+        verify(cancellationService, never()).recordVoyraWalletRefund(anyString(), any(), any());
     }
 
     @Test

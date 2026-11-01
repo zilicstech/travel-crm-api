@@ -1,5 +1,6 @@
 package com.voyra.crm.util;
 
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
 
@@ -15,6 +16,11 @@ public final class FinancialYear {
      */
     public static LocalDate today() {
         return LocalDate.now(ZoneId.of("Asia/Kolkata"));
+    }
+
+    /** The day in India {@code instant} fell on, as {@link #today()} is now's: a platform event's business date. */
+    public static LocalDate dateOf(Instant instant) {
+        return LocalDate.ofInstant(instant, ZoneId.of("Asia/Kolkata"));
     }
 
     public static String of(LocalDate date) {

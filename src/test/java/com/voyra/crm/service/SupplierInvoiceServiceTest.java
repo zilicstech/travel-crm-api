@@ -190,7 +190,7 @@ class SupplierInvoiceServiceTest {
                 .type(com.voyra.crm.enums.BookingType.FLIGHT).destination("BOM").build();
 
         supplierInvoiceService.draftForVoucher(booking, "V1", null, null, new BigDecimal("10000"), null,
-                new BigDecimal("410.00"), new BigDecimal("8.20"));
+                new BigDecimal("410.00"), new BigDecimal("8.20"), java.time.LocalDate.now());
 
         ArgumentCaptor<SupplierInvoice> saved = ArgumentCaptor.forClass(SupplierInvoice.class);
         org.mockito.Mockito.verify(supplierInvoiceRepository).save(saved.capture());
@@ -198,6 +198,24 @@ class SupplierInvoiceServiceTest {
         assertThat(saved.getValue().payable()).isEqualByComparingTo("9598.20");
         assertThat(saved.getValue().getBalanceDue()).isEqualByComparingTo("9598.20");
         assertThat(saved.getValue().getBalanceDueInr()).isEqualByComparingTo("9598.20");
+    }
+
+    /** A logged voucher's bill is dated today; a Voyra mirror's the day Voyra ticketed it, however late it is drafted. */
+    @Test
+    void aVoucherBillIsDatedTheDayItIsGiven() {
+        when(vendorRepository.findById("V1")).thenReturn(Optional.of(Vendor.builder().id("V1").name("Voyra Platform").build()));
+        com.voyra.crm.entity.Booking booking = com.voyra.crm.entity.Booking.builder().id("B1")
+                .type(com.voyra.crm.enums.BookingType.FLIGHT).destination("BOM").netCost(new BigDecimal("5000")).build();
+        java.time.LocalDate ticketed = java.time.LocalDate.now().minusDays(7);
+
+        supplierInvoiceService.draftForVoucher(booking, "V1", null, null, new BigDecimal("5000"), null, null, null, ticketed);
+        supplierInvoiceService.createAutoDraft(booking, "V1");
+
+        ArgumentCaptor<SupplierInvoice> saved = ArgumentCaptor.forClass(SupplierInvoice.class);
+        org.mockito.Mockito.verify(supplierInvoiceRepository, org.mockito.Mockito.times(2)).save(saved.capture());
+        assertThat(saved.getAllValues().get(0).getInvoiceDate()).isEqualTo(ticketed);
+        assertThat(saved.getAllValues().get(0).getReceivedOn()).isEqualTo(ticketed);
+        assertThat(saved.getAllValues().get(1).getInvoiceDate()).isEqualTo(java.time.LocalDate.now()); // a non-mirror draft: today
     }
 
     /** Booked: the gross clears the pass-through, the commission is income and the supplier's TDS is claimed back. */
@@ -290,7 +308,7 @@ class SupplierInvoiceServiceTest {
         com.voyra.crm.entity.Booking booking = com.voyra.crm.entity.Booking.builder().id("B1")
                 .type(com.voyra.crm.enums.BookingType.HOTEL).destination("Dubai").build();
 
-        supplierInvoiceService.draftForVoucher(booking, "V1", "HV-1", "AED", new BigDecimal("1000"), new BigDecimal("22.85"), null, null);
+        supplierInvoiceService.draftForVoucher(booking, "V1", "HV-1", "AED", new BigDecimal("1000"), new BigDecimal("22.85"), null, null, java.time.LocalDate.now());
 
         ArgumentCaptor<SupplierInvoice> saved = ArgumentCaptor.forClass(SupplierInvoice.class);
         org.mockito.Mockito.verify(supplierInvoiceRepository).save(saved.capture());
@@ -307,7 +325,7 @@ class SupplierInvoiceServiceTest {
         com.voyra.crm.entity.Booking booking = com.voyra.crm.entity.Booking.builder().id("B1")
                 .type(com.voyra.crm.enums.BookingType.FLIGHT).destination("BOM").build();
 
-        supplierInvoiceService.draftForVoucher(booking, "V1", null, null, new BigDecimal("4000"), null, null, null);
+        supplierInvoiceService.draftForVoucher(booking, "V1", null, null, new BigDecimal("4000"), null, null, null, java.time.LocalDate.now());
 
         ArgumentCaptor<SupplierInvoice> saved = ArgumentCaptor.forClass(SupplierInvoice.class);
         org.mockito.Mockito.verify(supplierInvoiceRepository).save(saved.capture());

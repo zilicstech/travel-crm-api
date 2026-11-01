@@ -40,6 +40,7 @@ import com.voyra.crm.service.BookingService;
 import com.voyra.crm.service.ExchangeRateProvider;
 import com.voyra.crm.service.SupplierInvoiceService;
 import com.voyra.crm.service.SupplierPaymentService;
+import com.voyra.crm.util.FinancialYear;
 import com.voyra.crm.util.FxMath;
 import com.voyra.crm.util.PaxTypeCalculator;
 import com.voyra.crm.util.UniqueIdResolver;
@@ -54,6 +55,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -96,8 +98,9 @@ public class PlatformBookingMirrorTenantService {
      * Phase 1: the CRM booking exists from the moment the booking is sent. Under a lock on the platform booking id (so a
      * second sync waits, then finds this one's row) it returns the existing mirror, or writes it PENDING through
      * {@link BookingService#createVoyraPending}: the trip, the client, agent, lead and service, vendor Voyra Platform, and
-     * one voucher bought in INR at the displayed fare (in the agency's base at today's rate, the only FX lookup) with the
-     * fare's base/tax split, priced at the published fare plus the current markup. No reference until it is ticketed.
+     * one voucher bought in INR at the displayed fare (in the agency's base at the rate of the day it was booked, the only
+     * FX lookup) with the fare's base/tax split, priced at the published fare plus the current markup. No reference until
+     * it is ticketed. Every date the mirror writes is the platform's (owner ruling: real dates, even for a late backfill).
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public String ensure(PlatformBooking pb, List<ItinerarySegment> segments, HotelStaySummary stay, List<PaxInput> passengers) {
@@ -111,8 +114,8 @@ public class PlatformBookingMirrorTenantService {
         Vendor vendor = vendorRepository.findByIsSystemTrueAndIsActiveTrue()
                 .orElseThrow(() -> new IllegalStateException("This agency has no active Voyra Platform vendor"));
         String base = baseCurrency.code();
-        // bought in rupees; a non-INR agency needs today's rate, and a missing one fails the mirror, never the booking
-        BigDecimal rate = exchangeRateProvider.resolve(INR, base, LocalDate.now()).rate();
+        // bought in rupees; a non-INR agency needs that day's rate, and a missing one fails the mirror, never the booking
+        BigDecimal rate = exchangeRateProvider.resolve(INR, base, FinancialYear.dateOf(pb.getCreatedAt())).rate();
         BigDecimal net = FxMath.toBase(INR, pb.getDisplayed(), rate, base).base();
 
         request.setClientId(pb.getClientId());
@@ -138,7 +141,7 @@ public class PlatformBookingMirrorTenantService {
                 .createdAt(LocalDateTime.now())
                 .createdBy(SystemActor.USER_ID)
                 .build();
-        return bookingService.createVoyraPending(request, voucher, pb.getId());
+        return bookingService.createVoyraPending(request, voucher, pb.getId(), pb.getCreatedAt());
     }
 
     /** The trip of a flight mirror, as a logged flight booking carries it; the PNR and ticket numbers come with the ticket. */
@@ -222,16 +225,18 @@ public class PlatformBookingMirrorTenantService {
      * Phase 2: Voyra ticketed it. {@link BookingService#confirmVoyraTicket} (under the booking's row lock) sets the
      * reference and ticket numbers, describes the voucher (flight legs, travellers and details; a hotel's stay was set by
      * ensure) and drafts its bill; a bill still DRAFT is then approved and paid from the Voyra wallet at the voucher's
-     * stored rate. A repeat finds the bill approved or paid and pays nothing.
+     * stored rate. A repeat finds the bill approved or paid and pays nothing. The voucher, bill and payment are dated
+     * the day Voyra ticketed it.
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void ticket(String crmId, PlatformBooking pb, List<ItinerarySegment> segments, List<PaxInput> passengers) {
         boolean hotel = pb.getProduct() == PricingProduct.HOTEL;
         List<VoucherLeg> legs = hotel ? List.of() : legs(segments);
         LocalDate firstFlight = VoucherTrip.firstDate(legs);
+        LocalDate ticketedOn = FinancialYear.dateOf(pb.getTicketedAt());
         boolean wasConfirmed = CONFIRMED.contains(bookingRepository.findById(crmId).map(Booking::getBookingStatus).orElse(null));
-        String billId = bookingService.confirmVoyraTicket(crmId, pb.getPnr(), ticketNo(pb.getTicketNumbers()), voucher -> {
-            voucher.setIssuedDate(LocalDate.now());
+        String billId = bookingService.confirmVoyraTicket(crmId, pb.getPnr(), ticketNo(pb.getTicketNumbers()), ticketedOn, voucher -> {
+            voucher.setIssuedDate(ticketedOn);
             if (!hotel) {
                 voucher.setLegs(legs.isEmpty() ? null : legs);
                 voucher.setTravellers(passengers.isEmpty() ? null : passengers.stream()
@@ -243,7 +248,7 @@ public class PlatformBookingMirrorTenantService {
         SupplierInvoice bill = Optional.ofNullable(billId).flatMap(supplierInvoiceRepository::findById)
                 .orElseThrow(() -> new IllegalStateException("The mirror's supplier bill was not drafted"));
         if (bill.getStatus() == SupplierInvoiceStatus.DRAFT) {
-            payFromVoyraWallet(billId, bill.getVendorId(), voucherRate(crmId), pb);
+            payFromVoyraWallet(billId, bill.getVendorId(), voucherRate(crmId), pb, ticketedOn);
         }
         // only the row this phase confirmed: a ticket downloaded while it was pending is priced now, and an older
         // confirmed row keeps its price until its markup is set
@@ -252,16 +257,17 @@ public class PlatformBookingMirrorTenantService {
         }
     }
 
-    /** Phase 3: Voyra could not book it - CANCELLED with the fixed reason and no money (a no-op unless PENDING). */
+    /** Phase 3: Voyra could not book it - CANCELLED at {@code failedAt} with the fixed reason and no money (a no-op unless PENDING). */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void fail(String crmId) {
-        bookingService.failVoyraBooking(crmId);
+    public void fail(String crmId, java.time.Instant failedAt) {
+        bookingService.failVoyraBooking(crmId, failedAt);
     }
 
     /**
      * Cancels the mirror through the existing cancel (spec 7.5): what Voyra kept ({@code displayed - refund}) is the
      * supplier's charge, and the refund already in the agency's wallet is recorded against "Voyra Wallet (advance to
-     * supplier)". A mirror already cancelled is left alone.
+     * supplier)". A mirror already cancelled is left alone. The cancel and its supplier postings are dated when Voyra
+     * cancelled it.
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void cancel(String bookingId, PlatformBooking pb) {
@@ -285,9 +291,10 @@ public class PlatformBookingMirrorTenantService {
         // from the converted figures, so charge + refund is exactly the purchase the mirror booked (two roundings can drift a cent)
         request.setSupplierCharge(FxMath.toBase(INR, pb.getDisplayed(), rate, base).base().subtract(refund).max(BigDecimal.ZERO));
         request.setAgencyFee(BigDecimal.ZERO);
-        cancellationService.cancel(bookingId, request);
+        LocalDate cancelledOn = FinancialYear.dateOf(pb.getCancelledAt());
+        cancellationService.cancel(bookingId, request, LocalDateTime.ofInstant(pb.getCancelledAt(), ZoneId.systemDefault()), cancelledOn);
         if (refund.signum() > 0) {
-            cancellationService.recordVoyraWalletRefund(bookingId, refund);
+            cancellationService.recordVoyraWalletRefund(bookingId, refund, cancelledOn);
         }
     }
 
@@ -299,7 +306,7 @@ public class PlatformBookingMirrorTenantService {
     }
 
     /** Approves the voucher's auto-drafted bill and pays it in full with {@link PaymentMode#VOYRA_WALLET} (Cr 1310). */
-    private void payFromVoyraWallet(String billId, String vendorId, BigDecimal rate, PlatformBooking pb) {
+    private void payFromVoyraWallet(String billId, String vendorId, BigDecimal rate, PlatformBooking pb, LocalDate paidOn) {
         SupplierInvoiceResponse bill = supplierInvoiceService.approveForBooking(billId, "Paid from the Voyra wallet");
         if (bill.getStatus() != SupplierInvoiceStatus.APPROVED) {
             throw new IllegalStateException("The mirror's supplier bill could not be approved (" + bill.getStatus() + ")");
@@ -310,7 +317,7 @@ public class PlatformBookingMirrorTenantService {
         pay.setAmount(bill.getBalanceDue());
         pay.setPaymentMode(PaymentMode.VOYRA_WALLET);
         pay.setSettlementFxRate(rate);
-        pay.setPaidOn(LocalDate.now());
+        pay.setPaidOn(paidOn);
         pay.setInstrumentRef(pb.getPnr());
         pay.setNotes("Paid from the Voyra wallet");
         supplierPaymentService.pay(pay);

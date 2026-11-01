@@ -421,7 +421,7 @@ class PlatformBookingMirrorServiceTest {
 
             verify(tenantService).ensure(eq(b), anyList(), any(), anyList());
             verify(tenantService, never()).ticket(anyString(), any(), anyList(), anyList());
-            verify(tenantService, never()).fail(anyString());
+            verify(tenantService, never()).fail(anyString(), any());
             verify(tenantService, never()).cancel(anyString(), any());
             assertThat(b.getMirrorStatus()).isEqualTo(MirrorStatus.DONE);
             assertThat(b.getTenantBookingId()).isEqualTo("B1");
@@ -438,31 +438,37 @@ class PlatformBookingMirrorServiceTest {
         order.verify(tenantService).ensure(eq(b), anyList(), any(), anyList());
         order.verify(tenantService).ticket(eq("B1"), eq(b), anyList(), anyList()); // the ticket phase is the one that pays
         verify(tenantService, org.mockito.Mockito.times(1)).ticket(anyString(), any(), anyList(), anyList());
-        verify(tenantService, never()).fail(anyString());
+        verify(tenantService, never()).fail(anyString(), any());
         verify(tenantService, never()).cancel(anyString(), any());
         assertThat(b.getMirrorStatus()).isEqualTo(MirrorStatus.DONE);
     }
 
+    /** The CRM booking is cancelled at the FAILED move's time (its event), not when this sync runs. */
     @Test
     void syncAtFailedEnsuresThenFails() {
         PlatformBooking b = at(PlatformBookingStatus.FAILED, false);
+        java.time.Instant failedAt = java.time.Instant.now().minus(java.time.Duration.ofDays(5));
+        when(eventRepository.findFirstByPlatformBookingIdAndTypeOrderByCreatedAtDesc("PB1", "FAILED"))
+                .thenReturn(Optional.of(PlatformBookingEvent.builder().type("FAILED").createdAt(failedAt).build()));
 
         service.sync("PB1");
 
         org.mockito.InOrder order = org.mockito.Mockito.inOrder(tenantService);
         order.verify(tenantService).ensure(eq(b), anyList(), any(), anyList());
-        order.verify(tenantService).fail("B1");
+        order.verify(tenantService).fail("B1", failedAt);
         verify(tenantService, never()).cancel(anyString(), any());
         assertThat(b.getMirrorStatus()).isEqualTo(MirrorStatus.DONE);
     }
 
     @Test
     void syncAtFailedNeverPays() {
-        at(PlatformBookingStatus.FAILED, false);
+        at(PlatformBookingStatus.FAILED, false); // no FAILED event found: the guard falls back to now
 
         service.sync("PB1");
 
         verify(tenantService, never()).ticket(anyString(), any(), anyList(), anyList());
+        verify(tenantService).fail(eq("B1"), org.mockito.ArgumentMatchers.argThat(at ->
+                !at.isBefore(java.time.Instant.now().minusSeconds(60))));
     }
 
     /** Review Focus 2: the platform only cancels a ticketed row, so a mirror still PENDING is ticketed (paid) first, then cancelled. */
@@ -477,7 +483,7 @@ class PlatformBookingMirrorServiceTest {
         order.verify(tenantService).ensure(eq(b), anyList(), any(), anyList());
         order.verify(tenantService).ticket(eq("B1"), eq(b), anyList(), anyList());
         order.verify(tenantService).cancel("B1", b);
-        verify(tenantService, never()).fail(anyString());
+        verify(tenantService, never()).fail(anyString(), any());
         assertThat(b.getMirrorStatus()).isEqualTo(MirrorStatus.DONE);
     }
 

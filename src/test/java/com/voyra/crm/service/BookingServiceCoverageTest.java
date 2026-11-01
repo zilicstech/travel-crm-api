@@ -527,7 +527,7 @@ class BookingServiceCoverageTest {
         when(bookingRepository.save(any())).thenAnswer(i -> { store.add(i.getArgument(0)); return i.getArgument(0); });
         when(bookingRepository.findById(anyString())).thenAnswer(i -> Optional.of(store.get(0)));
         when(supplierInvoiceService.draftForVoucher(any(), eq("V1"), isNull(), isNull(), eq(new BigDecimal("1000")),
-                isNull(), eq(BigDecimal.ZERO), eq(BigDecimal.ZERO))).thenReturn(com.voyra.crm.dto.SupplierInvoiceResponse.builder().id("SI1").build());
+                isNull(), eq(BigDecimal.ZERO), eq(BigDecimal.ZERO), eq(java.time.LocalDate.now()))).thenReturn(com.voyra.crm.dto.SupplierInvoiceResponse.builder().id("SI1").build());
         BookingCreateRequest r = request(BookingType.PACKAGE);
         r.setVendorId("V1");
         r.setPnr("PNR1");
@@ -562,7 +562,7 @@ class BookingServiceCoverageTest {
         when(bookingRepository.save(any())).thenAnswer(i -> { store.add(i.getArgument(0)); return i.getArgument(0); });
         when(bookingRepository.findById(anyString())).thenAnswer(i -> Optional.of(store.get(0)));
         when(supplierInvoiceService.draftForVoucher(any(), eq("V1"), eq("PNR1"), eq("USD"), eq(new BigDecimal("12")),
-                eq(new BigDecimal("83")), any(), any())).thenReturn(com.voyra.crm.dto.SupplierInvoiceResponse.builder().id("SI1").build());
+                eq(new BigDecimal("83")), any(), any(), eq(java.time.LocalDate.now()))).thenReturn(com.voyra.crm.dto.SupplierInvoiceResponse.builder().id("SI1").build());
         BookingCreateRequest r = request(BookingType.PACKAGE);
         r.setVendorId("V1");
         r.setNetCost(new BigDecimal("996"));
@@ -920,12 +920,13 @@ class BookingServiceCoverageTest {
     void cancellingALinkedBookingTellsItsLeadAndService() {
         Booking b = booking().leadId("L1").serviceId("S1").build();
 
-        bookingService.markCancelled(b, "Client changed plans");
+        java.time.LocalDateTime at = java.time.LocalDateTime.of(2026, 10, 25, 14, 30);
+        bookingService.markCancelled(b, "Client changed plans", at);
 
         assertThat(b.getBookingStatus()).isEqualTo(BookingStatus.CANCELLED);
         assertThat(b.getCancelReason()).isEqualTo("Client changed plans");
         assertThat(b.getCancelledBy()).isEqualTo("O1");
-        assertThat(b.getCancelledAt()).isNotNull();
+        assertThat(b.getCancelledAt()).isEqualTo(at);
         verify(bookingRepository).save(b);
         verify(leadTimelineService).record("L1", "S1", LeadTimelineEventType.BOOKING_REMOVED, "Flight booking cancelled: Client changed plans");
         verify(serviceBookingStatusSync).onBookingRemoved("S1");
@@ -934,7 +935,7 @@ class BookingServiceCoverageTest {
     @Test
     void cancellingAStandaloneBookingTouchesNoLead() {
         Booking b = booking().build();
-        bookingService.markCancelled(b, "x");
+        bookingService.markCancelled(b, "x", java.time.LocalDateTime.now());
         assertThat(b.getBookingStatus()).isEqualTo(BookingStatus.CANCELLED);
         verifyNoInteractions(leadTimelineService, serviceBookingStatusSync);
     }
@@ -1076,7 +1077,7 @@ class BookingServiceCoverageTest {
         BookingDocument v = voucher().netCost(new BigDecimal("830")).markupMode(MarkupMode.FLAT).markupValue(new BigDecimal("70"))
                 .referenceNumber("  HCONF-9  ").purchaseCurrency("USD").purchasePrice(new BigDecimal("10")).purchaseRate(new BigDecimal("83")).build();
         when(supplierInvoiceService.draftForVoucher(b, "V1", "  HCONF-9  ", "USD", new BigDecimal("10"), new BigDecimal("83"),
-                BigDecimal.ZERO, BigDecimal.ZERO)).thenReturn(com.voyra.crm.dto.SupplierInvoiceResponse.builder().id("SI2").build());
+                BigDecimal.ZERO, BigDecimal.ZERO, java.time.LocalDate.now())).thenReturn(com.voyra.crm.dto.SupplierInvoiceResponse.builder().id("SI2").build());
 
         bookingService.applyVoucher(b, v, "V1", true);
 

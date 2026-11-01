@@ -21,6 +21,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.Assert;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -94,13 +95,15 @@ public class PlatformBookingMirrorService {
             List<ItinerarySegment> legs = hotel ? List.of() : queryService.itinerary(b);
             List<PaxInput> stored = b.getPaxEnc() == null ? List.of() : paxCodec.decrypt(b.getPaxEnc(), StoredPax.class).passengers();
             List<PaxInput> pax = stored == null ? List.of() : stored;
+            // the FAILED move's own time: its event commits with the move
+            Instant failedAt = acted == PlatformBookingStatus.FAILED ? events.lastAt(platformBookingId, "FAILED").orElseGet(Instant::now) : null;
             String bookingId = SystemActor.call(b.getTenantId(), () -> {
                 String id = tenantService.ensure(b, legs, stay, pax);
                 if (b.getTicketedAt() != null) {
                     tenantService.ticket(id, b, legs, pax);
                 }
                 if (acted == PlatformBookingStatus.FAILED) {
-                    tenantService.fail(id);
+                    tenantService.fail(id, failedAt);
                 }
                 if (acted == PlatformBookingStatus.CANCELLED) {
                     tenantService.cancel(id, b);

@@ -635,7 +635,7 @@ class BookingServiceTest {
         Booking booking = pendingWithoutFare();
         when(vendorRepository.findById("V1")).thenReturn(Optional.of(
                 com.voyra.crm.entity.Vendor.builder().id("V1").name("TripJack").build()));
-        when(supplierInvoiceService.draftForVoucher(booking, "V1", "PNR123", null, new BigDecimal("4000"), null, BigDecimal.ZERO, BigDecimal.ZERO))
+        when(supplierInvoiceService.draftForVoucher(booking, "V1", "PNR123", null, new BigDecimal("4000"), null, BigDecimal.ZERO, BigDecimal.ZERO, java.time.LocalDate.now()))
                 .thenReturn(com.voyra.crm.dto.SupplierInvoiceResponse.builder().id("S1").build());
         com.voyra.crm.entity.BookingDocument v = voucher("4000", "10", "PNR123");
 
@@ -664,7 +664,7 @@ class BookingServiceTest {
         com.voyra.crm.entity.BookingDocument v = voucher("1000", "50", "PNR0");
         when(supplierInvoiceService.draftForVoucher(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
                 org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
-                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
                 .thenReturn(com.voyra.crm.dto.SupplierInvoiceResponse.builder().id("S1").build());
 
         bookingService.applyVoucher(booking, v, "V1", false);
@@ -677,7 +677,7 @@ class BookingServiceTest {
     @Test
     void aVoucherOnAnUninvoicedBookingLeavesItsPaymentStatusAlone() {
         Booking booking = pendingWithoutFare();
-        when(supplierInvoiceService.draftForVoucher(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+        when(supplierInvoiceService.draftForVoucher(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
                 .thenReturn(com.voyra.crm.dto.SupplierInvoiceResponse.builder().id("S1").build());
         when(vendorRepository.findById("V1")).thenReturn(Optional.of(
                 com.voyra.crm.entity.Vendor.builder().id("V1").name("TripJack").build()));
@@ -697,7 +697,7 @@ class BookingServiceTest {
         v.setCharges(new java.util.LinkedHashMap<>(java.util.Map.of("basic", new BigDecimal("8200"), "yq", new BigDecimal("1800"))));
         BookingService.applyCommission(v, MarkupMode.PERCENT, new BigDecimal("5"), null);
         when(supplierInvoiceService.draftForVoucher(booking, "V1", "PNR1", null, new BigDecimal("10000"), null,
-                new BigDecimal("410.00"), new BigDecimal("8.20")))
+                new BigDecimal("410.00"), new BigDecimal("8.20"), java.time.LocalDate.now()))
                 .thenReturn(com.voyra.crm.dto.SupplierInvoiceResponse.builder().id("S1").build());
 
         bookingService.applyVoucher(booking, v, "V1", false);
@@ -784,7 +784,7 @@ class BookingServiceTest {
         when(bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc("B1")).thenReturn(List.of(v));
         when(vendorRepository.findById("V2")).thenReturn(Optional.of(
                 com.voyra.crm.entity.Vendor.builder().id("V2").name("Akbar").build()));
-        when(supplierInvoiceService.draftForVoucher(booking, "V2", "PNR1", null, new BigDecimal("4000"), null, BigDecimal.ZERO, BigDecimal.ZERO))
+        when(supplierInvoiceService.draftForVoucher(booking, "V2", "PNR1", null, new BigDecimal("4000"), null, BigDecimal.ZERO, BigDecimal.ZERO, java.time.LocalDate.now()))
                 .thenReturn(com.voyra.crm.dto.SupplierInvoiceResponse.builder().id("S1").build());
 
         bookingService.applyVoucher(booking, v, "V2", false);
@@ -815,7 +815,7 @@ class BookingServiceTest {
         v.setPurchaseCurrency("AED");
         v.setPurchasePrice(new BigDecimal("1000"));
         v.setPurchaseRate(new BigDecimal("22.85"));
-        when(supplierInvoiceService.draftForVoucher(booking, "V1", "PNR123", "AED", new BigDecimal("1000"), new BigDecimal("22.85"), BigDecimal.ZERO, BigDecimal.ZERO))
+        when(supplierInvoiceService.draftForVoucher(booking, "V1", "PNR123", "AED", new BigDecimal("1000"), new BigDecimal("22.85"), BigDecimal.ZERO, BigDecimal.ZERO, java.time.LocalDate.now()))
                 .thenReturn(com.voyra.crm.dto.SupplierInvoiceResponse.builder().id("S2").build());
 
         bookingService.applyVoucher(booking, v, "V1", false);
@@ -889,7 +889,7 @@ class BookingServiceTest {
     void removingTheOnlyPricedVoucherPutsTheBookingBackToPending() {
         Booking booking = pendingFlight("PNR1", "0");
         booking.setVendorId("V1");
-        org.mockito.Mockito.lenient().when(supplierInvoiceService.draftForVoucher(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+        org.mockito.Mockito.lenient().when(supplierInvoiceService.draftForVoucher(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
                 .thenReturn(com.voyra.crm.dto.SupplierInvoiceResponse.builder().id("SI9").build());
         bookingService.applyVoucher(booking, voucher("1000", "20", "PNR1"), null, false);
         assertThat(booking.getBookingStatus()).isEqualTo(BookingStatus.CONFIRMED);
@@ -936,7 +936,7 @@ class BookingServiceTest {
     void aBookingCreatedWithAPriceIsPricedBySumOfItsVouchers() {
         Booking booking = pendingFlight(null, "5000.00"); // created with sell 5000 / net 4000, no vouchers
         booking.setVendorId("V1");
-        org.mockito.Mockito.lenient().when(supplierInvoiceService.draftForVoucher(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+        org.mockito.Mockito.lenient().when(supplierInvoiceService.draftForVoucher(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
                 .thenReturn(com.voyra.crm.dto.SupplierInvoiceResponse.builder().id("SI1").build());
         com.voyra.crm.entity.BookingDocument first = com.voyra.crm.entity.BookingDocument.builder().id("D1").bookingId("B1")
                 .referenceNumber("PNR1").netCost(new BigDecimal("4000")).markupMode(MarkupMode.FLAT).markupValue(new BigDecimal("1000")).build();
@@ -963,7 +963,7 @@ class BookingServiceTest {
         Booking booking = pendingFlight("PNR1", "5000.00");
         booking.setBookingStatus(BookingStatus.CONFIRMED);
         booking.setVendorId("V1");
-        org.mockito.Mockito.lenient().when(supplierInvoiceService.draftForVoucher(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+        org.mockito.Mockito.lenient().when(supplierInvoiceService.draftForVoucher(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
                 .thenReturn(com.voyra.crm.dto.SupplierInvoiceResponse.builder().id("SI9").build());
 
         // the booking's 4000 / 5000 is its first voucher's (R11: totals are the sum of the live vouchers)

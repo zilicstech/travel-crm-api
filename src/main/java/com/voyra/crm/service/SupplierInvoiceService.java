@@ -128,7 +128,7 @@ public class SupplierInvoiceService {
     public List<SupplierInvoiceResponse> createAutoDraft(Booking booking, String vendorId) {
         List<BookingCostComponent> components = bookingCostComponentRepository.findByBookingIdOrderBySortOrder(booking.getId());
         if (components.isEmpty()) {
-            return List.of(createAutoDraftSingle(booking, vendorId, booking.getNetCost(), null, null, null, null));
+            return List.of(createAutoDraftSingle(booking, vendorId, booking.getNetCost(), null, null, null, null, LocalDate.now()));
         }
 
         Map<String, List<BookingCostComponent>> byVendor = components.stream()
@@ -149,11 +149,12 @@ public class SupplierInvoiceService {
     }
 
     /** One voucher's own bill: its supplier, its cost, its reference - in the currency it was bought in
-     *  (null means base), so paying it at another rate posts the difference as forex gain or loss. */
+     *  (null means base), so paying it at another rate posts the difference as forex gain or loss. Dated
+     *  {@code billDate}: today for a logged voucher, the ticketing day for a Voyra mirror's. */
     public SupplierInvoiceResponse draftForVoucher(Booking booking, String vendorId, String reference,
                                                    String currency, BigDecimal price, BigDecimal rate,
-                                                   BigDecimal commission, BigDecimal supplierTds) {
-        SupplierInvoiceResponse drafted = createAutoDraftSingle(booking, vendorId, price, currency, rate, commission, supplierTds);
+                                                   BigDecimal commission, BigDecimal supplierTds, LocalDate billDate) {
+        SupplierInvoiceResponse drafted = createAutoDraftSingle(booking, vendorId, price, currency, rate, commission, supplierTds, billDate);
         if (reference != null && !reference.isBlank()) {
             supplierInvoiceRepository.findById(drafted.getId()).ifPresent(bill -> {
                 bill.setNotes(bill.getNotes() + " Voucher " + reference.trim() + ".");
@@ -168,11 +169,11 @@ public class SupplierInvoiceService {
      *  bill tax on. */
     private SupplierInvoiceResponse createAutoDraftSingle(Booking booking, String vendorId, BigDecimal netCost,
                                                           String currency, BigDecimal rate,
-                                                          BigDecimal commission, BigDecimal supplierTds) {
+                                                          BigDecimal commission, BigDecimal supplierTds, LocalDate billDate) {
         Vendor vendor = findVendor(vendorId);
         SupplierInvoice invoice = newAutoDraftHeader(booking, vendor,
                 "Drafted automatically from booking " + ref(booking)
-                        + " at the agent's net cost - confirm against the supplier's real invoice before approving.");
+                        + " at the agent's net cost - confirm against the supplier's real invoice before approving.", billDate);
         String base = baseCurrency.code();
         if (currency != null && !currency.equals(base)) {
             invoice.setCurrencyCode(currency);
@@ -204,7 +205,7 @@ public class SupplierInvoiceService {
         Vendor vendor = findVendor(vendorId);
         SupplierInvoice invoice = newAutoDraftHeader(booking, vendor,
                 "Drafted automatically from booking " + ref(booking) + "'s cost components for this vendor - "
-                        + "confirm against the supplier's real invoice before approving.");
+                        + "confirm against the supplier's real invoice before approving.", LocalDate.now());
 
         List<SupplierInvoiceLineItemRequest> lines = new ArrayList<>();
         for (BookingCostComponent component : vendorComponents) {
@@ -224,7 +225,7 @@ public class SupplierInvoiceService {
         return saveAutoDraft(invoice, lines);
     }
 
-    private SupplierInvoice newAutoDraftHeader(Booking booking, Vendor vendor, String notes) {
+    private SupplierInvoice newAutoDraftHeader(Booking booking, Vendor vendor, String notes, LocalDate billDate) {
         return SupplierInvoice.builder()
                 .id(UniqueIdResolver.resolve(supplierInvoiceRepository::existsById))
                 .vendorId(vendor.getId())
@@ -234,8 +235,8 @@ public class SupplierInvoiceService {
                 .category(booking.getType())
                 .supplierGstin(vendor.getGstNumber())
                 .supplierStateCode(vendor.getStateCode())
-                .invoiceDate(LocalDate.now())
-                .receivedOn(LocalDate.now())
+                .invoiceDate(billDate)
+                .receivedOn(billDate)
                 .bookingId(booking.getId())
                 .leadId(booking.getLeadId())
                 .serviceType(booking.getServiceType())

@@ -101,7 +101,7 @@ public class BookingCancellationService {
                 .customerPaid(customerPaid)
                 .paidToSupplier(paidToSupplier)
                 .customerRefundDue(due)
-                .supplierRefundExpected(supplierExpected(booking, bills, charge, false))
+                .supplierRefundExpected(supplierExpected(booking, bills, charge, false, LocalDate.now()))
                 .supplierChargeOwed(supplierChargeOwed(bills, charge))
                 .chargesInvoiceTotal(chargesInvoice)
                 .invoiced(!invoices.isEmpty())
@@ -110,6 +110,16 @@ public class BookingCancellationService {
 
     @Transactional
     public BookingResponse cancel(String bookingId, BookingCancelRequest request) {
+        return cancel(bookingId, request, LocalDateTime.now(), LocalDate.now());
+    }
+
+    /**
+     * The cancel dated when it happened: the booking's {@code cancelledAt}, and {@code postedOn} for the supplier credit
+     * notes. A Voyra mirror's is when Voyra cancelled it; the client's documents (credit notes, a charges invoice) are
+     * issued today, as their series must stay in date order.
+     */
+    @Transactional
+    public BookingResponse cancel(String bookingId, BookingCancelRequest request, LocalDateTime cancelledAt, LocalDate postedOn) {
         assertNotNegative(request.getAirlineCharge(), request.getSupplierCharge(), request.getAgencyFee());
         lock(bookingId);
         Booking booking = cancellable(bookingId);
@@ -133,7 +143,7 @@ public class BookingCancellationService {
         // invoice (issued while the booking is still live), and any advance held is applied to it.
         com.voyra.crm.dto.InvoiceResponse charges = invoices.isEmpty() && charge.add(fee).signum() > 0
                 ? bookingInvoiceIssuer.issueCancellationCharges(booking, charge, fee) : null;
-        bookingService.markCancelled(booking, reason);
+        bookingService.markCancelled(booking, reason, cancelledAt);
 
         BigDecimal due;
         if (!invoices.isEmpty()) {
@@ -162,7 +172,7 @@ public class BookingCancellationService {
         }
 
         List<SupplierInvoice> bills = supplierInvoiceRepository.findByBookingIdAndStatusNot(bookingId, SupplierInvoiceStatus.CANCELLED);
-        BigDecimal expected = supplierExpected(booking, bills, charge, true);
+        BigDecimal expected = supplierExpected(booking, bills, charge, true, postedOn);
 
         // The supplier took its commission back on the cancelled tickets (supplierExpected recalled it on each bill).
         booking.setProfit(nz(booking.getProfit()).subtract(nz(booking.getCommission())));
@@ -182,10 +192,10 @@ public class BookingCancellationService {
     /**
      * The platform's refund on a cancelled mirror (spec 7.5): already credited to the agency's Voyra wallet, so it is
      * posted against "Voyra Wallet (advance to supplier)" on the mirror's supplier credit note - no bank claim.
-     * Only the system actor records it.
+     * Only the system actor records it, dated {@code paidOn} (the day Voyra cancelled it).
      */
     @Transactional
-    public BookingResponse recordVoyraWalletRefund(String bookingId, BigDecimal amount) {
+    public BookingResponse recordVoyraWalletRefund(String bookingId, BigDecimal amount, LocalDate paidOn) {
         if (!SystemActor.isActive()) {
             throw new org.springframework.security.access.AccessDeniedException("Only Voyra records a Voyra wallet refund");
         }
@@ -193,7 +203,7 @@ public class BookingCancellationService {
         Booking booking = cancelled(bookingId);
         RefundSettlementRequest refund = new RefundSettlementRequest();
         refund.setAmount(amount);
-        refund.setPaidOn(LocalDate.now());
+        refund.setPaidOn(paidOn);
         refund.setPaymentMode(PaymentMode.VOYRA_WALLET);
         refund.setReference("Voyra wallet");
         postSupplierRefund(booking, refund, false);
@@ -428,7 +438,7 @@ public class BookingCancellationService {
      * supplier, so nothing is expected back - a refund needs a bill (and its credit note) to post
      * against. {@code write} false is the preview: same numbers, nothing recorded.
      */
-    private BigDecimal supplierExpected(Booking booking, List<SupplierInvoice> bills, BigDecimal charge, boolean write) {
+    private BigDecimal supplierExpected(Booking booking, List<SupplierInvoice> bills, BigDecimal charge, boolean write, LocalDate noteDate) {
         if (bills.isEmpty()) {
             return BigDecimal.ZERO;
         }
@@ -472,14 +482,14 @@ public class BookingCancellationService {
             BigDecimal stillOwed = bill.getGrandTotal().subtract(bill.getAmountPaid()).subtract(bill.getCreditNoteTotal()).max(BigDecimal.ZERO);
             expected = expected.add(credit.subtract(stillOwed).max(BigDecimal.ZERO));
             if (write) {
-                supplierCreditNoteService.record(supplierCreditNote(bill, credit));
+                supplierCreditNoteService.record(supplierCreditNote(bill, credit, noteDate));
             }
         }
         return expected;
     }
 
     /** GST on the credit in the same proportion as on the bill (a positive credit means a positive grand total). */
-    private static SupplierCreditNoteRequest supplierCreditNote(SupplierInvoice bill, BigDecimal credit) {
+    private static SupplierCreditNoteRequest supplierCreditNote(SupplierInvoice bill, BigDecimal credit, LocalDate noteDate) {
         BigDecimal ratio = credit.divide(bill.getGrandTotal(), 10, RoundingMode.HALF_UP);
         BigDecimal cgst = bill.getCgstAmount().multiply(ratio).setScale(2, RoundingMode.HALF_UP);
         BigDecimal sgst = bill.getSgstAmount().multiply(ratio).setScale(2, RoundingMode.HALF_UP);
@@ -493,7 +503,7 @@ public class BookingCancellationService {
         r.setSgstAmount(sgst);
         r.setIgstAmount(igst);
         r.setRetentionFee(BigDecimal.ZERO);
-        r.setNoteDate(LocalDate.now());
+        r.setNoteDate(noteDate);
         return r;
     }
 

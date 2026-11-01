@@ -149,7 +149,7 @@ class BookingCancellationServiceCoverageTest {
 
         service.cancel("B1", cancel(CancellationType.VOID, " "));
 
-        verify(bookingService).markCancelled(b, "Void");
+        verify(bookingService).markCancelled(eq(b), eq("Void"), any());
         assertThat(b.getCustomerRefundDue()).isEqualByComparingTo("10000");
         assertThat(b.getRefundState()).isEqualTo(RefundState.REFUND_PENDING);
         assertThat(b.getCancellationType()).isEqualTo(CancellationType.VOID);
@@ -169,7 +169,7 @@ class BookingCancellationServiceCoverageTest {
 
         SystemActor.call("T1", () -> service.cancel("B1", cancel(CancellationType.CANCELLATION, "Trip over")));
 
-        verify(bookingService).markCancelled(completed, "Trip over");
+        verify(bookingService).markCancelled(eq(completed), eq("Trip over"), any());
     }
 
     @Test
@@ -218,7 +218,7 @@ class BookingCancellationServiceCoverageTest {
 
         service.cancel("B1", r);
 
-        verify(bookingService).markCancelled(b, "Cancellation");
+        verify(bookingService).markCancelled(eq(b), eq("Cancellation"), any());
         verify(supplierInvoiceService).recallCommission("S1");
         verify(supplierCreditNoteService, never()).record(any());
         assertThat(b.getSupplierRefundExpected()).isEqualByComparingTo("0");

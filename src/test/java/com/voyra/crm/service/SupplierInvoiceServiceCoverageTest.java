@@ -312,7 +312,7 @@ class SupplierInvoiceServiceCoverageTest {
         vendor(Vendor.builder().id("V1").name("Air Co").build());
         Booking booking = Booking.builder().id("B1").type(BookingType.HOTEL).build();
 
-        SupplierInvoiceResponse d = service.draftForVoucher(booking, "V1", " ", "INR", new BigDecimal("900"), BigDecimal.ONE, null, null);
+        SupplierInvoiceResponse d = service.draftForVoucher(booking, "V1", " ", "INR", new BigDecimal("900"), BigDecimal.ONE, null, null, java.time.LocalDate.now());
 
         assertThat(d.getCurrencyCode()).isEqualTo("INR");
         assertThat(d.getFxRateSource()).isEqualTo("INR_IDENTITY");
@@ -458,7 +458,7 @@ class SupplierInvoiceServiceCoverageTest {
         SupplierInvoice stored = SupplierInvoice.builder().id("SI7").notes("Drafted.").build();
         when(supplierInvoiceRepository.findById(any())).thenReturn(Optional.of(stored));
 
-        service.draftForVoucher(booking, "V1", " PNR9 ", null, new BigDecimal("900"), null, null, null);
+        service.draftForVoucher(booking, "V1", " PNR9 ", null, new BigDecimal("900"), null, null, null, java.time.LocalDate.now());
 
         assertThat(stored.getNotes()).isEqualTo("Drafted. Voucher PNR9.");
         verify(supplierInvoiceRepository).save(stored);

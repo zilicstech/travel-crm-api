@@ -170,7 +170,7 @@ class BookingCancellationServiceTest {
         // Issued while the booking is still live, then the booking is cancelled.
         org.mockito.InOrder order = org.mockito.Mockito.inOrder(bookingInvoiceIssuer, bookingService);
         order.verify(bookingInvoiceIssuer).issueCancellationCharges(b, d("1200"), d("300"));
-        order.verify(bookingService).markCancelled(org.mockito.ArgumentMatchers.eq(b), any());
+        order.verify(bookingService).markCancelled(org.mockito.ArgumentMatchers.eq(b), any(), any());
         // 5,000 paid less the 1,554 charges invoice (GST included).
         assertThat(b.getCustomerRefundDue()).isEqualByComparingTo("3446");
         verify(creditNoteService, never()).create(any());
@@ -198,7 +198,7 @@ class BookingCancellationServiceTest {
 
         service.cancel("B1", cancel("2000", "500"));
 
-        verify(bookingService).markCancelled(b, "Client changed plans");
+        verify(bookingService).markCancelled(eq(b), eq("Client changed plans"), any());
         assertThat(b.getCustomerRefundDue()).isEqualByComparingTo("7500");
         assertThat(b.getSupplierRefundExpected()).isEqualByComparingTo("0");
         assertThat(b.getCancellationSupplierCharge()).isEqualByComparingTo("2000");
@@ -497,6 +497,9 @@ class BookingCancellationServiceTest {
         ArgumentCaptor<SupplierCreditNoteRequest> note = ArgumentCaptor.forClass(SupplierCreditNoteRequest.class);
         verify(supplierCreditNoteService).record(note.capture());
         assertThat(note.getValue().getTaxableValue()).isEqualByComparingTo("6000");
+        assertThat(note.getValue().getNoteDate()).isEqualTo(java.time.LocalDate.now()); // an agency's own cancel posts today
+        verify(bookingService).markCancelled(eq(b), any(), org.mockito.ArgumentMatchers.argThat(at ->
+                !at.isBefore(java.time.LocalDateTime.now().minusMinutes(1))));
         assertThat(b.getSupplierRefundExpected()).isEqualByComparingTo("6000");
     }
 
@@ -609,7 +612,7 @@ class BookingCancellationServiceTest {
         r.setType(CancellationType.VOID);
 
         assertThatThrownBy(() -> service.cancel("B1", r)).hasMessageContaining("Void is only for airline tickets");
-        verify(bookingService, never()).markCancelled(any(), any());
+        verify(bookingService, never()).markCancelled(any(), any(), any());
     }
 
     @Test
@@ -622,7 +625,7 @@ class BookingCancellationServiceTest {
 
         service.cancel("B1", r);
 
-        verify(bookingService).markCancelled(b, "Void");
+        verify(bookingService).markCancelled(eq(b), eq("Void"), any());
         assertThat(b.getCancellationType()).isEqualTo(CancellationType.VOID);
     }
 
@@ -789,7 +792,7 @@ class BookingCancellationServiceTest {
         booking(BookingStatus.CONFIRMED);
         assertThatThrownBy(() -> service.preview("B1", null, d("-5000"), BigDecimal.ZERO)).hasMessageContaining("negative");
         assertThatThrownBy(() -> service.cancel("B1", cancel("0", "-1"))).hasMessageContaining("negative");
-        verify(bookingService, never()).markCancelled(any(), anyString());
+        verify(bookingService, never()).markCancelled(any(), anyString(), any());
     }
 
     // ---- supplier refund: the agent records it, Accounts confirms a bank one --------------
@@ -926,13 +929,16 @@ class BookingCancellationServiceTest {
                 .isInstanceOf(com.voyra.crm.exception.BookingConflictException.class);
         assertThatThrownBy(() -> service.rejectSupplierRefund("B1"))
                 .isInstanceOf(com.voyra.crm.exception.BookingConflictException.class);
-        assertThatThrownBy(() -> service.recordVoyraWalletRefund("B1", d("6000")))
+        assertThatThrownBy(() -> service.recordVoyraWalletRefund("B1", d("6000"), java.time.LocalDate.now()))
                 .isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
         verify(supplierCreditNoteService, never()).record(any());
         verify(supplierCreditNoteService, never()).receiveRefund(any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
     }
 
-    /** The platform's cancel of a (even completed) mirror: the paid bill gets its supplier credit note, the refund lands on 1310. */
+    /**
+     * The platform's cancel of a (even completed) mirror: the paid bill gets its supplier credit note, the refund lands on
+     * 1310, all dated when Voyra cancelled it (days before this sync).
+     */
     @Test
     void theSystemActorCancelsAMirrorAndRecordsTheRefundAgainstTheVoyraWallet() {
         Booking b = booking(BookingStatus.COMPLETED);
@@ -950,20 +956,26 @@ class BookingCancellationServiceTest {
         org.mockito.Mockito.doAnswer(i -> {
             b.setBookingStatus(BookingStatus.CANCELLED);
             return null;
-        }).when(bookingService).markCancelled(eq(b), any());
+        }).when(bookingService).markCancelled(eq(b), any(), any());
 
+        java.time.LocalDateTime cancelledAt = java.time.LocalDateTime.now().minusDays(6);
+        java.time.LocalDate cancelledOn = cancelledAt.toLocalDate();
         com.voyra.crm.security.SystemActor.call("T1", () -> {
-            service.cancel("B1", request);
-            return service.recordVoyraWalletRefund("B1", d("4000"));
+            service.cancel("B1", request, cancelledAt, cancelledOn);
+            return service.recordVoyraWalletRefund("B1", d("4000"), cancelledOn);
         });
+
+        verify(bookingService).markCancelled(b, "Client changed plans", cancelledAt);
 
         ArgumentCaptor<SupplierCreditNoteRequest> credit = ArgumentCaptor.forClass(SupplierCreditNoteRequest.class);
         verify(supplierCreditNoteService).record(credit.capture());
         assertThat(credit.getValue().getTaxableValue()).isEqualByComparingTo("4000");
+        assertThat(credit.getValue().getNoteDate()).isEqualTo(cancelledOn);
         ArgumentCaptor<SupplierCreditNoteRefundRequest> refund = ArgumentCaptor.forClass(SupplierCreditNoteRefundRequest.class);
         verify(supplierCreditNoteService).receiveRefund(eq("SCN1"), refund.capture(), eq(false));
         assertThat(refund.getValue().getPaymentMode()).isEqualTo(PaymentMode.VOYRA_WALLET);
         assertThat(refund.getValue().getAmount()).isEqualByComparingTo("4000");
+        assertThat(refund.getValue().getReceivedOn()).isEqualTo(cancelledOn);
         verify(supplierPaymentService, never()).creditWallet(any(), any(), any(), anyString());
         assertThat(b.getSupplierRefundReceived()).isEqualByComparingTo("4000");
     }
