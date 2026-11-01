@@ -56,6 +56,9 @@ public class PlatformBookingResponse {
     @Schema(description = "CRM client the booking is for, if any", example = "Acme Travel")
     private String clientName;
 
+    @Schema(description = "The supplier the booking was made on", example = "Tripjack")
+    private String supplierName;
+
     @Schema(description = "When the fare was reviewed", example = "2026-10-25T05:00:00Z")
     private Instant createdAt;
 

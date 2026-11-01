@@ -49,6 +49,11 @@ public class GlobalExceptionHandlerFixtureController {
         throw new BookingConflictException("PRICE_CHANGED", "The fare changed", java.util.Map.of("displayedFare", new java.math.BigDecimal("4600.00")));
     }
 
+    @GetMapping("/test/suppliers-unavailable")
+    public String suppliersUnavailable() {
+        throw new SuppliersUnavailableException();
+    }
+
     @GetMapping("/test/fare-unavailable")
     public String fareUnavailable() {
         throw new FareUnavailableException("gone");

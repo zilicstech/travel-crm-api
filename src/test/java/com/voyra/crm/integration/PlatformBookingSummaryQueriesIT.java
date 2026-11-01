@@ -82,4 +82,28 @@ class PlatformBookingSummaryQueriesIT extends AbstractIntegrationTest {
         assertThat(repository.findNewestInStatuses("T1", null, EnumSet.of(PlatformBookingStatus.BOOKING, PlatformBookingStatus.UNKNOWN,
                 PlatformBookingStatus.CANCELLING), PageRequest.of(0, 5))).extracting(PlatformBooking::getId).containsExactly("unk");
     }
+
+    private void ticketed(String id, SupplierEnvironment env, PlatformBookingStatus status, String displayed, Instant ticketedAt) {
+        repository.save(PlatformBooking.builder().id(id).tenantId("T1").product(PricingProduct.FLIGHT).status(status)
+                .environment(env).displayed(new BigDecimal(displayed)).pricingSnapshot(Map.of()).itinerary(Map.of())
+                .ticketedAt(ticketedAt).createdAt(NOW).build());
+    }
+
+    @Test
+    void sumDisplayedTicketedCountsLiveTicketedCancellingAndCancelledRowsInRange() {
+        Instant from = NOW.minus(Duration.ofDays(10));
+        Instant to = NOW;
+        Instant in = NOW.minus(Duration.ofDays(1));
+        ticketed("t", SupplierEnvironment.PROD, PlatformBookingStatus.TICKETED, "100.00", in);
+        ticketed("c1", SupplierEnvironment.PROD, PlatformBookingStatus.CANCELLING, "20.00", in);
+        ticketed("c2", SupplierEnvironment.PROD, PlatformBookingStatus.CANCELLED, "3.00", from); // the lower bound is inclusive
+        ticketed("mock", SupplierEnvironment.MOCK, PlatformBookingStatus.TICKETED, "1000.00", in);
+        ticketed("failed", SupplierEnvironment.PROD, PlatformBookingStatus.FAILED, "2000.00", in);
+        ticketed("late", SupplierEnvironment.PROD, PlatformBookingStatus.TICKETED, "4000.00", to.plus(Duration.ofDays(1)));
+
+        var counted = EnumSet.of(PlatformBookingStatus.TICKETED, PlatformBookingStatus.CANCELLING, PlatformBookingStatus.CANCELLED);
+        assertThat(repository.sumDisplayedTicketed(from, to, SupplierEnvironment.PROD, counted)).isEqualByComparingTo("123.00");
+        assertThat(repository.sumDisplayedTicketed(to.plus(Duration.ofDays(5)), to.plus(Duration.ofDays(6)), SupplierEnvironment.PROD, counted))
+                .isEqualByComparingTo("0");
+    }
 }

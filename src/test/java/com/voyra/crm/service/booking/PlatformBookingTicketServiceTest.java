@@ -81,7 +81,7 @@ class PlatformBookingTicketServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new PlatformBookingTicketService(new PlatformBookingQueryService(bookings, events, tenants, agents, clients, paxCodec, objectMapper, tickets),
+        service = new PlatformBookingTicketService(new PlatformBookingQueryService(bookings, events, tenants, agents, clients, paxCodec, objectMapper, tickets, null),
                 bookings, tickets, tenants, authorResolver, logoLoader, paxCodec, objectMapper,
                 new com.voyra.crm.service.EntitlementService(subscriptions, transactionManager), mirrorService, transactionManager, crmBookings);
         com.voyra.crm.cache.TenantCache.remove("T1");
@@ -122,7 +122,7 @@ class PlatformBookingTicketServiceTest {
                 .status(PlatformBookingStatus.TICKETED).environment(SupplierEnvironment.UAT)
                 .pnr("ABC123").ticketNumbers(List.of("098-1"))
                 .gross(new BigDecimal("5000.00")).base(new BigDecimal("4250.00")).displayed(new BigDecimal("4500.00"))
-                .agencyCommission(new BigDecimal("100.00")).voyraEarned(new BigDecimal("250.00")).paxCount(1)
+                .agencyCommission(new BigDecimal("100.00")).paxCount(1)
                 .paxEnc(paxCodec.encrypt(Map.of("passengers", List.of(pax("Mr", "Rahul", "Sharma", "N1234567")),
                         "contactEmail", "c@x.test", "contactPhone", "9876543210")))
                 .itinerary(new HashMap<>(Map.of("sI", List.of(seg("DEL", "BOM", false)))))

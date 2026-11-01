@@ -30,14 +30,11 @@ public class PricingRuleResponse {
     @Schema(description = "Percentage, 0 to 100", example = "3.00")
     private BigDecimal pct;
 
-    @Schema(description = "Commission rules: the commission may exceed Voyra's estimated earning")
-    private boolean allowAboveEarned;
-
     @JsonProperty("isDefault")  // Lombok's isDefault() getter would otherwise serialize as "default"
     @Schema(description = "The rule every agency without an assignment is on; never deleted")
     private boolean isDefault;
 
-    @Schema(description = "Moves on each change of pct or allowAboveEarned", example = "1")
+    @Schema(description = "Moves on each change of pct", example = "1")
     private int version;
 
     @Schema(description = "Agencies on this rule (for a Default rule, including agencies with no assignment)", example = "4")

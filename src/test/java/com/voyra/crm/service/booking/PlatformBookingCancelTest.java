@@ -24,7 +24,6 @@ import com.voyra.crm.models.booking.SupplierBookingStatus;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.PlatformBookingEventRepository;
 import com.voyra.crm.repository.PlatformBookingRepository;
-import com.voyra.crm.repository.PlatformSupplierCredentialRepository;
 import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.repository.WalletEntryRepository;
 import com.voyra.crm.repository.WalletRepository;
@@ -33,6 +32,7 @@ import com.voyra.crm.service.AgencyPricingService;
 import com.voyra.crm.service.NotificationService;
 import com.voyra.crm.service.PlatformAuditService;
 import com.voyra.crm.service.PlatformSettingService;
+import com.voyra.crm.service.PlatformSupplierCredentialService;
 import com.voyra.crm.service.WalletService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -91,7 +91,8 @@ class PlatformBookingCancelTest {
     @Mock private WalletRepository walletRepository;
     @Mock private TenantRepository tenantRepository;
     @Mock private AgentRepository agentRepository;
-    @Mock private PlatformSupplierCredentialRepository credentialRepository;
+    @Mock private PlatformSupplierCredentialService suppliers;
+    @Mock private FlightBookingProvider tripjack;
     @Mock private NotificationService notificationService;
     @Mock private PlatformBookingMirrorService mirrorService;
     @Mock private com.voyra.crm.service.EntitlementService entitlementService;
@@ -112,14 +113,22 @@ class PlatformBookingCancelTest {
 
     private final FlightBookingProviderConfig flightConfig = new FlightBookingProviderConfig();
 
-    private BookingProviderRegistry registry() {
-        return new BookingProviderRegistry(provider, hotelProvider, flightConfig, hotelConfig);
+    private SupplierRegistry registry() {
+        return BookingSuppliers.registry(suppliers, provider, tripjack, hotelProvider, flightConfig, hotelConfig);
+    }
+
+    /** The ticketed row, booked on the Tripjack UAT account. */
+    private PlatformBooking onTripjack() {
+        PlatformBooking b = rows.get(ID);
+        b.setCredentialId(BookingSuppliers.TJ_UAT.id());
+        b.setEnvironment(SupplierEnvironment.UAT);
+        return b;
     }
 
     @BeforeEach
     void setUp() {
         service = new PlatformBookingService(bookingRepository, registry(), quoter, pricingService,
-                walletService, walletRepository, tenantRepository, agentRepository, credentialRepository, notificationService,
+                walletService, walletRepository, tenantRepository, agentRepository, notificationService,
                 new PlatformBookingEventRecorder(eventRepository, paxCodec), paxCodec, objectMapper, transactionManager,
                 walletEntryRepository, platformAuditService, settings, mirrorService, entitlementService);
         lenient().when(bookingRepository.save(any())).thenAnswer(i -> {
@@ -165,17 +174,19 @@ class PlatformBookingCancelTest {
 
     private static PlatformBooking ticketedRow(PlatformBookingStatus status) {
         return PlatformBooking.builder().id(ID).tenantId(T).product(PricingProduct.FLIGHT).status(status)
-                .environment(SupplierEnvironment.MOCK).supplierReviewId("rv-1").supplierBookingId("SB-1").pnr("PNR123")
+                .credentialId("s1").environment(SupplierEnvironment.MOCK).supplierReviewId("rv-1").supplierBookingId("SB-1").pnr("PNR123")
                 .gross(new BigDecimal("5000.00")).base(new BigDecimal("4250.00")).displayed(new BigDecimal("4500.00"))
-                .voyraEarned(new BigDecimal("127.50")).agencyCommission(new BigDecimal("100.00")).tds(new BigDecimal("5.00"))
-                .voyraNet(new BigDecimal("-472.50")).holdEntryId("H1").debitEntryId("D1")
+                .agencyCommission(new BigDecimal("100.00")).tds(new BigDecimal("5.00"))
+                .holdEntryId("H1").debitEntryId("D1")
                 .pricingSnapshot(new LinkedHashMap<>(Map.of("pricingId", "P1"))).createdAt(Instant.now()).build();
     }
 
     private void supplierRefunds(String refund) {
         BigDecimal r = refund == null ? null : new BigDecimal(refund);
-        lenient().when(provider.cancelQuote("SB-1")).thenReturn(new CancelQuote(r, "quoted"));
-        lenient().when(provider.cancel("SB-1")).thenReturn(new CancelResult(true, r, "Cancelled"));
+        for (FlightBookingProvider p : List.of(provider, tripjack)) {
+            lenient().when(p.cancelQuote(eq("SB-1"), any())).thenReturn(new CancelQuote(r, "quoted"));
+            lenient().when(p.cancel(eq("SB-1"), any())).thenReturn(new CancelResult(true, r, "Cancelled"));
+        }
     }
 
     private List<String> eventTypes() {
@@ -194,7 +205,7 @@ class PlatformBookingCancelTest {
         PlatformBooking b = service.cancel(ID, "ck-1");
 
         InOrder order = inOrder(provider, walletService);
-        order.verify(provider).cancel("SB-1");
+        order.verify(provider).cancel(eq("SB-1"), any());
         order.verify(walletService).credit(eq(T), eq(WalletEntryType.REFUND_CREDIT), eq(new BigDecimal("4000.00")),
                 eq("pb-refund:" + ID), eq(REF), eq(ID), contains("PNR123"));
         order.verify(walletService).debitOrReceivable(T, WalletEntryType.COMMISSION_RECALL, new BigDecimal("95.00"),
@@ -279,8 +290,8 @@ class PlatformBookingCancelTest {
 
     @Test
     void supplierRefusalPostsNothing() {
-        when(provider.cancelQuote("SB-1")).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
-        when(provider.cancel("SB-1")).thenReturn(new CancelResult(false, null, "Ticket already flown"));
+        when(provider.cancelQuote(eq("SB-1"), any())).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
+        when(provider.cancel(eq("SB-1"), any())).thenReturn(new CancelResult(false, null, "Ticket already flown"));
 
         assertThatThrownBy(() -> service.cancel(ID, "ck-1"))
                 .isInstanceOfSatisfying(BookingConflictException.class, e -> {
@@ -297,13 +308,13 @@ class PlatformBookingCancelTest {
         assertThat(eventTypes()).contains("CANCEL_REFUSED");
 
         assertThatThrownBy(() -> service.cancel(ID, "ck-2")).isInstanceOf(BookingConflictException.class);
-        verify(provider, times(2)).cancel("SB-1");
+        verify(provider, times(2)).cancel(eq("SB-1"), any());
     }
 
     @Test
     void supplierTimeoutKeepsTheBookingCancellingAndAlerts() {
-        when(provider.cancelQuote("SB-1")).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
-        when(provider.cancel("SB-1")).thenThrow(new SupplierTimeoutException("Tripjack cancel timed out", null));
+        when(provider.cancelQuote(eq("SB-1"), any())).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
+        when(provider.cancel(eq("SB-1"), any())).thenThrow(new SupplierTimeoutException("Tripjack cancel timed out", null));
 
         // accepted-pending: answers normally with the CANCELLING booking, so the agency is not told to retry
         assertThat(service.cancel(ID, "ck-1").getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
@@ -314,13 +325,13 @@ class PlatformBookingCancelTest {
         verify(notificationService, times(1)).platformAlert(contains(ID), anyString());
         verifyNothingPosted();
         assertThat(service.cancel(ID, "ck-1").getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
-        verify(provider, times(1)).cancel("SB-1");
+        verify(provider, times(1)).cancel(eq("SB-1"), any());
     }
 
     @Test
     void anyRuntimeErrorFromTheSupplierCancelIsTreatedAsNoAnswer() {
-        when(provider.cancelQuote("SB-1")).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
-        when(provider.cancel("SB-1")).thenThrow(new IllegalArgumentException("unexpected body"));
+        when(provider.cancelQuote(eq("SB-1"), any())).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
+        when(provider.cancel(eq("SB-1"), any())).thenThrow(new IllegalArgumentException("unexpected body"));
 
         assertThatThrownBy(() -> service.cancel(ID, "ck-1")).isInstanceOf(SupplierException.class);
         assertThat(rows.get(ID).getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
@@ -329,17 +340,17 @@ class PlatformBookingCancelTest {
 
     @Test
     void aQuoteErrorRevertsToTicketedBecauseNothingWasSubmitted() {
-        when(provider.cancelQuote("SB-1")).thenThrow(new SupplierException("Tripjack cancel quote call failed", null));
+        when(provider.cancelQuote(eq("SB-1"), any())).thenThrow(new SupplierException("Tripjack cancel quote call failed", null));
 
         assertThatThrownBy(() -> service.cancel(ID, "ck-1")).isInstanceOf(SupplierException.class);
         assertThat(rows.get(ID).getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
-        verify(provider, never()).cancel(anyString());
+        verify(provider, never()).cancel(anyString(), any());
     }
 
     @Test
     void aSecondCancelWhileCancellingNeverReachesTheSupplier() {
-        when(provider.cancelQuote("SB-1")).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
-        when(provider.cancel("SB-1")).thenAnswer(i -> {
+        when(provider.cancelQuote(eq("SB-1"), any())).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
+        when(provider.cancel(eq("SB-1"), any())).thenAnswer(i -> {
             // a double click / second tab arrives while the first request waits on the supplier
             assertThat(service.cancel(ID, "ck-1").getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
             assertThatThrownBy(() -> service.cancel(ID, "ck-2"))
@@ -350,8 +361,8 @@ class PlatformBookingCancelTest {
         });
 
         assertThat(service.cancel(ID, "ck-1").getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
-        verify(provider, times(1)).cancel("SB-1");
-        verify(provider, times(1)).cancelQuote("SB-1");
+        verify(provider, times(1)).cancel(eq("SB-1"), any());
+        verify(provider, times(1)).cancelQuote(eq("SB-1"), any());
         verify(walletService, times(1)).credit(anyString(), any(), any(), anyString(), anyString(), anyString(), anyString());
     }
 
@@ -370,7 +381,7 @@ class PlatformBookingCancelTest {
         verify(notificationService).platformAlert(contains(ID), contains("4000"));
         // a retry must not submit the cancellation again
         assertThat(service.cancel(ID, "ck-1").getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
-        verify(provider, times(1)).cancel("SB-1");
+        verify(provider, times(1)).cancel(eq("SB-1"), any());
     }
 
     @Test
@@ -398,8 +409,8 @@ class PlatformBookingCancelTest {
     }
 
     private void cancellingAfterATimeout() {
-        when(provider.cancelQuote("SB-1")).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
-        when(provider.cancel("SB-1")).thenThrow(new SupplierTimeoutException("Tripjack cancel timed out", null));
+        when(provider.cancelQuote(eq("SB-1"), any())).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
+        when(provider.cancel(eq("SB-1"), any())).thenThrow(new SupplierTimeoutException("Tripjack cancel timed out", null));
         service.cancel(ID, "ck-1");
         loginAsPlatformAdmin();
     }
@@ -464,8 +475,8 @@ class PlatformBookingCancelTest {
             assertThatThrownBy(() -> service.cancel(ID, "ck-1")).as(s.name()).isInstanceOf(IllegalStateException.class);
             assertThatThrownBy(() -> service.cancelQuote(ID)).as(s.name()).isInstanceOf(IllegalStateException.class);
         }
-        verify(provider, never()).cancelQuote(anyString());
-        verify(provider, never()).cancel(anyString());
+        verify(provider, never()).cancelQuote(anyString(), any());
+        verify(provider, never()).cancel(anyString(), any());
         verifyNothingPosted();
     }
 
@@ -477,50 +488,22 @@ class PlatformBookingCancelTest {
         PlatformBooking again = service.cancel(ID, "ck-1");
 
         assertThat(again.getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
-        verify(provider, times(1)).cancel("SB-1");
+        verify(provider, times(1)).cancel(eq("SB-1"), any());
         verify(walletService, times(1)).credit(anyString(), any(), any(), anyString(), anyString(), anyString(), anyString());
         verify(walletService, times(1)).debitOrReceivable(anyString(), any(), any(), anyString(), anyString(), anyString(), any());
     }
 
     @Test
-    void voyraNetRecomputedWithReversal() {
+    void cancelPostsRefundAndRecallAndTouchesNoVoyraFigure() {
         when(settings.voyraCancelFee()).thenReturn(new BigDecimal("250.00"));
         supplierRefunds("4000.00");
 
         PlatformBooking b = service.cancel(ID, "ck-1");
 
-        // earned reversed (-127.50), commission recovered (+100), Voyra keeps R - refund = 250:
-        // -472.50 - 127.50 + 100 + 250 = -250.00
-        assertThat(b.getVoyraEarnedReversal()).isEqualByComparingTo("127.50");
-        assertThat(b.getVoyraNet()).isEqualByComparingTo("-250.00");
-        verify(notificationService, never()).platformAlert(anyString(), anyString()); // better than -472.50: no loss alert
-    }
-
-    @Test
-    void cancellationReversesTheStatementEarningWhenOneIsInForce() {
-        when(settings.voyraCancelFee()).thenReturn(new BigDecimal("250.00"));
-        supplierRefunds("4000.00");
-        // a statement said Voyra earned 140 (not the 127.50 estimate): net was re-derived to -460.00
-        rows.put(ID, ticketedRow(PlatformBookingStatus.TICKETED).toBuilder().voyraEarnedActual(new BigDecimal("140.00"))
-                .voyraEarnedSource(com.voyra.crm.enums.VoyraEarnedSource.STATEMENT).voyraNet(new BigDecimal("-460.00")).build());
-
-        PlatformBooking b = service.cancel(ID, "ck-1");
-
-        // -460 - 140 + 100 + 250 = -250.00: the actual is reversed, the estimate stays as stamped
-        assertThat(b.getVoyraEarnedReversal()).isEqualByComparingTo("140.00");
-        assertThat(b.getVoyraEarned()).isEqualByComparingTo("127.50");
-        assertThat(b.getVoyraNet()).isEqualByComparingTo("-250.00");
-    }
-
-    @Test
-    void lossAlertOnlyWhenTheCancelMakesVoyraNetWorse() {
-        supplierRefunds("4000.00");
-
-        PlatformBooking b = service.cancel(ID, "ck-1");
-
-        // -472.50 - 127.50 + 100 + 0 = -500.00, worse than at ticket
-        assertThat(b.getVoyraNet()).isEqualByComparingTo("-500.00");
-        verify(notificationService).platformAlert(contains(ID), anyString());
+        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
+        verify(walletService).credit(eq(T), eq(WalletEntryType.REFUND_CREDIT), any(), anyString(), anyString(), anyString(), anyString());
+        verify(walletService).debitOrReceivable(eq(T), eq(WalletEntryType.COMMISSION_RECALL), any(), anyString(), anyString(), anyString(), any());
+        verify(notificationService, never()).platformAlert(anyString(), anyString()); // no "Loss-making" alert
     }
 
     @Test
@@ -551,7 +534,7 @@ class PlatformBookingCancelTest {
 
         assertThatThrownBy(() -> service.cancel(ID, "ck-1"))
                 .isInstanceOfSatisfying(BookingConflictException.class, e -> assertThat(e.getCode()).isEqualTo("REFUND_UNKNOWN"));
-        verify(provider, never()).cancel(anyString());
+        verify(provider, never()).cancel(anyString(), any());
         verifyNothingPosted();
         assertThat(rows.get(ID).getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
     }
@@ -565,13 +548,13 @@ class PlatformBookingCancelTest {
         assertThat(q.refundToBeConfirmed()).isTrue();
         assertThatThrownBy(() -> service.cancel(ID, "ck-1"))
                 .isInstanceOfSatisfying(BookingConflictException.class, e -> assertThat(e.getCode()).isEqualTo("REFUND_UNKNOWN"));
-        verify(provider, never()).cancel(anyString());
+        verify(provider, never()).cancel(anyString(), any());
     }
 
     @Test
     void aNegativeAcceptedRefundGoesToTheManualPath() {
-        when(provider.cancelQuote("SB-1")).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
-        when(provider.cancel("SB-1")).thenReturn(new CancelResult(true, new BigDecimal("-50.00"), "Cancelled"));
+        when(provider.cancelQuote(eq("SB-1"), any())).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
+        when(provider.cancel(eq("SB-1"), any())).thenReturn(new CancelResult(true, new BigDecimal("-50.00"), "Cancelled"));
 
         PlatformBooking b = service.cancel(ID, "ck-1");
 
@@ -583,8 +566,8 @@ class PlatformBookingCancelTest {
 
     @Test
     void acceptedWithoutARefundCancelsAndAlertsForAManualPost() {
-        when(provider.cancelQuote("SB-1")).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
-        when(provider.cancel("SB-1")).thenReturn(new CancelResult(true, null, "Cancelled"));
+        when(provider.cancelQuote(eq("SB-1"), any())).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
+        when(provider.cancel(eq("SB-1"), any())).thenReturn(new CancelResult(true, null, "Cancelled"));
 
         PlatformBooking b = service.cancel(ID, "ck-1");
 
@@ -598,8 +581,8 @@ class PlatformBookingCancelTest {
     @Test
     void usesTheReviewIdWhenTheSupplierBookingIdIsMissing() {
         rows.get(ID).setSupplierBookingId(null);
-        when(provider.cancelQuote("rv-1")).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
-        when(provider.cancel("rv-1")).thenReturn(new CancelResult(true, new BigDecimal("4000.00"), "Cancelled"));
+        when(provider.cancelQuote(eq("rv-1"), any())).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
+        when(provider.cancel(eq("rv-1"), any())).thenReturn(new CancelResult(true, new BigDecimal("4000.00"), "Cancelled"));
 
         assertThat(service.cancel(ID, "ck-1").getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
     }
@@ -610,7 +593,7 @@ class PlatformBookingCancelTest {
 
         assertThatThrownBy(() -> service.cancel(ID, "ck-1")).isInstanceOf(NotFoundException.class);
         assertThatThrownBy(() -> service.cancelQuote(ID)).isInstanceOf(NotFoundException.class);
-        verify(provider, never()).cancel(anyString());
+        verify(provider, never()).cancel(anyString(), any());
     }
 
     @Test
@@ -621,23 +604,23 @@ class PlatformBookingCancelTest {
         } finally {
             TransactionSynchronizationManager.setActualTransactionActive(false);
         }
-        verify(provider, never()).cancel(anyString());
+        verify(provider, never()).cancel(anyString(), any());
     }
 
     /** cancel for a hotel reuses the flight path but quotes and cancels with the hotel supplier. */
     @Test
     void aHotelBookingIsCancelledThroughTheHotelSupplier() {
         rows.get(ID).setProduct(PricingProduct.HOTEL);
-        when(hotelProvider.cancelQuote("SB-1")).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
-        when(hotelProvider.cancel("SB-1")).thenReturn(new CancelResult(true, new BigDecimal("4000.00"), "Cancelled"));
+        when(hotelProvider.cancelQuote(eq("SB-1"), any())).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
+        when(hotelProvider.cancel(eq("SB-1"), any())).thenReturn(new CancelResult(true, new BigDecimal("4000.00"), "Cancelled"));
 
         assertThat(service.cancelQuote(ID).refund()).isEqualByComparingTo("4000.00");
         PlatformBooking b = service.cancel(ID, "ck-1");
 
         assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
-        verify(hotelProvider).cancel("SB-1");
-        verify(provider, never()).cancelQuote(any());
-        verify(provider, never()).cancel(any());
+        verify(hotelProvider).cancel(eq("SB-1"), any());
+        verify(provider, never()).cancelQuote(any(), any());
+        verify(provider, never()).cancel(any(), any());
         verify(walletService).credit(eq(T), eq(WalletEntryType.REFUND_CREDIT), eq(new BigDecimal("4000.00")),
                 eq("pb-refund:" + ID), eq(REF), eq(ID), contains("hotel booking"));
         verify(walletService).debitOrReceivable(T, WalletEntryType.COMMISSION_RECALL, new BigDecimal("95.00"),
@@ -659,7 +642,7 @@ class PlatformBookingCancelTest {
     @Test
     void aHotelCancelQuoteShowsThePolicyAndTheFreeCancellationDeadline() {
         hotelRow();
-        when(hotelProvider.cancelQuote("SB-1")).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"),
+        when(hotelProvider.cancelQuote(eq("SB-1"), any())).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"),
                 new CancelQuote(null, "unknown"));
 
         CancelPreview q = service.cancelQuote(ID);
@@ -678,8 +661,8 @@ class PlatformBookingCancelTest {
     @Test
     void aHotelCancelledPastTheDeadlinePostsTheQuotedZeroAndStillRecalls() {
         hotelRow();
-        when(hotelProvider.cancelQuote("SB-1")).thenReturn(new CancelQuote(new BigDecimal("200.00"), "quoted before the deadline passed"));
-        when(hotelProvider.cancel("SB-1")).thenReturn(new CancelResult(true, BigDecimal.ZERO, "Cancelled"));
+        when(hotelProvider.cancelQuote(eq("SB-1"), any())).thenReturn(new CancelQuote(new BigDecimal("200.00"), "quoted before the deadline passed"));
+        when(hotelProvider.cancel(eq("SB-1"), any())).thenReturn(new CancelResult(true, BigDecimal.ZERO, "Cancelled"));
 
         CancelPreview q = service.cancelQuote(ID);
         assertThat(q.refund()).isEqualByComparingTo("200.00");
@@ -700,8 +683,7 @@ class PlatformBookingCancelTest {
      */
     @Test
     void anAcceptedTripjackCancelStaysCancellingAndPostsNothing() {
-        flightConfig.setProvider("tripjack");
-        rows.get(ID).setEnvironment(SupplierEnvironment.UAT); // booked with Tripjack
+        onTripjack();
         supplierRefunds("4000.00");
 
         PlatformBooking b = service.cancel(ID, "ck-1");
@@ -715,13 +697,13 @@ class PlatformBookingCancelTest {
 
         // a retry with the same key never submits again
         assertThat(service.cancel(ID, "ck-1").getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
-        verify(provider, times(1)).cancel("SB-1");
+        verify(tripjack, times(1)).cancel(eq("SB-1"), any());
     }
 
-    /** Final review Important 1: a live ticket is never cancelled through the mock provider; nothing is asked or posted. */
+    /** A row whose supplier row is now in another environment is never asked or settled; Voyra is alerted once. */
     @Test
-    void aLiveRowIsNotCancelledThroughTheMockProvider() {
-        rows.get(ID).setEnvironment(SupplierEnvironment.PROD); // provider is the mock
+    void aRowWhoseSupplierNoLongerMatchesIsNotServed() {
+        rows.get(ID).setEnvironment(SupplierEnvironment.PROD); // its row s1 is MOCK
         supplierRefunds("4000.00");
 
         assertThatThrownBy(() -> service.cancelQuote(ID)).isInstanceOfSatisfying(BookingConflictException.class, e -> {
@@ -731,23 +713,68 @@ class PlatformBookingCancelTest {
         assertThatThrownBy(() -> service.cancel(ID, "ck-1")).isInstanceOf(BookingConflictException.class)
                 .extracting("code").isEqualTo("BOOKING_UNAVAILABLE");
 
-        org.mockito.Mockito.verifyNoInteractions(provider);
+        verify(provider, never()).cancelQuote(anyString(), any());
+        verify(provider, never()).cancel(anyString(), any());
         verifyNothingPosted();
         assertThat(rows.get(ID).getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
         verify(notificationService, times(1)).platformAlert(contains(ID), anyString()); // once per row
         assertThat(eventTypes()).containsExactly("SUPPLIER_MISMATCH");
+        assertThat(savedEvents.get(0).getPayload()).containsEntry("environment", "PROD").containsEntry("status", "TICKETED")
+                .containsEntry("credentialId", "s1");
     }
 
-    /** A row booked on the mock is not sent to Tripjack once the provider is Tripjack: the same refusal. */
+    /** A row stamped with no supplier (or a supplier row that is gone) is refused the same way. */
     @Test
-    void aMockRowIsNotCancelledThroughTripjack() {
-        flightConfig.setProvider("tripjack");
+    void aRowWithoutItsSupplierIsNotServed() {
+        rows.get(ID).setCredentialId(null);
         supplierRefunds("4000.00");
 
         assertThatThrownBy(() -> service.cancel(ID, "ck-1")).isInstanceOf(BookingConflictException.class)
                 .extracting("code").isEqualTo("BOOKING_UNAVAILABLE");
-        org.mockito.Mockito.verifyNoInteractions(provider);
+        rows.get(ID).setCredentialId("gone");
+        assertThatThrownBy(() -> service.cancel(ID, "ck-1")).isInstanceOf(BookingConflictException.class)
+                .extracting("code").isEqualTo("BOOKING_UNAVAILABLE");
+        verify(provider, never()).cancel(anyString(), any());
         verifyNothingPosted();
+    }
+
+    @Test
+    void anAsyncSupplierStaysCancellingUntilThePollerConfirms() {
+        onTripjack();
+        supplierRefunds("4000.00");
+
+        PlatformBooking b = service.cancel(ID, "ck-1");
+
+        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
+        assertThat(eventTypes()).contains("CANCEL_ACCEPTED").doesNotContain("CANCELLED");
+        verify(tripjack).cancel("SB-1", BookingSuppliers.TJ_UAT);
+        verify(provider, never()).cancel(anyString(), any());
+        verifyNothingPosted();
+    }
+
+    @Test
+    void aSyncSupplierSettlesAtOnce() {
+        supplierRefunds("4000.00");
+
+        PlatformBooking b = service.cancel(ID, "ck-1");
+
+        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
+        verify(provider).cancel("SB-1", BookingSuppliers.S1);
+        verify(walletService).credit(eq(T), eq(WalletEntryType.REFUND_CREDIT), eq(new BigDecimal("4000.00")),
+                eq("pb-refund:" + ID), eq(REF), eq(ID), anyString());
+        verify(walletService).debitOrReceivable(T, WalletEntryType.COMMISSION_RECALL, new BigDecimal("95.00"),
+                "pb-recall:" + ID, REF, ID, ReceivableReason.CANCEL_NET_NEGATIVE);
+    }
+
+    /** The booking switch gates review and confirm only: a ticket already issued is still quoted and cancelled. */
+    @Test
+    void cancelStillWorksAfterBookingIsSwitchedOff() {
+        lenient().when(suppliers.bookingEnabledIds(any())).thenReturn(java.util.Set.of());
+        supplierRefunds("4000.00");
+
+        assertThat(service.cancelQuote(ID).refund()).isEqualByComparingTo("4000.00");
+        assertThat(service.cancel(ID, "ck-1").getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
+        verify(suppliers, never()).bookingEnabledIds(any());
     }
 
     // ---------------------------------------------------------------- coverage: cancel refusals and settlement edges
@@ -770,8 +797,8 @@ class PlatformBookingCancelTest {
 
     @Test
     void aRefusalWithoutTheSuppliersWordsRecordsTheFixedSentence() {
-        when(provider.cancelQuote("SB-1")).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
-        when(provider.cancel("SB-1")).thenReturn(new CancelResult(false, null, null));
+        when(provider.cancelQuote(eq("SB-1"), any())).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
+        when(provider.cancel(eq("SB-1"), any())).thenReturn(new CancelResult(false, null, null));
 
         assertThatThrownBy(() -> service.cancel(ID, "ck-1")).isInstanceOf(BookingConflictException.class);
 
@@ -782,8 +809,8 @@ class PlatformBookingCancelTest {
 
     @Test
     void aRefusalForARowThatMovedOnLeavesItAlone() {
-        when(provider.cancelQuote("SB-1")).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
-        when(provider.cancel("SB-1")).thenAnswer(i -> {
+        when(provider.cancelQuote(eq("SB-1"), any())).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
+        when(provider.cancel(eq("SB-1"), any())).thenAnswer(i -> {
             rows.get(ID).setStatus(PlatformBookingStatus.CANCELLED); // an admin settled it meanwhile
             return new CancelResult(false, null, "late");
         });
@@ -845,7 +872,7 @@ class PlatformBookingCancelTest {
     void aHotelQuoteWithAnUnreadableDeadlineShowsNone() {
         hotelRow();
         rows.get(ID).setItinerary(new LinkedHashMap<>(Map.of("cancellationPolicy", "Refundable", "freeCancellationUntil", "soon")));
-        when(hotelProvider.cancelQuote("SB-1")).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
+        when(hotelProvider.cancelQuote(eq("SB-1"), any())).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
 
         CancelPreview q = service.cancelQuote(ID);
 
@@ -855,8 +882,7 @@ class PlatformBookingCancelTest {
 
     @Test
     void aTripjackCancelTheSupplierAcceptsStaysCancellingUntilConfirmed() {
-        flightConfig.setProvider("tripjack");
-        rows.get(ID).setEnvironment(SupplierEnvironment.UAT);
+        onTripjack();
         supplierRefunds("4000.00");
 
         PlatformBooking b = service.cancel(ID, "ck-1");
@@ -868,8 +894,8 @@ class PlatformBookingCancelTest {
 
     @Test
     void anAcceptedCancelForARowAnAdminPutBackMeanwhileIsNotSettled() {
-        when(provider.cancelQuote("SB-1")).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
-        when(provider.cancel("SB-1")).thenAnswer(i -> {
+        when(provider.cancelQuote(eq("SB-1"), any())).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
+        when(provider.cancel(eq("SB-1"), any())).thenAnswer(i -> {
             rows.get(ID).setStatus(PlatformBookingStatus.TICKETED); // resolved "not cancelled" while the call ran
             return new CancelResult(true, new BigDecimal("4000.00"), "Cancelled");
         });

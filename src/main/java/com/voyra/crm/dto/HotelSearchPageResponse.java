@@ -29,4 +29,7 @@ public class HotelSearchPageResponse {
 
     @Schema(description = "This page's hotels")
     private List<HotelOfferResponse> offers;
+
+    @Schema(description = "Names of the suppliers that did not answer this search; their hotels are missing from the list")
+    private List<String> suppliersFailed;
 }

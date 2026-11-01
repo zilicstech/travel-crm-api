@@ -11,7 +11,6 @@ import com.voyra.crm.entity.Agent;
 import com.voyra.crm.entity.PricingRule;
 import com.voyra.crm.entity.PlatformBooking;
 import com.voyra.crm.entity.PlatformBookingEvent;
-import com.voyra.crm.entity.PlatformSupplierCredential;
 import com.voyra.crm.entity.Tenant;
 import com.voyra.crm.entity.Wallet;
 import com.voyra.crm.entity.WalletEntry;
@@ -24,15 +23,16 @@ import com.voyra.crm.enums.SupplierEnvironment;
 import com.voyra.crm.enums.SupplierProvider;
 import com.voyra.crm.enums.TenantStatus;
 import com.voyra.crm.enums.UserType;
-import com.voyra.crm.enums.VoyraEarnedSource;
 import com.voyra.crm.enums.WalletEntryType;
 import com.voyra.crm.exception.BookingConflictException;
+import com.voyra.crm.exception.BookingRequestException;
 import com.voyra.crm.exception.InsufficientBalanceException;
 import com.voyra.crm.exception.NotFoundException;
 import com.voyra.crm.exception.PricingNotConfiguredException;
 import com.voyra.crm.exception.ReceivableDueException;
 import com.voyra.crm.exception.SupplierException;
 import com.voyra.crm.exception.SupplierTimeoutException;
+import com.voyra.crm.models.ResolvedCredential;
 import com.voyra.crm.models.booking.BookRequest;
 import com.voyra.crm.models.booking.BookResult;
 import com.voyra.crm.models.booking.FareReview;
@@ -40,7 +40,6 @@ import com.voyra.crm.models.booking.SupplierBookingStatus;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.PlatformBookingEventRepository;
 import com.voyra.crm.repository.PlatformBookingRepository;
-import com.voyra.crm.repository.PlatformSupplierCredentialRepository;
 import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.repository.WalletEntryRepository;
 import com.voyra.crm.repository.WalletRepository;
@@ -49,11 +48,14 @@ import com.voyra.crm.service.AgencyPricingService;
 import com.voyra.crm.service.NotificationService;
 import com.voyra.crm.service.PlatformAuditService;
 import com.voyra.crm.service.PlatformSettingService;
+import com.voyra.crm.service.PlatformSupplierCredentialService;
 import com.voyra.crm.service.WalletService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.Mock;
@@ -73,6 +75,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -108,7 +111,8 @@ class PlatformBookingServiceTest {
     @Mock private WalletRepository walletRepository;
     @Mock private TenantRepository tenantRepository;
     @Mock private AgentRepository agentRepository;
-    @Mock private PlatformSupplierCredentialRepository credentialRepository;
+    @Mock private PlatformSupplierCredentialService suppliers;
+    @Mock private FlightBookingProvider tripjack;
     @Mock private NotificationService notificationService;
     @Mock private PlatformBookingMirrorService mirrorService;
     @Mock private com.voyra.crm.service.EntitlementService entitlementService;
@@ -133,21 +137,32 @@ class PlatformBookingServiceTest {
         BigDecimal c = new BigDecimal(commission);
         BigDecimal t = new BigDecimal(tds);
         BigDecimal d = new BigDecimal(displayed);
-        BigDecimal earned = new BigDecimal("127.50");
-        return new PriceQuote(d, c.subtract(t), earned, c, t,
-                earned.subtract(new BigDecimal("5000.00").subtract(d)).subtract(c), pricingId, BigDecimal.TEN, new BigDecimal("2.35"));
+        return new PriceQuote(d, c.subtract(t), c, t, pricingId, BigDecimal.TEN, new BigDecimal("2.35"));
     }
 
     private final HotelBookingProviderConfig hotelConfig = new HotelBookingProviderConfig();
 
-    private BookingProviderRegistry registry() {
-        return new BookingProviderRegistry(provider, hotelProvider, config, hotelConfig);
+    private static final ResolvedCredential S1 = BookingSuppliers.S1;
+    private static final ResolvedCredential S2 = new ResolvedCredential("s2", "Mock supplier 2", SupplierProvider.MOCK,
+            SupplierEnvironment.MOCK, "mock://local", "", null, BookingSuppliers.EDITED);
+    private static final ResolvedCredential TJ_UAT = BookingSuppliers.TJ_UAT;
+    private static final ResolvedCredential TJ_PROD = BookingSuppliers.TJ_PROD;
+
+    private SupplierRegistry registry() {
+        return BookingSuppliers.registry(suppliers, provider, tripjack, hotelProvider, config, hotelConfig, S2);
+    }
+
+    /** Every test row below is on supplier s1 unless it says otherwise. */
+    private static FlightReviewRequest reviewRequest(String supplierId) {
+        FlightReviewRequest r = reviewRequest();
+        r.setOfferId(supplierId + ":offer-1");
+        return r;
     }
 
     @BeforeEach
     void setUp() {
         service = new PlatformBookingService(bookingRepository, registry(), quoter, pricingService, walletService,
-                walletRepository, tenantRepository, agentRepository, credentialRepository, notificationService,
+                walletRepository, tenantRepository, agentRepository, notificationService,
                 new PlatformBookingEventRecorder(eventRepository, paxCodec), paxCodec, objectMapper, transactionManager,
                 walletEntryRepository, platformAuditService, settings, mirrorService, entitlementService);
         wallet = Wallet.builder().id("W1").tenantId(T).balance(new BigDecimal("10000.00")).held(BigDecimal.ZERO)
@@ -169,7 +184,7 @@ class PlatformBookingServiceTest {
         lenient().when(walletRepository.findByTenantId(T)).thenAnswer(i -> Optional.of(wallet));
         lenient().when(tenantRepository.findById(T)).thenAnswer(i -> Optional.of(tenant));
         lenient().when(pricingService.requireInForce(T, PricingProduct.FLIGHT)).thenReturn(rules());
-        lenient().when(provider.review(any(FlightReviewRequest.class)))
+        lenient().when(provider.review(any(FlightReviewRequest.class), any()))
                 .thenReturn(new FareReview("rv-1", new BigDecimal("5000.00"), new BigDecimal("4250.00"), "INR",
                         "Refundable", Instant.now().plus(15, ChronoUnit.MINUTES), null));
         lenient().when(quoter.quote(eq(T), eq(PricingProduct.FLIGHT), any(), any())).thenReturn(quote("P1", "4500.00", "100.00", "0.00"));
@@ -193,7 +208,11 @@ class PlatformBookingServiceTest {
                 .thenReturn(WalletEntry.builder().id("D2").tenantId(T).build());
         lenient().when(walletService.debitHeld(anyString(), any(), anyString(), anyString(), anyString()))
                 .thenReturn(WalletEntry.builder().id("D1").tenantId(T).build());
-        lenient().when(provider.book(any())).thenReturn(ticketed(null));
+        lenient().when(provider.book(any(), any())).thenReturn(ticketed(null));
+        lenient().when(tripjack.review(any(FlightReviewRequest.class), any()))
+                .thenReturn(new FareReview("tj-rv-1", new BigDecimal("5000.00"), new BigDecimal("4250.00"), "INR",
+                        "Refundable", Instant.now().plus(15, ChronoUnit.MINUTES), null));
+        lenient().when(tripjack.book(any(), any())).thenReturn(ticketed(null));
         loginAs(UserType.AGENCY_OWNER, "OWNER1");
     }
 
@@ -213,7 +232,7 @@ class PlatformBookingServiceTest {
 
     private static FlightReviewRequest reviewRequest() {
         FlightReviewRequest r = new FlightReviewRequest();
-        r.setOfferId("offer-1");
+        r.setOfferId("s1:offer-1");
         r.setAdults(2);
         r.setChildren(1);
         return r;
@@ -237,6 +256,13 @@ class PlatformBookingServiceTest {
     }
 
     @Test
+    void reviewSnapshotCarriesNoVoyraFigures() {
+        PlatformBooking b = rows.get(service.review(reviewRequest()).getBookingId());
+
+        assertThat(b.getPricingSnapshot()).doesNotContainKeys("voyraEarned", "voyraNet");
+    }
+
+    @Test
     void reviewStampsPricingSnapshot() {
         PlatformBookingReviewResponse res = service.review(reviewRequest());
 
@@ -245,16 +271,13 @@ class PlatformBookingServiceTest {
         assertThat(b.getTenantId()).isEqualTo(T);
         assertThat(b.getProduct()).isEqualTo(PricingProduct.FLIGHT);
         assertThat(b.getEnvironment()).isEqualTo(SupplierEnvironment.MOCK);
-        assertThat(b.getCredentialId()).isNull();
+        assertThat(b.getCredentialId()).isEqualTo("s1");
         assertThat(b.getSupplierReviewId()).isEqualTo("rv-1");
         assertThat(b.getGross()).isEqualByComparingTo("5000.00");
         assertThat(b.getBase()).isEqualByComparingTo("4250.00");
         assertThat(b.getDisplayed()).isEqualByComparingTo("4500.00");
         assertThat(b.getDiscountPct()).isEqualByComparingTo("10");
-        assertThat(b.getVoyraEarned()).isEqualByComparingTo("127.50");
-        assertThat(b.getVoyraEarnedSource()).isEqualTo(VoyraEarnedSource.ESTIMATE);
         assertThat(b.getAgencyCommission()).isEqualByComparingTo("100.00");
-        assertThat(b.getVoyraNet()).isEqualByComparingTo("-472.50");
         assertThat(b.getPricingSnapshot()).containsEntry("pricingId", "P1");
         assertThat(b.getPaxCount()).isEqualTo(3);
         assertThat(b.getBookedBy()).isEqualTo("OWNER1");
@@ -264,7 +287,7 @@ class PlatformBookingServiceTest {
         assertThat(res.getWalletAvailable()).isEqualByComparingTo("10000.00");
         assertThat(res.isPriceChanged()).isFalse();
         assertThat(res.getFareRules()).isEqualTo("Refundable");
-        verify(provider).review(argThat((FlightReviewRequest r) -> r.getOfferId().equals("offer-1") && r.getAdults() == 2 && r.getChildren() == 1));
+        verify(provider).review(argThat((FlightReviewRequest r) -> r.getOfferId().equals("offer-1") && r.getAdults() == 2 && r.getChildren() == 1), any());
     }
 
     @Test
@@ -280,16 +303,16 @@ class PlatformBookingServiceTest {
 
     @Test
     void aRoundTripIsOneReviewOfBothOffersDatedByTheFirstDeparture() {
-        when(provider.review(any(FlightReviewRequest.class))).thenReturn(new FareReview("rv-rt", new BigDecimal("10000.00"),
+        when(provider.review(any(FlightReviewRequest.class), any())).thenReturn(new FareReview("rv-rt", new BigDecimal("10000.00"),
                 new BigDecimal("8500.00"), "INR", null, null, objectMapper.valueToTree(Map.of("sI", List.of(
                         Map.of("dt", "2026-12-01T06:00", "da", Map.of("code", "DEL"), "aa", Map.of("code", "BOM")),
                         Map.of("dt", "2026-12-04T18:00", "da", Map.of("code", "BOM"), "aa", Map.of("code", "DEL")))))));
         FlightReviewRequest req = reviewRequest();
-        req.setReturnOfferId("offer-1-R");
+        req.setReturnOfferId("s1:offer-1-R");
 
         PlatformBooking b = rows.get(service.review(req).getBookingId());
 
-        verify(provider).review(argThat((FlightReviewRequest r) -> "offer-1-R".equals(r.getReturnOfferId())));
+        verify(provider).review(argThat((FlightReviewRequest r) -> "offer-1-R".equals(r.getReturnOfferId())), any());
         assertThat(b.getSupplierReviewId()).isEqualTo("rv-rt");
         assertThat(b.getGross()).isEqualByComparingTo("10000.00");
         assertThat(objectMapper.valueToTree(b.getItinerary()).path("sI")).hasSize(2);
@@ -298,31 +321,126 @@ class PlatformBookingServiceTest {
 
     @Test
     void twoPaiseOfRoundingIsNotAPriceChange() {
-        FlightReviewRequest req = reviewRequest();
-        req.setSearchDisplayedFare(new BigDecimal("4500.02"));
-        assertThat(service.review(req).isPriceChanged()).isFalse();
-        req.setSearchDisplayedFare(new BigDecimal("4499.98"));
-        assertThat(service.review(req).isPriceChanged()).isFalse();
-        req.setSearchDisplayedFare(new BigDecimal("4500.03"));
-        assertThat(service.review(req).isPriceChanged()).isTrue();
+        for (String searched : List.of("4500.02", "4499.98", "4500.03")) {
+            FlightReviewRequest req = reviewRequest(); // a review takes the namespace off its request's ids, so one each
+            req.setSearchDisplayedFare(new BigDecimal(searched));
+            assertThat(service.review(req).isPriceChanged()).isEqualTo(searched.equals("4500.03"));
+        }
+    }
+
+    /** Review Focus: two rows of one integration; the offer's namespace picks the second, and the booking is stamped with it. */
+    @Test
+    void reviewStampsTheChosenSuppliersIdAndEnvironment() {
+        FlightReviewRequest request = reviewRequest();
+        request.setOfferId("s2:mock-6E-1");
+
+        PlatformBooking saved = rows.get(service.review(request).getBookingId());
+
+        verify(provider).review(argThat((FlightReviewRequest r) -> "mock-6E-1".equals(r.getOfferId())), eq(S2));
+        assertThat(saved.getCredentialId()).isEqualTo("s2");
+        assertThat(saved.getEnvironment()).isEqualTo(SupplierEnvironment.MOCK);
     }
 
     @Test
-    void reviewStampsTheActiveCredentialEnvironment() {
-        config.setProvider("tripjack");
-        when(credentialRepository.findByProviderAndIsActiveTrue(SupplierProvider.TRIPJACK)).thenReturn(Optional.of(
-                PlatformSupplierCredential.builder().id("CRED1").environment(SupplierEnvironment.UAT).build()));
+    void aTripjackReviewIsStampedWithItsRowAndEnvironment() {
+        PlatformBooking saved = rows.get(service.review(reviewRequest("tj-uat")).getBookingId());
 
-        PlatformBooking b = rows.get(reviewed());
+        verify(tripjack).review(argThat((FlightReviewRequest r) -> "offer-1".equals(r.getOfferId())), eq(TJ_UAT));
+        verify(provider, never()).review(any(FlightReviewRequest.class), any());
+        assertThat(saved.getCredentialId()).isEqualTo("tj-uat");
+        assertThat(saved.getEnvironment()).isEqualTo(SupplierEnvironment.UAT);
+    }
 
-        assertThat(b.getEnvironment()).isEqualTo(SupplierEnvironment.UAT);
-        assertThat(b.getCredentialId()).isEqualTo("CRED1");
+    @ParameterizedTest
+    @ValueSource(strings = {"mock-6E-1", "unknown:mock-6E-1"})
+    void reviewOfAnUnnamespacedOrUnknownOfferIs400(String offerId) {
+        FlightReviewRequest request = reviewRequest();
+        request.setOfferId(offerId);
+
+        assertThatThrownBy(() -> service.review(request)).isInstanceOfSatisfying(BookingRequestException.class, e -> {
+            assertThat(e.getCode()).isEqualTo("OFFER_UNAVAILABLE");
+            assertThat(e.getMessage()).isEqualTo("This fare is no longer available; search again");
+        });
+        verify(provider, never()).review(any(FlightReviewRequest.class), any());
+        assertThat(rows).isEmpty();
+    }
+
+    @Test
+    void reviewWithLegsOnTwoSuppliersIs400() {
+        FlightReviewRequest request = reviewRequest();
+        request.setOfferId("s1:a");
+        request.setReturnOfferId("s2:b");
+
+        assertThatThrownBy(() -> service.review(request)).isInstanceOfSatisfying(BookingRequestException.class, e -> {
+            assertThat(e.getCode()).isEqualTo("MIXED_SUPPLIERS");
+            assertThat(e.getMessage()).isEqualTo("Both legs must be on one supplier");
+        });
+        assertThat(rows).isEmpty();
+    }
+
+    @Test
+    void aBlankReturnOfferIsAOneWayReview() {
+        FlightReviewRequest request = reviewRequest();
+        request.setReturnOfferId(" ");
+
+        service.review(request);
+
+        verify(provider).review(argThat((FlightReviewRequest r) -> "offer-1".equals(r.getOfferId())), eq(S1));
+    }
+
+    @Test
+    void reviewOnASupplierNotTakingBookingsIs409() {
+        when(suppliers.bookingEnabledIds(PricingProduct.FLIGHT)).thenReturn(Set.of("s1"));
+
+        assertThatThrownBy(() -> service.review(reviewRequest("tj-uat"))).isInstanceOfSatisfying(BookingConflictException.class, e -> {
+            assertThat(e.getCode()).isEqualTo("SUPPLIER_NOT_BOOKABLE");
+            assertThat(e.getMessage()).isEqualTo("Tripjack is not taking bookings right now; pick another supplier");
+        });
+        verify(tripjack, never()).review(any(FlightReviewRequest.class), any());
+        assertThat(rows).isEmpty();
+    }
+
+    @Test
+    void confirmRefusesWhenBookingWasSwitchedOffSinceTheReview() {
+        String id = reviewed();
+        when(suppliers.bookingEnabledIds(PricingProduct.FLIGHT)).thenReturn(Set.of());
+
+        assertThatThrownBy(() -> service.confirm(id, confirmRequest("key-00000001", "4500.00")))
+                .isInstanceOfSatisfying(BookingConflictException.class, e -> {
+                    assertThat(e.getCode()).isEqualTo("SUPPLIER_NOT_BOOKABLE");
+                    assertThat(e.getMessage()).isEqualTo("Mock supplier is not taking bookings right now; pick another supplier");
+                });
+        assertThat(rows.get(id).getStatus()).isEqualTo(PlatformBookingStatus.REVIEWING);
+        verify(walletService, never()).hold(any(), any(), any(), any(), any());
+        verify(provider, never()).book(any(), any());
+    }
+
+    /** Review Focus: a name, URL or key edit after the review (the row's updatedAt) expires it at confirm. */
+    @Test
+    void confirmOfAReviewOlderThanASupplierEditIsExpired() {
+        String id = reviewed();
+        when(suppliers.find("s1")).thenReturn(Optional.of(new ResolvedCredential("s1", "Mock supplier", SupplierProvider.MOCK,
+                SupplierEnvironment.MOCK, "mock://local", "", null, rows.get(id).getCreatedAt().plusSeconds(1))));
+
+        assertThatThrownBy(() -> service.confirm(id, confirmRequest("key-00000001", "4500.00")))
+                .isInstanceOfSatisfying(BookingConflictException.class, e -> assertThat(e.getCode()).isEqualTo("REVIEW_EXPIRED"));
+        assertThat(rows.get(id).getStatus()).isEqualTo(PlatformBookingStatus.REVIEWING);
+        verify(walletService, never()).hold(any(), any(), any(), any(), any());
+    }
+
+    /** Review Focus: a switch-only edit leaves the row's updatedAt alone (EDITED is before the review), so the review holds. */
+    @Test
+    void confirmAfterAToggleOnlyEditStillHolds() {
+        String id = reviewed();
+
+        assertThat(service.confirm(id, confirmRequest("key-00000001", "4500.00")).getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
+        verify(walletService).hold(eq(T), eq(new BigDecimal("4500.00")), eq("pb-hold:" + id), eq(REF), eq(id));
     }
 
     /** The discount and commission are worked off the base fare: without it there is no price to show, so 409, not a 500. */
     @Test
     void reviewWithAMissingBaseFareIsAConflictAndSavesNothing() {
-        when(provider.review(any(FlightReviewRequest.class)))
+        when(provider.review(any(FlightReviewRequest.class), any()))
                 .thenReturn(new FareReview("rv-1", new BigDecimal("5000.00"), null, "INR", null, null, null));
 
         assertThatThrownBy(() -> service.review(reviewRequest()))
@@ -336,7 +454,7 @@ class PlatformBookingServiceTest {
         when(pricingService.requireInForce(T, PricingProduct.FLIGHT)).thenThrow(new PricingNotConfiguredException());
 
         assertThatThrownBy(() -> service.review(reviewRequest())).isInstanceOf(PricingNotConfiguredException.class);
-        verify(provider, never()).review(any(FlightReviewRequest.class));
+        verify(provider, never()).review(any(FlightReviewRequest.class), any());
     }
 
     @Test
@@ -348,7 +466,7 @@ class PlatformBookingServiceTest {
         when(walletService.hasDueReceivable(T)).thenReturn(true);
         assertThatThrownBy(() -> service.review(reviewRequest())).isInstanceOf(ReceivableDueException.class);
 
-        verify(provider, never()).review(any(FlightReviewRequest.class));
+        verify(provider, never()).review(any(FlightReviewRequest.class), any());
     }
 
     @Test
@@ -362,11 +480,11 @@ class PlatformBookingServiceTest {
         assertThat(second.getId()).isEqualTo(id);
         assertThat(second.getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
         verify(walletService, times(1)).hold(eq(T), any(), anyString(), anyString(), anyString());
-        verify(provider, times(1)).book(any());
+        verify(provider, times(1)).book(any(), any());
         verify(walletService, times(1)).debitHeld(anyString(), any(), anyString(), anyString(), anyString());
         assertThatThrownBy(() -> service.confirm(id, confirmRequest("key-00000002", "4500.00")))
                 .isInstanceOf(IllegalStateException.class);
-        verify(provider, times(1)).book(any());
+        verify(provider, times(1)).book(any(), any());
     }
 
     @Test
@@ -377,7 +495,7 @@ class PlatformBookingServiceTest {
 
         verify(walletService).hold(T, new BigDecimal("4500.00"), "pb-hold:" + id, REF, id);
         ArgumentCaptor<BookRequest> sent = ArgumentCaptor.forClass(BookRequest.class);
-        verify(provider).book(sent.capture());
+        verify(provider).book(sent.capture(), any());
         assertThat(sent.getValue().reviewId()).isEqualTo("rv-1");
         assertThat(sent.getValue().totalFare()).isEqualByComparingTo("5000.00");
         assertThat(sent.getValue().passengers()).hasSize(3);
@@ -415,7 +533,7 @@ class PlatformBookingServiceTest {
                     assertThat((BigDecimal) e.getDetails().get("displayedFare")).isEqualByComparingTo("4500.00");
                 });
         verify(walletService, never()).hold(any(), any(), any(), any(), any());
-        verify(provider, never()).book(any());
+        verify(provider, never()).book(any(), any());
         assertThat(rows.get(id).getStatus()).isEqualTo(PlatformBookingStatus.REVIEWING);
     }
 
@@ -436,7 +554,7 @@ class PlatformBookingServiceTest {
 
         service.confirm(id, confirmRequest("key-00000001", "4400.00"));
         verify(walletService).hold(T, new BigDecimal("4400.00"), "pb-hold:" + id, REF, id);
-        verify(provider, times(1)).book(any());
+        verify(provider, times(1)).book(any(), any());
     }
 
     @Test
@@ -482,22 +600,19 @@ class PlatformBookingServiceTest {
 
         assertThatThrownBy(() -> service.confirm(id, confirmRequest("key-00000001", "4500.00")))
                 .isInstanceOf(InsufficientBalanceException.class);
-        verify(provider, never()).book(any());
+        verify(provider, never()).book(any(), any());
         assertThat(rows.get(id).getStatus()).isEqualTo(PlatformBookingStatus.REVIEWING);
     }
 
     @Test
     void uatBookingOnANonTestWalletIsRefused() {
-        config.setProvider("tripjack");
-        when(credentialRepository.findByProviderAndIsActiveTrue(SupplierProvider.TRIPJACK)).thenReturn(Optional.of(
-                PlatformSupplierCredential.builder().id("CRED1").environment(SupplierEnvironment.UAT).build()));
-        String id = reviewed();
+        String id = service.review(reviewRequest("tj-uat")).getBookingId();
         wallet.setIsTest(false);
 
         assertThatThrownBy(() -> service.confirm(id, confirmRequest("key-00000001", "4500.00")))
                 .isInstanceOfSatisfying(BookingConflictException.class, e -> assertThat(e.getCode()).isEqualTo("TEST_WALLET_REQUIRED"));
         verify(walletService, never()).hold(any(), any(), any(), any(), any());
-        verify(provider, never()).book(any());
+        verify(tripjack, never()).book(any(), any());
     }
 
     @Test
@@ -507,21 +622,17 @@ class PlatformBookingServiceTest {
 
         assertThatThrownBy(() -> service.confirm(id, confirmRequest("key-00000001", "4500.00")))
                 .isInstanceOfSatisfying(BookingConflictException.class, e -> assertThat(e.getCode()).isEqualTo("TEST_WALLET_REQUIRED"));
-        verify(provider, never()).book(any());
+        verify(provider, never()).book(any(), any());
     }
 
     @Test
     void prodBookingOnATestWalletIsRefused() {
-        config.setProvider("tripjack");
-        when(settings.tripjackLiveReady()).thenReturn(true);
-        when(credentialRepository.findByProviderAndIsActiveTrue(SupplierProvider.TRIPJACK)).thenReturn(Optional.of(
-                PlatformSupplierCredential.builder().id("CRED1").environment(SupplierEnvironment.PROD).build()));
-        String id = reviewed();
+        String id = service.review(reviewRequest("tj-prod")).getBookingId();
 
         assertThatThrownBy(() -> service.confirm(id, confirmRequest("key-00000001", "4500.00")))
                 .isInstanceOfSatisfying(BookingConflictException.class, e -> assertThat(e.getCode()).isEqualTo("LIVE_WALLET_REQUIRED"));
         verify(walletService, never()).hold(any(), any(), any(), any(), any());
-        verify(provider, never()).book(any());
+        verify(tripjack, never()).book(any(), any());
     }
 
     @Test
@@ -590,7 +701,7 @@ class PlatformBookingServiceTest {
     void markBookingQueuesTheMirror() {
         String id = reviewedForClient();
         List<Object> seenAtBook = new ArrayList<>();
-        when(provider.book(any())).thenAnswer(i -> {
+        when(provider.book(any(), any())).thenAnswer(i -> {
             seenAtBook.add(rows.get(id).getStatus());
             seenAtBook.add(rows.get(id).getMirrorStatus());
             seenAtBook.addAll(queuedStatuses(id));
@@ -606,13 +717,13 @@ class PlatformBookingServiceTest {
     @Test
     void confirmSyncsAfterTheBookCallNotBefore() {
         String id = reviewedForClient();
-        when(provider.book(any())).thenReturn(pending());
+        when(provider.book(any(), any())).thenReturn(pending());
 
         PlatformBooking b = service.confirm(id, confirmRequest("key-00000001", "4500.00"));
 
         assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.BOOKING);
         org.mockito.InOrder order = inOrder(provider, mirrorService);
-        order.verify(provider).book(any());
+        order.verify(provider).book(any(), any());
         order.verify(mirrorService).sync(id);
         verify(mirrorService, times(1)).sync(id);
     }
@@ -620,21 +731,21 @@ class PlatformBookingServiceTest {
     @Test
     void confirmSyncsEvenWhenTheBookCallHasNoAnswer() {
         String id = reviewedForClient();
-        when(provider.book(any())).thenThrow(new SupplierTimeoutException("timed out", null));
+        when(provider.book(any(), any())).thenThrow(new SupplierTimeoutException("timed out", null));
 
         PlatformBooking b = service.confirm(id, confirmRequest("key-00000001", "4500.00"));
 
         assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.BOOKING);
         assertThat(b.getMirrorStatus()).isEqualTo(com.voyra.crm.enums.MirrorStatus.PENDING);
         org.mockito.InOrder order = inOrder(provider, mirrorService);
-        order.verify(provider).book(any());
+        order.verify(provider).book(any(), any());
         order.verify(mirrorService).sync(id);
     }
 
     @Test
     void aFailedAnswerQueuesTheMirrorAndSyncs() {
         String id = reviewedForClient();
-        when(provider.book(any())).thenReturn(new BookResult("SB-1", SupplierBookingStatus.FAILED, null, List.of(), "No seats", null));
+        when(provider.book(any(), any())).thenReturn(new BookResult("SB-1", SupplierBookingStatus.FAILED, null, List.of(), "No seats", null));
 
         PlatformBooking b = service.confirm(id, confirmRequest("key-00000001", "4500.00"));
 
@@ -647,7 +758,7 @@ class PlatformBookingServiceTest {
     @Test
     void anAdminFailedResolveSyncs() {
         String id = reviewedForClient();
-        when(provider.book(any())).thenThrow(new SupplierTimeoutException("timed out", null));
+        when(provider.book(any(), any())).thenThrow(new SupplierTimeoutException("timed out", null));
         service.confirm(id, confirmRequest("key-00000001", "4500.00"));
         rows.get(id).setMirrorStatus(com.voyra.crm.enums.MirrorStatus.DONE); // the PENDING CRM row was written
         org.mockito.Mockito.clearInvocations(mirrorService);
@@ -677,7 +788,7 @@ class PlatformBookingServiceTest {
     void aRepeatedFailedAnswerDoesNotSyncAgain() {
         String id = reviewedForClient();
         BookResult failed = new BookResult("SB-1", SupplierBookingStatus.FAILED, null, List.of(), "No seats", null);
-        when(provider.book(any())).thenReturn(failed);
+        when(provider.book(any(), any())).thenReturn(failed);
         service.confirm(id, confirmRequest("key-00000001", "4500.00"));
         org.mockito.Mockito.clearInvocations(mirrorService);
 
@@ -805,7 +916,7 @@ class PlatformBookingServiceTest {
     void aRowWithoutAClientIsNeverQueued() {
         String id = reviewed();
         rows.get(id).setClientId(null);
-        when(provider.book(any())).thenReturn(new BookResult("SB-1", SupplierBookingStatus.FAILED, null, List.of(), "No seats", null));
+        when(provider.book(any(), any())).thenReturn(new BookResult("SB-1", SupplierBookingStatus.FAILED, null, List.of(), "No seats", null));
 
         PlatformBooking b = service.confirm(id, confirmRequest("key-00000001", "4500.00"));
 
@@ -840,22 +951,22 @@ class PlatformBookingServiceTest {
     }
 
     @Test
-    void negativeVoyraNetAlertsAndVarianceIsRecordedOnVoyraNet() {
+    void aFareVarianceAlertsButWritesNoVoyraNet() {
         String id = reviewed();
-        when(provider.book(any())).thenReturn(ticketed(new BigDecimal("5100.00")));
+        when(provider.book(any(), any())).thenReturn(ticketed(new BigDecimal("5100.00")));
 
         PlatformBooking b = service.confirm(id, confirmRequest("key-00000001", "4500.00"));
 
         verify(walletService).debitHeld("H1", new BigDecimal("4500.00"), "pb-debit:" + id, REF, id);
-        assertThat(b.getVoyraNet()).isEqualByComparingTo("-572.50");
-        verify(notificationService, times(2)).platformAlert(anyString(), anyString());
+        verify(notificationService, times(1)).platformAlert(eq("Supplier fare variance on booking " + id), anyString());
+        verify(notificationService, times(1)).platformAlert(anyString(), anyString()); // no "Loss-making" alert
         assertThat(savedEvents).extracting(PlatformBookingEvent::getType).contains("VARIANCE");
     }
 
     @Test
     void failedReleasesTheHold() {
         String id = reviewed();
-        when(provider.book(any())).thenReturn(new BookResult("SB-1", SupplierBookingStatus.FAILED, null, List.of(), "Fare sold out", null));
+        when(provider.book(any(), any())).thenReturn(new BookResult("SB-1", SupplierBookingStatus.FAILED, null, List.of(), "Fare sold out", null));
 
         PlatformBooking b = service.confirm(id, confirmRequest("key-00000001", "4500.00"));
 
@@ -869,7 +980,7 @@ class PlatformBookingServiceTest {
     @Test
     void pendingStaysBooking() {
         String id = reviewed();
-        when(provider.book(any())).thenReturn(new BookResult("SB-1", SupplierBookingStatus.PENDING, null, List.of(), null, null));
+        when(provider.book(any(), any())).thenReturn(new BookResult("SB-1", SupplierBookingStatus.PENDING, null, List.of(), null, null));
 
         PlatformBooking b = service.confirm(id, confirmRequest("key-00000001", "4500.00"));
 
@@ -884,8 +995,8 @@ class PlatformBookingServiceTest {
     void confirmWaitsForAnAcceptedBookingToTicket() {
         org.springframework.test.util.ReflectionTestUtils.setField(service, "confirmWaitSeconds", 10L);
         String id = reviewed();
-        when(provider.book(any())).thenReturn(new BookResult("SB-1", SupplierBookingStatus.PENDING, null, List.of(), null, null));
-        when(provider.bookingDetails("SB-1")).thenReturn(new BookResult("SB-1", SupplierBookingStatus.TICKETED, "PNR1", List.of("T1"), null, null));
+        when(provider.book(any(), any())).thenReturn(new BookResult("SB-1", SupplierBookingStatus.PENDING, null, List.of(), null, null));
+        when(provider.bookingDetails(eq("SB-1"), any())).thenReturn(new BookResult("SB-1", SupplierBookingStatus.TICKETED, "PNR1", List.of("T1"), null, null));
 
         PlatformBooking b = service.confirm(id, confirmRequest("key-00000001", "4500.00"));
 
@@ -896,7 +1007,7 @@ class PlatformBookingServiceTest {
     @Test
     void timeoutLeavesBooking() {
         String id = reviewed();
-        when(provider.book(any())).thenThrow(new SupplierTimeoutException("timed out", null));
+        when(provider.book(any(), any())).thenThrow(new SupplierTimeoutException("timed out", null));
 
         PlatformBooking b = service.confirm(id, confirmRequest("key-00000001", "4500.00"));
 
@@ -909,7 +1020,7 @@ class PlatformBookingServiceTest {
     @Test
     void supplierErrorOnBookLeavesBooking() {
         String id = reviewed();
-        when(provider.book(any())).thenThrow(new SupplierException("502 from supplier", null));
+        when(provider.book(any(), any())).thenThrow(new SupplierException("502 from supplier", null));
 
         PlatformBooking b = service.confirm(id, confirmRequest("key-00000001", "4500.00"));
 
@@ -940,7 +1051,7 @@ class PlatformBookingServiceTest {
     @Test
     void ticketingStoresTicketDetails() {
         String id = reviewed();
-        when(provider.book(any())).thenThrow(new SupplierTimeoutException("timed out", null));
+        when(provider.book(any(), any())).thenThrow(new SupplierTimeoutException("timed out", null));
         service.confirm(id, confirmRequest("key-00000001", "4500.00"));
 
         PlatformBooking b = service.applySupplierResult(id, new BookResult("rv-1", SupplierBookingStatus.TICKETED, "PNR123",
@@ -960,9 +1071,9 @@ class PlatformBookingServiceTest {
     }
 
     @Test
-    void timeoutThenTicketedWithoutAChargedAmountKeepsVoyraNet() {
+    void timeoutThenTicketedWithoutAChargedAmountRaisesNoAlert() {
         String id = reviewed();
-        when(provider.book(any())).thenThrow(new SupplierTimeoutException("timed out", null));
+        when(provider.book(any(), any())).thenThrow(new SupplierTimeoutException("timed out", null));
         service.confirm(id, confirmRequest("key-00000001", "4500.00"));
 
         // the poller asks by review id; the mock cannot read a fare from it
@@ -970,9 +1081,8 @@ class PlatformBookingServiceTest {
                 List.of("TKT-1"), "Ticketed", BigDecimal.ZERO));
 
         assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
-        assertThat(b.getVoyraNet()).isEqualByComparingTo("-472.50");
         assertThat(savedEvents).extracting(PlatformBookingEvent::getType).doesNotContain("VARIANCE");
-        verify(notificationService, times(1)).platformAlert(anyString(), anyString());
+        verify(notificationService, never()).platformAlert(anyString(), anyString());
     }
 
     @Test
@@ -987,13 +1097,13 @@ class PlatformBookingServiceTest {
         assertThatThrownBy(() -> service.confirm(id, confirmRequest("key-00000001", "4400.00")))
                 .isInstanceOfSatisfying(BookingConflictException.class, e -> assertThat(e.getCode()).isEqualTo("IDEMPOTENCY_KEY_REUSED"));
         assertThat(rows.get(id).getConfirmPayloadHash()).hasSize(64);
-        verify(provider, times(1)).book(any());
+        verify(provider, times(1)).book(any(), any());
     }
 
     @Test
     void anEncryptionFailureHappensBeforeTheHold() {
         PlatformBookingService broken = new PlatformBookingService(bookingRepository, registry(), quoter, pricingService,
-                walletService, walletRepository, tenantRepository, agentRepository, credentialRepository, notificationService,
+                walletService, walletRepository, tenantRepository, agentRepository, notificationService,
                 new PlatformBookingEventRecorder(eventRepository, paxCodec), new PaxCodec(objectMapper, "bad"), objectMapper,
                 transactionManager, walletEntryRepository, platformAuditService, settings, mirrorService, entitlementService);
         String id = broken.review(reviewRequest()).getBookingId();
@@ -1011,7 +1121,7 @@ class PlatformBookingServiceTest {
         InOrder order = inOrder(walletService, transactionManager, provider);
         order.verify(walletService).hold(eq(T), any(), anyString(), anyString(), anyString());
         order.verify(transactionManager, calls(2)).commit(any()); // tx1 (hold) and tx2 (BOOKING)
-        order.verify(provider).book(any());
+        order.verify(provider).book(any(), any());
     }
 
     @Test
@@ -1024,7 +1134,7 @@ class PlatformBookingServiceTest {
         } finally {
             TransactionSynchronizationManager.setActualTransactionActive(false);
         }
-        verify(provider, never()).book(any());
+        verify(provider, never()).book(any(), any());
     }
 
     @Test
@@ -1079,7 +1189,7 @@ class PlatformBookingServiceTest {
 
     private String timedOut() {
         String id = reviewed();
-        when(provider.book(any())).thenThrow(new SupplierTimeoutException("timed out", null));
+        when(provider.book(any(), any())).thenThrow(new SupplierTimeoutException("timed out", null));
         service.confirm(id, confirmRequest("key-00000001", "4500.00"));
         return id;
     }
@@ -1242,7 +1352,7 @@ class PlatformBookingServiceTest {
         assertThatThrownBy(() -> service.cancelQuote(id)).isInstanceOf(NotFoundException.class);
         assertThatThrownBy(() -> service.cancel(id, "cancel-key-1")).isInstanceOf(NotFoundException.class);
         verify(walletService, never()).hold(any(), any(), any(), any(), any());
-        verify(provider, never()).cancel(any());
+        verify(provider, never()).cancel(any(), any());
     }
 
     @Test
@@ -1252,7 +1362,7 @@ class PlatformBookingServiceTest {
         loginAs(UserType.AGENCY_OWNER, "OWNER1");
 
         assertThat(service.confirm(id, confirmRequest("key-00000001", "4500.00")).getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
-        when(provider.cancelQuote(any())).thenReturn(new com.voyra.crm.models.booking.CancelQuote(new BigDecimal("4000.00"), null));
+        when(provider.cancelQuote(any(), any())).thenReturn(new com.voyra.crm.models.booking.CancelQuote(new BigDecimal("4000.00"), null));
         when(settings.voyraCancelFee()).thenReturn(BigDecimal.ZERO);
         assertThatCode(() -> service.cancelQuote(id)).doesNotThrowAnyException();
         String other = reviewedByAgent("AG1");
@@ -1262,7 +1372,7 @@ class PlatformBookingServiceTest {
 
     @Test
     void reviewKeepsAnArrayItineraryUnderTripInfos() {
-        when(provider.review(any(FlightReviewRequest.class))).thenReturn(new FareReview("rv-2", new BigDecimal("5000.00"),
+        when(provider.review(any(FlightReviewRequest.class), any())).thenReturn(new FareReview("rv-2", new BigDecimal("5000.00"),
                 new BigDecimal("4250.00"), "INR", "Refundable", Instant.now().plus(15, ChronoUnit.MINUTES),
                 objectMapper.valueToTree(List.of(Map.of("sI", List.of(Map.of("id", "S1")))))));
 
@@ -1273,7 +1383,7 @@ class PlatformBookingServiceTest {
 
     @Test
     void reviewKeepsAnObjectItineraryAsIs() {
-        when(provider.review(any(FlightReviewRequest.class))).thenReturn(new FareReview("rv-3", new BigDecimal("5000.00"),
+        when(provider.review(any(FlightReviewRequest.class), any())).thenReturn(new FareReview("rv-3", new BigDecimal("5000.00"),
                 new BigDecimal("4250.00"), "INR", "Refundable", Instant.now().plus(15, ChronoUnit.MINUTES),
                 objectMapper.valueToTree(Map.of("tripInfos", List.of()))));
 
@@ -1286,18 +1396,41 @@ class PlatformBookingServiceTest {
 
     private void hotelSupplierQuotes(String total) {
         lenient().when(pricingService.requireInForce(T, PricingProduct.HOTEL)).thenReturn(rules());
-        lenient().when(hotelProvider.review(eq("O1"), eq("H1"), any(), any(), anyList()))
+        lenient().when(hotelProvider.review(eq("O1"), eq("H1"), any(), any(), anyList(), any()))
                 .thenReturn(new FareReview("hrv-1", new BigDecimal(total), new BigDecimal("4250.00"), "INR", "Rate rules",
                         Instant.now().plus(15, ChronoUnit.MINUTES), null, "Free cancellation until 2026-11-29", FREE_UNTIL));
         lenient().when(quoter.quote(eq(T), eq(PricingProduct.HOTEL), any(), any())).thenReturn(quote("PH", "4500.00", "100.00", "0.00"));
-        lenient().when(hotelProvider.book(any())).thenReturn(ticketed(null));
+        lenient().when(hotelProvider.book(any(), any())).thenReturn(ticketed(null));
     }
 
     /** Two rooms: 2 adults + a child of 6, and 1 adult - four guests. */
+    @Test
+    void hotelReviewWithHotelAndRoomOnTwoSuppliersIs400() {
+        HotelReviewRequest request = hotelReviewRequest();
+        request.setOptionId("s2:O1");
+
+        assertThatThrownBy(() -> service.reviewHotel(request)).isInstanceOfSatisfying(BookingRequestException.class, e -> {
+            assertThat(e.getCode()).isEqualTo("MIXED_SUPPLIERS");
+            assertThat(e.getMessage()).isEqualTo("The hotel and the room must be on one supplier");
+        });
+        verify(hotelProvider, never()).review(any(), any(), any(), any(), anyList(), any());
+        assertThat(rows).isEmpty();
+    }
+
+    @Test
+    void hotelReviewSendsTheSuppliersOwnIdsAndStampsItsRow() {
+        hotelSupplierQuotes("9000.00");
+
+        PlatformBooking saved = rows.get(service.reviewHotel(hotelReviewRequest()).getBookingId());
+
+        verify(hotelProvider).review(eq("O1"), eq("H1"), any(), any(), anyList(), eq(S1));
+        assertThat(saved.getCredentialId()).isEqualTo("s1");
+    }
+
     private static HotelReviewRequest hotelReviewRequest() {
         HotelReviewRequest r = new HotelReviewRequest();
-        r.setHotelId("H1");
-        r.setOptionId("O1");
+        r.setHotelId("s1:H1");
+        r.setOptionId("s1:O1");
         r.setCheckIn(LocalDate.now().plusDays(37));
         r.setCheckOut(LocalDate.now().plusDays(39));
         r.setRooms(List.of(new HotelRoomRequest(2, List.of(6)), new HotelRoomRequest(1, List.of())));
@@ -1338,13 +1471,13 @@ class PlatformBookingServiceTest {
         assertThat(res.getCancellationPolicy()).isEqualTo("Free cancellation until 2026-11-29");
         assertThat(res.getFreeCancellationUntil()).isEqualTo(FREE_UNTIL);
         verify(pricingService).requireInForce(T, PricingProduct.HOTEL);
-        verify(provider, never()).review(any(FlightReviewRequest.class));
+        verify(provider, never()).review(any(FlightReviewRequest.class), any());
     }
 
     @Test
     void hotelReviewWithAMissingBaseRateIsAConflict() {
         hotelSupplierQuotes("5000.00");
-        when(hotelProvider.review(eq("O1"), eq("H1"), any(), any(), anyList()))
+        when(hotelProvider.review(eq("O1"), eq("H1"), any(), any(), anyList(), any()))
                 .thenReturn(new FareReview("hrv-1", new BigDecimal("5000.00"), null, "INR", null, null, null));
 
         assertThatThrownBy(() -> service.reviewHotel(hotelReviewRequest()))
@@ -1369,7 +1502,7 @@ class PlatformBookingServiceTest {
                     assertThat(e.getMessage()).contains("rate").doesNotContain("fare");
                 });
         verify(walletService, never()).hold(any(), any(), any(), any(), any());
-        verify(hotelProvider, never()).book(any());
+        verify(hotelProvider, never()).book(any(), any());
 
         PlatformBooking b = service.confirm(res.getBookingId(), hotelConfirmRequest("key-00000001", "4500.00"));
         assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
@@ -1388,7 +1521,7 @@ class PlatformBookingServiceTest {
         assertThatThrownBy(() -> service.reviewHotel(hotelReviewRequest())).isInstanceOf(AccessDeniedException.class);
         assertThatThrownBy(() -> service.confirm(id, hotelConfirmRequest("key-00000001", "4500.00"))).isInstanceOf(AccessDeniedException.class);
         verify(walletService, never()).hold(any(), any(), any(), any(), any());
-        verify(hotelProvider, times(1)).review(any(), any(), any(), any(), anyList());
+        verify(hotelProvider, times(1)).review(any(), any(), any(), any(), anyList(), any());
     }
 
     @Test
@@ -1416,8 +1549,8 @@ class PlatformBookingServiceTest {
         PlatformBooking b = service.confirm(id, req);
 
         ArgumentCaptor<BookRequest> sent = ArgumentCaptor.forClass(BookRequest.class);
-        verify(hotelProvider, times(1)).book(sent.capture());
-        verify(provider, never()).book(any());
+        verify(hotelProvider, times(1)).book(sent.capture(), any());
+        verify(provider, never()).book(any(), any());
         assertThat(sent.getValue().reviewId()).isEqualTo("hrv-1");
         assertThat(sent.getValue().rooms()).hasSize(2);
         assertThat(sent.getValue().rooms().get(0)).extracting(p -> p.firstName()).containsExactly("Rahul", "Priya");
@@ -1454,7 +1587,7 @@ class PlatformBookingServiceTest {
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<HotelRoomRequest>> rooms = ArgumentCaptor.forClass(List.class);
-        verify(hotelProvider).review(eq("O1"), eq("H1"), any(), any(), rooms.capture());
+        verify(hotelProvider).review(eq("O1"), eq("H1"), any(), any(), rooms.capture(), any());
         assertThat(rooms.getValue()).extracting(HotelRoomRequest::getAdults).containsExactly(2, 1);
         assertThat(rooms.getValue().get(0).getChildAges()).containsExactly(6);
     }
@@ -1467,7 +1600,7 @@ class PlatformBookingServiceTest {
         r.setCheckOut(LocalDate.now().plusDays(1));
 
         assertThatThrownBy(() -> service.reviewHotel(r)).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("past");
-        verify(hotelProvider, never()).review(any(), any(), any(), any(), anyList());
+        verify(hotelProvider, never()).review(any(), any(), any(), any(), anyList(), any());
         assertThat(rows).isEmpty();
     }
 
@@ -1482,7 +1615,7 @@ class PlatformBookingServiceTest {
 
             assertThatThrownBy(() -> service.reviewHotel(r)).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("past");
         }
-        verify(hotelProvider, never()).review(any(), any(), any(), any(), anyList());
+        verify(hotelProvider, never()).review(any(), any(), any(), any(), anyList(), any());
     }
 
     /** Room 2 was reviewed for one adult: a second guest there is refused even though the booking total (4) is not exceeded. */
@@ -1498,7 +1631,7 @@ class PlatformBookingServiceTest {
 
         assertThatThrownBy(() -> service.confirm(id, req)).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("room 2");
         verify(walletService, never()).hold(any(), any(), any(), any(), any());
-        verify(hotelProvider, never()).book(any());
+        verify(hotelProvider, never()).book(any(), any());
     }
 
     /** Ownership first: an agent without hotels never learns that a colleague's hotel booking exists (404, not 403). */
@@ -1552,7 +1685,7 @@ class PlatformBookingServiceTest {
         assertThatThrownBy(() -> service.confirm(id, withPax(pax("ADULT", null), pax("ADULT", null), pax("CHILD", LocalDate.of(2025, 1, 1)))))
                 .extracting("code").isEqualTo("PAX_TYPE_MISMATCH");
         verify(walletService, never()).hold(any(), any(), any(), any(), any());
-        verify(provider, never()).book(any());
+        verify(provider, never()).book(any(), any());
 
         // the day before the 12th birthday is still a child
         assertThat(service.confirm(id, withPax(pax("ADULT", null), pax("ADULT", null), pax("CHILD", LocalDate.of(2014, 12, 2))))
@@ -1589,7 +1722,7 @@ class PlatformBookingServiceTest {
                 .extracting("code").isEqualTo("PAX_TYPE_MISMATCH");
 
         verify(walletService, never()).hold(any(), any(), any(), any(), any());
-        verify(provider, never()).book(any());
+        verify(provider, never()).book(any(), any());
     }
 
     /** R1: the supplier's own itinerary date wins over the request hint; a re-price keeps the stamped date. */
@@ -1597,7 +1730,7 @@ class PlatformBookingServiceTest {
     void theStampedTravelDateComesFromTheReviewedItineraryFirstAndSurvivesARePrice() {
         com.fasterxml.jackson.databind.node.ObjectNode it = objectMapper.createObjectNode();
         it.putArray("sI").addObject().put("dt", "2026-11-20T06:00");
-        when(provider.review(any(FlightReviewRequest.class))).thenReturn(new FareReview("rv-2", new BigDecimal("5000.00"),
+        when(provider.review(any(FlightReviewRequest.class), any())).thenReturn(new FareReview("rv-2", new BigDecimal("5000.00"),
                 new BigDecimal("4250.00"), "INR", "Refundable", Instant.now().plus(15, ChronoUnit.MINUTES), it));
         FlightReviewRequest r = reviewRequest();
         r.setDepartDate("2026-12-01");
@@ -1632,7 +1765,7 @@ class PlatformBookingServiceTest {
                 .when(mirrorService).requireLinks("C-OTHER", "L1", "S1");
 
         assertThatThrownBy(() -> service.review(request)).isInstanceOf(IllegalArgumentException.class).hasMessage("Client not found: C-OTHER");
-        verify(provider, never()).review(any(FlightReviewRequest.class));
+        verify(provider, never()).review(any(FlightReviewRequest.class), any());
         assertThat(rows).isEmpty();
     }
 
@@ -1649,77 +1782,34 @@ class PlatformBookingServiceTest {
                 .isInstanceOf(com.voyra.crm.exception.BookingRequestException.class)
                 .extracting("code").isEqualTo("PAX_MIX_CHANGED");
         verify(walletService, never()).hold(any(), any(), any(), any(), any());
-        verify(provider, never()).book(any());
+        verify(provider, never()).book(any(), any());
 
         assertThat(service.confirm(id, withPax(pax("ADULT", null), pax("CHILD", LocalDate.of(2019, 5, 1)))).getStatus())
                 .isEqualTo(PlatformBookingStatus.TICKETED);
     }
 
-    /** Fix round 1: with a PROD credential active and tripjack_live_ready off, new bookings stop at review; nothing is asked. */
+    /** Replaying the same confirm key on a live row after its supplier's booking went off returns it, held or ticketed. */
     @Test
-    void aProdCredentialWithoutTheLiveSwitchRefusesNewBookings() {
-        config.setProvider("tripjack");
-        when(credentialRepository.findByProviderAndIsActiveTrue(SupplierProvider.TRIPJACK)).thenReturn(Optional.of(
-                PlatformSupplierCredential.builder().id("CRED1").environment(SupplierEnvironment.PROD).build()));
-        when(settings.tripjackLiveReady()).thenReturn(false);
-
-        assertThatThrownBy(() -> service.review(reviewRequest()))
-                .isInstanceOfSatisfying(BookingConflictException.class, e -> {
-                    assertThat(e.getCode()).isEqualTo("LIVE_BOOKINGS_PAUSED");
-                    assertThat(e.getMessage()).doesNotContain("tripjack_live_ready").doesNotContain("PROD");
-                });
-        verify(provider, never()).review(any(FlightReviewRequest.class));
-        assertThat(rows).isEmpty();
-    }
-
-    /** Fix round 2: a live row reviewed while the switch was on, confirmed after it went off, is refused before any hold or book. */
-    @Test
-    void aLiveReviewConfirmedAfterTheSwitchWentOffIsRefused() {
-        config.setProvider("tripjack");
-        when(credentialRepository.findByProviderAndIsActiveTrue(SupplierProvider.TRIPJACK)).thenReturn(Optional.of(
-                PlatformSupplierCredential.builder().id("CRED1").environment(SupplierEnvironment.PROD).build()));
-        when(settings.tripjackLiveReady()).thenReturn(true, false);
+    void aSameKeyReplayOfAHeldOrTicketedLiveRowStillAnswersAfterBookingIsSwitchedOff() {
         wallet.setIsTest(false);
-        String id = reviewed();
-
-        assertThatThrownBy(() -> service.confirm(id, confirmRequest("key-00000001", "4500.00")))
-                .isInstanceOfSatisfying(BookingConflictException.class, e -> {
-                    assertThat(e.getCode()).isEqualTo("LIVE_BOOKINGS_PAUSED");
-                    assertThat(e.getMessage()).doesNotContain("tripjack_live_ready").doesNotContain("PROD");
-                });
-        verify(walletService, never()).hold(any(), any(), any(), any(), any());
-        verify(provider, never()).book(any());
-        assertThat(rows.get(id).getStatus()).isEqualTo(PlatformBookingStatus.REVIEWING);
-    }
-
-    /** Final review minor 3: replaying the same confirm key on a live row after the switch went off returns it, held or ticketed. */
-    @Test
-    void aSameKeyReplayOfAHeldOrTicketedLiveRowStillAnswersWithTheSwitchOff() {
-        config.setProvider("tripjack");
-        when(credentialRepository.findByProviderAndIsActiveTrue(SupplierProvider.TRIPJACK)).thenReturn(Optional.of(
-                PlatformSupplierCredential.builder().id("CRED1").environment(SupplierEnvironment.PROD).build()));
-        when(settings.tripjackLiveReady()).thenReturn(true, true, false); // on for review and confirm, then off
-        wallet.setIsTest(false);
-        String id = reviewed();
+        String id = service.review(reviewRequest("tj-prod")).getBookingId();
         PlatformBookingConfirmRequest request = confirmRequest("key-00000001", "4500.00");
         assertThat(service.confirm(id, request).getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
+        lenient().when(suppliers.bookingEnabledIds(PricingProduct.FLIGHT)).thenReturn(Set.of()); // a replay never asks again
 
         assertThat(service.confirm(id, request).getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
         rows.get(id).setStatus(PlatformBookingStatus.HELD);
         assertThat(service.confirm(id, request).getStatus()).isEqualTo(PlatformBookingStatus.HELD);
 
-        verify(provider, times(1)).book(any());
+        verify(tripjack, times(1)).book(any(), eq(TJ_PROD));
         verify(walletService, times(1)).hold(any(), any(), any(), any(), any());
     }
 
-    /** Final review Important 1: a Tripjack review confirmed after the provider went back to the mock is refused; the mock never books it. */
+    /** A review whose supplier row is now in another environment is refused at confirm; no supplier is asked to book it. */
     @Test
-    void aTripjackReviewIsNotBookedThroughTheMock() {
-        config.setProvider("tripjack");
-        when(credentialRepository.findByProviderAndIsActiveTrue(SupplierProvider.TRIPJACK)).thenReturn(Optional.of(
-                PlatformSupplierCredential.builder().id("CRED1").environment(SupplierEnvironment.UAT).build()));
-        String id = reviewed();
-        config.setProvider("mock"); // restarted on the mock
+    void aReviewWhoseSupplierNoLongerMatchesIsNotConfirmed() {
+        String id = service.review(reviewRequest("tj-uat")).getBookingId();
+        when(suppliers.find("tj-uat")).thenReturn(Optional.of(TJ_PROD));
 
         assertThatThrownBy(() -> service.confirm(id, confirmRequest("key-00000001", "4500.00")))
                 .isInstanceOfSatisfying(BookingConflictException.class, e -> {
@@ -1727,7 +1817,7 @@ class PlatformBookingServiceTest {
                     assertThat(e.getMessage()).isEqualTo("This booking can't be changed right now. Voyra has been notified.");
                 });
         verify(walletService, never()).hold(any(), any(), any(), any(), any());
-        verify(provider, never()).book(any());
+        verify(tripjack, never()).book(any(), any());
         assertThat(rows.get(id).getStatus()).isEqualTo(PlatformBookingStatus.REVIEWING);
         verify(notificationService).platformAlert(org.mockito.ArgumentMatchers.contains(id), anyString());
         assertThat(savedEvents).filteredOn(e -> e.getType().equals("SUPPLIER_MISMATCH")).hasSize(1);
@@ -1793,7 +1883,7 @@ class PlatformBookingServiceTest {
     }
 
     @Test
-    void aReviewIsRefusedForAMissingOrSuspendedAgencyAnUnknownIssuerOrAnUnconfiguredTripjack() {
+    void aReviewIsRefusedForAMissingOrSuspendedAgency() {
         when(tenantRepository.findById(T)).thenReturn(Optional.empty());
         assertThatThrownBy(() -> service.review(reviewRequest())).isInstanceOf(NotFoundException.class).hasMessage("Agency not found");
 
@@ -1802,11 +1892,7 @@ class PlatformBookingServiceTest {
         assertThatThrownBy(() -> service.review(reviewRequest())).isInstanceOf(IllegalStateException.class)
                 .hasMessage("This agency is suspended or deactivated - bookings are not allowed");
 
-        tenant.setStatus(TenantStatus.ACTIVE);
-        config.setProvider("tripjack");
-        assertThatThrownBy(() -> service.review(reviewRequest())).isInstanceOf(IllegalStateException.class)
-                .hasMessage("Tripjack is not configured on the platform");
-        verify(provider, never()).review(any(FlightReviewRequest.class));
+        verify(provider, never()).review(any(FlightReviewRequest.class), any());
         verify(walletService, never()).hold(any(), any(), any(), any(), any());
     }
 
@@ -1825,14 +1911,14 @@ class PlatformBookingServiceTest {
         PlatformBooking b = service.confirm(id, confirmRequest("key-00000001", "4500.00"));
 
         assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.ABORTED);
-        verify(provider, never()).book(any());
+        verify(provider, never()).book(any(), any());
     }
 
     @Test
     void anInterruptedConfirmWaitLeavesTheBookingToThePoller() {
         org.springframework.test.util.ReflectionTestUtils.setField(service, "confirmWaitSeconds", 10L);
         String id = reviewed();
-        when(provider.book(any())).thenAnswer(i -> {
+        when(provider.book(any(), any())).thenAnswer(i -> {
             Thread.currentThread().interrupt();
             return new BookResult("SB-1", SupplierBookingStatus.PENDING, null, List.of(), null, null);
         });
@@ -1842,7 +1928,7 @@ class PlatformBookingServiceTest {
 
             assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.BOOKING);
             assertThat(Thread.currentThread().isInterrupted()).isTrue();
-            verify(provider, never()).bookingDetails(anyString());
+            verify(provider, never()).bookingDetails(anyString(), any());
         } finally {
             Thread.interrupted();
         }
@@ -1852,13 +1938,13 @@ class PlatformBookingServiceTest {
     void anUnansweredDetailsCallDuringTheConfirmWaitKeepsTheBooking() {
         org.springframework.test.util.ReflectionTestUtils.setField(service, "confirmWaitSeconds", 1L);
         String id = reviewed();
-        when(provider.book(any())).thenReturn(new BookResult("SB-1", SupplierBookingStatus.PENDING, null, List.of(), null, null));
-        when(provider.bookingDetails("SB-1")).thenThrow(new SupplierException("not yet", null));
+        when(provider.book(any(), any())).thenReturn(new BookResult("SB-1", SupplierBookingStatus.PENDING, null, List.of(), null, null));
+        when(provider.bookingDetails(eq("SB-1"), any())).thenThrow(new SupplierException("not yet", null));
 
         PlatformBooking b = service.confirm(id, confirmRequest("key-00000001", "4500.00"));
 
         assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.BOOKING);
-        verify(provider).bookingDetails("SB-1");
+        verify(provider).bookingDetails(eq("SB-1"), any());
         verify(walletService, never()).debitHeld(any(), any(), any(), any(), any());
     }
 
@@ -1877,13 +1963,12 @@ class PlatformBookingServiceTest {
     @Test
     void aChargedAmountEqualToTheGrossIsNoVarianceAndALongSupplierMessageIsCut() {
         String id = reviewed();
-        when(provider.book(any())).thenReturn(new BookResult("SB-1", SupplierBookingStatus.TICKETED, "PNR1", List.of("T"),
+        when(provider.book(any(), any())).thenReturn(new BookResult("SB-1", SupplierBookingStatus.TICKETED, "PNR1", List.of("T"),
                 "m".repeat(600), new BigDecimal("5000.00")));
 
         PlatformBooking b = service.confirm(id, confirmRequest("key-00000001", "4500.00"));
 
         assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
-        assertThat(b.getVoyraNet()).isEqualByComparingTo("-472.50");
         assertThat(b.getSupplierMessage()).hasSize(500);
         assertThat(savedEvents).extracting(PlatformBookingEvent::getType).doesNotContain("VARIANCE");
     }
@@ -2017,7 +2102,7 @@ class PlatformBookingServiceTest {
 
         assertThatThrownBy(() -> service.confirm(id, confirmRequest("key-00000001", "4500.00")))
                 .isInstanceOf(NotFoundException.class).hasMessage("Booking not found");
-        verify(provider, never()).book(any());
+        verify(provider, never()).book(any(), any());
     }
 
     @Test
@@ -2055,7 +2140,7 @@ class PlatformBookingServiceTest {
 
     @Test
     void aSupplierItineraryOfJsonNullIsStoredAsNone() {
-        when(provider.review(any(FlightReviewRequest.class))).thenReturn(new FareReview("rv-2", new BigDecimal("5000.00"),
+        when(provider.review(any(FlightReviewRequest.class), any())).thenReturn(new FareReview("rv-2", new BigDecimal("5000.00"),
                 new BigDecimal("4250.00"), "INR", null, Instant.now().plus(15, ChronoUnit.MINUTES),
                 com.fasterxml.jackson.databind.node.NullNode.getInstance()));
 
@@ -2082,7 +2167,7 @@ class PlatformBookingServiceTest {
 
         assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
         org.mockito.ArgumentCaptor<BookRequest> sent = org.mockito.ArgumentCaptor.forClass(BookRequest.class);
-        verify(hotelProvider).book(sent.capture());
+        verify(hotelProvider).book(sent.capture(), any());
         assertThat(sent.getValue().leadPan()).isEqualTo("PQRSX6789K");
     }
 

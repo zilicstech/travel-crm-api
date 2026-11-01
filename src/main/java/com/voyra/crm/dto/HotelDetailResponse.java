@@ -66,6 +66,15 @@ public class HotelDetailResponse {
     @Schema(example = "Tripjack")
     private String supplier;
 
+    @Schema(description = "The supplier row this hotel belongs to")
+    private String supplierId;
+
+    @Schema(example = "Tripjack")
+    private String supplierName;
+
+    @Schema(description = "False while the supplier is not taking bookings; its rooms cannot be booked with Voyra")
+    private boolean bookingEnabled;
+
     @Data
     @Builder
     @NoArgsConstructor

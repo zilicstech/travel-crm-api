@@ -48,7 +48,7 @@ class PlatformBookingPurgeTxServiceTest {
 
     private PlatformBookingPurgeTxService service() {
         PaxCodec codec = new PaxCodec(objectMapper, "dGVzdC1vbmx5LWFlcy1rZXktMzItYnl0ZXMtbG9uZyE=");
-        PlatformBookingQueryService query = new PlatformBookingQueryService(bookings, events, null, null, null, codec, objectMapper, null);
+        PlatformBookingQueryService query = new PlatformBookingQueryService(bookings, events, null, null, null, codec, objectMapper, null, null);
         return new PlatformBookingPurgeTxService(bookings, events, query, recorder, notifications);
     }
 

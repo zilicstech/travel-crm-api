@@ -12,12 +12,10 @@ import com.voyra.crm.enums.FlightDirection;
 import com.voyra.crm.enums.SupplierProvider;
 import com.voyra.crm.exception.SupplierException;
 import com.voyra.crm.service.FlightSearchProvider;
-import com.voyra.crm.service.PlatformSupplierCredentialService;
 import com.voyra.crm.util.AirportCodeResolver;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
@@ -35,7 +33,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Real Tripjack flight search, behind {@code app.flight-supplier.provider=tripjack}.
+ * Real Tripjack flight search, called with each Tripjack supplier row that has flight search switched on.
  *
  * <p>The request/response contract below is reconstructed from Tripjack's own published
  * documentation (endpoint table + Postman setup instructions) and cross-checked against two
@@ -52,12 +50,10 @@ import java.util.regex.Pattern;
  * others follow the same enum by symmetry).
  */
 @Service
-@ConditionalOnProperty(name = "app.flight-supplier.provider", havingValue = "tripjack")
 @RequiredArgsConstructor
 @Slf4j
 public class TripjackFlightSearchProvider implements FlightSearchProvider {
 
-    private final PlatformSupplierCredentialService platformSupplierCredentialService;
     /** The timeout-bounded builder from {@code config.TripjackConfig} - cloned per call so
      *  a credential change applies to the next call. This class never calls
      *  {@code .requestFactory(...)} on it, so tests can bind {@code MockRestServiceServer} to
@@ -78,27 +74,14 @@ public class TripjackFlightSearchProvider implements FlightSearchProvider {
     }
 
     @Override
-    public List<FlightOfferResponse> search(FlightSearchQuery query) {
-        // The platform credential is resolved fresh per call, so a key change applies to the next search.
-        log.info("Tripjack flight search start: {} -> {} on {}", query.getOrigin(), query.getDestination(), query.getDepartDate());
-        ResolvedCredential credential;
-        try {
-            credential = platformSupplierCredentialService.resolveActive(SupplierProvider.TRIPJACK);
-        } catch (RuntimeException e) {
-            log.warn("Tripjack flight search aborted - no active platform credential: {}", e.getMessage());
-            throw e;
-        }
-        return search(query, credential);
+    public SupplierProvider provider() {
+        return SupplierProvider.TRIPJACK;
     }
 
-    /** Searches with the given credential instead of the active one - the supplier page's Test connection tests the row it is on. */
+    @Override
     public List<FlightOfferResponse> search(FlightSearchQuery query, ResolvedCredential credential) {
-        if (credential != null) {
-            String key = credential.apiKey() == null ? "" : credential.apiKey();
-            log.info("Tripjack credential resolved: environment={}, baseUrl={}, apiKey=...{} (len {})",
-                    credential.environment(), credential.baseUrl(),
-                    key.length() > 4 ? key.substring(key.length() - 4) : "****", key.length());
-        }
+        log.info("Tripjack flight search start: supplier={}, environment={}, {} -> {} on {}", credential.name(),
+                credential.environment(), query.getOrigin(), query.getDestination(), query.getDepartDate());
 
         String originCode = AirportCodeResolver.resolve(query.getOrigin());
         String destinationCode = AirportCodeResolver.resolve(query.getDestination());

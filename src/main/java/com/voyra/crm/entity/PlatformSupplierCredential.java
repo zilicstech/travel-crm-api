@@ -19,9 +19,10 @@ import lombok.Setter;
 import java.time.Instant;
 
 /**
- * Voyra's own account with an external supplier (public schema) - one row per provider (unique since V34), with
- * its commission terms per product in {@link PlatformSupplierProduct}. Every agency's searches run on it. The encrypted columns never leave the service:
- * responses carry a masked key and nothing reveals the plaintext.
+ * One of Voyra's accounts with an external supplier (public schema). Several rows may share an integration (name is
+ * unique); {@link PlatformSupplierProduct} says which products each row is searched and booked for. The encrypted columns
+ * never leave the service: responses carry a masked key and nothing reveals the plaintext. The old {@code is_active} column
+ * is no longer mapped (NOT NULL DEFAULT false, so inserts keep working; dropped in V39).
  */
 @Entity
 @Table(name = "platform_supplier_credential")
@@ -57,10 +58,6 @@ public class PlatformSupplierCredential {
     @Column(name = "user_id_encrypted", length = 1024)
     @JsonIgnore
     private String userIdEncrypted;
-
-    @Column(name = "is_active", nullable = false)
-    @Builder.Default
-    private Boolean isActive = false;
 
     @Column(name = "updated_by", length = 36)
     private String updatedBy;

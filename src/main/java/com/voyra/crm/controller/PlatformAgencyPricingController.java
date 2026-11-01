@@ -2,7 +2,6 @@ package com.voyra.crm.controller;
 
 import com.voyra.crm.dto.AgencyPricingAssignRequest;
 import com.voyra.crm.dto.AgencyPricingAssignmentResponse;
-import com.voyra.crm.dto.PricingPreviewResponse;
 import com.voyra.crm.enums.PricingProduct;
 import com.voyra.crm.service.AgencyPricingService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -16,7 +15,6 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -36,16 +34,9 @@ public class PlatformAgencyPricingController {
         return ResponseEntity.ok(service.assignments(id));
     }
 
-    @GetMapping("/preview")
-    @Operation(summary = "Preview a discount and commission rule pair against the reference fare basket")
-    public ResponseEntity<PricingPreviewResponse> preview(@PathVariable String id, @RequestParam PricingProduct product,
-                                                          @RequestParam String discountRuleId, @RequestParam String commissionRuleId) {
-        return ResponseEntity.ok(service.preview(id, product, discountRuleId, commissionRuleId));
-    }
-
     @PutMapping("/{product}")
     @Operation(summary = "Put the agency on a discount and a commission rule for a product",
-            description = "Takes effect at once (next booking review). Audited with the worst case and lossMaking.")
+            description = "Takes effect at once (next booking review). Audited.")
     public ResponseEntity<AgencyPricingAssignmentResponse> assign(@PathVariable String id, @PathVariable PricingProduct product,
                                                                   @Valid @RequestBody AgencyPricingAssignRequest request) {
         return ResponseEntity.ok(service.assign(id, product, request));

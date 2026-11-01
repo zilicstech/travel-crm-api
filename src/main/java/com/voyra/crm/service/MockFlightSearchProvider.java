@@ -5,8 +5,9 @@ import com.voyra.crm.dto.FlightOfferResponse;
 import com.voyra.crm.dto.FlightSearchQuery;
 import com.voyra.crm.enums.FlightCabin;
 import com.voyra.crm.enums.FlightDirection;
+import com.voyra.crm.enums.SupplierProvider;
+import com.voyra.crm.models.ResolvedCredential;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -20,7 +21,6 @@ import java.util.List;
  */
 @Service
 @Slf4j
-@ConditionalOnProperty(name = "app.flight-supplier.provider", havingValue = "mock", matchIfMissing = true)
 public class MockFlightSearchProvider implements FlightSearchProvider {
 
     private record Template(String airline, String flightNumberPrefix, LocalTime depart, int durationMinutes,
@@ -55,8 +55,13 @@ public class MockFlightSearchProvider implements FlightSearchProvider {
     private static final BigDecimal CABIN_MULTIPLIER_FIRST = new BigDecimal("5.0");
 
     @Override
-    public List<FlightOfferResponse> search(FlightSearchQuery query) {
-        log.warn("Flight search served by MOCK provider ({} -> {}); Tripjack was NOT called", query.getOrigin(), query.getDestination());
+    public SupplierProvider provider() {
+        return SupplierProvider.MOCK;
+    }
+
+    @Override
+    public List<FlightOfferResponse> search(FlightSearchQuery query, ResolvedCredential supplier) {
+        log.debug("Flight search served by the mock supplier ({} -> {})", query.getOrigin(), query.getDestination());
         FlightCabin cabin = query.getCabin() != null ? query.getCabin() : FlightCabin.ECONOMY;
 
         // Like the real supplier: one row per fare, several fares per flight; a round trip adds the way back as RETURN (never COMBO).

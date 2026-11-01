@@ -2,11 +2,9 @@ package com.voyra.crm.controller;
 
 import com.voyra.crm.config.SecurityConfig;
 import com.voyra.crm.entity.PricingRule;
-import com.voyra.crm.enums.DiscountBase;
 import com.voyra.crm.enums.PricingProduct;
 import com.voyra.crm.enums.PricingRuleKind;
 import com.voyra.crm.enums.UserType;
-import com.voyra.crm.models.ReferenceFare;
 import com.voyra.crm.repository.AgencyPricingAssignmentRepository;
 import com.voyra.crm.repository.PricingRuleRepository;
 import com.voyra.crm.repository.TenantRepository;
@@ -16,7 +14,6 @@ import com.voyra.crm.security.JwtService;
 import com.voyra.crm.security.RestAuthenticationEntryPoint;
 import com.voyra.crm.service.AgencyPricingService;
 import com.voyra.crm.service.PlatformAuditService;
-import com.voyra.crm.service.PlatformSettingService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -44,7 +41,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/** The real AgencyPricingService over mocked repositories: routes, validation, the JSON shape and the preview guard. */
+/** The real AgencyPricingService over mocked repositories: routes, validation, the JSON shape. */
 @WebMvcTest({PlatformAgencyPricingController.class, PlatformPricingRuleController.class})
 @ActiveProfiles("test")
 @Import({SecurityConfig.class, JwtAuthenticationFilter.class, JwtService.class, RestAuthenticationEntryPoint.class,
@@ -58,8 +55,6 @@ class PlatformAgencyPricingControllerTest {
     @MockBean private PricingRuleRepository ruleRepository;
     @MockBean private AgencyPricingAssignmentRepository assignmentRepository;
     @MockBean private TenantRepository tenantRepository;
-    @MockBean private PlatformSettingService settings;
-    @MockBean private com.voyra.crm.service.PlatformSupplierCredentialService suppliers;
     @MockBean private PlatformAuditService auditService;
 
     private static PricingRule rule(String id, PricingRuleKind kind, String pct, boolean isDefault) {
@@ -69,12 +64,6 @@ class PlatformAgencyPricingControllerTest {
 
     private void seed() {
         given(tenantRepository.existsById("T1")).willReturn(true);
-        given(settings.discountBase()).willReturn(DiscountBase.GROSS);
-        given(suppliers.commissionEstimatePct(org.mockito.ArgumentMatchers.any())).willReturn(new BigDecimal("5"));
-        given(settings.referenceFareBasket(PricingProduct.FLIGHT)).willReturn(List.of(
-                new ReferenceFare("Domestic LCC", new BigDecimal("5000"), new BigDecimal("3500")),
-                new ReferenceFare("Domestic FSC", new BigDecimal("9000"), new BigDecimal("6000")),
-                new ReferenceFare("International", new BigDecimal("45000"), new BigDecimal("22000"))));
         given(ruleRepository.findById("D10")).willReturn(Optional.of(rule("D10", PricingRuleKind.DISCOUNT, "10", false)));
         given(ruleRepository.findById("C4")).willReturn(Optional.of(rule("C4", PricingRuleKind.COMMISSION, "4", false)));
         given(ruleRepository.findByKindAndProductAndIsDefaultTrue(PricingRuleKind.DISCOUNT, PricingProduct.FLIGHT))
@@ -90,20 +79,8 @@ class PlatformAgencyPricingControllerTest {
     }
 
     @Test
-    void previewOfARulePairFlagsALossMakingPairOnTheSeededBasket() throws Exception {
-        seed();
-        mockMvc.perform(get(AGENCY + "/preview").param("product", "FLIGHT").param("discountRuleId", "D10").param("commissionRuleId", "C4")
-                        .with(as(UserType.SUPER_ADMIN)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.worstCaseNetPer10k").value(-951.11))
-                .andExpect(jsonPath("$.basketLines.length()").value(3));
-    }
-
-    @Test
     void anUnassignedAgencyShowsTheDefaultRulesForBothProducts() throws Exception {
         seed();
-        given(settings.referenceFareBasket(PricingProduct.HOTEL)).willReturn(List.of(
-                new ReferenceFare("City hotel", new BigDecimal("5000"), new BigDecimal("4200"))));
         given(ruleRepository.findByKindAndProductAndIsDefaultTrue(PricingRuleKind.DISCOUNT, PricingProduct.HOTEL))
                 .willReturn(Optional.of(rule("HD", PricingRuleKind.DISCOUNT, "0", true)));
         given(ruleRepository.findByKindAndProductAndIsDefaultTrue(PricingRuleKind.COMMISSION, PricingProduct.HOTEL))
@@ -114,7 +91,8 @@ class PlatformAgencyPricingControllerTest {
                 .andExpect(jsonPath("$[0].product").value("FLIGHT"))
                 .andExpect(jsonPath("$[0].assigned").value(false))
                 .andExpect(jsonPath("$[0].discountRule.isDefault").value(true))
-                .andExpect(jsonPath("$[0].lossMaking").value(false));
+                .andExpect(jsonPath("$[0].lossMaking").doesNotExist())
+                .andExpect(jsonPath("$[0].worstCaseNetPer10k").doesNotExist());
     }
 
     @Test

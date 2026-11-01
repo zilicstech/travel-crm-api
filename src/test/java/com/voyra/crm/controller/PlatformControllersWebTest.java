@@ -114,14 +114,12 @@ class PlatformControllersWebTest {
         mvc.perform(json(put("/api/platform/pricing-rules/R1"), "{\"name\":\"Discount 5%\",\"pct\":5}").with(as(UserType.SUPER_ADMIN)))
                 .andExpect(status().isOk());
         mvc.perform(delete("/api/platform/pricing-rules/R1").with(as(UserType.SUPER_ADMIN))).andExpect(status().isNoContent());
-        mvc.perform(get("/api/platform/pricing-rules/R1/impact").param("pct", "7.5").with(as(UserType.SUPER_ADMIN))).andExpect(status().isOk());
         mvc.perform(json(put("/api/platform/agencies/T9/pricing/" + product), "{\"discountRuleId\":\"D1\",\"commissionRuleId\":\"C1\"}")
                 .with(as(UserType.SUPER_ADMIN))).andExpect(status().isOk());
 
         verify(agencyPricingService).listRules(PricingProduct.values()[0]);
         verify(agencyPricingService).updateRule(eq("R1"), any());
         verify(agencyPricingService).deleteRule("R1");
-        verify(agencyPricingService).impact("R1", new BigDecimal("7.5"), false);
         verify(agencyPricingService).assign(eq("T9"), eq(PricingProduct.values()[0]), any());
     }
 

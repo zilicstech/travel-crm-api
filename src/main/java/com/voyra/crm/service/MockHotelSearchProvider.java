@@ -3,7 +3,8 @@ package com.voyra.crm.service;
 import com.voyra.crm.dto.HotelDetailResponse;
 import com.voyra.crm.dto.HotelOfferResponse;
 import com.voyra.crm.dto.HotelSearchQuery;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import com.voyra.crm.enums.SupplierProvider;
+import com.voyra.crm.models.ResolvedCredential;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -20,7 +21,6 @@ import java.util.stream.IntStream;
  * serves from {@code public/mock-hotels/}.
  */
 @Service
-@ConditionalOnProperty(name = "app.hotel-supplier.provider", havingValue = "mock", matchIfMissing = true)
 public class MockHotelSearchProvider implements HotelSearchProvider {
 
     private record Template(String hotelName, int starRating, String roomType, String boardBasis,
@@ -44,7 +44,12 @@ public class MockHotelSearchProvider implements HotelSearchProvider {
     private static final List<String> HOTEL_PHOTOS = List.of("Exterior", "Lobby", "Pool", "Restaurant", "Spa", "View");
 
     @Override
-    public List<HotelOfferResponse> search(HotelSearchQuery query) {
+    public SupplierProvider provider() {
+        return SupplierProvider.MOCK;
+    }
+
+    @Override
+    public List<HotelOfferResponse> search(HotelSearchQuery query, ResolvedCredential supplier) {
         int nights = nights(query);
         int rooms = Math.max(1, query.getRooms());
 
@@ -74,7 +79,7 @@ public class MockHotelSearchProvider implements HotelSearchProvider {
 
     /** Like the real supplier, the list's photos come after the list itself - one per hotel, from the template's place. */
     @Override
-    public List<com.voyra.crm.dto.HotelThumbnailResponse> thumbnails(List<String> hotelIds) {
+    public List<com.voyra.crm.dto.HotelThumbnailResponse> thumbnails(List<String> hotelIds, ResolvedCredential supplier) {
         return IntStream.range(0, TEMPLATES.size())
                 .filter(i -> hotelIds.contains(TEMPLATES.get(i).id()))
                 .mapToObj(i -> com.voyra.crm.dto.HotelThumbnailResponse.builder()
@@ -87,7 +92,7 @@ public class MockHotelSearchProvider implements HotelSearchProvider {
 
     /** The hotel's page: six photos, its rooms' photos after them, and three options - its search room and two upgrades. */
     @Override
-    public HotelDetailResponse detail(String hotelId, HotelSearchQuery query) {
+    public HotelDetailResponse detail(String hotelId, HotelSearchQuery query, ResolvedCredential supplier) {
         Template t = TEMPLATES.stream().filter(x -> x.id().equals(hotelId)).findFirst()
                 .orElseThrow(() -> new com.voyra.crm.exception.NotFoundException("This hotel is no longer in the search - search again"));
         int nights = nights(query);

@@ -6,12 +6,9 @@ import com.voyra.crm.models.ResolvedCredential;
 import com.voyra.crm.enums.SupplierEnvironment;
 import com.voyra.crm.enums.SupplierProvider;
 import com.voyra.crm.exception.SupplierException;
-import com.voyra.crm.service.PlatformSupplierCredentialService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -33,24 +30,21 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 /** Offline: every Tripjack call is answered by MockRestServiceServer with the v3 shapes. */
-@ExtendWith(MockitoExtension.class)
 class TripjackHotelSearchProviderTest {
 
     private static final String HOST = "https://apitest-hms.tripjack.com";
 
-    @Mock
-    private PlatformSupplierCredentialService platformSupplierCredentialService;
+    private final ResolvedCredential cred = new ResolvedCredential("s1", "Tripjack", SupplierProvider.TRIPJACK, SupplierEnvironment.UAT,
+            "https://apitest.tripjack.com", "test-key", null, null);
 
     private MockRestServiceServer server;
     private TripjackHotelSearchProvider provider;
 
     @BeforeEach
     void setUp() {
-        org.mockito.Mockito.lenient().when(platformSupplierCredentialService.resolveActive(SupplierProvider.TRIPJACK)).thenReturn(new ResolvedCredential(SupplierProvider.TRIPJACK, SupplierEnvironment.UAT,
-                "https://apitest.tripjack.com", "test-key", null));
         RestClient.Builder builder = RestClient.builder();
         server = MockRestServiceServer.bindTo(builder).build();
-        provider = new TripjackHotelSearchProvider(platformSupplierCredentialService, builder, HOST, "https://hms-search.tripjack.com");
+        provider = new TripjackHotelSearchProvider(builder, HOST, "https://hms-search.tripjack.com");
     }
 
     private HotelSearchQuery query(String city, String country) {
@@ -87,6 +81,11 @@ class TripjackHotelSearchProviderTest {
     }
 
     @Test
+    void isTheTripjackIntegration() {
+        org.assertj.core.api.Assertions.assertThat(provider.provider()).isEqualTo(SupplierProvider.TRIPJACK);
+    }
+
+    @Test
     void cityBecomesHotelIdsAndTheCheapestOptionOfEachHotelIsOffered() {
         staticData();
         server.expect(requestTo(HOST + "/hms/v3/content/fetch-hotel-mapping")).andExpect(method(HttpMethod.POST))
@@ -109,8 +108,8 @@ class TripjackHotelSearchProviderTest {
                           {"tjHotelId":"1002","name":"Hotel B","options":[]}]}""", MediaType.APPLICATION_JSON));
         // No city list, nationality or content call during the search (server.verify() fails on any unexpected call).
 
-        provider.refreshStaticData();
-        List<HotelOfferResponse> offers = provider.search(query("Paris", "FR"));
+        provider.refreshStaticData(cred);
+        List<HotelOfferResponse> offers = provider.search(query("Paris", "FR"), cred);
 
         server.verify();
         assertThat(offers).hasSize(1);
@@ -133,8 +132,8 @@ class TripjackHotelSearchProviderTest {
     @Test
     void anUnknownCityIsAClearError() {
         staticData();
-        provider.refreshStaticData();
-        assertThatThrownBy(() -> provider.search(query("Atlantis", null)))
+        provider.refreshStaticData(cred);
+        assertThatThrownBy(() -> provider.search(query("Atlantis", null), cred))
                 .isInstanceOf(SupplierException.class)
                 .hasMessageContaining("no hotels listed for \"Atlantis\"");
     }
@@ -144,7 +143,7 @@ class TripjackHotelSearchProviderTest {
         server.expect(requestTo(HOST + "/hms/v3/content/fetch-city-regionIds?limit=2000"))
                 .andRespond(withStatus(HttpStatus.FORBIDDEN).contentType(MediaType.APPLICATION_JSON)
                         .body("{\"errors\":[{\"message\":\"IP not whitelisted\"}]}"));
-        assertThatThrownBy(provider::refreshStaticData)
+        assertThatThrownBy(() -> provider.refreshStaticData(cred))
                 .isInstanceOf(SupplierException.class)
                 .hasMessageContaining("HTTP 403").hasMessageContaining("IP not whitelisted");
     }
@@ -153,7 +152,7 @@ class TripjackHotelSearchProviderTest {
     void aSearchNeverLoadsTheCityListItselfAndAsksToRetryUntilItIsLoaded() {
         server.expect(org.springframework.test.web.client.ExpectedCount.manyTimes(), requestTo(org.hamcrest.Matchers.startsWith(HOST)))
                 .andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
-        assertThatThrownBy(() -> provider.search(query("Goa", "IN")))
+        assertThatThrownBy(() -> provider.search(query("Goa", "IN"), cred))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("still loading");
     }
@@ -161,8 +160,8 @@ class TripjackHotelSearchProviderTest {
     @Test
     void aFreshCopyIsNotLoadedAgain() {
         staticData();
-        provider.refreshStaticData();
-        provider.refreshStaticData(); // A second load would hit an unexpected request and fail.
+        provider.refreshStaticData(cred);
+        provider.refreshStaticData(cred); // A second load would hit an unexpected request and fail.
         server.verify();
     }
 
@@ -175,8 +174,8 @@ class TripjackHotelSearchProviderTest {
                           "locale":{"address":{"fulladdr":"Beach Road, Goa"}},
                           "images":[{"links":{"1000px":{"href":"https://i.travelapi.com/lodging/1/abc_z.jpg"}}}]}]}""", MediaType.APPLICATION_JSON));
 
-        var first = provider.thumbnails(List.of("1001", "1002"));
-        var again = provider.thumbnails(List.of("1001"));
+        var first = provider.thumbnails(List.of("1001", "1002"), cred);
+        var again = provider.thumbnails(List.of("1001"), cred);
 
         server.verify();
         assertThat(first).hasSize(1);

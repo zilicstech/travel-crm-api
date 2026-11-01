@@ -348,6 +348,16 @@ public class GlobalExceptionHandler {
                         "Supplier unavailable", null, HttpStatus.BAD_GATEWAY.value(), path));
     }
 
+    @ExceptionHandler(SuppliersUnavailableException.class)
+    public ResponseEntity<ApiErrorResponse> handleSuppliersUnavailable(SuppliersUnavailableException ex, HttpServletRequest request) {
+        String path = getPath(request);
+        log.warn("No supplier answered - path: {}", path);
+        ApiErrorResponse response = ApiErrorResponse.of(ex.getMessage(), "Suppliers unavailable", null,
+                HttpStatus.SERVICE_UNAVAILABLE.value(), path);
+        response.setCode("SUPPLIERS_UNAVAILABLE");
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(response);
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiErrorResponse> handleGeneric(Exception ex, HttpServletRequest request) {
         String path = getPath(request);

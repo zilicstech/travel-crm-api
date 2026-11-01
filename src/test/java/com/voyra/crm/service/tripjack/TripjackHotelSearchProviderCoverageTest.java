@@ -7,11 +7,8 @@ import com.voyra.crm.enums.SupplierEnvironment;
 import com.voyra.crm.enums.SupplierProvider;
 import com.voyra.crm.exception.SupplierException;
 import com.voyra.crm.models.ResolvedCredential;
-import com.voyra.crm.service.PlatformSupplierCredentialService;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -42,14 +39,11 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 /** Search, hotel page, thumbnails and the HTTP error paths, all answered offline by MockRestServiceServer. */
-@ExtendWith(MockitoExtension.class)
 class TripjackHotelSearchProviderCoverageTest {
 
     private static final String UAT = "https://apitest-hms.tripjack.com";
     private static final String PROD = "https://hms-search.tripjack.com";
 
-    @Mock
-    private PlatformSupplierCredentialService credentials;
 
     private MockRestServiceServer server;
     private TripjackHotelSearchProvider provider;
@@ -79,12 +73,13 @@ class TripjackHotelSearchProviderCoverageTest {
         }
     }
 
+    private ResolvedCredential cred;
+
     private void setUp(SupplierEnvironment env, boolean ordered) {
-        when(credentials.resolveActive(SupplierProvider.TRIPJACK))
-                .thenReturn(new ResolvedCredential(SupplierProvider.TRIPJACK, env, "https://unused.example.test", "test-key", null));
+        cred = new ResolvedCredential("s1", "Tripjack", SupplierProvider.TRIPJACK, env, "https://unused.example.test", "test-key", null, null);
         RestClient.Builder builder = RestClient.builder();
         server = MockRestServiceServer.bindTo(builder).ignoreExpectOrder(!ordered).build();
-        provider = new TripjackHotelSearchProvider(credentials, builder, UAT, PROD);
+        provider = new TripjackHotelSearchProvider(builder, UAT, PROD);
         provider.clock = clock;
     }
 
@@ -126,9 +121,9 @@ class TripjackHotelSearchProviderCoverageTest {
         server.expect(ExpectedCount.once(), requestTo(UAT + "/hms/v3/content/fetch-hotel-mapping"))
                 .andRespond(withSuccess("{\"hotels\":[{\"tjHotelId\":\" \"}]}", MediaType.APPLICATION_JSON));
 
-        provider.refreshStaticData();
-        assertThat(provider.search(query("Goa", "FR"))).isEmpty();
-        assertThat(provider.search(query("goa", null))).isEmpty();
+        provider.refreshStaticData(cred);
+        assertThat(provider.search(query("Goa", "FR"), cred)).isEmpty();
+        assertThat(provider.search(query("goa", null), cred)).isEmpty();
         server.verify();
     }
 
@@ -137,9 +132,9 @@ class TripjackHotelSearchProviderCoverageTest {
         setUp(SupplierEnvironment.UAT, true);
         staticData(UAT, "{\"nationalityInfos\":[{\"countryId\":\"1\",\"code\":\"FR\"}]}");
         json(UAT, "/hms/v3/content/fetch-hotel-mapping", "{\"hotels\":[{\"tjHotelId\":\"5\"}]}");
-        provider.refreshStaticData();
+        provider.refreshStaticData(cred);
 
-        assertThatThrownBy(() -> provider.search(query("Goa", "IN")))
+        assertThatThrownBy(() -> provider.search(query("Goa", "IN"), cred))
                 .isInstanceOf(SupplierException.class).hasMessage("Tripjack hotels don't support nationality IN");
     }
 
@@ -159,9 +154,9 @@ class TripjackHotelSearchProviderCoverageTest {
         server.expect(requestTo(UAT + "/hms/v3/hotel/listing")).andExpect(jsonPath("$.hids[0]").value(201))
                 .andExpect(jsonPath("$.hids.length()").value(100))
                 .andRespond(withStatus(HttpStatus.INTERNAL_SERVER_ERROR));
-        provider.refreshStaticData();
+        provider.refreshStaticData(cred);
 
-        List<HotelOfferResponse> offers = provider.search(query("Goa", "IN"));
+        List<HotelOfferResponse> offers = provider.search(query("Goa", "IN"), cred);
 
         server.verify();
         assertThat(offers).extracting(HotelOfferResponse::getOfferId).containsExactly("A1", "B1");
@@ -176,10 +171,10 @@ class TripjackHotelSearchProviderCoverageTest {
         String listing = "{\"hotels\":[{\"tjHotelId\":\"5\",\"name\":\"H\",\"options\":[" + option("O5", 100) + "]}]}";
         json(UAT, "/hms/v3/hotel/listing", listing);
         json(UAT, "/hms/v3/hotel/listing", listing);
-        provider.refreshStaticData();
+        provider.refreshStaticData(cred);
 
-        assertThat(provider.search(query("Goa", " "))).extracting(HotelOfferResponse::getOfferId).containsExactly("O5");
-        assertThat(provider.search(query("Goa", "IN"))).extracting(HotelOfferResponse::getOfferId).containsExactly("O5");
+        assertThat(provider.search(query("Goa", " "), cred)).extracting(HotelOfferResponse::getOfferId).containsExactly("O5");
+        assertThat(provider.search(query("Goa", "IN"), cred)).extracting(HotelOfferResponse::getOfferId).containsExactly("O5");
         server.verify();
     }
 
@@ -191,9 +186,9 @@ class TripjackHotelSearchProviderCoverageTest {
         server.expect(requestTo(UAT + "/hms/v3/hotel/listing")).andRespond(request -> {
             throw new IllegalStateException("boom");
         });
-        provider.refreshStaticData();
+        provider.refreshStaticData(cred);
 
-        assertThatThrownBy(() -> provider.search(query("Goa", "IN")))
+        assertThatThrownBy(() -> provider.search(query("Goa", "IN"), cred))
                 .isInstanceOf(SupplierException.class).hasMessage("Tripjack hotel search failed")
                 .hasCauseInstanceOf(IllegalStateException.class);
     }
@@ -208,7 +203,7 @@ class TripjackHotelSearchProviderCoverageTest {
                 .andRespond(withSuccess(page, MediaType.APPLICATION_JSON));
         json(UAT, "/hms/v3/nationality-info", "{\"nationalityInfos\":[]}");
 
-        provider.refreshStaticData();
+        provider.refreshStaticData(cred);
 
         server.verify();
     }
@@ -221,9 +216,9 @@ class TripjackHotelSearchProviderCoverageTest {
         server.expect(requestTo(UAT + "/hms/v3/hotel/listing"))
                 .andRespond(withStatus(HttpStatus.BAD_GATEWAY).contentType(MediaType.APPLICATION_JSON)
                         .body("{\"error\":{\"message\":\"Upstream down\"}}"));
-        provider.refreshStaticData();
+        provider.refreshStaticData(cred);
 
-        assertThatThrownBy(() -> provider.search(query("Goa", "IN")))
+        assertThatThrownBy(() -> provider.search(query("Goa", "IN"), cred))
                 .isInstanceOf(SupplierException.class)
                 .hasMessage("Tripjack hotel search failed (/hms/v3/hotel/listing, HTTP 502): Upstream down");
     }
@@ -234,9 +229,9 @@ class TripjackHotelSearchProviderCoverageTest {
         expectUatStaticData();
         json(UAT, "/hms/v3/content/fetch-hotel-mapping", "{\"hotels\":[{\"tjHotelId\":\"5\"}]}");
         json(UAT, "/hms/v3/hotel/listing", "  ");
-        provider.refreshStaticData();
+        provider.refreshStaticData(cred);
 
-        assertThat(provider.search(query("Goa", "IN"))).isEmpty();
+        assertThat(provider.search(query("Goa", "IN"), cred)).isEmpty();
     }
 
     @Test
@@ -257,16 +252,16 @@ class TripjackHotelSearchProviderCoverageTest {
         json(UAT, "/hms/v3/nationality-info", "{\"nationalityInfos\":[{\"countryId\":\"106\",\"code\":\"IN\"}]}");
         json(UAT, "/hms/v3/content/fetch-hotel-mapping", "{\"hotels\":[]}");
 
-        assertThatThrownBy(() -> provider.search(query("Goa", "IN"))).hasMessageContaining("still loading");
+        assertThatThrownBy(() -> provider.search(query("Goa", "IN"), cred)).hasMessageContaining("still loading");
         // While the first load runs, neither another search nor the scheduled refresh starts a second one.
-        assertThatThrownBy(() -> provider.search(query("Goa", "IN"))).hasMessageContaining("still loading");
-        provider.refreshStaticData();
+        assertThatThrownBy(() -> provider.search(query("Goa", "IN"), cred)).hasMessageContaining("still loading");
+        provider.refreshStaticData(cred);
         release.countDown();
 
         List<HotelOfferResponse> offers = null;
         for (int i = 0; i < 100 && offers == null; i++) {
             try {
-                offers = provider.search(query("Goa", "IN"));
+                offers = provider.search(query("Goa", "IN"), cred);
             } catch (IllegalStateException stillLoading) {
                 Thread.sleep(50);
             }
@@ -287,11 +282,11 @@ class TripjackHotelSearchProviderCoverageTest {
         server.expect(requestTo(UAT + "/hms/v3/hotel/pricing")).andRespond(withSuccess(pricing, MediaType.APPLICATION_JSON));
         HotelSearchQuery q = query("Goa", "IN");
         q.setCorrelationId("corr-9");
-        provider.refreshStaticData();
+        provider.refreshStaticData(cred);
 
-        HotelDetailResponse first = provider.detail("H1", q);
+        HotelDetailResponse first = provider.detail("H1", q, cred);
         q.setCorrelationId(" ");
-        HotelDetailResponse second = provider.detail("H1", q);
+        HotelDetailResponse second = provider.detail("H1", q, cred);
 
         server.verify();
         assertThat(first.getName()).isEqualTo("Priced Hotel");
@@ -308,9 +303,9 @@ class TripjackHotelSearchProviderCoverageTest {
                 .andRespond(withSuccess("{\"options\":[]}", MediaType.APPLICATION_JSON));
         server.expect(requestTo(UAT + "/hms/v3/hotel/static-detail")).andRespond(withStatus(HttpStatus.INTERNAL_SERVER_ERROR));
         json(UAT, "/hms/v3/content/fetch-hotel-content", "{\"hotels\":[{\"tjHotelId\":\"H1\",\"name\":\"From Content\",\"star_rating\":3}]}");
-        provider.refreshStaticData();
+        provider.refreshStaticData(cred);
 
-        HotelDetailResponse d = provider.detail("H1", query("Goa", "IN"));
+        HotelDetailResponse d = provider.detail("H1", query("Goa", "IN"), cred);
 
         server.verify();
         assertThat(d.getName()).isEqualTo("From Content");
@@ -326,7 +321,7 @@ class TripjackHotelSearchProviderCoverageTest {
         server.expect(requestTo(PROD + "/hms/v3/content/fetch-hotel-content")).andExpect(jsonPath("$.hotelIds[0]").value("6"))
                 .andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
 
-        var thumbs = provider.thumbnails(List.of("1", " ", "2", "3", "4", "5", "6"));
+        var thumbs = provider.thumbnails(List.of("1", " ", "2", "3", "4", "5", "6"), cred);
 
         server.verify();
         assertThat(thumbs).singleElement().satisfies(t -> {
@@ -341,7 +336,7 @@ class TripjackHotelSearchProviderCoverageTest {
         server.expect(requestTo(UAT + "/hms/v3/content/fetch-city-regionIds?limit=2000")).andExpect(method(HttpMethod.GET))
                 .andRespond(withException(new IOException("connection refused")));
 
-        assertThatThrownBy(provider::refreshStaticData)
+        assertThatThrownBy(() -> provider.refreshStaticData(cred))
                 .isInstanceOf(SupplierException.class).hasMessage("Tripjack hotel search could not reach Tripjack");
     }
 
@@ -350,7 +345,7 @@ class TripjackHotelSearchProviderCoverageTest {
         setUp(SupplierEnvironment.UAT, true);
         json(UAT, "/hms/v3/content/fetch-city-regionIds?limit=2000", "not json");
 
-        assertThatThrownBy(provider::refreshStaticData).isInstanceOf(SupplierException.class)
+        assertThatThrownBy(() -> provider.refreshStaticData(cred)).isInstanceOf(SupplierException.class)
                 .hasMessage("Tripjack hotel /hms/v3/content/fetch-city-regionIds returned an unparseable response");
     }
 
@@ -359,7 +354,7 @@ class TripjackHotelSearchProviderCoverageTest {
         setUp(SupplierEnvironment.UAT, true);
         json(UAT, "/hms/v3/content/fetch-city-regionIds?limit=2000", "{\"status\":{\"success\":false},\"errors\":[{\"message\":\"Bad key\"}]}");
 
-        assertThatThrownBy(provider::refreshStaticData)
+        assertThatThrownBy(() -> provider.refreshStaticData(cred))
                 .hasMessage("Tripjack hotel search returned an error: Bad key");
     }
 
@@ -369,8 +364,8 @@ class TripjackHotelSearchProviderCoverageTest {
         json(UAT, "/hms/v3/content/fetch-city-regionIds?limit=2000", "{\"status\":{\"success\":true},\"error\":{}}");
         json(UAT, "/hms/v3/content/fetch-city-regionIds?limit=2000", "{\"errors\":[{}]}");
 
-        assertThatThrownBy(provider::refreshStaticData).hasMessage("Tripjack hotel search returned an error");
-        assertThatThrownBy(provider::refreshStaticData).hasMessage("Tripjack hotel search returned an error");
+        assertThatThrownBy(() -> provider.refreshStaticData(cred)).hasMessage("Tripjack hotel search returned an error");
+        assertThatThrownBy(() -> provider.refreshStaticData(cred)).hasMessage("Tripjack hotel search returned an error");
     }
 
     @Test
@@ -379,7 +374,7 @@ class TripjackHotelSearchProviderCoverageTest {
         server.expect(requestTo(UAT + "/hms/v3/content/fetch-city-regionIds?limit=2000"))
                 .andRespond(withStatus(HttpStatus.FORBIDDEN).body("<html>nope</html>"));
 
-        assertThatThrownBy(provider::refreshStaticData)
+        assertThatThrownBy(() -> provider.refreshStaticData(cred))
                 .hasMessage("Tripjack hotel search failed (/hms/v3/content/fetch-city-regionIds, HTTP 403)");
     }
 
@@ -389,11 +384,11 @@ class TripjackHotelSearchProviderCoverageTest {
         expectUatStaticData();
         expectUatStaticData();
 
-        provider.refreshStaticData();
+        provider.refreshStaticData(cred);
         clock.advance(Duration.ofDays(7).minusSeconds(1));
-        provider.refreshStaticData(); // still under a week: no call
+        provider.refreshStaticData(cred); // still under a week: no call
         clock.advance(Duration.ofSeconds(1));
-        provider.refreshStaticData();
+        provider.refreshStaticData(cred);
 
         server.verify();
     }
@@ -407,11 +402,11 @@ class TripjackHotelSearchProviderCoverageTest {
         json(UAT, "/hms/v3/hotel/listing", listing);
         json(UAT, "/hms/v3/content/fetch-hotel-mapping", "{\"hotels\":[{\"tjHotelId\":\"5\"}]}");
         json(UAT, "/hms/v3/hotel/listing", listing);
-        provider.refreshStaticData();
+        provider.refreshStaticData(cred);
 
-        provider.search(query("Goa", "IN"));
+        provider.search(query("Goa", "IN"), cred);
         clock.advance(Duration.ofDays(1));
-        assertThat(provider.search(query("Goa", "IN"))).extracting(HotelOfferResponse::getOfferId).containsExactly("O5");
+        assertThat(provider.search(query("Goa", "IN"), cred)).extracting(HotelOfferResponse::getOfferId).containsExactly("O5");
 
         server.verify();
     }
@@ -422,11 +417,11 @@ class TripjackHotelSearchProviderCoverageTest {
         json(PROD, "/hms/v3/content/fetch-hotel-content", "{\"hotels\":[{\"tjHotelId\":\"1\",\"star_rating\":2}]}");
         json(PROD, "/hms/v3/content/fetch-hotel-content", "{\"hotels\":[{\"tjHotelId\":\"1\",\"star_rating\":4}]}");
 
-        assertThat(provider.thumbnails(List.of("1"))).singleElement().satisfies(t -> assertThat(t.getStarRating()).isEqualTo(2));
+        assertThat(provider.thumbnails(List.of("1"), cred)).singleElement().satisfies(t -> assertThat(t.getStarRating()).isEqualTo(2));
         clock.advance(Duration.ofDays(7).minusSeconds(1));
-        assertThat(provider.thumbnails(List.of("1"))).singleElement().satisfies(t -> assertThat(t.getStarRating()).isEqualTo(2));
+        assertThat(provider.thumbnails(List.of("1"), cred)).singleElement().satisfies(t -> assertThat(t.getStarRating()).isEqualTo(2));
         clock.advance(Duration.ofSeconds(1));
-        assertThat(provider.thumbnails(List.of("1"))).singleElement().satisfies(t -> assertThat(t.getStarRating()).isEqualTo(4));
+        assertThat(provider.thumbnails(List.of("1"), cred)).singleElement().satisfies(t -> assertThat(t.getStarRating()).isEqualTo(4));
 
         server.verify();
     }
@@ -440,11 +435,11 @@ class TripjackHotelSearchProviderCoverageTest {
         json(UAT, "/hms/v3/hotel/static-detail", "{\"star_rating\":5}");
         json(UAT, "/hms/v3/hotel/pricing", pricing);
         json(UAT, "/hms/v3/hotel/static-detail", "{\"star_rating\":3}");
-        provider.refreshStaticData();
+        provider.refreshStaticData(cred);
 
-        assertThat(provider.detail("H1", query("Goa", "IN")).getStarRating()).isEqualTo(5);
+        assertThat(provider.detail("H1", query("Goa", "IN"), cred).getStarRating()).isEqualTo(5);
         clock.advance(Duration.ofDays(1));
-        assertThat(provider.detail("H1", query("Goa", "IN")).getStarRating()).isEqualTo(3);
+        assertThat(provider.detail("H1", query("Goa", "IN"), cred).getStarRating()).isEqualTo(3);
 
         server.verify();
     }
@@ -454,7 +449,7 @@ class TripjackHotelSearchProviderCoverageTest {
         setUp(SupplierEnvironment.PROD, true);
         json(PROD, "/hms/v3/content/fetch-hotel-content", "{\"hotels\":[{\"tjHotelId\":\"1\",\"star_rating\":2}]}");
 
-        var thumbs = provider.thumbnails(java.util.Arrays.asList(null, "1"));
+        var thumbs = provider.thumbnails(java.util.Arrays.asList(null, "1"), cred);
 
         server.verify();
         assertThat(thumbs).extracting(com.voyra.crm.dto.HotelThumbnailResponse::getHotelId).containsExactly("1");
@@ -465,7 +460,7 @@ class TripjackHotelSearchProviderCoverageTest {
         setUp(SupplierEnvironment.PROD, true);
         server.expect(requestTo(PROD + "/hms/v3/content/fetch-hotel-content")).andRespond(withSuccess());
 
-        assertThat(provider.thumbnails(List.of("1"))).isEmpty();
+        assertThat(provider.thumbnails(List.of("1"), cred)).isEmpty();
         server.verify();
     }
 }

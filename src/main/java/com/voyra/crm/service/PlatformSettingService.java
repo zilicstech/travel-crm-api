@@ -4,10 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.voyra.crm.dto.PlatformSettingResponse;
 import com.voyra.crm.entity.PlatformSetting;
-import com.voyra.crm.enums.DiscountBase;
 import com.voyra.crm.enums.PlatformAuditAction;
-import com.voyra.crm.enums.PricingProduct;
-import com.voyra.crm.models.ReferenceFare;
 import com.voyra.crm.repository.PlatformSettingRepository;
 import com.voyra.crm.security.SecurityContextUtil;
 import com.voyra.crm.util.ValidationPatterns;
@@ -33,15 +30,8 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class PlatformSettingService {
 
-    static final String DISCOUNT_BASE = "discount_base";
     static final String TDS_RATE = "tds_rate";
-    /** Not read since V34 (pricing uses the supplier's per-product terms); kept so the old row stays valid during a rolling deploy. */
-    static final String COMMISSION_ESTIMATE_PCT = "commission_estimate_pct";
     static final String VOYRA_CANCEL_FEE = "voyra_cancel_fee";
-    static final String REFERENCE_FARE_BASKET = "reference_fare_basket";
-    static final String REFERENCE_FARE_BASKET_HOTEL = "reference_fare_basket_hotel";
-    /** Off until a platform admin turns it on (owner ruling 2026-10-27: one admin, audited); guards the Tripjack live switch. */
-    static final String TRIPJACK_LIVE_READY = "tripjack_live_ready";
     static final String PAX_RETENTION_DAYS = "pax_retention_days";
     static final String SKU_PRICES = "sku_prices";
     static final String FOUNDING_AGENCIES = "founding_agencies";
@@ -54,20 +44,11 @@ public class PlatformSettingService {
     private static final Set<String> SKU_PRICE_KEYS = Set.of("CRM_CORE", "STAFF_SEATS", "ACCOUNTS_GST", "REPORTS", "VISA", "SUITE", "LITE");
 
     private static final Map<String, String> DEFAULTS = Map.ofEntries(
-            Map.entry(DISCOUNT_BASE, "GROSS"),
             Map.entry(TDS_RATE, "0"),
-            Map.entry(COMMISSION_ESTIMATE_PCT, "5"),
             Map.entry(VOYRA_CANCEL_FEE, "0"),
             Map.entry(SKU_PRICES, "{\"CRM_CORE\":2499,\"STAFF_SEATS\":399,\"ACCOUNTS_GST\":1999,\"REPORTS\":699,\"VISA\":499,\"SUITE\":4999,\"LITE\":2999}"),
             Map.entry(FOUNDING_AGENCIES, "[\"Voyra Global\"]"),
-            Map.entry(REFERENCE_FARE_BASKET, "[{\"label\":\"Domestic LCC\",\"gross\":5000,\"base\":3500},"
-                    + "{\"label\":\"Domestic FSC\",\"gross\":9000,\"base\":6000},"
-                    + "{\"label\":\"International\",\"gross\":45000,\"base\":22000}]"),
-            Map.entry(REFERENCE_FARE_BASKET_HOTEL, "[{\"label\":\"Budget 3*\",\"gross\":3150,\"base\":3000},"
-                    + "{\"label\":\"Mid 4*\",\"gross\":9440,\"base\":8000},"
-                    + "{\"label\":\"Premium 5*\",\"gross\":23600,\"base\":20000}]"),
             Map.entry(PAX_RETENTION_DAYS, "90"),
-            Map.entry(TRIPJACK_LIVE_READY, "false"),
             Map.entry(VOYRA_LEGAL_NAME, ""),
             Map.entry(VOYRA_GSTIN, ""),
             Map.entry(VOYRA_ADDRESS, ""),
@@ -85,11 +66,6 @@ public class PlatformSettingService {
                 .map(this::toResponse).toList();
     }
 
-    @Transactional(readOnly = true)
-    public DiscountBase discountBase() {
-        return DiscountBase.valueOf(raw(DISCOUNT_BASE));
-    }
-
     /** INR charged by Voyra on a cancellation, on top of the supplier's own fee. */
     @Transactional(readOnly = true)
     public BigDecimal voyraCancelFee() {
@@ -101,22 +77,10 @@ public class PlatformSettingService {
         return new BigDecimal(raw(TDS_RATE));
     }
 
-    /** The sample fares the pricing guard tests a rate against: hotel rooms for HOTEL, flights otherwise. */
-    @Transactional(readOnly = true)
-    public List<ReferenceFare> referenceFareBasket(PricingProduct product) {
-        return parseBasket(raw(product == PricingProduct.HOTEL ? REFERENCE_FARE_BASKET_HOTEL : REFERENCE_FARE_BASKET));
-    }
-
     /** Days a finished booking keeps its passenger data before the DPDP purge removes it. */
     @Transactional(readOnly = true)
     public int paxRetentionDays() {
         return Integer.parseInt(raw(PAX_RETENTION_DAYS));
-    }
-
-    /** Whether a platform admin has cleared Tripjack for live (PROD credential, Tripjack booking providers). */
-    @Transactional(readOnly = true)
-    public boolean tripjackLiveReady() {
-        return "true".equals(raw(TRIPJACK_LIVE_READY));
     }
 
     /** Monthly INR price per key of {@link #SKU_PRICE_KEYS}; annual billing is 10 of these. */
@@ -200,13 +164,7 @@ public class PlatformSettingService {
 
     private void validate(String key, String v) {
         switch (key) {
-            case DISCOUNT_BASE -> {
-                if (!v.equals("GROSS") && !v.equals("BASE")) {
-                    throw new IllegalArgumentException(key + " must be GROSS or BASE");
-                }
-            }
             case TDS_RATE -> requireRange(key, v, 30);
-            case COMMISSION_ESTIMATE_PCT -> requireRange(key, v, 100);
             case VOYRA_CANCEL_FEE -> requireRange(key, v, 1_000_000);
             case PAX_RETENTION_DAYS -> {
                 if (!v.matches("[0-9]{1,4}") || Integer.parseInt(v) < 1) {
@@ -240,28 +198,10 @@ public class PlatformSettingService {
                     throw new IllegalArgumentException(key + " must be a 4-8 digit SAC code");
                 }
             }
-            case TRIPJACK_LIVE_READY -> {
-                if (!v.equals("true") && !v.equals("false")) {
-                    throw new IllegalArgumentException(key + " must be true or false");
-                }
-            }
-            case FOUNDING_AGENCIES -> {
+            default -> { // founding_agencies: set() has already refused every key outside DEFAULTS
                 List<String> names = readJson(key, v, new TypeReference<>() { });
                 if (names == null || names.stream().anyMatch(n -> n == null || n.isBlank() || n.length() > 150)) {
                     throw new IllegalArgumentException(key + " must be a JSON list of agency names (1-150 characters each)");
-                }
-            }
-            default -> { // the two reference fare baskets
-                String name = key.equals(REFERENCE_FARE_BASKET_HOTEL) ? "The hotel reference fare basket" : "The flight reference fare basket";
-                List<ReferenceFare> basket;
-                try {
-                    basket = parseBasket(v);
-                } catch (RuntimeException e) {
-                    throw new IllegalArgumentException(name + " must be a JSON list of fares, each with a label, gross and base");
-                }
-                if (basket == null || basket.isEmpty() || basket.stream().anyMatch(f -> f == null
-                        || f.label() == null || f.label().isBlank() || f.gross() == null || f.gross().signum() <= 0 || f.base() == null || f.base().signum() < 0 || f.base().compareTo(f.gross()) > 0)) {
-                    throw new IllegalArgumentException(name + " needs at least one fare, each with a label and 0 <= base <= gross, gross above 0");
                 }
             }
         }
@@ -290,14 +230,6 @@ public class PlatformSettingService {
             return objectMapper.readValue(json, type);
         } catch (Exception e) {
             throw new IllegalArgumentException(key + " is not valid JSON of the expected shape", e);
-        }
-    }
-
-    private List<ReferenceFare> parseBasket(String json) {
-        try {
-            return objectMapper.readValue(json, new TypeReference<>() { });
-        } catch (Exception e) {
-            throw new IllegalArgumentException("The reference fare basket is not valid JSON", e);
         }
     }
 

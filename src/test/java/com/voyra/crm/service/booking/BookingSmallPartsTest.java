@@ -118,13 +118,13 @@ class BookingSmallPartsTest {
         r.setChildren(1);
         r.setInfants(0);
 
-        provider.review(r);
+        provider.review(r, BookingSuppliers.S1);
         r.setReturnOfferId(" ");
         assertThat(FlightBookingProvider.offerIds(r)).containsExactly("ON");
         r.setReturnOfferId("RET");
 
         assertThat(FlightBookingProvider.offerIds(r)).containsExactly("ON", "RET");
-        verify(provider).review(List.of("ON"), 2, 1, 0);
+        verify(provider).review(List.of("ON"), 2, 1, 0, BookingSuppliers.S1);
     }
 
     @Test

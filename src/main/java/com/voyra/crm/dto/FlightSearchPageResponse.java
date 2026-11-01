@@ -44,6 +44,12 @@ public class FlightSearchPageResponse {
     @Schema(description = "Key of the cheapest flight in the filtered set (null when empty)")
     private String cheapestKey;
 
+    @Schema(description = "Every supplier with a fare in the unfiltered result, by name, with its booking state")
+    private List<SearchSupplierResponse> suppliers;
+
+    @Schema(description = "Names of the suppliers that did not answer this search; empty when all did (the page is then cached)")
+    private List<String> suppliersFailed;
+
     @Schema(description = "Key of the fastest flight in the filtered set (null when empty)")
     private String fastestKey;
 }

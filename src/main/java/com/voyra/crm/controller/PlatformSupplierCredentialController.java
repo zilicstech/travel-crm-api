@@ -3,7 +3,6 @@ package com.voyra.crm.controller;
 import com.voyra.crm.dto.PlatformSupplierCreateRequest;
 import com.voyra.crm.dto.PlatformSupplierCredentialResponse;
 import com.voyra.crm.dto.PlatformSupplierUpdateRequest;
-import com.voyra.crm.dto.SupplierProductTerms;
 import com.voyra.crm.dto.SupplierTestResult;
 import com.voyra.crm.service.PlatformSupplierCredentialService;
 import com.voyra.crm.service.PlatformSupplierTestService;
@@ -28,7 +27,7 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/platform/supplier-credentials")
 @RequiredArgsConstructor
-@Tag(name = "Platform - Suppliers", description = "SUPER_ADMIN management of the platform's suppliers, keys and commission terms")
+@Tag(name = "Platform - Suppliers", description = "SUPER_ADMIN management of the platform's suppliers, keys and per-product search and booking switches")
 @PreAuthorize("hasRole('SUPER_ADMIN')")
 public class PlatformSupplierCredentialController {
 
@@ -48,23 +47,16 @@ public class PlatformSupplierCredentialController {
     }
 
     @PostMapping
-    @Operation(summary = "Add a supplier", description = "Production only. 409 SUPPLIER_EXISTS when the integration already has a supplier.")
+    @Operation(summary = "Add a supplier", description = "The base URL decides UAT or production. 409 SUPPLIER_EXISTS when the name is taken (ignoring case).")
     public ResponseEntity<PlatformSupplierCredentialResponse> create(@Valid @RequestBody PlatformSupplierCreateRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(credentialService.create(request));
     }
 
     @PutMapping("/{id}")
-    @Operation(summary = "Change name, key or active flag", description = "A blank apiKey keeps the stored key.")
+    @Operation(summary = "Change name, base URL, key or the product switches", description = "A blank apiKey keeps the stored key; the products listed replace the stored set.")
     public ResponseEntity<PlatformSupplierCredentialResponse> update(@PathVariable String id,
                                                                      @Valid @RequestBody PlatformSupplierUpdateRequest request) {
         return ResponseEntity.ok(credentialService.update(id, request));
-    }
-
-    @PutMapping("/{id}/products")
-    @Operation(summary = "Change commission terms per product", description = "Never refused for bookings in flight.")
-    public ResponseEntity<PlatformSupplierCredentialResponse> updateProducts(@PathVariable String id,
-                                                                             @RequestBody List<@Valid SupplierProductTerms> products) {
-        return ResponseEntity.ok(credentialService.updateProducts(id, products));
     }
 
     @PostMapping("/{id}/test")

@@ -11,11 +11,9 @@ import com.voyra.crm.enums.SupplierEnvironment;
 import com.voyra.crm.enums.SupplierProvider;
 import com.voyra.crm.exception.SupplierException;
 import com.voyra.crm.service.HotelSearchProvider;
-import com.voyra.crm.service.PlatformSupplierCredentialService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
@@ -39,7 +37,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Real Tripjack hotel search (Hotel API v3), behind {@code app.hotel-supplier.provider=tripjack}.
+ * Real Tripjack hotel search (Hotel API v3), called with each Tripjack supplier row that has hotel search switched on.
  *
  * <p>v3 searches by Tripjack hotel ids, not by city, and lives on its own host (not the flight
  * one): a city is turned into region ids through the paged city list, the regions into hotel ids
@@ -54,7 +52,6 @@ import java.util.concurrent.ConcurrentHashMap;
  * loads them at startup and again once they are a week old, and a search reads whatever is loaded.
  */
 @Service
-@ConditionalOnProperty(name = "app.hotel-supplier.provider", havingValue = "tripjack")
 @Slf4j
 public class TripjackHotelSearchProvider implements HotelSearchProvider {
 
@@ -84,7 +81,6 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
     private record StaticData(Map<String, List<Region>> cities, Map<String, String> nationalities, Instant builtAt) { }
     private record Cached<T>(T value, Instant at) { }
 
-    private final PlatformSupplierCredentialService platformSupplierCredentialService;
     private final RestClient.Builder restClientBuilder;
     private final String uatBaseUrl;
     private final String prodBaseUrl;
@@ -105,20 +101,23 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
     });
     private final java.util.concurrent.atomic.AtomicBoolean shapeLogged = new java.util.concurrent.atomic.AtomicBoolean();
 
-    public TripjackHotelSearchProvider(PlatformSupplierCredentialService platformSupplierCredentialService,
-                                       @Qualifier("tripjackRestClientBuilder") RestClient.Builder restClientBuilder,
+    public TripjackHotelSearchProvider(@Qualifier("tripjackRestClientBuilder") RestClient.Builder restClientBuilder,
                                        @Value("${app.hotel-supplier.tripjack.uat-base-url:https://apitest-hms.tripjack.com}") String uatBaseUrl,
                                        @Value("${app.hotel-supplier.tripjack.prod-base-url:https://hms-search.tripjack.com}") String prodBaseUrl) {
-        this.platformSupplierCredentialService = platformSupplierCredentialService;
         this.restClientBuilder = restClientBuilder;
         this.uatBaseUrl = uatBaseUrl;
         this.prodBaseUrl = prodBaseUrl;
     }
 
     @Override
-    public List<HotelOfferResponse> search(HotelSearchQuery query) {
+    public SupplierProvider provider() {
+        return SupplierProvider.TRIPJACK;
+    }
+
+    @Override
+    public List<HotelOfferResponse> search(HotelSearchQuery query, ResolvedCredential supplier) {
         log.info("Tripjack hotel search start: {} ({}) {} -> {}", query.getCity(), query.getCountryCode(), query.getCheckIn(), query.getCheckOut());
-        Conn conn = connect();
+        Conn conn = connect(supplier);
         RestClient client = conn.client();
         String host = conn.host();
         long startedAt = System.currentTimeMillis();
@@ -203,8 +202,7 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
 
     private record Conn(RestClient client, String host) { }
 
-    private Conn connect() {
-        ResolvedCredential credential = platformSupplierCredentialService.resolveActive(SupplierProvider.TRIPJACK);
+    private Conn connect(ResolvedCredential credential) {
         String host = credential.environment() == SupplierEnvironment.PROD ? prodBaseUrl : uatBaseUrl;
         return new Conn(restClientBuilder.clone().baseUrl(host).defaultHeader("apikey", credential.apiKey()).build(), host);
     }
@@ -315,8 +313,8 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
      * the options, with the photos the search's content call gave.
      */
     @Override
-    public HotelDetailResponse detail(String hotelId, HotelSearchQuery query) {
-        Conn conn = connect();
+    public HotelDetailResponse detail(String hotelId, HotelSearchQuery query, ResolvedCredential supplier) {
+        Conn conn = connect(supplier);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("correlationId", query.getCorrelationId() != null && !query.getCorrelationId().isBlank()
                 ? query.getCorrelationId() : UUID.randomUUID().toString().replace("-", ""));
@@ -585,11 +583,11 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
     }
 
     /**
-     * Loads the platform Tripjack host's city list and nationalities unless a copy under a week old is already held.
+     * Loads the supplier's Tripjack host's city list and nationalities unless a copy under a week old is already held.
      * Called by the scheduled job.
      */
-    public void refreshStaticData() {
-        Conn conn = connect();
+    public void refreshStaticData(ResolvedCredential supplier) {
+        Conn conn = connect(supplier);
         StaticData current = staticData.get(conn.host());
         if (current != null && current.builtAt().plus(STATIC_DATA_TTL).isAfter(clock.instant())) return;
         if (!loading.add(conn.host())) return;
@@ -694,8 +692,8 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
     }
 
     @Override
-    public List<HotelThumbnailResponse> thumbnails(List<String> hids) {
-        Conn conn = connect();
+    public List<HotelThumbnailResponse> thumbnails(List<String> hids, ResolvedCredential supplier) {
+        Conn conn = connect(supplier);
         Map<String, JsonNode> info = contentFor(conn.client(), conn.host(), hids);
         // contentFor skips null ids, and the concurrent map refuses a null key
         return hids.stream().filter(hid -> hid != null && info.containsKey(hid)).map(hid -> toThumbnail(hid, info.get(hid))).toList();

@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.voyra.crm.dto.PlatformSettingResponse;
 import com.voyra.crm.entity.PlatformSetting;
 import com.voyra.crm.enums.PlatformAuditAction;
-import com.voyra.crm.enums.PricingProduct;
 import com.voyra.crm.enums.UserType;
 import com.voyra.crm.models.VoyraLegal;
 import com.voyra.crm.repository.PlatformSettingRepository;
@@ -78,33 +77,21 @@ class PlatformSettingServiceCoverageTest {
     void listsStoredSettingsByKey() {
         when(repository.findAll()).thenReturn(List.of(
                 PlatformSetting.builder().key("tds_rate").value("2").build(),
-                PlatformSetting.builder().key("discount_base").value("BASE").build()));
+                PlatformSetting.builder().key("pax_retention_days").value("30").build()));
 
-        assertThat(service.list()).extracting(PlatformSettingResponse::getKey).containsExactly("discount_base", "tds_rate");
+        assertThat(service.list()).extracting(PlatformSettingResponse::getKey).containsExactly("pax_retention_days", "tds_rate");
     }
 
     @Test
     void readersFallBackToDefaultsOrUseStoredValues() {
         stored("voyra_cancel_fee", "150");
-        stored("tripjack_live_ready", "true");
 
         assertThat(service.voyraCancelFee()).isEqualByComparingTo("150");
         assertThat(service.tdsRate()).isEqualByComparingTo("0");
         assertThat(service.paxRetentionDays()).isEqualTo(90);
-        assertThat(service.tripjackLiveReady()).isTrue();
         assertThat(service.subscriptionSac()).isEqualTo("998314");
-        assertThat(service.referenceFareBasket(PricingProduct.HOTEL)).extracting(f -> f.label())
-                .containsExactly("Budget 3*", "Mid 4*", "Premium 5*");
         assertThat(service.skuPrices()).containsKeys("CRM_CORE", "SUITE", "LITE");
         assertThat(service.foundingAgencies()).containsExactly("Voyra Global");
-    }
-
-    @Test
-    void aStoredBasketThatIsNotJsonIsReportedAsSuch() {
-        stored("reference_fare_basket", "{oops");
-
-        assertThatThrownBy(() -> service.referenceFareBasket(PricingProduct.FLIGHT))
-                .hasMessage("The reference fare basket is not valid JSON");
     }
 
     @Test
@@ -143,17 +130,17 @@ class PlatformSettingServiceCoverageTest {
 
     @Test
     void settingAValueUpdatesTheRowAndAuditsFromAndTo() {
-        stored("discount_base", "GROSS");
+        stored("tds_rate", "1");
         saves();
 
-        PlatformSettingResponse res = service.set("discount_base", "  BASE ");
+        PlatformSettingResponse res = service.set("tds_rate", "  2 ");
 
-        assertThat(res.getValue()).isEqualTo("BASE");
+        assertThat(res.getValue()).isEqualTo("2");
         assertThat(res.getUpdatedAt()).isNotNull();
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, Object>> detail = ArgumentCaptor.forClass(Map.class);
-        verify(auditService).record(eq(PlatformAuditAction.SETTING_SET), eq("PLATFORM_SETTING"), eq("discount_base"), detail.capture());
-        assertThat(detail.getValue()).containsEntry("from", "GROSS").containsEntry("to", "BASE");
+        verify(auditService).record(eq(PlatformAuditAction.SETTING_SET), eq("PLATFORM_SETTING"), eq("tds_rate"), detail.capture());
+        assertThat(detail.getValue()).containsEntry("from", "1").containsEntry("to", "2");
     }
 
     @Test
@@ -168,10 +155,8 @@ class PlatformSettingServiceCoverageTest {
 
     @Test
     void eachSimpleSettingValidatesItsShape() {
-        bad("discount_base", "NET", "must be GROSS or BASE");
         bad("tds_rate", "abc", "must be a number between 0 and 30");
         bad("tds_rate", "-1", "must be between 0 and 30");
-        bad("commission_estimate_pct", "101", "between 0 and 100");
         bad("voyra_cancel_fee", "1000001", "between 0 and 1000000");
         bad("pax_retention_days", "0", "1 or more");
         bad("pax_retention_days", "ten", "1 or more");
@@ -180,7 +165,6 @@ class PlatformSettingServiceCoverageTest {
         bad("voyra_gstin", "NOTAGSTIN", "15-character GSTIN");
         bad("voyra_state_code", "2x", "2-digit GST state code");
         bad("subscription_sac", "12", "4-8 digit SAC");
-        bad("tripjack_live_ready", "yes", "true or false");
         verify(repository, never()).save(any());
     }
 
@@ -190,14 +174,14 @@ class PlatformSettingServiceCoverageTest {
         saves();
 
         for (String[] kv : List.of(
-                new String[]{"discount_base", "GROSS"}, new String[]{"tds_rate", "2"}, new String[]{"commission_estimate_pct", "50"},
+                new String[]{"tds_rate", "2"},
                 new String[]{"voyra_cancel_fee", "100"}, new String[]{"pax_retention_days", "30"},
                 new String[]{"voyra_legal_name", "Voyra"}, new String[]{"voyra_address", "Mumbai"},
                 new String[]{"voyra_gstin", "27AAACV1234F1Z5"}, new String[]{"voyra_state_code", "27"},
-                new String[]{"subscription_sac", "998314"}, new String[]{"tripjack_live_ready", "false"}, new String[]{"tripjack_live_ready", "true"},
+                new String[]{"subscription_sac", "998314"},
                 new String[]{"founding_agencies", "[\"Voyra Global\",\"QA Agency\"]"},
-                new String[]{"sku_prices", "{\"CRM_CORE\":1,\"STAFF_SEATS\":1,\"ACCOUNTS_GST\":1,\"REPORTS\":1,\"VISA\":1,\"SUITE\":1,\"LITE\":0}"},
-                new String[]{"reference_fare_basket_hotel", "[{\"label\":\"x\",\"gross\":100,\"base\":0}]"})) {
+                new String[]{"sku_prices", "{\"CRM_CORE\":1,\"STAFF_SEATS\":1,\"ACCOUNTS_GST\":1,\"REPORTS\":1,\"VISA\":1,\"SUITE\":1,\"LITE\":0}"}
+        )) {
             assertThat(service.set(kv[0], kv[1]).getValue()).isEqualTo(kv[1]);
         }
     }
@@ -228,18 +212,5 @@ class PlatformSettingServiceCoverageTest {
         bad("founding_agencies", "[null]", "JSON list of agency names");
         bad("founding_agencies", "[\" \"]", "JSON list of agency names");
         bad("founding_agencies", "[\"" + "x".repeat(151) + "\"]", "JSON list of agency names");
-    }
-
-    @Test
-    void aBasketNeedsLabelledFaresWithBaseWithinGross() {
-        String hotel = "The hotel reference fare basket";
-        bad("reference_fare_basket_hotel", "{oops", hotel + " must be a JSON list of fares");
-        bad("reference_fare_basket_hotel", "null", hotel + " needs at least one fare");
-        bad("reference_fare_basket", "[null]", "needs at least one fare");
-        bad("reference_fare_basket", "[{\"gross\":100,\"base\":1}]", "needs at least one fare");
-        bad("reference_fare_basket", "[{\"label\":\" \",\"gross\":100,\"base\":1}]", "needs at least one fare");
-        bad("reference_fare_basket", "[{\"label\":\"x\",\"base\":1}]", "needs at least one fare");
-        bad("reference_fare_basket", "[{\"label\":\"x\",\"gross\":100}]", "needs at least one fare");
-        bad("reference_fare_basket", "[{\"label\":\"x\",\"gross\":100,\"base\":-1}]", "needs at least one fare");
     }
 }

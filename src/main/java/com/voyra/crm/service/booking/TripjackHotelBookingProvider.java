@@ -11,12 +11,10 @@ import com.voyra.crm.exception.SupplierException;
 import com.voyra.crm.exception.SupplierTimeoutException;
 import com.voyra.crm.models.ResolvedCredential;
 import com.voyra.crm.models.booking.*;
-import com.voyra.crm.service.PlatformSupplierCredentialService;
 import com.voyra.crm.service.tripjack.TripjackHotelSearchProvider;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
@@ -34,8 +32,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Tripjack hotel booking, behind {@code app.hotel-booking.provider=tripjack}, on the hotel host of
- * {@code app.hotel-supplier.tripjack.*}.
+ * Tripjack hotel booking with the key of the supplier row each call is given, on the hotel host of
+ * {@code app.hotel-supplier.tripjack.*} for that row's environment.
  *
  * <p><b>Unverified.</b> No real hotel booking response has been captured. The endpoints
  * ({@code /hms/v3/hotel/review}, {@code /oms/v3/hotel/book}, {@code booking-details}, {@code cancel-booking}) and every
@@ -48,7 +46,6 @@ import java.util.Map;
  * still confirmed (SUCCESS / CONFIRMED).
  */
 @Service
-@ConditionalOnProperty(name = "app.hotel-booking.provider", havingValue = "tripjack")
 @Slf4j
 public class TripjackHotelBookingProvider implements HotelBookingProvider {
 
@@ -56,30 +53,39 @@ public class TripjackHotelBookingProvider implements HotelBookingProvider {
     /** shortcut: Tripjack deadlines carry no zone in the search shape, read as India time; correct after the spike. */
     private static final ZoneId HOTEL_ZONE = ZoneId.of("Asia/Kolkata");
 
-    private final PlatformSupplierCredentialService platformSupplierCredentialService;
     private final RestClient.Builder restClientBuilder;
     private final String uatBaseUrl;
     private final String prodBaseUrl;
 
-    public TripjackHotelBookingProvider(PlatformSupplierCredentialService platformSupplierCredentialService,
-                                        @Qualifier("tripjackRestClientBuilder") RestClient.Builder restClientBuilder,
+    public TripjackHotelBookingProvider(@Qualifier("tripjackRestClientBuilder") RestClient.Builder restClientBuilder,
                                         @Value("${app.hotel-supplier.tripjack.uat-base-url:https://apitest-hms.tripjack.com}") String uatBaseUrl,
                                         @Value("${app.hotel-supplier.tripjack.prod-base-url:https://hms-search.tripjack.com}") String prodBaseUrl) {
-        this.platformSupplierCredentialService = platformSupplierCredentialService;
         this.restClientBuilder = restClientBuilder;
         this.uatBaseUrl = uatBaseUrl;
         this.prodBaseUrl = prodBaseUrl;
     }
 
     @Override
-    public FareReview review(String optionId, String hotelId, LocalDate checkIn, LocalDate checkOut, List<HotelRoomRequest> rooms) {
+    public SupplierProvider provider() {
+        return SupplierProvider.TRIPJACK;
+    }
+
+    /** Same as flights: an accepted cancel is confirmed by booking-details later, through the poller. */
+    @Override
+    public boolean cancelIsAsync() {
+        return true;
+    }
+
+    @Override
+    public FareReview review(String optionId, String hotelId, LocalDate checkIn, LocalDate checkOut, List<HotelRoomRequest> rooms,
+                             ResolvedCredential supplier) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("optionId", optionId);
         body.put("hid", hotelId);
         body.put("checkIn", checkIn.toString());
         body.put("checkOut", checkOut.toString());
         body.put("rooms", rooms(rooms));
-        JsonNode res = post("/hms/v3/hotel/review", body, "review", true);
+        JsonNode res = post(supplier, "/hms/v3/hotel/review", body, "review", true);
         if (!succeeded(res)) {
             log.warn("Tripjack hotel review refused option {}: {}", optionId, message(res, "no message"));
             throw new FareUnavailableException(AgencySupplierMessage.NOT_CONFIRMED_HOTEL);
@@ -100,7 +106,7 @@ public class TripjackHotelBookingProvider implements HotelBookingProvider {
     }
 
     @Override
-    public BookResult book(BookRequest r) {
+    public BookResult book(BookRequest r, ResolvedCredential supplier) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("bookingId", r.reviewId());
         body.put("paymentInfos", List.of(Map.of("amount", r.totalFare())));
@@ -112,7 +118,7 @@ public class TripjackHotelBookingProvider implements HotelBookingProvider {
 
         JsonNode res;
         try {
-            res = post("/oms/v3/hotel/book", body, "book", false);
+            res = post(supplier, "/oms/v3/hotel/book", body, "book", false);
         } catch (SupplierException e) {
             String refusal = SupplierRefusal.of(e, log);
             if (refusal == null) {
@@ -132,8 +138,8 @@ public class TripjackHotelBookingProvider implements HotelBookingProvider {
     }
 
     @Override
-    public BookResult bookingDetails(String supplierBookingId) {
-        JsonNode res = post("/oms/v3/hotel/booking-details", Map.of("bookingId", supplierBookingId), "booking-details", true);
+    public BookResult bookingDetails(String supplierBookingId, ResolvedCredential supplier) {
+        JsonNode res = post(supplier, "/oms/v3/hotel/booking-details", Map.of("bookingId", supplierBookingId), "booking-details", true);
         if (!succeeded(res)) {
             return new BookResult(supplierBookingId, SupplierBookingStatus.PENDING, null, List.of(), message(res, null), null);
         }
@@ -151,8 +157,8 @@ public class TripjackHotelBookingProvider implements HotelBookingProvider {
     }
 
     @Override
-    public CancelQuote cancelQuote(String supplierBookingId) {
-        JsonNode res = post("/oms/v3/hotel/booking-details", Map.of("bookingId", supplierBookingId), "cancel quote", true);
+    public CancelQuote cancelQuote(String supplierBookingId, ResolvedCredential supplier) {
+        JsonNode res = post(supplier, "/oms/v3/hotel/booking-details", Map.of("bookingId", supplierBookingId), "cancel quote", true);
         String orderStatus = res == null ? "" : res.path("order").path("status").asText("").toUpperCase();
         if (!orderStatus.equals("SUCCESS") && !orderStatus.equals("CONFIRMED")) {
             // only a booking the supplier still shows as confirmed gets a figure; anything else is Voyra support's (refund unknown)
@@ -164,8 +170,8 @@ public class TripjackHotelBookingProvider implements HotelBookingProvider {
     }
 
     @Override
-    public CancelResult cancel(String supplierBookingId) {
-        JsonNode res = post("/oms/v3/hotel/cancel-booking", Map.of("bookingId", supplierBookingId, "remarks", "Cancelled by agency"), "cancel", true);
+    public CancelResult cancel(String supplierBookingId, ResolvedCredential supplier) {
+        JsonNode res = post(supplier, "/oms/v3/hotel/cancel-booking", Map.of("bookingId", supplierBookingId, "remarks", "Cancelled by agency"), "cancel", true);
         if (explicitlyFailed(res)) {
             return new CancelResult(false, null, message(res, null));
         }
@@ -269,10 +275,9 @@ public class TripjackHotelBookingProvider implements HotelBookingProvider {
     }
 
     /** {@code logBody=false} for calls whose error body may echo guest data. */
-    private JsonNode post(String path, Object body, String what, boolean logBody) {
-        ResolvedCredential credential = platformSupplierCredentialService.resolveActive(SupplierProvider.TRIPJACK);
-        String host = credential.environment() == SupplierEnvironment.PROD ? prodBaseUrl : uatBaseUrl;
-        RestClient client = restClientBuilder.clone().baseUrl(host).defaultHeader("apikey", credential.apiKey()).build();
+    private JsonNode post(ResolvedCredential supplier, String path, Object body, String what, boolean logBody) {
+        String host = supplier.environment() == SupplierEnvironment.PROD ? prodBaseUrl : uatBaseUrl;
+        RestClient client = restClientBuilder.clone().baseUrl(host).defaultHeader("apikey", supplier.apiKey()).build();
         String raw;
         try {
             raw = client.post().uri(path).body(body).retrieve().body(String.class);

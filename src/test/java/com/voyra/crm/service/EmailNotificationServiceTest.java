@@ -205,8 +205,8 @@ class EmailNotificationServiceTest {
         given(agentRepository.findById("AG1")).willReturn(Optional.of(Agent.builder().id("AG1").tenantId("T1")
                 .email("ravi@sky.test").isActive(true).build()));
         PlatformBooking b = booking("AG1", PlatformBookingStatus.TICKETED).toBuilder()
-                .gross(new BigDecimal("5555.55")).base(new BigDecimal("4444.44")).voyraEarned(new BigDecimal("111.11"))
-                .voyraEarnedActual(new BigDecimal("121.21")).voyraNet(new BigDecimal("222.22")).agencyCommission(new BigDecimal("33.33"))
+                .gross(new BigDecimal("5555.55")).base(new BigDecimal("4444.44"))
+                .agencyCommission(new BigDecimal("33.33"))
                 .tds(new BigDecimal("1.67")).supplierBookingId("SUPP-BOOKING-ID").supplierReviewId("SUPP-REVIEW-ID")
                 .credentialId("CRED-ID").supplierMessage("RAW SUPPLIER TEXT").build();
         TopupRequest t = TopupRequest.builder().id("R1").tenantId("T1").amount(new BigDecimal("50000.00"))

@@ -50,6 +50,12 @@ public class HotelOfferResponse {
     @Schema(description = "Total nights for the stay", example = "3")
     private int nights;
 
+    @Schema(description = "The supplier row that listed this hotel; ids below are namespaced by it")
+    private String supplierId;
+
+    @Schema(example = "Tripjack")
+    private String supplierName;
+
     @Schema(example = "Tripjack")
     private String supplier;
 

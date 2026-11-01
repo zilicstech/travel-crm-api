@@ -23,7 +23,7 @@ class MockFlightSearchProviderCoverageTest {
 
     @Test
     void aSearchWithoutCabinOrDateIsEconomyWithNoDates() {
-        List<FlightOfferResponse> offers = new MockFlightSearchProvider().search(query(null));
+        List<FlightOfferResponse> offers = new MockFlightSearchProvider().search(query(null), null);
 
         assertThat(offers).isNotEmpty().allSatisfy(o -> {
             assertThat(o.getOfferId()).endsWith("-ECONOMY");
@@ -34,7 +34,7 @@ class MockFlightSearchProviderCoverageTest {
 
     @Test
     void premiumCabinsCostTheirMultipleOfEconomy() {
-        String economy = new MockFlightSearchProvider().search(query(FlightCabin.ECONOMY)).get(0).getOfferId();
+        String economy = new MockFlightSearchProvider().search(query(FlightCabin.ECONOMY), null).get(0).getOfferId();
         BigDecimal base = MockFlightSearchProvider.adultFare(economy);
         String stem = economy.substring(0, economy.lastIndexOf('-') + 1);
 
@@ -46,7 +46,7 @@ class MockFlightSearchProviderCoverageTest {
 
     @Test
     void anIdThatIsNotAMockOfferHasNoFare() {
-        String id = new MockFlightSearchProvider().search(query(FlightCabin.ECONOMY)).get(0).getOfferId();
+        String id = new MockFlightSearchProvider().search(query(FlightCabin.ECONOMY), null).get(0).getOfferId();
         String[] p = id.split("-");   // mock, airline, HH:mm, tier, cabin
 
         assertThat(MockFlightSearchProvider.adultFare(null)).isNull();

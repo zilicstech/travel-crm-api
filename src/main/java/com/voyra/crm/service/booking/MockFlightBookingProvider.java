@@ -3,11 +3,12 @@ package com.voyra.crm.service.booking;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.voyra.crm.dto.FlightReviewRequest;
+import com.voyra.crm.enums.SupplierProvider;
 import com.voyra.crm.exception.FareUnavailableException;
 import com.voyra.crm.exception.SupplierTimeoutException;
+import com.voyra.crm.models.ResolvedCredential;
 import com.voyra.crm.models.booking.*;
 import lombok.RequiredArgsConstructor;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
 import com.voyra.crm.service.MockFlightSearchProvider;
@@ -27,13 +28,12 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Default booking provider: deterministic ids and fares derived from the offer id, with
+ * The MOCK supplier's booking provider (the supplier row is not read): deterministic ids and fares derived from the offer id, with
  * switches ({@link FlightBookingProviderConfig.Mock}) so regressions can drive reprice,
  * expiry, slow ticketing and book timeouts with no supplier account.
  */
 @Service
 @RequiredArgsConstructor
-@ConditionalOnProperty(name = "app.flight-booking.provider", havingValue = "mock", matchIfMissing = true)
 public class MockFlightBookingProvider implements FlightBookingProvider {
 
     private static final BigDecimal REFUND_SHARE = new BigDecimal("0.80");
@@ -47,8 +47,18 @@ public class MockFlightBookingProvider implements FlightBookingProvider {
     private final Map<String, Integer> pendingLeft = new ConcurrentHashMap<>();
 
     @Override
-    public FareReview review(FlightReviewRequest r) {
-        FareReview base = review(FlightBookingProvider.offerIds(r), r.getAdults(), r.getChildren(), r.getInfants());
+    public SupplierProvider provider() {
+        return SupplierProvider.MOCK;
+    }
+
+    @Override
+    public boolean cancelIsAsync() {
+        return false;
+    }
+
+    @Override
+    public FareReview review(FlightReviewRequest r, ResolvedCredential supplier) {
+        FareReview base = review(FlightBookingProvider.offerIds(r), r.getAdults(), r.getChildren(), r.getInfants(), supplier);
         // always a complete itinerary, like Tripjack (mirror, purge and the age check read it); shape mirrors its sI segments.
         // shortcut: a request without the display hints gets DEL-BOM 30 days out - mock data only, never a real supplier
         String date = blank(r.getDepartDate()) ? java.time.LocalDate.now().plusDays(30).toString() : r.getDepartDate();
@@ -94,7 +104,7 @@ public class MockFlightBookingProvider implements FlightBookingProvider {
     }
 
     @Override
-    public FareReview review(List<String> offerIds, int adults, int children, int infants) {
+    public FareReview review(List<String> offerIds, int adults, int children, int infants, ResolvedCredential supplier) {
         var mock = config.getMock();
         if (mock.isFareExpired()) {
             throw new FareUnavailableException("The selected fare is no longer available");
@@ -117,7 +127,7 @@ public class MockFlightBookingProvider implements FlightBookingProvider {
     }
 
     @Override
-    public BookResult book(BookRequest r) {
+    public BookResult book(BookRequest r, ResolvedCredential supplier) {
         String id = bookingId(r.reviewId(), r.totalFare());
         if (config.getMock().isBookFail()) {
             return new BookResult(id, SupplierBookingStatus.FAILED, null, List.of(), "Mock: fare sold out", null);
@@ -134,7 +144,7 @@ public class MockFlightBookingProvider implements FlightBookingProvider {
     }
 
     @Override
-    public BookResult bookingDetails(String supplierBookingId) {
+    public BookResult bookingDetails(String supplierBookingId, ResolvedCredential supplier) {
         int[] left = {0};
         pendingLeft.computeIfPresent(supplierBookingId, (k, v) -> {
             left[0] = v;
@@ -147,12 +157,12 @@ public class MockFlightBookingProvider implements FlightBookingProvider {
     }
 
     @Override
-    public CancelQuote cancelQuote(String supplierBookingId) {
+    public CancelQuote cancelQuote(String supplierBookingId, ResolvedCredential supplier) {
         return new CancelQuote(refund(supplierBookingId), "Mock refund: 80% of the fare");
     }
 
     @Override
-    public CancelResult cancel(String supplierBookingId) {
+    public CancelResult cancel(String supplierBookingId, ResolvedCredential supplier) {
         if (config.getMock().isCancelTimeout()) {
             throw new SupplierTimeoutException("Mock supplier timed out on cancel", null);
         }

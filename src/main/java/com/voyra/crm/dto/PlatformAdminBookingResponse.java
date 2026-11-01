@@ -2,7 +2,6 @@ package com.voyra.crm.dto;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.voyra.crm.enums.SupplierEnvironment;
-import com.voyra.crm.enums.VoyraEarnedSource;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -37,23 +36,11 @@ public class PlatformAdminBookingResponse extends PlatformBookingResponse {
     @Schema(description = "Discount percent off gross given to the agency", example = "10.00")
     private BigDecimal discountPct;
 
-    @Schema(description = "What Voyra earns on the booking", example = "250.00")
-    private BigDecimal voyraEarned;
-
-    @Schema(description = "ESTIMATE until the supplier reports the real figure", example = "ESTIMATE")
-    private VoyraEarnedSource voyraEarnedSource;
-
-    @Schema(description = "What Voyra actually earned per the Tripjack statement; voyraEarned stays the estimate", example = "262.00")
-    private BigDecimal voyraEarnedActual;
-
     @Schema(description = "Commission credited to the agency before TDS", example = "100.00")
     private BigDecimal agencyCommission;
 
     @Schema(description = "TDS deducted from the agency commission", example = "5.00")
     private BigDecimal tds;
-
-    @Schema(description = "Voyra's net after agency commission and TDS", example = "145.00")
-    private BigDecimal voyraNet;
 
     @Schema(description = "Every audited event, oldest first")
     private List<PlatformBookingEventResponse> events;

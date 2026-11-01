@@ -27,17 +27,17 @@ public class PlatformSupplierCredentialResponse {
     @Schema(description = "The integration this supplier runs on", example = "TRIPJACK")
     private SupplierProvider provider;
 
-    @Schema(description = "Read-only: new suppliers are PROD", example = "PROD")
+    @Schema(description = "Decided by the base URL when the supplier was added", example = "PROD")
     private SupplierEnvironment environment;
+
+    @Schema(example = "https://api.tripjack.com")
+    private String baseUrl;
 
     @Schema(description = "Last four characters only", example = "••••••3f2a")
     private String maskedApiKey;
 
-    @Schema(example = "true")
-    private Boolean isActive;
-
-    @Schema(description = "Commission terms per product")
-    private List<SupplierProductTerms> products;
+    @Schema(description = "Search and booking switches per product, FLIGHT then HOTEL")
+    private List<SupplierProductSettings> products;
 
     @Schema(example = "2026-10-23T10:15:00Z")
     private Instant updatedAt;

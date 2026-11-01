@@ -18,9 +18,9 @@ class MockFlightSearchProviderTest {
         query.setDepartDate(LocalDate.of(2026, 11, 20));
         query.setAdults(1);
 
-        FlightOfferResponse redEye = new MockFlightSearchProvider().search(query).stream()
+        FlightOfferResponse redEye = new MockFlightSearchProvider().search(query, null).stream()
                 .filter(o -> o.getAirline().equals("Emirates")).findFirst().orElseThrow();
-        FlightOfferResponse morning = new MockFlightSearchProvider().search(query).stream()
+        FlightOfferResponse morning = new MockFlightSearchProvider().search(query, null).stream()
                 .filter(o -> o.getAirline().equals("IndiGo")).findFirst().orElseThrow();
 
         assertThat(redEye.getDepartDate()).isEqualTo(LocalDate.of(2026, 11, 20));
@@ -41,8 +41,8 @@ class MockFlightSearchProviderTest {
         family.setAdults(2);
         family.setChildren(1);
 
-        FlightOfferResponse solo = new MockFlightSearchProvider().search(one).get(0);
-        FlightOfferResponse group = new MockFlightSearchProvider().search(family).get(0);
+        FlightOfferResponse solo = new MockFlightSearchProvider().search(one, null).get(0);
+        FlightOfferResponse group = new MockFlightSearchProvider().search(family, null).get(0);
 
         assertThat(group.getPrice()).isEqualByComparingTo(solo.getPrice());
         assertThat(solo.getTotalPrice()).isEqualByComparingTo(solo.getPrice());
@@ -60,7 +60,7 @@ class MockFlightSearchProviderTest {
         query.setDepartDate(LocalDate.of(2026, 11, 26));
         query.setReturnDate(LocalDate.of(2026, 11, 29));
 
-        var offers = new MockFlightSearchProvider().search(query);
+        var offers = new MockFlightSearchProvider().search(query, null);
         var onward = offers.stream().filter(o -> o.getDirection() == com.voyra.crm.enums.FlightDirection.ONWARD).toList();
         var back = offers.stream().filter(o -> o.getDirection() == com.voyra.crm.enums.FlightDirection.RETURN).toList();
 

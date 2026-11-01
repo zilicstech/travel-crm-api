@@ -3,18 +3,17 @@ package com.voyra.crm.service;
 import com.voyra.crm.dto.PlatformSupplierCreateRequest;
 import com.voyra.crm.dto.PlatformSupplierCredentialResponse;
 import com.voyra.crm.dto.PlatformSupplierUpdateRequest;
-import com.voyra.crm.dto.SupplierProductTerms;
+import com.voyra.crm.dto.SupplierProductSettings;
 import com.voyra.crm.entity.PlatformSupplierCredential;
 import com.voyra.crm.entity.PlatformSupplierProduct;
 import com.voyra.crm.enums.PlatformAuditAction;
-import com.voyra.crm.enums.PlatformBookingStatus;
 import com.voyra.crm.enums.PricingProduct;
 import com.voyra.crm.enums.SupplierEnvironment;
 import com.voyra.crm.enums.SupplierProvider;
 import com.voyra.crm.enums.UserType;
 import com.voyra.crm.exception.BookingConflictException;
+import com.voyra.crm.exception.BookingRequestException;
 import com.voyra.crm.models.ResolvedCredential;
-import com.voyra.crm.repository.PlatformBookingRepository;
 import com.voyra.crm.repository.PlatformSupplierCredentialRepository;
 import com.voyra.crm.repository.PlatformSupplierProductRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
@@ -23,17 +22,20 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.core.env.Environment;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
-import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -47,20 +49,21 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-/** The platform's suppliers: one per integration, key stored encrypted and shown masked, terms per product, PROD only. */
+/** The platform's suppliers: any number per integration, key stored encrypted and shown masked, search and booking switches per product. */
 @ExtendWith(MockitoExtension.class)
 class PlatformSupplierCredentialServiceTest {
 
     /** Same value as application-test.properties - a real 32-byte AES-256 key, test-only. */
+    private static final Instant OLD = Instant.parse("2026-01-01T00:00:00Z");
+
     private static final String KEY = "dGVzdC1vbmx5LWFlcy1rZXktMzItYnl0ZXMtbG9uZyE=";
 
     @Mock private PlatformSupplierCredentialRepository repository;
     @Mock private PlatformSupplierProductRepository productRepository;
     @Mock private PlatformAuditService platformAuditService;
-    @Mock private PlatformBookingRepository bookingRepository;
+    @Mock private Environment springEnv;
 
     @InjectMocks private PlatformSupplierCredentialService service;
 
@@ -77,37 +80,48 @@ class PlatformSupplierCredentialServiceTest {
         SecurityContextHolder.clearContext();
     }
 
-    private static PlatformSupplierCreateRequest createRequest(String apiKey, SupplierProductTerms... terms) {
+    private static SupplierProductSettings sw(PricingProduct product, boolean search, boolean booking) {
+        return new SupplierProductSettings(product, search, booking);
+    }
+
+    private static PlatformSupplierCreateRequest createRequest(SupplierProvider provider, String baseUrl, String apiKey,
+                                                               SupplierProductSettings... products) {
         PlatformSupplierCreateRequest r = new PlatformSupplierCreateRequest();
-        r.setName("Tripjack");
-        r.setProvider(SupplierProvider.TRIPJACK);
+        r.setName(" Tripjack ");
+        r.setProvider(provider);
+        r.setBaseUrl(baseUrl);
         r.setApiKey(apiKey);
-        r.setIsActive(true);
-        r.setProducts(List.of(terms));
+        r.setProducts(List.of(products));
         return r;
     }
 
-    private static PlatformSupplierUpdateRequest updateRequest(String apiKey, Boolean active) {
+    private static PlatformSupplierCreateRequest createRequest(String apiKey, SupplierProductSettings... products) {
+        return createRequest(SupplierProvider.TRIPJACK, "https://api.tripjack.com", apiKey, products);
+    }
+
+    private static PlatformSupplierUpdateRequest updateRequest(String name, String baseUrl, String apiKey, SupplierProductSettings... products) {
         PlatformSupplierUpdateRequest r = new PlatformSupplierUpdateRequest();
-        r.setName("Tripjack India");
+        r.setName(name);
+        r.setBaseUrl(baseUrl);
         r.setApiKey(apiKey);
-        r.setIsActive(active);
+        r.setProducts(List.of(products));
         return r;
     }
 
-    private static SupplierProductTerms terms(PricingProduct product, String pct) {
-        return new SupplierProductTerms(product, pct == null ? null : new BigDecimal(pct));
-    }
-
-    private PlatformSupplierCredential stored(String plainKey, boolean active, SupplierEnvironment env, String baseUrl) {
+    private PlatformSupplierCredential stored(String plainKey, SupplierEnvironment env, String baseUrl) {
         return PlatformSupplierCredential.builder()
                 .id("C1").name("Tripjack").provider(SupplierProvider.TRIPJACK).environment(env).baseUrl(baseUrl)
                 .apiKeyEncrypted(PasswordEncryptionUtil.encrypt(plainKey, KEY))
-                .isActive(active).build();
+                .updatedAt(OLD).build();
     }
 
-    private PlatformSupplierCredential stored(String plainKey, boolean active) {
-        return stored(plainKey, active, SupplierEnvironment.PROD, "https://api.tripjack.com");
+    private PlatformSupplierCredential stored(String plainKey) {
+        return stored(plainKey, SupplierEnvironment.PROD, "https://api.tripjack.com");
+    }
+
+    private static PlatformSupplierProduct row(PricingProduct product, boolean search, boolean booking) {
+        return PlatformSupplierProduct.builder().credentialId("C1").product(product).searchEnabled(search).bookingEnabled(booking)
+                .updatedAt(OLD).build();
     }
 
     @SuppressWarnings("unchecked")
@@ -118,160 +132,272 @@ class PlatformSupplierCredentialServiceTest {
     }
 
     @Test
-    void createIsProdOnTheProductionHostWithAnEncryptedMaskedKey() {
-        when(repository.existsById(any())).thenReturn(false);
+    void createStoresTheNormalizedUrlAndTheEnvironmentItDecides() {
         when(repository.saveAndFlush(any())).thenAnswer(i -> {
             PlatformSupplierCredential c = i.getArgument(0);
             c.setId("C1");
             return c;
         });
 
-        PlatformSupplierCredentialResponse response = service.create(createRequest("tj_live_key_9f3a",
-                terms(PricingProduct.FLIGHT, "4.5")));
+        PlatformSupplierCredentialResponse prod = service.create(createRequest(SupplierProvider.TRIPJACK,
+                "https://API.Tripjack.com./", "tj_live_key_9f3a", sw(PricingProduct.HOTEL, true, false), sw(PricingProduct.FLIGHT, true, true)));
+        PlatformSupplierCredentialResponse uat = service.create(createRequest(SupplierProvider.TRIPJACK,
+                "https://apitest.tripjack.com", "tj_uat_key_1111", sw(PricingProduct.FLIGHT, false, false)));
 
         ArgumentCaptor<PlatformSupplierCredential> saved = ArgumentCaptor.forClass(PlatformSupplierCredential.class);
-        verify(repository).saveAndFlush(saved.capture());
-        assertThat(saved.getValue().getEnvironment()).isEqualTo(SupplierEnvironment.PROD);
-        assertThat(saved.getValue().getBaseUrl()).isEqualTo("https://api.tripjack.com");
-        assertThat(saved.getValue().getApiKeyEncrypted()).isNotEqualTo("tj_live_key_9f3a");
-        assertThat(PasswordEncryptionUtil.decrypt(saved.getValue().getApiKeyEncrypted(), KEY)).isEqualTo("tj_live_key_9f3a");
-        assertThat(response.getMaskedApiKey()).isEqualTo("••••••9f3a");
-        assertThat(response.getUpdatedBy()).isEqualTo("SA1");
-        // a product left out gets the 5% default, so pricing has terms for both
-        assertThat(response.getProducts()).extracting(SupplierProductTerms::getProduct, SupplierProductTerms::getCommissionEstimatePct)
-                .containsExactly(org.assertj.core.groups.Tuple.tuple(PricingProduct.FLIGHT, new BigDecimal("4.5")),
-                        org.assertj.core.groups.Tuple.tuple(PricingProduct.HOTEL, BigDecimal.valueOf(5)));
-        Map<String, Object> detail = auditDetail(PlatformAuditAction.CREDENTIAL_SET);
-        assertThat(detail).containsEntry("name", "Tripjack").containsEntry("keyChanged", true).containsKey("products");
-        assertThat(detail.toString()).doesNotContain("tj_live_key_9f3a").doesNotContain("9f3a");
+        verify(repository, org.mockito.Mockito.times(2)).saveAndFlush(saved.capture());
+        assertThat(saved.getAllValues().get(0).getName()).isEqualTo("Tripjack");
+        assertThat(saved.getAllValues().get(0).getApiKeyEncrypted()).isNotEqualTo("tj_live_key_9f3a");
+        assertThat(PasswordEncryptionUtil.decrypt(saved.getAllValues().get(0).getApiKeyEncrypted(), KEY)).isEqualTo("tj_live_key_9f3a");
+        assertThat(prod.getBaseUrl()).isEqualTo("https://api.tripjack.com");
+        assertThat(prod.getEnvironment()).isEqualTo(SupplierEnvironment.PROD);
+        assertThat(prod.getMaskedApiKey()).isEqualTo("••••••9f3a");
+        assertThat(prod.getUpdatedBy()).isEqualTo("SA1");
+        assertThat(prod.getProducts()).containsExactly(sw(PricingProduct.FLIGHT, true, true), sw(PricingProduct.HOTEL, true, false));
+        assertThat(uat.getEnvironment()).isEqualTo(SupplierEnvironment.UAT);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"http://api.tripjack.com", "https://api.tripjack.com:8443", "https://u@api.tripjack.com",
+            "https://api.tripjack.com/x", "https://api.tripjack.com?a=1", "https://api.tripjack.com/#f", "https://evil.example.com",
+            "https:///nohost", "https://api.trip jack.com"})
+    void createRefusesAUrlOffTheAllowList(String url) {
+        assertThatThrownBy(() -> service.create(createRequest(SupplierProvider.TRIPJACK, url, "k_12345", sw(PricingProduct.FLIGHT, true, true))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Base URL must be a Tripjack UAT or production host over https");
+        verify(repository, never()).saveAndFlush(any());
     }
 
     @Test
-    void aSecondSupplierForTheSameIntegrationIsRefused() {
-        when(repository.existsByProvider(SupplierProvider.TRIPJACK)).thenReturn(true);
+    void theMockTakesMockLocalOnly() {
+        when(repository.saveAndFlush(any())).thenAnswer(i -> i.getArgument(0));
 
-        assertThatThrownBy(() -> service.create(createRequest("tj_live_key_9f3a")))
-                .isInstanceOf(BookingConflictException.class)
+        assertThat(service.create(createRequest(SupplierProvider.MOCK, " MOCK://local ", "", sw(PricingProduct.FLIGHT, true, true))))
+                .satisfies(r -> {
+                    assertThat(r.getEnvironment()).isEqualTo(SupplierEnvironment.MOCK);
+                    assertThat(r.getBaseUrl()).isEqualTo("mock://local");
+                    assertThat(r.getMaskedApiKey()).isEqualTo("••••••");
+                });
+        assertThatThrownBy(() -> service.create(createRequest(SupplierProvider.MOCK, "https://api.tripjack.com", "k_12345",
+                sw(PricingProduct.FLIGHT, true, true)))).isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("The mock supplier's base URL is mock://local");
+    }
+
+    @Test
+    void creatingAMockRowOnCloudrunIs400() {
+        when(springEnv.matchesProfiles("cloudrun")).thenReturn(true);
+
+        assertThatThrownBy(() -> service.create(createRequest(SupplierProvider.MOCK, "mock://local", "k_12345",
+                sw(PricingProduct.FLIGHT, true, true))))
+                .isInstanceOf(BookingRequestException.class).hasMessage("The mock supplier cannot be added on this server")
+                .satisfies(e -> assertThat(((BookingRequestException) e).getCode()).isEqualTo("PROVIDER_UNAVAILABLE"));
+        verify(repository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void aNameTakenIgnoringCaseIs409() {
+        when(repository.existsByNameIgnoreCase("tripjack")).thenReturn(true);
+        PlatformSupplierCreateRequest r = createRequest("k_12345", sw(PricingProduct.FLIGHT, true, true));
+        r.setName("tripjack");
+
+        assertThatThrownBy(() -> service.create(r)).isInstanceOf(BookingConflictException.class)
+                .hasMessage("A supplier named tripjack already exists")
                 .satisfies(e -> assertThat(((BookingConflictException) e).getCode()).isEqualTo("SUPPLIER_EXISTS"));
         verify(repository, never()).saveAndFlush(any());
     }
 
-    /** Owner 2026-10-30: the key is saved and tested before going live; the live flag gates bookings, not saves. */
     @Test
-    void createDoesNotNeedTheLiveSwitch() {
-        when(repository.saveAndFlush(any())).thenAnswer(i -> i.getArgument(0));
-
-        assertThat(service.create(createRequest("tj_live_key_9f3a")).getEnvironment()).isEqualTo(SupplierEnvironment.PROD);
-    }
-
-    @Test
-    void termsOutOfRangeOrRepeatedAreRejected() {
-        for (PlatformSupplierCreateRequest r : List.of(
-                createRequest("k_12345", terms(PricingProduct.FLIGHT, "-1")),
-                createRequest("k_12345", terms(PricingProduct.FLIGHT, "100.01")),
-                createRequest("k_12345", terms(PricingProduct.FLIGHT, null)),
-                createRequest("k_12345", terms(null, "5")),
-                createRequest("k_12345", terms(PricingProduct.HOTEL, "5"), terms(PricingProduct.HOTEL, "6")))) {
-            assertThatThrownBy(() -> service.create(r)).isInstanceOf(IllegalArgumentException.class);
-        }
+    void aProductListedTwiceIs400() {
+        assertThatThrownBy(() -> service.create(createRequest("k_12345", sw(PricingProduct.FLIGHT, true, true), sw(PricingProduct.FLIGHT, false, false))))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("FLIGHT is listed twice");
         verify(repository, never()).saveAndFlush(any());
     }
 
     @Test
-    void updateWithABlankKeyKeepsTheStoredKeyAndEnvironment() {
-        PlatformSupplierCredential existing = stored("old_key_1234", true, SupplierEnvironment.UAT, "https://apitest.tripjack.com");
-        String cipher = existing.getApiKeyEncrypted();
-        when(repository.findById("C1")).thenReturn(Optional.of(existing));
+    void auditNamesTheChangedFieldsAndNeverTheKey() {
+        when(repository.saveAndFlush(any())).thenAnswer(i -> {
+            PlatformSupplierCredential c = i.getArgument(0);
+            c.setId("C1");
+            return c;
+        });
 
-        PlatformSupplierCredentialResponse response = service.update("C1", updateRequest("  ", null));
+        service.create(createRequest("tj_live_key_9f3a", sw(PricingProduct.FLIGHT, true, false)));
+
+        Map<String, Object> detail = auditDetail(PlatformAuditAction.CREDENTIAL_SET);
+        assertThat(detail).containsEntry("name", "Tripjack").containsEntry("environment", "PROD")
+                .containsEntry("changed", List.of("name", "baseUrl", "apiKey", "products"))
+                .containsEntry("products", Map.of("FLIGHT", Map.of("search", true, "booking", false)));
+        assertThat(detail.toString()).doesNotContain("tj_live_key_9f3a").doesNotContain("9f3a");
+    }
+
+    @Test
+    void updateRefusesAnotherProvider() {
+        when(repository.findById("C1")).thenReturn(Optional.of(stored("old_key_1234")));
+        PlatformSupplierUpdateRequest r = updateRequest("Tripjack", "https://api.tripjack.com", null, sw(PricingProduct.FLIGHT, true, true));
+        r.setProvider(SupplierProvider.MOCK);
+
+        assertThatThrownBy(() -> service.update("C1", r)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("The integration of a supplier cannot change");
+    }
+
+    @Test
+    void updateRefusesAUrlOfTheOtherEnvironment() {
+        when(repository.findById("C1")).thenReturn(Optional.of(stored("old_key_1234", SupplierEnvironment.UAT, "https://apitest.tripjack.com")));
+
+        assertThatThrownBy(() -> service.update("C1", updateRequest("Tripjack", "https://api.tripjack.com", null, sw(PricingProduct.FLIGHT, true, true))))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Add a new supplier for the production account");
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    void updateRefusesANameTakenByAnotherSupplier() {
+        when(repository.findById("C1")).thenReturn(Optional.of(stored("old_key_1234")));
+        when(repository.existsByNameIgnoreCaseAndIdNot("Other", "C1")).thenReturn(true);
+
+        assertThatThrownBy(() -> service.update("C1", updateRequest("Other", "https://api.tripjack.com", null, sw(PricingProduct.FLIGHT, true, true))))
+                .isInstanceOf(BookingConflictException.class);
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    void updateReplacesTheProductSetAndKeepsABlankKey() {
+        PlatformSupplierCredential existing = stored("old_key_1234");
+        String cipher = existing.getApiKeyEncrypted();
+        PlatformSupplierProduct flight = row(PricingProduct.FLIGHT, true, true);
+        PlatformSupplierProduct hotel = row(PricingProduct.HOTEL, true, false);
+        when(repository.findById("C1")).thenReturn(Optional.of(existing));
+        when(productRepository.findByCredentialIdIn(List.of("C1"))).thenReturn(List.of(flight, hotel));
+
+        PlatformSupplierCredentialResponse response = service.update("C1",
+                updateRequest("Tripjack India", "https://API.tripjack.com/", "  ", sw(PricingProduct.FLIGHT, true, true)));
 
         assertThat(existing.getApiKeyEncrypted()).isEqualTo(cipher);
         assertThat(existing.getName()).isEqualTo("Tripjack India");
-        assertThat(existing.getIsActive()).isTrue();
         assertThat(response.getMaskedApiKey()).isEqualTo("••••••1234");
-        assertThat(response.getEnvironment()).isEqualTo(SupplierEnvironment.UAT);
-        // a rename alone is not refused for bookings in flight
-        verifyNoInteractions(bookingRepository);
+        assertThat(response.getProducts()).containsExactly(sw(PricingProduct.FLIGHT, true, true));
+        verify(productRepository).deleteAll(List.of(hotel));
+        assertThat(auditDetail(PlatformAuditAction.CREDENTIAL_SET).get("changed")).isEqualTo(List.of("name", "products"));
     }
 
     @Test
-    void aNewKeyKeepsTheStoredEnvironmentAndBaseUrl() {
-        PlatformSupplierCredential existing = stored("old_key_1234", true, SupplierEnvironment.UAT, "https://apitest.tripjack.com");
+    void aNewKeyIsEncryptedAndTheEnvironmentStays() {
+        PlatformSupplierCredential existing = stored("old_key_1234", SupplierEnvironment.UAT, "https://apitest.tripjack.com");
         when(repository.findById("C1")).thenReturn(Optional.of(existing));
+        when(productRepository.findByCredentialIdIn(List.of("C1"))).thenReturn(List.of(row(PricingProduct.FLIGHT, true, true)));
 
-        PlatformSupplierCredentialResponse response = service.update("C1", updateRequest("tj_uat_key_7777", true));
+        PlatformSupplierCredentialResponse response = service.update("C1",
+                updateRequest("Tripjack", "https://apitest.tripjack.com", "tj_uat_key_7777", sw(PricingProduct.FLIGHT, true, true)));
 
         assertThat(existing.getEnvironment()).isEqualTo(SupplierEnvironment.UAT);
-        assertThat(existing.getBaseUrl()).isEqualTo("https://apitest.tripjack.com");
         assertThat(response.getMaskedApiKey()).isEqualTo("••••••7777");
-        assertThat(auditDetail(PlatformAuditAction.CREDENTIAL_SET)).containsEntry("keyChanged", true);
+        assertThat(existing.getUpdatedAt()).isAfter(OLD);
+        assertThat(existing.getUpdatedBy()).isEqualTo("SA1");
+        assertThat(auditDetail(PlatformAuditAction.CREDENTIAL_SET).get("changed")).isEqualTo(List.of("apiKey"));
     }
 
     @Test
-    void aKeyChangeOrToggleIsBlockedWhileBookingsInFlight() {
-        // a cancel in progress is still addressed to the supplier under the stamped credential
-        assertThat(PlatformBookingStatus.SUPPLIER_PENDING).contains(PlatformBookingStatus.CANCELLING);
-        when(repository.findById("C1")).thenReturn(Optional.of(stored("old_key_1234", true)));
-        when(bookingRepository.countByStatusIn(PlatformBookingStatus.SUPPLIER_PENDING)).thenReturn(2L);
-
-        assertThatThrownBy(() -> service.update("C1", updateRequest("tj_new_key_1234", true)))
-                .isInstanceOf(IllegalStateException.class).hasMessageContaining("2 booking");
-        assertThatThrownBy(() -> service.update("C1", updateRequest(null, false)))
-                .isInstanceOf(IllegalStateException.class).hasMessageContaining("2 booking");
-        verify(repository, never()).save(any());
-        verifyNoInteractions(platformAuditService);
-    }
-
-    @Test
-    void termsChangeIsNeverBlockedByBookingsInFlightAndIsAudited() {
-        PlatformSupplierCredential existing = stored("old_key_1234", true, SupplierEnvironment.UAT, "https://apitest.tripjack.com");
+    void onlyANameUrlOrKeyEditBumpsUpdatedAt() {
+        PlatformSupplierCredential existing = stored("old_key_1234");
+        PlatformSupplierProduct flight = row(PricingProduct.FLIGHT, true, true);
         when(repository.findById("C1")).thenReturn(Optional.of(existing));
+        when(productRepository.findByCredentialIdIn(List.of("C1"))).thenReturn(List.of(flight));
 
-        service.updateProducts("C1", List.of(terms(PricingProduct.HOTEL, "7.25")));
+        PlatformSupplierCredentialResponse response = service.update("C1",
+                updateRequest("Tripjack", "https://api.tripjack.com", null, sw(PricingProduct.FLIGHT, true, false), sw(PricingProduct.HOTEL, true, true)));
 
+        assertThat(existing.getUpdatedAt()).isEqualTo(OLD);
+        verify(repository, never()).save(any());
+        assertThat(response.getUpdatedAt()).isEqualTo(OLD);
         @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<PlatformSupplierProduct>> rows = ArgumentCaptor.forClass(List.class);
-        verify(productRepository).saveAll(rows.capture());
-        assertThat(rows.getValue()).singleElement().satisfies(p -> {
-            assertThat(p.getProduct()).isEqualTo(PricingProduct.HOTEL);
-            assertThat(p.getCommissionEstimatePct()).isEqualByComparingTo("7.25");
+        ArgumentCaptor<List<PlatformSupplierProduct>> saved = ArgumentCaptor.forClass(List.class);
+        verify(productRepository).saveAll(saved.capture());
+        assertThat(saved.getValue()).hasSize(2).allSatisfy(p -> {
+            assertThat(p.getUpdatedAt()).isAfter(OLD);
             assertThat(p.getUpdatedBy()).isEqualTo("SA1");
         });
-        assertThat(existing.getEnvironment()).isEqualTo(SupplierEnvironment.UAT);
-        verifyNoInteractions(bookingRepository);
-        assertThat(auditDetail(PlatformAuditAction.SUPPLIER_TERMS_SET).toString()).contains("HOTEL");
+        assertThat(auditDetail(PlatformAuditAction.CREDENTIAL_SET).get("changed")).isEqualTo(List.of("products"));
+    }
+
+    /** The real repository merges saveAll onto the managed rows it returned from the find; the audit must still see the change. */
+    @Test
+    void aSwitchOnlyChangeIsAuditedEvenWhenSaveMutatesTheManagedRows() {
+        PlatformSupplierProduct managed = row(PricingProduct.FLIGHT, true, true);
+        when(repository.findById("C1")).thenReturn(Optional.of(stored("old_key_1234")));
+        when(productRepository.findByCredentialIdIn(List.of("C1"))).thenReturn(List.of(managed));
+        when(productRepository.saveAll(anyList())).thenAnswer(i -> {
+            List<PlatformSupplierProduct> saved = i.getArgument(0);
+            saved.forEach(n -> managed.setBookingEnabled(n.isBookingEnabled()));
+            return saved;
+        });
+
+        service.update("C1", updateRequest("Tripjack", "https://api.tripjack.com", null, sw(PricingProduct.FLIGHT, true, false)));
+
+        assertThat(auditDetail(PlatformAuditAction.CREDENTIAL_SET).get("changed")).isEqualTo(List.of("products"));
     }
 
     @Test
-    void commissionEstimateComesFromTheActiveSupplierElseFive() {
-        PlatformSupplierCredential active = stored("k_12345", true);
-        when(repository.findByProviderAndIsActiveTrue(SupplierProvider.TRIPJACK)).thenReturn(Optional.of(active));
-        when(productRepository.findByCredentialIdAndProduct("C1", PricingProduct.FLIGHT)).thenReturn(Optional.of(
-                PlatformSupplierProduct.builder().credentialId("C1").product(PricingProduct.FLIGHT)
-                        .commissionEstimatePct(new BigDecimal("3.5")).build()));
-        when(productRepository.findByCredentialIdAndProduct("C1", PricingProduct.HOTEL)).thenReturn(Optional.empty());
+    void updateAcceptsTheSameProviderAndEditsTheUrlWithinTheEnvironment() {
+        PlatformSupplierCredential existing = stored("old_key_1234", SupplierEnvironment.UAT, "https://apitest.tripjack.com");
+        when(repository.findById("C1")).thenReturn(Optional.of(existing));
+        when(productRepository.findByCredentialIdIn(List.of("C1"))).thenReturn(List.of(row(PricingProduct.FLIGHT, true, true)));
+        PlatformSupplierUpdateRequest r = updateRequest("Tripjack", "https://apitest.tripjack.com/", null, sw(PricingProduct.FLIGHT, true, true));
+        r.setProvider(SupplierProvider.TRIPJACK);
+        service.update("C1", r);
+        verify(repository, never()).save(any());
 
-        assertThat(service.commissionEstimatePct(PricingProduct.FLIGHT)).isEqualByComparingTo("3.5");
-        assertThat(service.commissionEstimatePct(PricingProduct.HOTEL)).isEqualByComparingTo("5");
+        existing.setBaseUrl("https://old.example");
+        service.update("C1", r);
+        assertThat(existing.getBaseUrl()).isEqualTo("https://apitest.tripjack.com");
+    }
 
-        when(repository.findByProviderAndIsActiveTrue(SupplierProvider.TRIPJACK)).thenReturn(Optional.empty());
-        assertThat(service.commissionEstimatePct(PricingProduct.FLIGHT)).isEqualByComparingTo("5");
+    @Test
+    void aSearchSwitchChangeOnAnExistingRowIsSaved() {
+        when(repository.findById("C1")).thenReturn(Optional.of(stored("old_key_1234")));
+        when(productRepository.findByCredentialIdIn(List.of("C1"))).thenReturn(List.of(row(PricingProduct.FLIGHT, true, true)));
+
+        service.update("C1", updateRequest("Tripjack", "https://api.tripjack.com", null, sw(PricingProduct.FLIGHT, false, true)));
+
+        assertThat(auditDetail(PlatformAuditAction.CREDENTIAL_SET).get("changed")).isEqualTo(List.of("products"));
+    }
+
+    @Test
+    void anUnchangedSaveChangesNothing() {
+        PlatformSupplierCredential existing = stored("old_key_1234");
+        when(repository.findById("C1")).thenReturn(Optional.of(existing));
+        when(productRepository.findByCredentialIdIn(List.of("C1"))).thenReturn(List.of(row(PricingProduct.FLIGHT, true, true)));
+
+        service.update("C1", updateRequest("Tripjack", "https://api.tripjack.com", null, sw(PricingProduct.FLIGHT, true, true)));
+
+        verify(repository, never()).save(any());
+        assertThat(auditDetail(PlatformAuditAction.CREDENTIAL_SET).get("changed")).isEqualTo(List.of());
+    }
+
+    @Test
+    void aBlankStoredKeyMasksAsDots() {
+        PlatformSupplierCredential mock = stored("x", SupplierEnvironment.MOCK, "mock://local");
+        mock.setProvider(SupplierProvider.MOCK);
+        mock.setApiKeyEncrypted("");
+        when(repository.findById("C1")).thenReturn(Optional.of(mock));
+        when(productRepository.findByCredentialIdIn(List.of("C1"))).thenReturn(List.of());
+
+        assertThat(service.get("C1").getMaskedApiKey()).isEqualTo("••••••");
+        assertThat(service.resolve("C1").apiKey()).isEmpty();
     }
 
     @Test
     void resolvedCredentialToStringMasksTheKey() {
-        ResolvedCredential c = new ResolvedCredential(SupplierProvider.TRIPJACK, SupplierEnvironment.UAT,
-                "https://apitest.tripjack.com", "tj_live_key_9f3a", "voyra-user-0042");
+        ResolvedCredential c = new ResolvedCredential("s1", "Tripjack", SupplierProvider.TRIPJACK, SupplierEnvironment.UAT,
+                "https://apitest.tripjack.com", "tj_live_key_9f3a", "voyra-user-0042", null);
 
         assertThat(c.toString()).doesNotContain("tj_live_key_9f3a").doesNotContain("voyra-user-0042")
                 .contains("••••••9f3a").contains("••••••0042");
     }
 
     @Test
-    void resolveActiveReturnsDecryptedKey() {
-        when(repository.findByProviderAndIsActiveTrue(SupplierProvider.TRIPJACK)).thenReturn(Optional.of(stored("tj_live_key_9f3a", true)));
+    void findReturnsTheDecryptedKey() {
+        when(repository.findById("C1")).thenReturn(Optional.of(stored("tj_live_key_9f3a")));
 
-        ResolvedCredential credential = service.resolveActive(SupplierProvider.TRIPJACK);
+        ResolvedCredential credential = service.find("C1").orElseThrow();
 
         assertThat(credential.apiKey()).isEqualTo("tj_live_key_9f3a");
         assertThat(credential.environment()).isEqualTo(SupplierEnvironment.PROD);
@@ -280,8 +406,8 @@ class PlatformSupplierCredentialServiceTest {
     }
 
     @Test
-    void resolveByIdWorksForAnInactiveRow() {
-        when(repository.findById("C1")).thenReturn(Optional.of(stored("tj_off_key_1111", false)));
+    void resolveByIdReturnsThatRowsKey() {
+        when(repository.findById("C1")).thenReturn(Optional.of(stored("tj_off_key_1111")));
 
         assertThat(service.resolve("C1").apiKey()).isEqualTo("tj_off_key_1111");
     }
@@ -289,26 +415,37 @@ class PlatformSupplierCredentialServiceTest {
     /** A row saved before the host guard existed must not keep sending the key to an off-list host. */
     @Test
     void resolveRefusesAStoredHostOffTheAllowlist() {
-        PlatformSupplierCredential old = stored("tj_live_key_9f3a", true, SupplierEnvironment.PROD, "https://attacker.example.com");
-        when(repository.findByProviderAndIsActiveTrue(SupplierProvider.TRIPJACK)).thenReturn(Optional.of(old));
+        PlatformSupplierCredential old = stored("tj_live_key_9f3a", SupplierEnvironment.PROD, "https://attacker.example.com");
         when(repository.findById("C1")).thenReturn(Optional.of(old));
 
-        assertThatThrownBy(() -> service.resolveActive(SupplierProvider.TRIPJACK)).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> service.resolve("C1")).isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
-    void resolveActiveWithoutARowThrows() {
-        when(repository.findByProviderAndIsActiveTrue(SupplierProvider.TRIPJACK)).thenReturn(Optional.empty());
+    void findTreatsAnUnreadableRowAsNoSupplier() {
+        PlatformSupplierCredential old = stored("tj_live_key_9f3a", SupplierEnvironment.PROD, "https://attacker.example.com");
+        when(repository.findById("C1")).thenReturn(Optional.of(old));
 
-        assertThatThrownBy(() -> service.resolveActive(SupplierProvider.TRIPJACK))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage("Tripjack is not configured on the platform");
+        try (com.voyra.crm.support.LogCapture log = new com.voyra.crm.support.LogCapture(PlatformSupplierCredentialService.class)) {
+            assertThat(service.find("C1")).isEmpty();
+            assertThat(log.lines()).containsExactly("WARN Supplier Tripjack cannot be used: IllegalArgumentException");
+        }
+    }
+
+    @Test
+    void listShowsPlainDotsForAKeyThatCannotBeDecryptedAndKeepsTheOtherRows() {
+        PlatformSupplierCredential bad = stored("k").toBuilder().id("C2").name("Bad")
+                .apiKeyEncrypted(PasswordEncryptionUtil.encrypt("tj_live_key_9f3a", "b3RoZXItdGVzdC1hZXMta2V5LTMyLWJ5dGVzLWxvbmc=")).build();
+        when(repository.findAllByOrderByNameAsc()).thenReturn(List.of(bad, stored("tj_live_key_9f3a")));
+        when(productRepository.findByCredentialIdIn(List.of("C2", "C1"))).thenReturn(List.of());
+
+        assertThat(service.list()).extracting(r -> r.getName() + " " + r.getMaskedApiKey())
+                .containsExactly("Bad ••••••", "Tripjack ••••••9f3a");
     }
 
     @Test
     void listMasksEveryKey() {
-        when(repository.findAllByOrderByNameAsc()).thenReturn(List.of(stored("tj_live_key_9f3a", true)));
+        when(repository.findAllByOrderByNameAsc()).thenReturn(List.of(stored("tj_live_key_9f3a")));
         when(productRepository.findByCredentialIdIn(List.of("C1"))).thenReturn(List.of());
 
         assertThat(service.list()).singleElement().satisfies(r -> {
@@ -328,16 +465,15 @@ class PlatformSupplierCredentialServiceTest {
     // ---- remaining guards
 
     @Test
-    void getReturnsOneSupplierWithItsSortedTermsAndAShortKeyFullyMasked() {
-        when(repository.findById("C1")).thenReturn(Optional.of(stored("abcd", true)));
+    void getReturnsOneSupplierWithItsSortedSwitchesAndAShortKeyFullyMasked() {
+        when(repository.findById("C1")).thenReturn(Optional.of(stored("abcd")));
         when(productRepository.findByCredentialIdIn(List.of("C1"))).thenReturn(List.of(
-                com.voyra.crm.entity.PlatformSupplierProduct.builder().product(PricingProduct.HOTEL).commissionEstimatePct(new BigDecimal("3")).build(),
-                com.voyra.crm.entity.PlatformSupplierProduct.builder().product(PricingProduct.FLIGHT).commissionEstimatePct(new BigDecimal("2")).build()));
+                row(PricingProduct.HOTEL, true, false), row(PricingProduct.FLIGHT, false, false)));
 
         var r = service.get("C1");
 
         assertThat(r.getMaskedApiKey()).isEqualTo("••••••");
-        assertThat(r.getProducts()).extracting(SupplierProductTerms::getProduct).containsExactly(PricingProduct.FLIGHT, PricingProduct.HOTEL);
+        assertThat(r.getProducts()).extracting(SupplierProductSettings::getProduct).containsExactly(PricingProduct.FLIGHT, PricingProduct.HOTEL);
     }
 
     @Test
@@ -348,53 +484,57 @@ class PlatformSupplierCredentialServiceTest {
     }
 
     @Test
-    void aSupplierCreatedInactiveWithNoTermsGetsTheDefaultCommission() {
-        when(repository.existsByProvider(SupplierProvider.TRIPJACK)).thenReturn(false);
-        PlatformSupplierCreateRequest r = createRequest("tj_live_key_9f3a");
-        r.setProducts(null);
-        r.setIsActive(false);
+    void searchEnabledReturnsTheSwitchedOnRowsByNameWithTheirIdentity() {
+        PlatformSupplierCredential b = stored("kb").toBuilder().id("C2").name("Beta").build();
+        PlatformSupplierCredential a = stored("ka").toBuilder().id("C3").name("Alpha").build();
+        when(productRepository.findByProductAndSearchEnabledTrue(PricingProduct.FLIGHT))
+                .thenReturn(List.of(row(PricingProduct.FLIGHT, true, false).toBuilder().credentialId("C2").build(),
+                        row(PricingProduct.FLIGHT, true, false).toBuilder().credentialId("C3").build()));
+        when(repository.findAllById(List.of("C2", "C3"))).thenReturn(List.of(b, a));
 
-        var res = service.create(r);
+        List<ResolvedCredential> found = service.searchEnabled(PricingProduct.FLIGHT);
 
-        assertThat(res.getIsActive()).isFalse();
-        assertThat(res.getProducts()).extracting(SupplierProductTerms::getCommissionEstimatePct)
-                .allSatisfy(p -> assertThat(p).isEqualByComparingTo("5"));
+        assertThat(found).extracting(ResolvedCredential::name).containsExactly("Alpha", "Beta");
+        assertThat(found).extracting(ResolvedCredential::id).containsExactly("C3", "C2");
+        assertThat(found.get(0).apiKey()).isEqualTo("ka");
+        assertThat(found.get(0).updatedAt()).isEqualTo(OLD);
     }
 
     @Test
-    void aSupplierWithNoActiveFlagIsActive() {
-        when(repository.existsByProvider(SupplierProvider.TRIPJACK)).thenReturn(false);
-        PlatformSupplierCreateRequest r = createRequest("tj_live_key_9f3a", terms(PricingProduct.FLIGHT, "2"));
-        r.setIsActive(null);
+    void searchEnabledSkipsAnUnreadableRowAndKeepsTheOthers() {
+        PlatformSupplierCredential bad = stored("kb").toBuilder().id("C2").name("Bad").baseUrl("https://evil.example.com").build();
+        PlatformSupplierCredential good = stored("ka").toBuilder().id("C3").name("Good").build();
+        when(productRepository.findByProductAndSearchEnabledTrue(PricingProduct.FLIGHT))
+                .thenReturn(List.of(row(PricingProduct.FLIGHT, true, false).toBuilder().credentialId("C2").build(),
+                        row(PricingProduct.FLIGHT, true, false).toBuilder().credentialId("C3").build()));
+        when(repository.findAllById(List.of("C2", "C3"))).thenReturn(List.of(bad, good));
 
-        assertThat(service.create(r).getIsActive()).isTrue();
+        try (com.voyra.crm.support.LogCapture log = new com.voyra.crm.support.LogCapture(PlatformSupplierCredentialService.class)) {
+            assertThat(service.searchEnabled(PricingProduct.FLIGHT)).extracting(ResolvedCredential::name).containsExactly("Good");
+            assertThat(log.lines()).containsExactly("WARN Supplier Bad cannot be used: IllegalArgumentException");
+        }
     }
 
     @Test
-    void termsNeedAProductAndAtLeastOneOnATermsUpdate() {
-        when(repository.findById("C1")).thenReturn(Optional.of(stored("tj_live_key_9f3a", true)));
-        java.util.List<SupplierProductTerms> withNull = new java.util.ArrayList<>();
-        withNull.add(null);
+    void findResolvesOneRowOrNothing() {
+        when(repository.findById("C1")).thenReturn(Optional.of(stored("k")));
+        when(repository.findById("nope")).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.updateProducts("C1", List.of())).hasMessage("Give the commission for at least one product");
-        assertThatThrownBy(() -> service.updateProducts("C1", withNull)).hasMessage("Product is required");
-        assertThatThrownBy(() -> service.updateProducts("C1", List.of(terms(null, "2")))).hasMessage("Product is required");
-        assertThatThrownBy(() -> service.updateProducts("C1", List.of(terms(PricingProduct.FLIGHT, null))))
-                .hasMessage("Commission % must be between 0 and 100");
-        verify(platformAuditService, never()).record(any(), any(), any(), any());
+        assertThat(service.find("C1")).get().extracting(ResolvedCredential::name).isEqualTo("Tripjack");
+        assertThat(service.find("nope")).isEmpty();
     }
 
     @Test
-    void hasActiveTellsWhetherAnActiveRowExists() {
-        when(repository.findByProviderAndIsActiveTrue(SupplierProvider.TRIPJACK)).thenReturn(Optional.empty(), Optional.of(stored("k", true)));
+    void bookingEnabledIdsAreTheRowsOpenForBooking() {
+        when(productRepository.findByProductAndBookingEnabledTrue(PricingProduct.HOTEL))
+                .thenReturn(List.of(row(PricingProduct.HOTEL, false, true)));
 
-        assertThat(service.hasActive(SupplierProvider.TRIPJACK)).isFalse();
-        assertThat(service.hasActive(SupplierProvider.TRIPJACK)).isTrue();
+        assertThat(service.bookingEnabledIds(PricingProduct.HOTEL)).containsExactly("C1");
     }
 
     @Test
     void aStoredUserIdIsDecryptedToo() {
-        PlatformSupplierCredential c = stored("tj_live_key_9f3a", true);
+        PlatformSupplierCredential c = stored("tj_live_key_9f3a");
         c.setUserIdEncrypted(PasswordEncryptionUtil.encrypt("agency-user-1", KEY));
         when(repository.findById("C1")).thenReturn(Optional.of(c));
 
@@ -402,17 +542,18 @@ class PlatformSupplierCredentialServiceTest {
     }
 
     @Test
-    void theKeyIsSentOnlyToAPlainHttpsTripjackHostOfTheRightEnvironment() {
+    void theKeyIsSentOnlyToAPlainHttpsTripjackHostOfTheRowsEnvironment() {
         for (String url : List.of("http://api.tripjack.com", "https://user@api.tripjack.com", "https://api.tripjack.com:8443",
-                "https://api.tripjack.com/?x=1", "https://api.tripjack.com/#f", "https://api.tripjack.com/v1",
-                "https://apitest.tripjack.com", "https:///nohost", "https://api.trip jack.com")) {
-            when(repository.findById("C1")).thenReturn(Optional.of(stored("tj_live_key_9f3a", true, SupplierEnvironment.PROD, url)));
+                "https://api.tripjack.com/?x=1", "https://api.tripjack.com/#f", "https://api.tripjack.com/v1", "https://api.trip jack.com")) {
+            when(repository.findById("C1")).thenReturn(Optional.of(stored("tj_live_key_9f3a", SupplierEnvironment.PROD, url)));
             assertThatThrownBy(() -> service.resolve("C1")).as(url).isInstanceOf(IllegalArgumentException.class)
-                    .hasMessage("Base URL must be a Tripjack PROD host over https");
+                    .hasMessage("Base URL must be a Tripjack UAT or production host over https");
         }
-        when(repository.findById("C1")).thenReturn(Optional.of(stored("tj_live_key_9f3a", true, SupplierEnvironment.PROD, "https://API.tripjack.com/")));
+        when(repository.findById("C1")).thenReturn(Optional.of(stored("tj_live_key_9f3a", SupplierEnvironment.PROD, "https://apitest.tripjack.com")));
+        assertThatThrownBy(() -> service.resolve("C1")).hasMessage("Base URL does not match the supplier's environment");
+        when(repository.findById("C1")).thenReturn(Optional.of(stored("tj_live_key_9f3a", SupplierEnvironment.PROD, "https://API.tripjack.com/")));
         assertThat(service.resolve("C1").apiKey()).isEqualTo("tj_live_key_9f3a");
-        when(repository.findById("C1")).thenReturn(Optional.of(stored("tj_live_key_9f3a", true, SupplierEnvironment.UAT, "https://apitest.tripjack.com")));
+        when(repository.findById("C1")).thenReturn(Optional.of(stored("tj_live_key_9f3a", SupplierEnvironment.UAT, "https://apitest.tripjack.com")));
         assertThat(service.resolve("C1").environment()).isEqualTo(SupplierEnvironment.UAT);
     }
 }

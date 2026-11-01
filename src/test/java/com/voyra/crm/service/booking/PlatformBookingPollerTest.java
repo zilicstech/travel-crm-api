@@ -15,7 +15,6 @@ import com.voyra.crm.models.booking.SupplierBookingStatus;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.PlatformBookingEventRepository;
 import com.voyra.crm.repository.PlatformBookingRepository;
-import com.voyra.crm.repository.PlatformSupplierCredentialRepository;
 import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.repository.WalletEntryRepository;
 import com.voyra.crm.repository.WalletRepository;
@@ -23,6 +22,7 @@ import com.voyra.crm.service.AgencyPricingService;
 import com.voyra.crm.service.NotificationService;
 import com.voyra.crm.service.PlatformAuditService;
 import com.voyra.crm.service.PlatformSettingService;
+import com.voyra.crm.service.PlatformSupplierCredentialService;
 import com.voyra.crm.service.WalletService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -73,7 +73,8 @@ class PlatformBookingPollerTest {
     @Mock private WalletEntryRepository walletEntryRepository;
     @Mock private TenantRepository tenantRepository;
     @Mock private AgentRepository agentRepository;
-    @Mock private PlatformSupplierCredentialRepository credentialRepository;
+    @Mock private PlatformSupplierCredentialService suppliers;
+    @Mock private FlightBookingProvider tripjack;
     @Mock private NotificationService notificationService;
     @Mock private PlatformBookingMirrorService mirrorService;
     @Mock private com.voyra.crm.service.EntitlementService entitlementService;
@@ -90,8 +91,8 @@ class PlatformBookingPollerTest {
 
     private final HotelBookingProviderConfig hotelConfig = new HotelBookingProviderConfig();
 
-    private BookingProviderRegistry registry() {
-        return new BookingProviderRegistry(provider, hotelProvider, config, hotelConfig);
+    private SupplierRegistry registry() {
+        return BookingSuppliers.registry(suppliers, provider, tripjack, hotelProvider, config, hotelConfig);
     }
 
     @BeforeEach
@@ -100,7 +101,7 @@ class PlatformBookingPollerTest {
         PaxCodec paxCodec = new PaxCodec(objectMapper, KEY);
         PlatformBookingEventRecorder events = new PlatformBookingEventRecorder(eventRepository, paxCodec);
         PlatformBookingService service = new PlatformBookingService(bookingRepository, registry(), quoter, pricingService,
-                walletService, walletRepository, tenantRepository, agentRepository, credentialRepository, notificationService,
+                walletService, walletRepository, tenantRepository, agentRepository, notificationService,
                 events, paxCodec, objectMapper, transactionManager, walletEntryRepository, platformAuditService, settings, mirrorService, entitlementService);
         poller = new PlatformBookingPoller(bookingRepository, eventRepository, registry(), service, events,
                 notificationService, transactionManager);
@@ -161,9 +162,9 @@ class PlatformBookingPollerTest {
     private PlatformBooking bookingRow(String id, Instant bookingAt) {
         PlatformBooking b = PlatformBooking.builder()
                 .id(id).tenantId(T).product(PricingProduct.FLIGHT).status(PlatformBookingStatus.BOOKING)
-                .environment(SupplierEnvironment.MOCK).supplierReviewId("rv-" + id)
+                .credentialId("s1").environment(SupplierEnvironment.MOCK).supplierReviewId("rv-" + id)
                 .gross(new BigDecimal("5000.00")).base(new BigDecimal("4250.00")).displayed(new BigDecimal("4500.00"))
-                .agencyCommission(new BigDecimal("100.00")).tds(BigDecimal.ZERO).voyraNet(new BigDecimal("27.50"))
+                .agencyCommission(new BigDecimal("100.00")).tds(BigDecimal.ZERO)
                 .holdEntryId("H1").createdAt(bookingAt.minus(2, ChronoUnit.MINUTES)).build();
         rows.put(id, b);
         savedEvents.add(PlatformBookingEvent.builder().id("E-" + id).platformBookingId(id).type("BOOKING").createdAt(bookingAt).build());
@@ -177,7 +178,7 @@ class PlatformBookingPollerTest {
     @Test
     void pendingThenTicketedOnPollDebitsOnce() {
         bookingRow("B1", Instant.now());
-        when(provider.bookingDetails("rv-B1")).thenReturn(pending())
+        when(provider.bookingDetails(eq("rv-B1"), any())).thenReturn(pending())
                 .thenReturn(new BookResult("rv-B1", SupplierBookingStatus.TICKETED, "PNR1", List.of("TKT-1"), "Ticketed", null));
 
         poller.poll();
@@ -190,7 +191,7 @@ class PlatformBookingPollerTest {
 
         assertThat(rows.get("B1").getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
         assertThat(rows.get("B1").getPnr()).isEqualTo("PNR1");
-        verify(provider, times(2)).bookingDetails("rv-B1");
+        verify(provider, times(2)).bookingDetails(eq("rv-B1"), any());
         verify(walletService, times(1)).debitHeld("H1", new BigDecimal("4500.00"), "pb-debit:B1", "PLATFORM_BOOKING", "B1");
         verify(walletService, times(1)).credit(any(), any(), any(), any(), any(), any(), any());
     }
@@ -198,17 +199,17 @@ class PlatformBookingPollerTest {
     @Test
     void pollsBySupplierBookingIdWhenKnown() {
         bookingRow("B1", Instant.now()).setSupplierBookingId("SB-9");
-        when(provider.bookingDetails("SB-9")).thenReturn(pending());
+        when(provider.bookingDetails(eq("SB-9"), any())).thenReturn(pending());
 
         poller.poll();
 
-        verify(provider).bookingDetails("SB-9");
+        verify(provider).bookingDetails(eq("SB-9"), any());
     }
 
     @Test
     void failedOnPollReleasesTheHold() {
         bookingRow("B1", Instant.now());
-        when(provider.bookingDetails("rv-B1")).thenReturn(
+        when(provider.bookingDetails(eq("rv-B1"), any())).thenReturn(
                 new BookResult(null, SupplierBookingStatus.FAILED, null, List.of(), "Fare sold out", null));
 
         poller.poll();
@@ -221,7 +222,7 @@ class PlatformBookingPollerTest {
     @Test
     void noAnswerAfterMaxMinutesBecomesUnknownAndKeepsHold() {
         bookingRow("B1", Instant.now().minus(31, ChronoUnit.MINUTES));
-        when(provider.bookingDetails("rv-B1")).thenThrow(new SupplierTimeoutException("timed out", null));
+        when(provider.bookingDetails(eq("rv-B1"), any())).thenThrow(new SupplierTimeoutException("timed out", null));
 
         poller.poll();
 
@@ -236,7 +237,7 @@ class PlatformBookingPollerTest {
     @Test
     void pendingWithinMaxMinutesStaysBooking() {
         bookingRow("B1", Instant.now().minus(29, ChronoUnit.MINUTES));
-        when(provider.bookingDetails("rv-B1")).thenReturn(pending());
+        when(provider.bookingDetails(eq("rv-B1"), any())).thenReturn(pending());
 
         poller.poll();
 
@@ -251,10 +252,10 @@ class PlatformBookingPollerTest {
         b.setLastPolledAt(Instant.now().minus(3, ChronoUnit.MINUTES));
 
         poller.poll();
-        verify(provider, never()).bookingDetails(anyString());
+        verify(provider, never()).bookingDetails(anyString(), any());
 
         rows.get("B1").setLastPolledAt(Instant.now().minus(11, ChronoUnit.MINUTES));
-        when(provider.bookingDetails("rv-B1")).thenReturn(
+        when(provider.bookingDetails(eq("rv-B1"), any())).thenReturn(
                 new BookResult("SB-1", SupplierBookingStatus.TICKETED, "PNR1", List.of("TKT-1"), "Ticketed", null));
         poller.poll();
 
@@ -266,9 +267,9 @@ class PlatformBookingPollerTest {
     void oneRowFailingDoesNotStopTheOthers() {
         bookingRow("B1", Instant.now());
         bookingRow("B2", Instant.now());
-        when(provider.bookingDetails("rv-B1")).thenReturn(
+        when(provider.bookingDetails(eq("rv-B1"), any())).thenReturn(
                 new BookResult("SB-1", SupplierBookingStatus.TICKETED, "PNR1", List.of("TKT-1"), "Ticketed", null));
-        when(provider.bookingDetails("rv-B2")).thenReturn(
+        when(provider.bookingDetails(eq("rv-B2"), any())).thenReturn(
                 new BookResult("SB-2", SupplierBookingStatus.TICKETED, "PNR2", List.of("TKT-2"), "Ticketed", null));
         when(walletService.debitHeld(anyString(), any(), anyString(), anyString(), anyString())).thenAnswer(i -> {
             if (i.<String>getArgument(2).endsWith("B1")) {
@@ -295,14 +296,14 @@ class PlatformBookingPollerTest {
         b.setResolvedFailedAt(Instant.now().minus(1, ChronoUnit.HOURS));
         walletEntries.put("pb-release:B1", WalletEntry.builder().id("R1").type(WalletEntryType.HOLD_RELEASE)
                 .relatedEntryId("H1").idempotencyKey("pb-release:B1").build());
-        when(provider.bookingDetails("rv-B1"))
+        when(provider.bookingDetails(eq("rv-B1"), any()))
                 .thenReturn(new BookResult(null, SupplierBookingStatus.FAILED, null, List.of(), "No booking", null))
                 .thenReturn(ticketed());
 
         poller.poll();
         assertThat(rows.get("B1").getStatus()).isEqualTo(PlatformBookingStatus.FAILED);
         poller.poll(); // within 10 minutes of the last poll: not asked again
-        verify(provider, times(1)).bookingDetails("rv-B1");
+        verify(provider, times(1)).bookingDetails(eq("rv-B1"), any());
 
         rows.get("B1").setLastPolledAt(Instant.now().minus(11, ChronoUnit.MINUTES));
         poller.poll();
@@ -323,13 +324,13 @@ class PlatformBookingPollerTest {
 
         poller.poll();
 
-        verify(provider, never()).bookingDetails(anyString());
+        verify(provider, never()).bookingDetails(anyString(), any());
     }
 
     @Test
     void aFailingApplyStillRecordsThePollAndEscalates() {
         bookingRow("B1", Instant.now().minus(31, ChronoUnit.MINUTES));
-        when(provider.bookingDetails("rv-B1")).thenReturn(ticketed());
+        when(provider.bookingDetails(eq("rv-B1"), any())).thenReturn(ticketed());
         when(walletService.debitHeld(anyString(), any(), anyString(), anyString(), anyString()))
                 .thenThrow(new IllegalStateException("wallet row locked"));
 
@@ -355,7 +356,7 @@ class PlatformBookingPollerTest {
         assertThat(rows.get("B1").getStatus()).isEqualTo(PlatformBookingStatus.ABORTED);
         assertThat(rows.get("B1").getAbortReason()).isEqualTo("Review expired");
         verify(walletService).releaseHold("H1", "pb-release:B1");
-        verify(provider, never()).bookingDetails(anyString());
+        verify(provider, never()).bookingDetails(anyString(), any());
     }
 
     /** An expired review the agency simply walked away from (no hold at all) is closed too, with no wallet call. */
@@ -428,7 +429,7 @@ class PlatformBookingPollerTest {
         } finally {
             TransactionSynchronizationManager.setActualTransactionActive(false);
         }
-        verify(provider, never()).bookingDetails(anyString());
+        verify(provider, never()).bookingDetails(anyString(), any());
     }
 
     /** Review Focus 3: a flight and a hotel booking of the same agency polled in one run - each asks its own supplier. */
@@ -436,16 +437,16 @@ class PlatformBookingPollerTest {
     void aFlightAndAHotelPolledInOneRunEachAskTheirOwnSupplier() {
         bookingRow("F1", Instant.now());
         bookingRow("H1", Instant.now()).setProduct(PricingProduct.HOTEL);
-        when(provider.bookingDetails("rv-F1")).thenReturn(pending());
-        when(hotelProvider.bookingDetails("rv-H1"))
+        when(provider.bookingDetails(eq("rv-F1"), any())).thenReturn(pending());
+        when(hotelProvider.bookingDetails(eq("rv-H1"), any()))
                 .thenReturn(new BookResult("HB-1", SupplierBookingStatus.TICKETED, "MH42", List.of(), "Confirmed", null));
 
         poller.poll();
 
-        verify(provider).bookingDetails("rv-F1");
-        verify(hotelProvider).bookingDetails("rv-H1");
-        verify(provider, never()).bookingDetails("rv-H1");
-        verify(hotelProvider, never()).bookingDetails("rv-F1");
+        verify(provider).bookingDetails(eq("rv-F1"), any());
+        verify(hotelProvider).bookingDetails(eq("rv-H1"), any());
+        verify(provider, never()).bookingDetails(eq("rv-H1"), any());
+        verify(hotelProvider, never()).bookingDetails(eq("rv-F1"), any());
         assertThat(rows.get("F1").getStatus()).isEqualTo(PlatformBookingStatus.BOOKING);
         assertThat(rows.get("H1").getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
         assertThat(rows.get("H1").getPnr()).isEqualTo("MH42");
@@ -457,8 +458,8 @@ class PlatformBookingPollerTest {
         hotelConfig.getPoll().setMaxMinutes(90);
         bookingRow("F1", Instant.now().minus(45, ChronoUnit.MINUTES));
         bookingRow("H1", Instant.now().minus(45, ChronoUnit.MINUTES)).setProduct(PricingProduct.HOTEL);
-        when(provider.bookingDetails("rv-F1")).thenReturn(pending());
-        when(hotelProvider.bookingDetails("rv-H1")).thenReturn(pending());
+        when(provider.bookingDetails(eq("rv-F1"), any())).thenReturn(pending());
+        when(hotelProvider.bookingDetails(eq("rv-H1"), any())).thenReturn(pending());
 
         poller.poll();
 
@@ -470,10 +471,10 @@ class PlatformBookingPollerTest {
     private PlatformBooking acceptedCancel(String id, Instant acceptedAt) {
         PlatformBooking b = bookingRow(id, acceptedAt.minus(1, ChronoUnit.DAYS));
         b.setStatus(PlatformBookingStatus.CANCELLING);
-        b.setEnvironment(SupplierEnvironment.UAT); // booked with Tripjack
+        b.setCredentialId(BookingSuppliers.TJ_UAT.id()); // booked with Tripjack
+        b.setEnvironment(SupplierEnvironment.UAT);
         b.setSupplierBookingId("SB-" + id);
         b.setPnr("PNR1");
-        b.setVoyraEarned(new BigDecimal("127.50"));
         savedEvents.add(PlatformBookingEvent.builder().id("E-REQ" + id).platformBookingId(id).type("CANCEL_REQUESTED")
                 .payload(Map.of("key", "ck-1")).createdAt(acceptedAt.minusSeconds(5)).build());
         savedEvents.add(PlatformBookingEvent.builder().id("E-ACC" + id).platformBookingId(id).type("CANCEL_ACCEPTED")
@@ -484,11 +485,10 @@ class PlatformBookingPollerTest {
     /** Readiness: an accepted Tripjack amendment posts the refund only once bookingDetails says the booking is cancelled. */
     @Test
     void anAcceptedTripjackCancelSettlesWhenTheSupplierShowsItCancelled() {
-        config.setProvider("tripjack"); // booked with Tripjack and served by it
         lenient().when(settings.voyraCancelFee()).thenReturn(BigDecimal.ZERO);
         lenient().when(walletRepository.findByTenantId(T)).thenReturn(Optional.empty());
         acceptedCancel("C1", Instant.now().minus(1, ChronoUnit.HOURS));
-        when(provider.bookingDetails("SB-C1"))
+        when(tripjack.bookingDetails(eq("SB-C1"), any()))
                 .thenReturn(new BookResult("SB-C1", SupplierBookingStatus.TICKETED, "PNR1", List.of(), "SUCCESS", null))
                 .thenReturn(new BookResult("SB-C1", SupplierBookingStatus.CANCELLED, "PNR1", List.of(), "CANCELLED", null));
 
@@ -497,7 +497,7 @@ class PlatformBookingPollerTest {
         verify(walletService, never()).credit(any(), any(), any(), any(), any(), any(), any());
 
         poller.poll(); // within the 10-minute cadence: not asked again
-        verify(provider, times(1)).bookingDetails("SB-C1");
+        verify(tripjack, times(1)).bookingDetails(eq("SB-C1"), any());
 
         rows.get("C1").setLastPolledAt(Instant.now().minus(11, ChronoUnit.MINUTES));
         poller.poll();
@@ -513,9 +513,9 @@ class PlatformBookingPollerTest {
     /** A cancel with no supplier answer (or one still being submitted), and every mock cancel, is never polled. */
     @Test
     void aCancellingRowWithoutAnAcceptanceOrOnTheMockIsNotPolled() {
-        config.setProvider("tripjack");
         PlatformBooking unanswered = bookingRow("C2", Instant.now().minus(1, ChronoUnit.DAYS));
         unanswered.setStatus(PlatformBookingStatus.CANCELLING);
+        unanswered.setCredentialId(BookingSuppliers.TJ_UAT.id());
         unanswered.setEnvironment(SupplierEnvironment.UAT);
         event("C2", "CANCEL_REQUESTED", Instant.now().minus(2, ChronoUnit.HOURS));
         // accepted on an earlier attempt, then put back to TICKETED and requested again: the new request has no answer yet
@@ -524,52 +524,55 @@ class PlatformBookingPollerTest {
 
         poller.poll();
 
-        verify(provider, never()).bookingDetails(anyString());
+        verify(tripjack, never()).bookingDetails(anyString(), any());
 
-        config.setProvider("tripjack"); // a row booked on the mock is never polled, whatever the provider is now
-        acceptedCancel("C4", Instant.now().minus(1, ChronoUnit.HOURS)).setEnvironment(SupplierEnvironment.MOCK);
+        PlatformBooking onMock = acceptedCancel("C4", Instant.now().minus(1, ChronoUnit.HOURS)); // the mock's cancel is synchronous
+        onMock.setCredentialId("s1");
+        onMock.setEnvironment(SupplierEnvironment.MOCK);
         poller.poll();
-        verify(provider, never()).bookingDetails(anyString());
+        verify(tripjack, never()).bookingDetails(anyString(), any());
+        verify(provider, never()).bookingDetails(anyString(), any());
     }
 
     /** Fix round 1: a cancel the supplier accepted but has not confirmed after 24 hours alerts Voyra once. */
     @Test
     void anAcceptedCancelStillUnconfirmedAfter24HoursAlertsOnce() {
-        config.setProvider("tripjack");
         acceptedCancel("C5", Instant.now().minus(25, ChronoUnit.HOURS));
-        when(provider.bookingDetails("SB-C5"))
+        when(tripjack.bookingDetails(eq("SB-C5"), any()))
                 .thenReturn(new BookResult("SB-C5", SupplierBookingStatus.TICKETED, "PNR1", List.of(), "SUCCESS", null));
 
         poller.poll();
         rows.get("C5").setLastPolledAt(Instant.now().minus(11, ChronoUnit.MINUTES));
         poller.poll();
 
-        verify(provider, times(2)).bookingDetails("SB-C5");
+        verify(tripjack, times(2)).bookingDetails(eq("SB-C5"), any());
         verify(notificationService, times(1)).platformAlert(contains("C5"), anyString());
         assertThat(savedEvents).filteredOn(e -> e.getType().equals("CANCEL_OVERDUE")).hasSize(1);
         assertThat(rows.get("C5").getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
     }
 
     /**
-     * Final review Important 1: with the mock configured, Tripjack rows (BOOKING, FAILED in the late-ticket window, an accepted
-     * CANCELLING) are never asked of the mock - which would answer TICKETED for an id it never saw - and nothing is posted.
+     * Rows whose supplier is missing (MU1), or whose supplier row is in another environment (MP1 in the late-ticket window,
+     * MC1 an accepted CANCELLING), are never asked - a supplier would answer for an id it never saw - and nothing is posted.
      * Voyra is alerted once per row, however many runs see it.
      */
     @Test
-    void rowsTheConfiguredSupplierDoesNotServeAreSkippedAndAlertedOnce() {
-        bookingRow("MU1", Instant.now()).setEnvironment(SupplierEnvironment.UAT);
+    void skipsAndAlertsOnceForARowWhoseSupplierIsMissing() {
+        bookingRow("MU1", Instant.now()).setCredentialId("gone");
         PlatformBooking failed = bookingRow("MP1", Instant.now().minus(2, ChronoUnit.HOURS));
         failed.setEnvironment(SupplierEnvironment.PROD);
         failed.setStatus(PlatformBookingStatus.FAILED);
         failed.setResolvedFailedAt(Instant.now().minus(1, ChronoUnit.HOURS));
         acceptedCancel("MC1", Instant.now().minus(25, ChronoUnit.HOURS)).setEnvironment(SupplierEnvironment.PROD);
-        lenient().when(provider.bookingDetails(anyString()))
-                .thenReturn(new BookResult("x", SupplierBookingStatus.TICKETED, "PNR1", List.of("TKT-1"), "Ticketed", null));
+        BookResult ticketed = new BookResult("x", SupplierBookingStatus.TICKETED, "PNR1", List.of("TKT-1"), "Ticketed", null);
+        lenient().when(provider.bookingDetails(anyString(), any())).thenReturn(ticketed);
+        lenient().when(tripjack.bookingDetails(anyString(), any())).thenReturn(ticketed);
 
         poller.poll();
         poller.poll();
 
-        verify(provider, never()).bookingDetails(anyString());
+        verify(provider, never()).bookingDetails(anyString(), any());
+        verify(tripjack, never()).bookingDetails(anyString(), any());
         verifyNoInteractions(walletService);
         for (String id : List.of("MU1", "MP1", "MC1")) {
             verify(notificationService, times(1)).platformAlert(contains(id), anyString());
@@ -582,19 +585,34 @@ class PlatformBookingPollerTest {
         assertThat(savedEvents).filteredOn(e -> e.getType().equals("CANCEL_OVERDUE")).isEmpty();
     }
 
+    /** The booking switch gates review and confirm only: a row in flight keeps being asked through the row it was booked on. */
+    @Test
+    void pollsAnInFlightBookingThroughItsOwnSupplierAfterBookingIsSwitchedOff() {
+        PlatformBooking b = bookingRow("TJ1", Instant.now());
+        b.setCredentialId(BookingSuppliers.TJ_UAT.id());
+        b.setEnvironment(SupplierEnvironment.UAT);
+        lenient().when(suppliers.bookingEnabledIds(any())).thenReturn(java.util.Set.of());
+        when(tripjack.bookingDetails("rv-TJ1", BookingSuppliers.TJ_UAT)).thenReturn(ticketed());
+
+        poller.poll();
+
+        assertThat(rows.get("TJ1").getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
+        verify(suppliers, never()).bookingEnabledIds(any());
+        verify(provider, never()).bookingDetails(anyString(), any());
+    }
+
     // ---------------------------------------------------------------- coverage: cancel polling and sweep edges
 
     @Test
     void aCancelAcceptedWithoutARecordedRequestIsPolledByItsReviewIdWhenItHasNoBookingId() {
-        config.setProvider("tripjack");
         PlatformBooking b = acceptedCancel("C6", Instant.now().minus(1, ChronoUnit.HOURS));
         b.setSupplierBookingId(null);
         savedEvents.removeIf(e -> e.getPlatformBookingId().equals("C6") && e.getType().equals("CANCEL_REQUESTED"));
-        when(provider.bookingDetails("rv-C6")).thenThrow(new IllegalStateException("supplier down"));
+        when(tripjack.bookingDetails(eq("rv-C6"), any())).thenThrow(new IllegalStateException("supplier down"));
 
         poller.poll();
 
-        verify(provider).bookingDetails("rv-C6");
+        verify(tripjack).bookingDetails(eq("rv-C6"), any());
         assertThat(rows.get("C6").getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
         assertThat(rows.get("C6").getPollCount()).isEqualTo(1);
         verify(walletService, never()).credit(any(), any(), any(), any(), any(), any(), any());
@@ -602,9 +620,8 @@ class PlatformBookingPollerTest {
 
     @Test
     void aFailingOverdueAlertDoesNotStopTheRun() {
-        config.setProvider("tripjack");
         acceptedCancel("C7", Instant.now().minus(25, ChronoUnit.HOURS));
-        when(provider.bookingDetails("SB-C7"))
+        when(tripjack.bookingDetails(eq("SB-C7"), any()))
                 .thenReturn(new BookResult("SB-C7", SupplierBookingStatus.TICKETED, "PNR1", List.of(), "SUCCESS", null));
         doThrow(new IllegalStateException("mail down")).when(notificationService).platformAlert(anyString(), anyString());
 
@@ -616,11 +633,10 @@ class PlatformBookingPollerTest {
 
     @Test
     void anOverdueCancelSettledInTheSameRunIsNotAlerted() {
-        config.setProvider("tripjack");
         lenient().when(settings.voyraCancelFee()).thenReturn(BigDecimal.ZERO);
         lenient().when(walletRepository.findByTenantId(T)).thenReturn(Optional.empty());
         acceptedCancel("C8", Instant.now().minus(25, ChronoUnit.HOURS));
-        when(provider.bookingDetails("SB-C8"))
+        when(tripjack.bookingDetails(eq("SB-C8"), any()))
                 .thenReturn(new BookResult("SB-C8", SupplierBookingStatus.CANCELLED, "PNR1", List.of(), "CANCELLED", null));
 
         poller.poll();
@@ -632,11 +648,10 @@ class PlatformBookingPollerTest {
 
     @Test
     void anOverdueAlertForAnEarlierAcceptanceDoesNotSilenceANewOne() {
-        config.setProvider("tripjack");
         Instant accepted = Instant.now().minus(25, ChronoUnit.HOURS);
         acceptedCancel("C9", accepted);
         event("C9", "CANCEL_OVERDUE", accepted.minus(3, ChronoUnit.DAYS));
-        when(provider.bookingDetails("SB-C9"))
+        when(tripjack.bookingDetails(eq("SB-C9"), any()))
                 .thenReturn(new BookResult("SB-C9", SupplierBookingStatus.TICKETED, "PNR1", List.of(), "SUCCESS", null));
 
         poller.poll();
@@ -647,9 +662,8 @@ class PlatformBookingPollerTest {
 
     @Test
     void anOverdueCancelWhoseRowIsGoneIsNotAlerted() {
-        config.setProvider("tripjack");
         acceptedCancel("C10", Instant.now().minus(25, ChronoUnit.HOURS));
-        when(provider.bookingDetails("SB-C10")).thenAnswer(i -> {
+        when(tripjack.bookingDetails(eq("SB-C10"), any())).thenAnswer(i -> {
             rows.remove("C10"); // deleted between the poll and the alert
             return new BookResult("SB-C10", SupplierBookingStatus.TICKETED, "PNR1", List.of(), "SUCCESS", null);
         });
@@ -662,7 +676,7 @@ class PlatformBookingPollerTest {
     @Test
     void aBookingRowGoneBeforeItsPollIsRecordedIsLeftAlone() {
         PlatformBooking b = bookingRow("G1", Instant.now());
-        when(provider.bookingDetails("rv-G1")).thenAnswer(i -> {
+        when(provider.bookingDetails(eq("rv-G1"), any())).thenAnswer(i -> {
             rows.remove("G1");
             throw new IllegalStateException("no answer");
         });

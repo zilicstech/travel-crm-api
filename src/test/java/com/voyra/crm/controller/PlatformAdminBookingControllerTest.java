@@ -54,15 +54,21 @@ class PlatformAdminBookingControllerTest {
     }
 
     @Test
-    void superAdminListsWithFiltersAndSeesVoyraMoney() throws Exception {
+    void adminBookingCarriesNoVoyraFigures() throws Exception {
         given(queryService.adminList(eq(0), eq(25), eq(PlatformBookingStatus.UNKNOWN), eq("T1")))
                 .willReturn(PagedResponse.<PlatformAdminBookingResponse>builder().content(List.of(
-                        PlatformAdminBookingResponse.builder().id("B1").voyraNet(new BigDecimal("145.00"))
-                                .markup(new BigDecimal("500.00")).build())).build());
+                        PlatformAdminBookingResponse.builder().id("B1").agencyEarns(new BigDecimal("95.00")).gross(new BigDecimal("5000.00"))
+                                .markup(new BigDecimal("500.00")).supplierName("Tripjack").build())).build());
 
         mockMvc.perform(get("/api/platform/bookings?page=0&size=25&status=UNKNOWN&tenantId=T1").with(as(UserType.SUPER_ADMIN)))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.content[0].voyraNet").value(145.00))
-                .andExpect(jsonPath("$.content[0].markup").doesNotExist()); // the agency's own figure, not an admin one
+                .andExpect(status().isOk()).andExpect(jsonPath("$.content[0].agencyEarns").value(95.00))
+                .andExpect(jsonPath("$.content[0].gross").value(5000.00))
+                .andExpect(jsonPath("$.content[0].voyraEarned").doesNotExist())
+                .andExpect(jsonPath("$.content[0].voyraEarnedSource").doesNotExist())
+                .andExpect(jsonPath("$.content[0].voyraEarnedActual").doesNotExist())
+                .andExpect(jsonPath("$.content[0].voyraNet").doesNotExist())
+                .andExpect(jsonPath("$.content[0].markup").doesNotExist()) // the agency's own figure, not an admin one
+                .andExpect(jsonPath("$.content[0].supplierName").value("Tripjack"));
     }
 
     @Test

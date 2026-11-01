@@ -12,7 +12,6 @@ import java.math.BigDecimal;
 @ConfigurationProperties(prefix = "app.flight-booking")
 public class FlightBookingProviderConfig {
 
-    private String provider = "mock";
     private Mock mock = new Mock();
     private Poll poll = new Poll();
 

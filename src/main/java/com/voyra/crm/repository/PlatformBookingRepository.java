@@ -42,14 +42,16 @@ public interface PlatformBookingRepository extends JpaRepository<PlatformBooking
     @Query("SELECT b.id FROM PlatformBooking b WHERE b.pnr = :pnr AND b.environment = :environment")
     List<String> findIdsByPnr(@Param("pnr") String pnr, @Param("environment") com.voyra.crm.enums.SupplierEnvironment environment);
 
-    /** The P&L window: bookings ticketed in [from, to). */
-    List<PlatformBooking> findByTicketedAtGreaterThanEqualAndTicketedAtLessThan(Instant from, Instant to);
+    /** Dashboard GMV: what agencies were charged on bookings ticketed in [from, to). */
+    @Query("SELECT coalesce(sum(b.displayed), 0) FROM PlatformBooking b WHERE b.ticketedAt >= :from AND b.ticketedAt < :to "
+            + "AND b.environment = :environment AND b.status IN :statuses")
+    java.math.BigDecimal sumDisplayedTicketed(@Param("from") Instant from, @Param("to") Instant to,
+                                              @Param("environment") SupplierEnvironment environment,
+                                              @Param("statuses") Collection<PlatformBookingStatus> statuses);
 
     Optional<PlatformBooking> findByIdempotencyKey(String idempotencyKey);
 
     List<PlatformBooking> findByStatusIn(Collection<PlatformBookingStatus> statuses);
-
-    long countByStatusInAndEnvironmentNot(Collection<PlatformBookingStatus> statuses, SupplierEnvironment environment);
 
     List<PlatformBooking> findByMirrorStatusIn(Collection<com.voyra.crm.enums.MirrorStatus> statuses);
 

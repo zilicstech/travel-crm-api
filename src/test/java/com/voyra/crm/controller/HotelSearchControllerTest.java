@@ -6,7 +6,6 @@ import com.voyra.crm.dto.HotelSearchQuery;
 import com.voyra.crm.security.JwtAuthenticationFilter;
 import com.voyra.crm.security.JwtService;
 import com.voyra.crm.security.RestAuthenticationEntryPoint;
-import com.voyra.crm.service.HotelSearchProvider;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -36,8 +35,6 @@ class HotelSearchControllerTest {
     @Autowired
     private ObjectMapper objectMapper;
 
-    @MockBean
-    private HotelSearchProvider hotelSearchProvider;
     @MockBean
     private com.voyra.crm.service.HotelSearchService hotelSearchService;
 
@@ -91,7 +88,7 @@ class HotelSearchControllerTest {
 
     @Test
     void thumbnails_agentGetsThemAndAnEmptyListIsRejected() throws Exception {
-        when(hotelSearchProvider.thumbnails(any())).thenReturn(List.of());
+        when(hotelSearchService.thumbnails(any())).thenReturn(List.of());
         mockMvc.perform(post("/api/hotels/thumbnails")
                         .with(SecurityMockMvcRequestPostProcessors.user("agent1").roles("AGENT"))
                         .contentType(MediaType.APPLICATION_JSON)

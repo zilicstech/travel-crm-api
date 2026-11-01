@@ -3,7 +3,6 @@ package com.voyra.crm.service.booking;
 import com.voyra.crm.entity.PlatformBooking;
 import com.voyra.crm.entity.PlatformBookingEvent;
 import com.voyra.crm.enums.PlatformBookingStatus;
-import com.voyra.crm.enums.SupplierEnvironment;
 import com.voyra.crm.models.booking.BookResult;
 import com.voyra.crm.models.booking.SupplierBookingStatus;
 import com.voyra.crm.repository.PlatformBookingEventRepository;
@@ -33,12 +32,13 @@ import java.util.Optional;
  * {@link PlatformBookingService#applySupplierResult} (keyed wallet calls, so a re-apply posts nothing twice), and the
  * poll is recorded in a separate REQUIRES_NEW transaction.
  * <p>
- * A Tripjack cancel the supplier accepted stays CANCELLING (amendments are asynchronous): those rows are asked every 10
- * minutes and settled by {@link PlatformBookingService#settleConfirmedCancel} once bookingDetails shows them cancelled.
- * Hotels give up after {@code app.hotel-booking.poll.max-minutes}.
+ * A cancel accepted by a supplier whose cancel is asynchronous ({@link BookingSupplier#cancelIsAsync}, e.g. Tripjack)
+ * stays CANCELLING: those rows are asked every 10 minutes and settled by {@link PlatformBookingService#settleConfirmedCancel}
+ * once bookingDetails shows them cancelled. Hotels give up after {@code app.hotel-booking.poll.max-minutes}.
  * <p>
- * A row the configured provider did not book (mock vs Tripjack, after a provider switch) is skipped - no supplier call,
- * no money - and Voyra is alerted once ({@link PlatformBookingService#alertNotServed}).
+ * Each row is asked through the supplier row it was reviewed on, even after that supplier's booking switch is off. A row
+ * whose supplier is missing, not in this build or in another environment is skipped - no supplier call, no money - and
+ * Voyra is alerted once ({@link PlatformBookingService#alertNotServed}).
  * <p>
  * The same run sweeps rows that can never go on: an expired REVIEWING row (releasing an orphan hold if it has one), and a
  * HELD row whose book was never sent (crash between hold and BOOKING), are ABORTED.
@@ -56,18 +56,18 @@ public class PlatformBookingPoller {
 
     private final PlatformBookingRepository bookingRepository;
     private final PlatformBookingEventRepository eventRepository;
-    private final BookingProviderRegistry providers;
+    private final SupplierRegistry registry;
     private final PlatformBookingService bookingService;
     private final PlatformBookingEventRecorder events;
     private final NotificationService notificationService;
     private final TransactionTemplate tx;
 
     public PlatformBookingPoller(PlatformBookingRepository bookingRepository, PlatformBookingEventRepository eventRepository,
-                                 BookingProviderRegistry providers, PlatformBookingService bookingService, PlatformBookingEventRecorder events,
+                                 SupplierRegistry registry, PlatformBookingService bookingService, PlatformBookingEventRecorder events,
                                  NotificationService notificationService, PlatformTransactionManager transactionManager) {
         this.bookingRepository = bookingRepository;
         this.eventRepository = eventRepository;
-        this.providers = providers;
+        this.registry = registry;
         this.bookingService = bookingService;
         this.events = events;
         this.notificationService = notificationService;
@@ -88,7 +88,7 @@ public class PlatformBookingPoller {
                 continue;
             }
             try {
-                if (!providers.serves(b)) {
+                if (!registry.serves(b)) {
                     alertNotServed(b.getId()); // never ask the wrong supplier: the mock would answer TICKETED for an id it never saw
                     continue;
                 }
@@ -98,14 +98,14 @@ public class PlatformBookingPoller {
             }
         }
         for (PlatformBooking b : bookingRepository.findByStatusIn(EnumSet.of(PlatformBookingStatus.CANCELLING))) {
-            Optional<Instant> acceptedAt = b.getEnvironment() == SupplierEnvironment.MOCK ? Optional.empty() : acceptedSinceRequested(b.getId());
-            if (acceptedAt.isEmpty()) {
-                continue; // a mock row settles at once; an unanswered cancel is an admin's (resolveCancel)
-            }
             try {
-                if (!providers.serves(b)) {
+                if (!registry.serves(b)) {
                     alertNotServed(b.getId());
                     continue;
+                }
+                Optional<Instant> acceptedAt = registry.supplierFor(b).cancelIsAsync() ? acceptedSinceRequested(b.getId()) : Optional.empty();
+                if (acceptedAt.isEmpty()) {
+                    continue; // a synchronous cancel settles at once; an unanswered cancel is an admin's (resolveCancel)
                 }
                 if (b.getLastPolledAt() == null || !b.getLastPolledAt().isAfter(slowDue)) {
                     pollCancel(b);
@@ -152,7 +152,7 @@ public class PlatformBookingPoller {
     private void pollCancel(PlatformBooking b) {
         BookResult result = null;
         try {
-            result = providers.supplierFor(b).bookingDetails(b.getSupplierBookingId() != null ? b.getSupplierBookingId() : b.getSupplierReviewId());
+            result = registry.supplierFor(b).bookingDetails(b.getSupplierBookingId() != null ? b.getSupplierBookingId() : b.getSupplierReviewId());
         } catch (RuntimeException e) {
             log.warn("bookingDetails for the cancellation of platform booking {} gave no answer: {}", b.getId(), e.getClass().getSimpleName());
         }
@@ -192,7 +192,7 @@ public class PlatformBookingPoller {
         String supplierId = b.getSupplierBookingId() != null ? b.getSupplierBookingId() : b.getSupplierReviewId();
         BookResult result = null;
         try {
-            result = providers.supplierFor(b).bookingDetails(supplierId); // each row asks its own product's supplier
+            result = registry.supplierFor(b).bookingDetails(supplierId); // each row asks the supplier it was reviewed on
         } catch (RuntimeException e) {
             log.warn("bookingDetails for platform booking {} gave no answer: {}", b.getId(), e.getClass().getSimpleName());
         }
@@ -214,7 +214,7 @@ public class PlatformBookingPoller {
         Instant now = Instant.now();
         b.setPollCount(b.getPollCount() + 1);
         b.setLastPolledAt(now);
-        int maxMinutes = providers.pollMaxMinutes(b.getProduct());
+        int maxMinutes = registry.pollMaxMinutes(b.getProduct());
         if (b.getStatus() == PlatformBookingStatus.BOOKING && now.isAfter(bookingStartedAt(b).plus(Duration.ofMinutes(maxMinutes)))) {
             b.setStatus(PlatformBookingStatus.UNKNOWN);
             events.record(bookingId, "UNKNOWN", Map.of("polls", b.getPollCount()));

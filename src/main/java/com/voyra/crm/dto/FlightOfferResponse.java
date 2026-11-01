@@ -20,7 +20,7 @@ import java.util.List;
         + "the agent adds it via the batch proposal-item endpoint")
 public class FlightOfferResponse {
 
-    @Schema(description = "Opaque id for this offer within the search response, not a stored entity", example = "off-1")
+    @Schema(description = "Opaque id for this offer, <supplierId>:<supplier's own id>; not a stored entity", example = "s1:off-1")
     private String offerId;
 
     @Schema(example = "IndiGo")
@@ -56,8 +56,14 @@ public class FlightOfferResponse {
     @Schema(description = "0 = non-stop", example = "0")
     private int stops;
 
-    @Schema(example = "Tripjack")
+    @Schema(description = "Name of the supplier that answered (same as supplierName)", example = "Tripjack")
     private String supplier;
+
+    @Schema(description = "Id of the supplier that answered; offerId, specialReturnId and pairsWith are namespaced by it")
+    private String supplierId;
+
+    @Schema(example = "Tripjack")
+    private String supplierName;
 
     @Schema(description = "Fare for ONE adult", example = "18000.00")
     private BigDecimal price;

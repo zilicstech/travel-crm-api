@@ -6,11 +6,8 @@ import com.voyra.crm.enums.SupplierEnvironment;
 import com.voyra.crm.enums.SupplierProvider;
 import com.voyra.crm.exception.SupplierException;
 import com.voyra.crm.models.ResolvedCredential;
-import com.voyra.crm.service.PlatformSupplierCredentialService;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
@@ -23,8 +20,6 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.Mockito.verifyNoInteractions;
-import static org.mockito.Mockito.when;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withException;
@@ -32,16 +27,12 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 /** Request defaults, odd bodies and the segment shapes the fixture tests leave out, with inline made-up responses. */
-@ExtendWith(MockitoExtension.class)
 class TripjackFlightSearchProviderCoverageTest {
 
     private static final String URL = "https://apitest.tripjack.com/fms/v1/air-search-all";
 
-    @Mock
-    private PlatformSupplierCredentialService credentials;
-
     private static ResolvedCredential credential(String key) {
-        return new ResolvedCredential(SupplierProvider.TRIPJACK, SupplierEnvironment.UAT, "https://apitest.tripjack.com", key, null);
+        return new ResolvedCredential("s1", "Tripjack", SupplierProvider.TRIPJACK, SupplierEnvironment.UAT, "https://apitest.tripjack.com", key, null, null);
     }
 
     private static FlightSearchQuery query() {
@@ -71,18 +62,10 @@ class TripjackFlightSearchProviderCoverageTest {
         server.expect(requestTo(URL)).andExpect(jsonPath("$.searchQuery.cabinClass").value("ECONOMY"))
                 .andRespond(withSuccess(body, MediaType.APPLICATION_JSON));
         try {
-            return new TripjackFlightSearchProvider(credentials, builder).search(q, c);
+            return new TripjackFlightSearchProvider(builder).search(q, c);
         } finally {
             server.verify();
         }
-    }
-
-    @Test
-    void noActivePlatformCredentialStopsTheSearch() {
-        when(credentials.resolveActive(SupplierProvider.TRIPJACK)).thenThrow(new IllegalStateException("No active credential"));
-
-        assertThatThrownBy(() -> new TripjackFlightSearchProvider(credentials, RestClient.builder()).search(query()))
-                .isInstanceOf(IllegalStateException.class).hasMessage("No active credential");
     }
 
     @Test
@@ -184,9 +167,8 @@ class TripjackFlightSearchProviderCoverageTest {
         FlightSearchQuery q = query();
         q.setOrigin("Atlantis Unknown");
 
-        assertThatThrownBy(() -> new TripjackFlightSearchProvider(credentials, RestClient.builder()).search(q, credential("k")))
+        assertThatThrownBy(() -> new TripjackFlightSearchProvider(RestClient.builder()).search(q, credential("k")))
                 .isInstanceOf(IllegalArgumentException.class);
-        verifyNoInteractions(credentials);
     }
 
     /** A provider whose IP lookup answers from {@code ipAnswer} instead of the network; the server is returned for verify. */
@@ -203,7 +185,7 @@ class TripjackFlightSearchProviderCoverageTest {
         RestClient.Builder builder = RestClient.builder();
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
         server.expect(requestTo(URL)).andRespond(withException(new IOException("connection refused")));
-        TripjackFlightSearchProvider provider = new TripjackFlightSearchProvider(credentials, builder);
+        TripjackFlightSearchProvider provider = new TripjackFlightSearchProvider(builder);
         MockRestServiceServer ipServer = ipLookup(provider, withSuccess("203.0.113.7", MediaType.TEXT_PLAIN));
 
         assertThatThrownBy(() -> provider.search(query(), credential("long-test-key")))
@@ -215,7 +197,7 @@ class TripjackFlightSearchProviderCoverageTest {
 
     @Test
     void theOutboundIpIsTrimmedUnknownWhenEmptyAndNamesTheFailureWhenTheLookupFails() {
-        TripjackFlightSearchProvider provider = new TripjackFlightSearchProvider(credentials, RestClient.builder());
+        TripjackFlightSearchProvider provider = new TripjackFlightSearchProvider(RestClient.builder());
 
         ipLookup(provider, withSuccess(" 203.0.113.7\n", MediaType.TEXT_PLAIN));
         assertThat(provider.outboundIp()).isEqualTo("203.0.113.7");
@@ -225,6 +207,5 @@ class TripjackFlightSearchProviderCoverageTest {
 
         ipLookup(provider, withServerError());
         assertThat(provider.outboundIp()).isEqualTo("unknown (lookup failed: InternalServerError)");
-        verifyNoInteractions(credentials);
     }
 }

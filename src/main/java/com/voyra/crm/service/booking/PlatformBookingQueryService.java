@@ -15,6 +15,7 @@ import com.voyra.crm.entity.Agent;
 import com.voyra.crm.entity.Client;
 import com.voyra.crm.entity.PlatformBooking;
 import com.voyra.crm.entity.PlatformBookingEvent;
+import com.voyra.crm.entity.PlatformSupplierCredential;
 import com.voyra.crm.entity.Tenant;
 import com.voyra.crm.enums.PlatformBookingStatus;
 import com.voyra.crm.enums.PricingProduct;
@@ -24,6 +25,7 @@ import com.voyra.crm.repository.ClientRepository;
 import com.voyra.crm.repository.PlatformBookingEventRepository;
 import com.voyra.crm.repository.PlatformBookingRepository;
 import com.voyra.crm.repository.PlatformBookingTicketRepository;
+import com.voyra.crm.repository.PlatformSupplierCredentialRepository;
 import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.security.SecurityContextUtil;
@@ -95,6 +97,7 @@ public class PlatformBookingQueryService {
     private final PaxCodec paxCodec;
     private final ObjectMapper objectMapper;
     private final PlatformBookingTicketRepository ticketRepository;
+    private final PlatformSupplierCredentialRepository credentialRepository;
 
     /** Event recorded by Set markup; its payload {@code markup} competes with the newest ticket download by time. */
     static final String MARKUP_SET = "MARKUP_SET";
@@ -226,12 +229,14 @@ public class PlatformBookingQueryService {
         Map<String, String> agentNames = bookerNames(rows);
         Map<String, String> clientNames = names(rows, PlatformBooking::getClientId,
                 clientRepository::findAllById, Client::getId, Client::getName);
+        Map<String, String> supplierNames = supplierNames(rows);
         Map<String, BigDecimal> markups = currentMarkups(rows.stream().map(PlatformBooking::getId).toList());
         return rows.stream().<PlatformBookingResponse>map(b -> PlatformBookingResponse.builder()
                 .id(b.getId()).product(b.getProduct()).status(b.getStatus()).pnr(b.getPnr()).ticketNumbers(b.getTicketNumbers())
                 .publishedFare(b.getGross()).displayedFare(b.getDisplayed()).agencyEarns(agencyEarns(b)).itinerary(itinerary(b))
                 .hotel(hotel(b)).passengers(passengers(b))
                 .bookedByName(agentNames.get(b.getBookedBy())).clientName(clientNames.get(b.getClientId()))
+                .supplierName(supplierNames.get(b.getCredentialId()))
                 .createdAt(b.getCreatedAt()).ticketedAt(b.getTicketedAt()).cancelRefund(b.getCancelRefund())
                 .supplierMessage(AgencySupplierMessage.of(b)).mirrorStatus(b.getMirrorStatus()).tenantBookingId(b.getTenantBookingId())
                 .markup(markups.getOrDefault(b.getId(), BigDecimal.ZERO))
@@ -266,17 +271,16 @@ public class PlatformBookingQueryService {
         Map<String, String> agencyNames = names(rows, PlatformBooking::getTenantId,
                 tenantRepository::findAllById, Tenant::getId, Tenant::getAgencyName);
         Map<String, String> agentNames = bookerNames(rows);
+        Map<String, String> supplierNames = supplierNames(rows);
         return rows.stream().<PlatformAdminBookingResponse>map(b -> PlatformAdminBookingResponse.builder()
                 .id(b.getId()).product(b.getProduct()).status(b.getStatus()).pnr(b.getPnr()).ticketNumbers(b.getTicketNumbers())
                 .displayedFare(b.getDisplayed()).agencyEarns(agencyEarns(b)).itinerary(itinerary(b)).hotel(hotel(b)).passengers(passengers(b))
-                .bookedByName(agentNames.get(b.getBookedBy()))
+                .bookedByName(agentNames.get(b.getBookedBy())).supplierName(supplierNames.get(b.getCredentialId()))
                 .createdAt(b.getCreatedAt()).ticketedAt(b.getTicketedAt()).cancelRefund(b.getCancelRefund())
                 .supplierMessage(AgencySupplierMessage.of(b)).supplierMessageRaw(b.getSupplierMessage())
                 .mirrorStatus(b.getMirrorStatus()).tenantBookingId(b.getTenantBookingId())
                 .tenantId(b.getTenantId()).agencyName(agencyNames.get(b.getTenantId())).environment(b.getEnvironment())
-                .gross(b.getGross()).base(b.getBase()).discountPct(b.getDiscountPct()).voyraEarned(b.getVoyraEarned())
-                .voyraEarnedSource(b.getVoyraEarnedSource()).voyraEarnedActual(b.getVoyraEarnedActual()).agencyCommission(b.getAgencyCommission()).tds(b.getTds())
-                .voyraNet(b.getVoyraNet())
+                .gross(b.getGross()).base(b.getBase()).discountPct(b.getDiscountPct()).agencyCommission(b.getAgencyCommission()).tds(b.getTds())
                 .events(detail ? eventRepository.findByPlatformBookingIdOrderByCreatedAtAsc(b.getId()).stream()
                         .map(e -> new PlatformBookingEventResponse(e.getType(), e.getPayload(), e.getCreatedAt())).toList() : null)
                 .build()).toList();
@@ -293,6 +297,12 @@ public class PlatformBookingQueryService {
                 .filter(b -> b.getBookedBy() != null && b.getBookedBy().equals(b.getTenantId()) && !out.containsKey(b.getBookedBy())).toList();
         out.putAll(names(byOwner, PlatformBooking::getTenantId, tenantRepository::findAllById, Tenant::getId, Tenant::getOwnerName));
         return out;
+    }
+
+    /** The supplier each row was reviewed on, in one lookup. */
+    private Map<String, String> supplierNames(List<PlatformBooking> rows) {
+        return names(rows, PlatformBooking::getCredentialId, credentialRepository::findAllById,
+                PlatformSupplierCredential::getId, PlatformSupplierCredential::getName);
     }
 
     private static <T> Map<String, String> names(List<PlatformBooking> rows, Function<PlatformBooking, String> idOf,
