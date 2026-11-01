@@ -39,6 +39,9 @@ public class FlightSearchPageRequest {
     @Schema(description = "Only these airlines (by name); omit or empty for all")
     private List<String> airlines;
 
+    @Schema(description = "Only fares of these suppliers (supplier ids); omit or empty for all")
+    private List<String> suppliers;
+
     @Schema(description = "Only refundable fares")
     private boolean refundableOnly;
 

@@ -18,7 +18,7 @@ import java.util.List;
 @Schema(description = "One physical flight with every fare option the supplier returned for it, cheapest first")
 public class FlightGroupResponse {
 
-    @Schema(description = "Stable within one search result: airline|flight number|departure|arrival")
+    @Schema(description = "Stable within one search result: airline code|flight number|departure|arrival per leg, then direction")
     private String key;
 
     @Schema(description = "Airline name")
@@ -54,8 +54,14 @@ public class FlightGroupResponse {
     @Schema(description = "Each direction this flight flies; one leg except on a COMBO round trip")
     private List<FlightLegResponse> legs;
 
-    @Schema(description = "Lowest fare among the (filtered) options")
+    @Schema(description = "Displayed fare of the leading option: the cheapest fare of a supplier taking bookings, else the cheapest")
     private BigDecimal cheapestPrice;
+
+    @Schema(description = "Supplier of the leading option", example = "Tripjack")
+    private String cheapestSupplierName;
+
+    @Schema(description = "How many suppliers have a fare on this flight (after filters)", example = "2")
+    private int supplierCount;
 
     @Schema(description = "Every fare option for this flight, cheapest first")
     private List<FlightOfferResponse> fares;

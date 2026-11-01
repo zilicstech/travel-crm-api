@@ -136,7 +136,7 @@ public class FlightSearchService {
         } else {
             log.debug("Flight search cache HIT: {} flights", groups.size());
         }
-        FlightSearchPageResponse page = FlightResultPaging.page(groups, req);
+        FlightSearchPageResponse page = FlightResultPaging.page(groups, req, registry.bookingEnabledIds(PricingProduct.FLIGHT));
         page.setSuppliersFailed(failed);
         return page;
     }
