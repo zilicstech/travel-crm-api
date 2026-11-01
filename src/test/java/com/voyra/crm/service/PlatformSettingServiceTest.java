@@ -159,6 +159,13 @@ class PlatformSettingServiceTest {
     }
 
     @Test
+    void planPricesFailLoudlyWhenAStoredPriceIsNotANumber() {
+        when(repository.findById("sku_prices")).thenReturn(Optional.of(new PlatformSetting("sku_prices", "{\"LITE\":\"free\",\"SUITE\":4999,\"STAFF_SEATS\":399}", null, null)));
+        assertThatThrownBy(() -> service().planPrices())
+                .isInstanceOf(IllegalStateException.class).hasMessage("sku_prices has no price for LITE");
+    }
+
+    @Test
     void skuPricesNeedLiteSuiteAndSeatsAboveZeroAndIgnoreOtherKeys() {
         signIn();
         when(repository.save(any(PlatformSetting.class))).thenAnswer(i -> i.getArgument(0));
