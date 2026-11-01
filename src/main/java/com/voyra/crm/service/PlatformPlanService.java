@@ -45,11 +45,7 @@ public class PlatformPlanService {
         merged.put("LITE", to.getLite());
         merged.put("SUITE", to.getSuite());
         merged.put("STAFF_SEATS", to.getStaffSeats());
-        try {
-            row.setValue(objectMapper.writeValueAsString(merged));
-        } catch (JsonProcessingException e) {
-            throw new IllegalStateException("sku_prices could not be written", e);
-        }
+        row.setValue(objectMapper.valueToTree(merged).toString());
         row.setUpdatedBy(SecurityContextUtil.getCurrentUserOrThrow().userId());
         row.setUpdatedAt(Instant.now());
         repository.save(row);
