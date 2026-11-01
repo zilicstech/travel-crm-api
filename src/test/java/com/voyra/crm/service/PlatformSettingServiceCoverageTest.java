@@ -196,7 +196,7 @@ class PlatformSettingServiceCoverageTest {
                 new String[]{"voyra_gstin", "27AAACV1234F1Z5"}, new String[]{"voyra_state_code", "27"},
                 new String[]{"subscription_sac", "998314"}, new String[]{"tripjack_live_ready", "false"}, new String[]{"tripjack_live_ready", "true"},
                 new String[]{"founding_agencies", "[\"Voyra Global\",\"QA Agency\"]"},
-                new String[]{"sku_prices", "{\"CRM_CORE\":1,\"STAFF_SEATS\":1,\"ACCOUNTS_GST\":1,\"REPORTS\":1,\"VISA\":1,\"SUITE\":1,\"LITE\":0}"},
+                new String[]{"sku_prices", "{\"LITE\":1,\"SUITE\":1,\"STAFF_SEATS\":1}"},
                 new String[]{"reference_fare_basket_hotel", "[{\"label\":\"x\",\"gross\":100,\"base\":0}]"})) {
             assertThat(service.set(kv[0], kv[1]).getValue()).isEqualTo(kv[1]);
         }
@@ -213,13 +213,13 @@ class PlatformSettingServiceCoverageTest {
 
     @Test
     void skuPricesNeedEveryKeyEachInRange() {
-        String all = "\"CRM_CORE\":1,\"STAFF_SEATS\":1,\"ACCOUNTS_GST\":1,\"REPORTS\":1,\"VISA\":1,\"SUITE\":1";
-        bad("sku_prices", "{oops", "is not valid JSON of the expected shape");
-        bad("sku_prices", "null", "needs exactly");
-        bad("sku_prices", "{" + all + "}", "needs exactly");
-        bad("sku_prices", "{" + all + ",\"LITE\":-1}", "needs exactly");
-        bad("sku_prices", "{" + all + ",\"LITE\":1000001}", "needs exactly");
-        bad("sku_prices", "{" + all + ",\"LITE\":null}", "needs exactly");
+        String all = "\"SUITE\":1,\"STAFF_SEATS\":1";
+        bad("sku_prices", "{oops", "needs LITE, SUITE and STAFF_SEATS");
+        bad("sku_prices", "null", "needs LITE, SUITE and STAFF_SEATS");
+        bad("sku_prices", "{" + all + "}", "needs LITE, SUITE and STAFF_SEATS");
+        bad("sku_prices", "{" + all + ",\"LITE\":-1}", "needs LITE, SUITE and STAFF_SEATS");
+        bad("sku_prices", "{" + all + ",\"LITE\":1000001}", "needs LITE, SUITE and STAFF_SEATS");
+        bad("sku_prices", "{" + all + ",\"LITE\":null}", "needs LITE, SUITE and STAFF_SEATS");
     }
 
     @Test

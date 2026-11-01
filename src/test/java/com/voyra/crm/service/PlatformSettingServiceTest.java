@@ -13,6 +13,7 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import static org.mockito.ArgumentMatchers.any;
@@ -144,22 +145,35 @@ class PlatformSettingServiceTest {
     }
 
     @Test
-    void skuPricesMustNameEveryPriceWithANonNegativeNumber() {
-        signIn();
-        assertThatThrownBy(() -> service().set("sku_prices", "{\"SUITE\":4999}"))
-                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("sku_prices");
-        assertThatThrownBy(() -> service().set("sku_prices", "not json"))
-                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("sku_prices");
-        String negative = "{\"CRM_CORE\":-1,\"STAFF_SEATS\":399,\"ACCOUNTS_GST\":1999,\"REPORTS\":699,\"VISA\":499,\"SUITE\":4999,\"LITE\":2999}";
-        assertThatThrownBy(() -> service().set("sku_prices", negative))
-                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("sku_prices");
-        String extra = "{\"CRM_CORE\":1,\"STAFF_SEATS\":399,\"ACCOUNTS_GST\":1999,\"REPORTS\":699,\"VISA\":499,\"SUITE\":4999,\"X\":1}";
-        assertThatThrownBy(() -> service().set("sku_prices", extra))
-                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("sku_prices");
+    void planPricesReadLiteSuiteAndSeatsFromSkuPrices() {
+        com.voyra.crm.models.PlanPrices p = service().planPrices();
+        assertThat(p.lite()).isEqualByComparingTo("2999");
+        assertThat(p.suite()).isEqualByComparingTo("4999");
+        assertThat(p.staffSeats()).isEqualByComparingTo("399");
+        assertThat(p.monthly(com.voyra.crm.enums.SubscriptionPlan.STARTER)).isEqualByComparingTo("0");
+        assertThat(p.monthly(com.voyra.crm.enums.SubscriptionPlan.LITE)).isEqualByComparingTo("2999");
+        assertThat(p.monthly(com.voyra.crm.enums.SubscriptionPlan.SUITE)).isEqualByComparingTo("4999");
+    }
 
+    @Test
+    void planPricesFailLoudlyWhenAStoredKeyIsMissing() {
+        when(repository.findById("sku_prices")).thenReturn(Optional.of(new PlatformSetting("sku_prices", "{\"LITE\":2999,\"STAFF_SEATS\":399}", null, null)));
+        assertThatThrownBy(() -> service().planPrices())
+                .isInstanceOf(IllegalStateException.class).hasMessage("sku_prices has no price for SUITE");
+    }
+
+    @Test
+    void skuPricesNeedLiteSuiteAndSeatsAboveZeroAndIgnoreOtherKeys() {
+        signIn();
         when(repository.save(any(PlatformSetting.class))).thenAnswer(i -> i.getArgument(0));
-        String ok = "{\"CRM_CORE\":2999,\"STAFF_SEATS\":399,\"ACCOUNTS_GST\":1999,\"REPORTS\":699,\"VISA\":499,\"SUITE\":5499,\"LITE\":2999}";
+        String ok = "{\"LITE\":2999,\"SUITE\":4999,\"STAFF_SEATS\":399}";
         assertThat(service().set("sku_prices", ok).getValue()).isEqualTo(ok);
+        service().set("sku_prices", "{\"LITE\":2999.50,\"SUITE\":4999,\"STAFF_SEATS\":399,\"CRM_CORE\":2499,\"FOO\":-1}");
+        for (String bad : List.of("{\"LITE\":2999,\"STAFF_SEATS\":399}", "{\"LITE\":0,\"SUITE\":4999,\"STAFF_SEATS\":399}",
+                "{\"LITE\":1000001,\"SUITE\":4999,\"STAFF_SEATS\":399}", "{\"LITE\":2999.999,\"SUITE\":4999,\"STAFF_SEATS\":399}",
+                "{\"LITE\":null,\"SUITE\":4999,\"STAFF_SEATS\":399}", "{\"LITE\":\"2999\",\"SUITE\":4999,\"STAFF_SEATS\":399}", "not json"))
+            assertThatThrownBy(() -> service().set("sku_prices", bad)).isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("sku_prices needs LITE, SUITE and STAFF_SEATS");
     }
 
     @Test
