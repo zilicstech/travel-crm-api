@@ -107,12 +107,12 @@ public class PlatformBookingMirrorService {
 
     /**
      * Prices the CRM booking of a ticketed platform booking at the published fare plus {@code markup}, as the system in
-     * the agency's schema, with no platform transaction open. Unlike {@link #sync} its refusals reach the caller.
+     * the agency's schema on behalf of {@code by} (who CRM History names), with no platform transaction open. Unlike {@link #sync} its refusals reach the caller.
      */
-    public void setMarkup(PlatformBooking pb, BigDecimal markup) {
+    public void setMarkup(PlatformBooking pb, BigDecimal markup, SystemActor.Author by) {
         Assert.state(!TransactionSynchronizationManager.isActualTransactionActive(),
                 "setMarkup must not run inside a platform transaction");
-        SystemActor.call(pb.getTenantId(), () -> {
+        SystemActor.call(pb.getTenantId(), by, () -> {
             tenantService.setMarkup(pb, markup);
             return null;
         });

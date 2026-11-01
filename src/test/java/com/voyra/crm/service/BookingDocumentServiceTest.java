@@ -393,7 +393,7 @@ class BookingDocumentServiceTest {
 
         assertThatThrownBy(() -> service.attachFile("B1", "D1", org.mockito.Mockito.mock(org.springframework.web.multipart.MultipartFile.class)))
                 .isInstanceOf(com.voyra.crm.exception.BookingConflictException.class)
-                .hasMessage("Managed from Platform Bookings");
+                .hasMessage("Voyra manages this booking; use the Voyra section on it");
         verify(fileStorageService, never()).store(any(), any(), any(), any());
     }
 

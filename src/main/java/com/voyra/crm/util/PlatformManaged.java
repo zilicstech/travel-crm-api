@@ -14,10 +14,10 @@ public final class PlatformManaged {
     private PlatformManaged() {
     }
 
-    /** 409 "Managed from Platform Bookings" when {@code mirrored}, unless the system actor is writing. */
+    /** 409 "Voyra manages this booking" when {@code mirrored}, unless the system actor is writing. */
     public static void check(boolean mirrored) {
         if (mirrored && !SystemActor.isActive()) {
-            throw new BookingConflictException(CODE, "Managed from Platform Bookings", Map.of());
+            throw new BookingConflictException(CODE, "Voyra manages this booking; use the Voyra section on it", Map.of());
         }
     }
 

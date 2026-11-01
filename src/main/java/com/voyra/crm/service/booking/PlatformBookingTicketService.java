@@ -19,6 +19,7 @@ import com.voyra.crm.repository.PlatformBookingRepository;
 import com.voyra.crm.repository.PlatformBookingTicketRepository;
 import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.service.AgencyLogoLoader;
+import com.voyra.crm.security.SystemActor;
 import com.voyra.crm.service.AuthorResolver;
 import com.voyra.crm.service.EntitlementService;
 import com.voyra.crm.service.booking.ticket.Direction;
@@ -92,7 +93,8 @@ public class PlatformBookingTicketService {
             Entitlements crm = entitlementService.resolve(checked.getTenantId());
             if (crm.skus().contains(Sku.CRM_CORE) && !crm.readOnly()) {
                 try {
-                    mirrorService.setMarkup(checked, m);
+                    AuthorResolver.AuthorInfo who = authorResolver.resolveCurrentAuthor();
+                    mirrorService.setMarkup(checked, m, new SystemActor.Author(who.id(), who.name()));
                 } catch (BookingConflictException e) {
                     if (!"MARKUP_NOT_APPLICABLE".equals(e.getCode())) {
                         throw e;

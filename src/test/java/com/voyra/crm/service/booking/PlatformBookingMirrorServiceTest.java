@@ -262,7 +262,7 @@ class PlatformBookingMirrorServiceTest {
         verifyNoInteractions(tenantService);
     }
 
-    /** Set markup runs as the system in the agency's schema, restores the caller, and a refusal reaches the caller. */
+    /** Set markup runs as the system in the agency's schema on the user's behalf, restores the caller, and a refusal reaches the caller. */
     @Test
     void setMarkupRunsAsTheSystemAndPassesRefusalsOn() {
         PlatformBooking b = ticketed("C1");
@@ -270,18 +270,19 @@ class PlatformBookingMirrorServiceTest {
         doAnswer(i -> {
             seen.add(TenantContext.getTenantId());
             seen.add(String.valueOf(SystemActor.isActive()));
+            seen.add(SystemActor.author().name());
             return null;
         }).when(tenantService).setMarkup(b, new BigDecimal("500.00"));
 
-        service.setMarkup(b, new BigDecimal("500.00"));
+        service.setMarkup(b, new BigDecimal("500.00"), new SystemActor.Author("T1", "Asha Rao"));
 
-        assertThat(seen).containsExactly("T1", "true");
+        assertThat(seen).containsExactly("T1", "true", "Asha Rao");
         assertThat(TenantContext.getTenantId()).isNull();
         assertThat(SystemActor.isActive()).isFalse();
 
         org.mockito.Mockito.doThrow(new com.voyra.crm.exception.BookingConflictException("PRICE_BELOW_INVOICED", "below", Map.of()))
                 .when(tenantService).setMarkup(b, BigDecimal.ONE);
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.setMarkup(b, BigDecimal.ONE))
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.setMarkup(b, BigDecimal.ONE, new SystemActor.Author("T1", "Asha Rao")))
                 .isInstanceOf(com.voyra.crm.exception.BookingConflictException.class);
         assertThat(SystemActor.isActive()).isFalse();
     }
@@ -291,7 +292,7 @@ class PlatformBookingMirrorServiceTest {
         PlatformBooking b = ticketed("C1");
         org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(true);
         try {
-            org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.setMarkup(b, BigDecimal.ONE))
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.setMarkup(b, BigDecimal.ONE, new SystemActor.Author("T1", "Asha Rao")))
                     .isInstanceOf(IllegalStateException.class);
         } finally {
             org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(false);

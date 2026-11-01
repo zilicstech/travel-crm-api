@@ -236,6 +236,17 @@ class BookingLifecycleServiceTest {
         assertThat(settled.getAllowedActions()).containsExactly("CROSS_CHECK");
     }
 
+    /** A booking Voyra could not complete moved no money, so there is nothing for Accounts to cross-check. */
+    @Test
+    void aFailCancelledVoyraBookingOffersNoCrossCheck() {
+        Booking b = booking(BookingStatus.CANCELLED);
+        b.setPlatformBookingId("PB1");
+        b.setCancelledBy(com.voyra.crm.security.SystemActor.USER_ID);
+
+        assertThat(BookingLifecycleService.build(facts(b, 1, List.of(), List.of(), "0"), Viewer.ACCOUNTANT).getAllowedActions())
+                .doesNotContain("CROSS_CHECK");
+    }
+
     /** BUG-MO-14 / MO-13, BK-01000: cancelled before any invoice, its 4,680 "Cancellation charges" invoice is unpaid. */
     @Test
     void noCrossCheckWhileTheCancellationChargesAreUnpaid() {

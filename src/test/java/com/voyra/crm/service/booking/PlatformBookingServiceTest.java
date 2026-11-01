@@ -715,13 +715,13 @@ class PlatformBookingServiceTest {
         assertThat(b).isSameAs(rows.get(id));
         org.mockito.InOrder order = inOrder(entitlementService, mirrorService);
         order.verify(entitlementService).assertWritable(T);
-        order.verify(mirrorService).setMarkup(b, new BigDecimal("250.50"));
+        order.verify(mirrorService).setMarkup(b, new BigDecimal("250.50"), new com.voyra.crm.security.SystemActor.Author("OWNER1", "Asha Rao"));
         assertThat(savedEvents).filteredOn(e -> e.getType().equals("MARKUP_SET")).singleElement()
                 .satisfies(e -> assertThat(e.getPayload()).containsEntry("markup", "250.50")
                         .containsEntry("by", "OWNER1").containsEntry("byName", "Asha Rao"));
     }
 
-    /** The CRM reprice runs as the system, so the event names who set the markup. */
+    /** The CRM reprice runs as the system on the agent's behalf, so CRM History and the event both name them. */
     @Test
     void anAgentsSetMarkupNamesTheAgentOnTheEvent() {
         String id = reviewedByAgent("AG1");
@@ -734,6 +734,7 @@ class PlatformBookingServiceTest {
 
         service.setMarkup(id, BigDecimal.TEN);
 
+        verify(mirrorService).setMarkup(any(), eq(new BigDecimal("10.00")), eq(new com.voyra.crm.security.SystemActor.Author("AG1", "Liam")));
         assertThat(savedEvents).filteredOn(e -> e.getType().equals("MARKUP_SET")).singleElement()
                 .satisfies(e -> assertThat(e.getPayload()).containsEntry("by", "AG1").containsEntry("byName", "Liam"));
     }
@@ -744,7 +745,7 @@ class PlatformBookingServiceTest {
         String id = ticketedWithCrmRow();
         crmPlan(true);
         org.mockito.Mockito.doThrow(new BookingConflictException("PRICE_BELOW_INVOICED", "below", Map.of()))
-                .when(mirrorService).setMarkup(any(), any());
+                .when(mirrorService).setMarkup(any(), any(), any());
 
         assertThatThrownBy(() -> service.setMarkup(id, BigDecimal.ONE)).isInstanceOf(BookingConflictException.class);
         assertThat(savedEvents).noneMatch(e -> e.getType().equals("MARKUP_SET"));
@@ -761,7 +762,7 @@ class PlatformBookingServiceTest {
             assertThat(e.getCode()).isEqualTo("TICKET_NOT_AVAILABLE");
             assertThat(e.getMessage()).isEqualTo("Markup can be set only on a ticketed booking");
         });
-        verify(mirrorService, never()).setMarkup(any(), any());
+        verify(mirrorService, never()).setMarkup(any(), any(), any());
         org.mockito.Mockito.verifyNoInteractions(entitlementService);
     }
 
@@ -770,11 +771,14 @@ class PlatformBookingServiceTest {
     void setMarkupWithoutACrmBookingIs404() {
         String id = ticketedWithCrmRow();
         crmPlan(false);
-        assertThatThrownBy(() -> service.setMarkup(id, BigDecimal.ONE)).isInstanceOf(NotFoundException.class);
+        assertThatThrownBy(() -> service.setMarkup(id, BigDecimal.ONE)).isInstanceOf(NotFoundException.class)
+                .hasMessage("Set markup is part of the CRM plans");
 
+        crmPlan(true);
         rows.get(id).setTenantBookingId(null);
-        assertThatThrownBy(() -> service.setMarkup(id, BigDecimal.ONE)).isInstanceOf(NotFoundException.class);
-        verify(mirrorService, never()).setMarkup(any(), any());
+        assertThatThrownBy(() -> service.setMarkup(id, BigDecimal.ONE)).isInstanceOf(NotFoundException.class)
+                .hasMessage("This booking has no CRM booking to price");
+        verify(mirrorService, never()).setMarkup(any(), any(), any());
         verify(entitlementService, never()).assertWritable(any());
     }
 
@@ -785,7 +789,7 @@ class PlatformBookingServiceTest {
         org.mockito.Mockito.doThrow(com.voyra.crm.exception.TenantWriteRefusedException.readOnly()).when(entitlementService).assertWritable(T);
 
         assertThatThrownBy(() -> service.setMarkup(id, BigDecimal.ONE)).isInstanceOf(com.voyra.crm.exception.TenantWriteRefusedException.class);
-        verify(mirrorService, never()).setMarkup(any(), any());
+        verify(mirrorService, never()).setMarkup(any(), any(), any());
     }
 
     @Test

@@ -49,6 +49,7 @@ import com.voyra.crm.repository.WalletEntryRepository;
 import com.voyra.crm.repository.WalletRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.security.SecurityContextUtil;
+import com.voyra.crm.security.SystemActor;
 import com.voyra.crm.service.AgencyPricingService;
 import com.voyra.crm.service.EntitlementService;
 import com.voyra.crm.service.NotificationService;
@@ -454,15 +455,18 @@ public class PlatformBookingService {
         if (m.compareTo(b.getGross()) > 0) {
             throw new IllegalArgumentException("Markup can be at most the published fare");
         }
-        if (b.getTenantBookingId() == null || !entitlementService.resolve(b.getTenantId()).skus().contains(Sku.CRM_CORE)) {
+        if (!entitlementService.resolve(b.getTenantId()).skus().contains(Sku.CRM_CORE)) {
+            throw new NotFoundException("Set markup is part of the CRM plans");
+        }
+        if (b.getTenantBookingId() == null) {
             throw new NotFoundException("This booking has no CRM booking to price");
         }
         entitlementService.assertWritable(b.getTenantId());
-        mirrorService.setMarkup(b, m);
-        // the CRM reprice ran as the system, so the event names who set it
         String byName = principal.isStaffUser()
                 ? agentRepository.findById(principal.userId()).map(Agent::getName).orElse(principal.username())
                 : tenantRepository.findById(principal.userId()).map(Tenant::getOwnerName).orElse(principal.username());
+        // the CRM reprice runs as the system on behalf of this user, so CRM History and the event both name them
+        mirrorService.setMarkup(b, m, new SystemActor.Author(principal.userId(), byName));
         // the current markup the next ticket download opens with (PlatformBookingQueryService#currentMarkup)
         // shortcut: recorded in its own transaction after the CRM reprice committed, so a crash between them leaves the
         // CRM price set but the next download prefilled with the old markup; record it in one transaction if that bites

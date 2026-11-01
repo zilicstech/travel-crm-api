@@ -73,7 +73,7 @@ class AccessAndGuardsTest {
     void aMirroredBookingRefusesEveryoneButTheSystemActor() {
         assertThatCode(() -> PlatformManaged.check(false)).doesNotThrowAnyException();
         assertThatThrownBy(() -> PlatformManaged.check(true))
-                .isInstanceOf(BookingConflictException.class).hasMessage("Managed from Platform Bookings");
+                .isInstanceOf(BookingConflictException.class).hasMessage("Voyra manages this booking; use the Voyra section on it");
         assertThat(SystemActor.call("t1", () -> {
             PlatformManaged.check(true);
             return "ok";

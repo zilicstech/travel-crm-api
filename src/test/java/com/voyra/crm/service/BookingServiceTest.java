@@ -232,7 +232,7 @@ class BookingServiceTest {
                 () -> bookingService.replaceCostComponents("B1", java.util.List.of()));
         for (org.assertj.core.api.ThrowableAssert.ThrowingCallable edit : edits) {
             assertThatThrownBy(edit).isInstanceOf(com.voyra.crm.exception.BookingConflictException.class)
-                    .hasMessage("Managed from Platform Bookings")
+                    .hasMessage("Voyra manages this booking; use the Voyra section on it")
                     .extracting("code").isEqualTo("MANAGED_FROM_PLATFORM");
         }
         org.mockito.Mockito.verify(bookingRepository, org.mockito.Mockito.never()).save(org.mockito.ArgumentMatchers.any());

@@ -84,6 +84,23 @@ class AuthorResolverTest {
         assertThat(com.voyra.crm.security.SystemActor.isActive()).isFalse();
     }
 
+    /** Acting on a user's behalf, the system's writes name that user; a nested plain scope names the system, then hands back. */
+    @Test
+    void theSystemActorOnAUsersBehalfNamesThatUser() {
+        var asha = new com.voyra.crm.security.SystemActor.Author("AG1", "Asha Rao");
+        List<String> names = new java.util.ArrayList<>();
+
+        com.voyra.crm.security.SystemActor.call("T1", asha, () -> {
+            names.add(authorResolver.resolveCurrentAuthor().name());
+            names.add(com.voyra.crm.security.SystemActor.call("T1", () -> authorResolver.resolveCurrentAuthor().name()));
+            names.add(authorResolver.resolveCurrentAuthor().id());
+            return null;
+        });
+
+        assertThat(names).containsExactly("Asha Rao", "Voyra Platform", "AG1");
+        assertThat(com.voyra.crm.security.SystemActor.author()).isNull();
+    }
+
     @Test
     void aStaffLoginOrOwnerWithoutItsRowFails() {
         org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(

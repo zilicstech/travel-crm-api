@@ -741,6 +741,19 @@ class BookingCancellationServiceTest {
         verify(bookingService, never()).toResponsePublic(done);
     }
 
+    /** A Voyra booking Voyra could not complete was charged nothing: it is not on the refunds list. */
+    @Test
+    void aFailCancelledVoyraBookingIsNotOnTheList() {
+        Booking failed = Booking.builder().id("B1").bookingStatus(BookingStatus.CANCELLED).platformBookingId("PB1")
+                .cancelledBy(com.voyra.crm.security.SystemActor.USER_ID)
+                .customerRefundDue(BigDecimal.ZERO).refundedTotalInr(BigDecimal.ZERO)
+                .supplierRefundExpected(BigDecimal.ZERO).supplierRefundReceived(BigDecimal.ZERO).build();
+        when(bookingRepository.findByBookingStatus(BookingStatus.CANCELLED)).thenReturn(List.of(failed));
+
+        assertThat(service.listOutstanding()).isEmpty();
+        verify(bookingService, never()).toResponsePublic(any());
+    }
+
     /** Nothing to refund either way, but the client still owes its cancellation charges: listed with what it owes. */
     @Test
     void aCancelledBookingWhoseClientStillOwesChargesIsListedWithWhatItOwes() {
@@ -892,7 +905,7 @@ class BookingCancellationServiceTest {
         b.setPlatformBookingId("PB1");
 
         assertThatThrownBy(() -> service.cancel("B1", cancel("1000", "0")))
-                .isInstanceOf(com.voyra.crm.exception.BookingConflictException.class).hasMessage("Managed from Platform Bookings");
+                .isInstanceOf(com.voyra.crm.exception.BookingConflictException.class).hasMessage("Voyra manages this booking; use the Voyra section on it");
         b.setBookingStatus(BookingStatus.CANCELLED);
         b.setSupplierRefundExpected(d("6000"));
         assertThatThrownBy(() -> service.recordSupplierRefund("B1", pay("6000")))

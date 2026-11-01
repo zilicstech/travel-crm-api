@@ -29,7 +29,8 @@ public class AuthorResolver {
 
     public AuthorInfo resolveCurrentAuthor() {
         if (SystemActor.isActive()) {
-            return new AuthorInfo(SystemActor.USER_ID, SystemActor.NAME);
+            SystemActor.Author author = SystemActor.author();
+            return new AuthorInfo(author.id(), author.name());
         }
         CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
         if (principal.isStaffUser()) {

@@ -506,7 +506,7 @@ class SupplierPaymentServiceTest {
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> supplierPaymentService.pay(request("SI1", new BigDecimal("100.00"))))
                 .isInstanceOf(com.voyra.crm.exception.BookingConflictException.class)
-                .hasMessage("Managed from Platform Bookings");
+                .hasMessage("Voyra manages this booking; use the Voyra section on it");
         verify(supplierPaymentRepository, org.mockito.Mockito.never()).save(any());
     }
 

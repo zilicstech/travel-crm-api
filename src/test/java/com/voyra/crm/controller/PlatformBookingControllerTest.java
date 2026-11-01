@@ -314,7 +314,7 @@ class PlatformBookingControllerTest {
     @Test
     void patchMarkupValidatesLikeTheTicket() throws Exception {
         Map<String, String> bad = Map.of("{\"markup\":-1}", "Markup cannot be negative",
-                "{\"markup\":1.234}", "Markup can have at most two decimals",
+                "{\"markup\":1.234}", "Markup can be at most the published fare, with at most two decimals",
                 "{}", "Markup is required");
         for (Map.Entry<String, String> e : bad.entrySet()) {
             mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch("/api/platform-bookings/B1/markup")

@@ -372,6 +372,8 @@ public class BookingCancellationService {
     @Transactional(readOnly = true)
     public List<BookingResponse> listOutstanding() {
         return bookingRepository.findByBookingStatus(BookingStatus.CANCELLED).stream()
+                // a booking Voyra could not complete moved no money, so there is nothing to refund or cross-check
+                .filter(b -> !BookingService.isFailCancelled(b))
                 .filter(b -> b.getRefundCheckedAt() == null || !settled(b))
                 .map(b -> {
                     BookingResponse response = bookingService.toResponsePublic(b);

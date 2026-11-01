@@ -316,7 +316,7 @@ public class BookingLifecycleService {
             actions.add(REJECT_SUPPLIER_REFUND);
         }
         if (accounts && cancelled && !clientRefundOpen && !supplierRefundOpen && claim == null && toCollect.signum() == 0
-                && b.getRefundCheckedAt() == null) actions.add(CROSS_CHECK);
+                && b.getRefundCheckedAt() == null && !BookingService.isFailCancelled(b)) actions.add(CROSS_CHECK);
 
         return BookingLifecycleResponse.builder()
                 .bookingId(b.getId())

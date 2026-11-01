@@ -249,7 +249,7 @@ class PlatformBookingTicketServiceTest {
         TicketDownloadResponse t = service.create("B1", new BigDecimal("500.5"));
 
         org.mockito.InOrder order = org.mockito.Mockito.inOrder(mirrorService, bookings, tickets);
-        order.verify(mirrorService).setMarkup(b, new BigDecimal("500.50"));
+        order.verify(mirrorService).setMarkup(b, new BigDecimal("500.50"), new com.voyra.crm.security.SystemActor.Author("T1", "Dana Owner"));
         order.verify(bookings).findByIdAndTenantIdForUpdate("B1", "T1");
         order.verify(tickets).save(any());
         assertThat(t.getTicketPrice()).isEqualByComparingTo("5500.50");
@@ -263,9 +263,10 @@ class PlatformBookingTicketServiceTest {
         b.setTenantBookingId("CRM1");
         given(bookings.findByIdAndTenantId("B1", "T1")).willReturn(Optional.of(b));
         plan(com.voyra.crm.enums.SubscriptionPlan.SUITE, com.voyra.crm.enums.SubscriptionStatus.ACTIVE);
+        given(authorResolver.resolveCurrentAuthor()).willReturn(new AuthorResolver.AuthorInfo("T1", "Dana Owner"));
         org.mockito.Mockito.doThrow(new BookingConflictException("PRICE_BELOW_INVOICED",
                         "This price is below what you have invoiced; adjust the invoice first", Map.of()))
-                .when(mirrorService).setMarkup(b, new BigDecimal("100.00"));
+                .when(mirrorService).setMarkup(b, new BigDecimal("100.00"), new com.voyra.crm.security.SystemActor.Author("T1", "Dana Owner"));
 
         assertThatThrownBy(() -> service.create("B1", new BigDecimal("100")))
                 .isInstanceOfSatisfying(BookingConflictException.class, e -> assertThat(e.getCode()).isEqualTo("PRICE_BELOW_INVOICED"));
@@ -285,7 +286,7 @@ class PlatformBookingTicketServiceTest {
         plan(com.voyra.crm.enums.SubscriptionPlan.SUITE, com.voyra.crm.enums.SubscriptionStatus.ACTIVE);
         org.mockito.Mockito.doThrow(new BookingConflictException("MARKUP_NOT_APPLICABLE",
                         "Markup can be set only on a confirmed booking", Map.of()))
-                .when(mirrorService).setMarkup(b, new BigDecimal("500.00"));
+                .when(mirrorService).setMarkup(b, new BigDecimal("500.00"), new com.voyra.crm.security.SystemActor.Author("T1", "Dana Owner"));
 
         TicketDownloadResponse t = service.create("B1", new BigDecimal("500"));
 
@@ -330,7 +331,7 @@ class PlatformBookingTicketServiceTest {
 
         service.create("B1", new BigDecimal("500"));
 
-        verify(mirrorService).setMarkup(b, new BigDecimal("500.00"));
+        verify(mirrorService).setMarkup(b, new BigDecimal("500.00"), new com.voyra.crm.security.SystemActor.Author("T1", "Dana Owner"));
         assertThat(saved).hasSize(1);
     }
 
