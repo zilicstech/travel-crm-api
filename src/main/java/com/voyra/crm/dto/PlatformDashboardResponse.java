@@ -18,11 +18,8 @@ public class PlatformDashboardResponse {
     @Schema(description = "Last IST day (today)", example = "2026-10-26")
     private LocalDate to;
 
-    @Schema(description = "Fares charged to agencies on live (PROD) bookings ticketed in the window, as on the P&L", example = "125000.00")
+    @Schema(description = "Fares charged to agencies on live (PROD) bookings ticketed in the window", example = "125000.00")
     private BigDecimal gmv30d;
-
-    @Schema(description = "Voyra net on those bookings, as on the P&L", example = "4210.50")
-    private BigDecimal voyraNet30d;
 
     @Schema(description = "Sum of agency wallet balances, test wallets excluded", example = "350000.00")
     private BigDecimal walletFloat;

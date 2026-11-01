@@ -490,8 +490,6 @@ class PlatformBookingCancelTest {
         PlatformBooking b = service.cancel(ID, "ck-1");
 
         assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
-        assertThat(b.getVoyraNet()).isNull();
-        assertThat(b.getVoyraEarnedReversal()).isNull();
         verify(walletService).credit(eq(T), eq(WalletEntryType.REFUND_CREDIT), any(), anyString(), anyString(), anyString(), anyString());
         verify(walletService).debitOrReceivable(eq(T), eq(WalletEntryType.COMMISSION_RECALL), any(), anyString(), anyString(), anyString(), any());
         verify(notificationService, never()).platformAlert(anyString(), anyString()); // no "Loss-making" alert

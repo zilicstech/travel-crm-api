@@ -37,6 +37,7 @@ class PlatformDashboardControllerTest {
                 .walletFloat(new BigDecimal("3500.50")).unknownBookings(1).failedEmails(6).build());
         mockMvc.perform(get("/api/platform/dashboard").with(user("a").roles("SUPER_ADMIN"))).andExpect(status().isOk())
                 .andExpect(jsonPath("$.gmv30d").value(125000.0))
+                .andExpect(jsonPath("$.voyraNet30d").doesNotExist())
                 .andExpect(jsonPath("$.walletFloat").value(3500.5))
                 .andExpect(jsonPath("$.unknownBookings").value(1))
                 .andExpect(jsonPath("$.failedEmails").value(6));

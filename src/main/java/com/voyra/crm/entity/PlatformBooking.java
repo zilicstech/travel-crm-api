@@ -4,7 +4,6 @@ import com.voyra.crm.enums.MirrorStatus;
 import com.voyra.crm.enums.PlatformBookingStatus;
 import com.voyra.crm.enums.PricingProduct;
 import com.voyra.crm.enums.SupplierEnvironment;
-import com.voyra.crm.enums.VoyraEarnedSource;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -101,27 +100,11 @@ public class PlatformBooking {
     @Column(name = "pricing_snapshot", columnDefinition = "jsonb")
     private Map<String, Object> pricingSnapshot;
 
-    @Column(name = "voyra_earned", precision = 19, scale = 2)
-    private BigDecimal voyraEarned;
-
-    @Enumerated(EnumType.STRING)
-    @Column(name = "voyra_earned_source", length = 10)
-    private VoyraEarnedSource voyraEarnedSource;
-
-    @Column(name = "voyra_earned_actual", precision = 19, scale = 2)
-    private BigDecimal voyraEarnedActual;
-
-    @Column(name = "voyra_earned_reversal", precision = 19, scale = 2)
-    private BigDecimal voyraEarnedReversal;
-
     @Column(name = "agency_commission", precision = 19, scale = 2)
     private BigDecimal agencyCommission;
 
     @Column(name = "tds", precision = 19, scale = 2)
     private BigDecimal tds;
-
-    @Column(name = "voyra_net", precision = 19, scale = 2)
-    private BigDecimal voyraNet;
 
     @Column(name = "pax_count")
     private Integer paxCount;

@@ -1,7 +1,6 @@
 package com.voyra.crm.service;
 
 import com.voyra.crm.dto.PlatformDashboardResponse;
-import com.voyra.crm.dto.PnlRow;
 import com.voyra.crm.entity.Wallet;
 import com.voyra.crm.enums.ApplicationStatus;
 import com.voyra.crm.enums.NotificationOutboxStatus;
@@ -32,8 +31,9 @@ import java.util.Set;
 public class PlatformDashboardService {
 
     private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
+    private static final Set<PlatformBookingStatus> COUNTED =
+            Set.of(PlatformBookingStatus.TICKETED, PlatformBookingStatus.CANCELLING, PlatformBookingStatus.CANCELLED);
 
-    private final PlatformPnlService pnlService;
     private final WalletRepository walletRepository;
     private final AgencyApplicationRepository applicationRepository;
     private final TopupRequestRepository topupRepository;
@@ -45,8 +45,8 @@ public class PlatformDashboardService {
     public PlatformDashboardResponse dashboard() {
         LocalDate to = LocalDate.now(IST);
         LocalDate from = to.minusDays(29);
-        // same sums as the P&L screen, live bookings only
-        PnlRow totals = pnlService.pnl(from, to, null, null, SupplierEnvironment.PROD).getTotals();
+        BigDecimal gmv = bookingRepository.sumDisplayedTicketed(from.atStartOfDay(IST).toInstant(),
+                to.plusDays(1).atStartOfDay(IST).toInstant(), SupplierEnvironment.PROD, COUNTED);
         // shortcut: one wallet per agency summed in memory; move to a SUM query past a few thousand agencies
         BigDecimal walletFloat = walletRepository.findAll().stream()
                 .filter(w -> !Boolean.TRUE.equals(w.getIsTest()))
@@ -54,8 +54,7 @@ public class PlatformDashboardService {
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         return PlatformDashboardResponse.builder()
                 .from(from).to(to)
-                .gmv30d(totals.getGmv())
-                .voyraNet30d(totals.getVoyraNet())
+                .gmv30d(gmv)
                 .walletFloat(walletFloat)
                 .pendingKyc(applicationRepository.countByStatusIn(Set.of(ApplicationStatus.SUBMITTED, ApplicationStatus.UNDER_REVIEW)))
                 .pendingTopups(topupRepository.countByStatusAndMode(TopupStatus.PENDING, TopupMode.BANK_TRANSFER))

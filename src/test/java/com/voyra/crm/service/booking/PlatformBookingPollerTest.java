@@ -163,7 +163,7 @@ class PlatformBookingPollerTest {
                 .id(id).tenantId(T).product(PricingProduct.FLIGHT).status(PlatformBookingStatus.BOOKING)
                 .environment(SupplierEnvironment.MOCK).supplierReviewId("rv-" + id)
                 .gross(new BigDecimal("5000.00")).base(new BigDecimal("4250.00")).displayed(new BigDecimal("4500.00"))
-                .agencyCommission(new BigDecimal("100.00")).tds(BigDecimal.ZERO).voyraNet(new BigDecimal("27.50"))
+                .agencyCommission(new BigDecimal("100.00")).tds(BigDecimal.ZERO)
                 .holdEntryId("H1").createdAt(bookingAt.minus(2, ChronoUnit.MINUTES)).build();
         rows.put(id, b);
         savedEvents.add(PlatformBookingEvent.builder().id("E-" + id).platformBookingId(id).type("BOOKING").createdAt(bookingAt).build());
@@ -473,7 +473,6 @@ class PlatformBookingPollerTest {
         b.setEnvironment(SupplierEnvironment.UAT); // booked with Tripjack
         b.setSupplierBookingId("SB-" + id);
         b.setPnr("PNR1");
-        b.setVoyraEarned(new BigDecimal("127.50"));
         savedEvents.add(PlatformBookingEvent.builder().id("E-REQ" + id).platformBookingId(id).type("CANCEL_REQUESTED")
                 .payload(Map.of("key", "ck-1")).createdAt(acceptedAt.minusSeconds(5)).build());
         savedEvents.add(PlatformBookingEvent.builder().id("E-ACC" + id).platformBookingId(id).type("CANCEL_ACCEPTED")

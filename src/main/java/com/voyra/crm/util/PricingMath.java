@@ -15,9 +15,4 @@ public final class PricingMath {
     public static BigDecimal displayed(BigDecimal gross, BigDecimal discountPct) {
         return gross.subtract(gross.multiply(discountPct).divide(HUNDRED)).setScale(2, RoundingMode.HALF_UP);
     }
-
-    /** voyraNet = voyraEarned - (gross - displayed) - agencyCommission; only the statement import still uses it (removed with it). */
-    public static BigDecimal voyraNetOf(BigDecimal voyraEarned, BigDecimal gross, BigDecimal displayed, BigDecimal agencyCommission) {
-        return voyraEarned.subtract(gross.subtract(displayed)).subtract(agencyCommission).setScale(2, RoundingMode.HALF_UP);
-    }
 }

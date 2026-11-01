@@ -14,7 +14,6 @@ import com.voyra.crm.enums.PlatformBookingStatus;
 import com.voyra.crm.enums.PricingProduct;
 import com.voyra.crm.enums.SupplierEnvironment;
 import com.voyra.crm.enums.UserType;
-import com.voyra.crm.enums.VoyraEarnedSource;
 import com.voyra.crm.exception.NotFoundException;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.ClientRepository;
@@ -80,9 +79,9 @@ class PlatformBookingQueryServiceTest {
                 .status(PlatformBookingStatus.TICKETED).environment(SupplierEnvironment.UAT)
                 .supplierReviewId("RV-SECRET").supplierBookingId("TJS-SECRET").pnr("ABC123").ticketNumbers(List.of("098-1"))
                 .gross(new BigDecimal("5000.00")).base(new BigDecimal("4250.00")).discountPct(new BigDecimal("10.00"))
-                .displayed(new BigDecimal("4500.00")).voyraEarned(new BigDecimal("250.00"))
-                .voyraEarnedSource(VoyraEarnedSource.ESTIMATE).agencyCommission(new BigDecimal("100.00"))
-                .tds(new BigDecimal("5.00")).voyraNet(new BigDecimal("145.00")).paxCount(1)
+                .displayed(new BigDecimal("4500.00"))
+                .agencyCommission(new BigDecimal("100.00"))
+                .tds(new BigDecimal("5.00")).paxCount(1)
                 .paxEnc(paxCodec.encrypt(Map.of("passengers", List.of(Map.of("type", "ADULT", "title", "Mr", "firstName", "Rahul",
                         "lastName", "Sharma", "passportNo", "N1234567")), "contactEmail", "c@x.test")))
                 .itinerary(Map.of("tripInfos", List.of(Map.of("sI", List.of(Map.of("fD", Map.of("aI", Map.of("code", "6E", "name", "IndiGo"),
@@ -272,23 +271,9 @@ class PlatformBookingQueryServiceTest {
 
         assertThat(page.getContent()).extracting(PlatformAdminBookingResponse::getAgencyName).containsOnly("Acme Travel");
         PlatformAdminBookingResponse first = page.getContent().get(0);
-        assertThat(first.getVoyraNet()).isEqualByComparingTo("145.00");
         assertThat(first.getGross()).isEqualByComparingTo("5000.00");
         assertThat(first.getEnvironment()).isEqualTo(SupplierEnvironment.UAT);
         verify(tenants).findAllById(List.of("T1"));
-    }
-
-    @Test
-    void adminViewShowsTheEstimateAndTheStatementFigureSideBySide() {
-        login("SA1", UserType.SUPER_ADMIN, null);
-        PlatformBooking b = booking("B1", "T1", "A1").toBuilder().voyraEarnedActual(new BigDecimal("270.00"))
-                .voyraEarnedSource(com.voyra.crm.enums.VoyraEarnedSource.STATEMENT).build();
-        given(tenants.findAllById(List.of("T1"))).willReturn(List.of(Tenant.builder().id("T1").agencyName("Acme Travel").build()));
-
-        PlatformAdminBookingResponse r = service().adminView(b);
-
-        assertThat(r.getVoyraEarned()).isEqualByComparingTo("250.00");
-        assertThat(r.getVoyraEarnedActual()).isEqualByComparingTo("270.00");
     }
 
     @Test

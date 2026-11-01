@@ -238,9 +238,6 @@ class PlatformBookingServiceTest {
         PlatformBooking b = rows.get(service.review(reviewRequest()).getBookingId());
 
         assertThat(b.getPricingSnapshot()).doesNotContainKeys("voyraEarned", "voyraNet");
-        assertThat(b.getVoyraNet()).isNull();
-        assertThat(b.getVoyraEarned()).isNull();
-        assertThat(b.getVoyraEarnedSource()).isNull();
     }
 
     @Test
@@ -851,7 +848,6 @@ class PlatformBookingServiceTest {
         PlatformBooking b = service.confirm(id, confirmRequest("key-00000001", "4500.00"));
 
         verify(walletService).debitHeld("H1", new BigDecimal("4500.00"), "pb-debit:" + id, REF, id);
-        assertThat(b.getVoyraNet()).isNull();
         verify(notificationService, times(1)).platformAlert(eq("Supplier fare variance on booking " + id), anyString());
         verify(notificationService, times(1)).platformAlert(anyString(), anyString()); // no "Loss-making" alert
         assertThat(savedEvents).extracting(PlatformBookingEvent::getType).contains("VARIANCE");
