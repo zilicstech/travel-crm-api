@@ -26,7 +26,4 @@ public class PricingRuleUpdateRequest {
     @Digits(integer = 3, fraction = 2, message = "pct must have at most 2 decimals")
     @Schema(example = "3.50")
     private BigDecimal pct;
-
-    @Schema(description = "Commission rules only", example = "false")
-    private boolean allowAboveEarned;
 }

@@ -49,10 +49,6 @@ public class PricingRule {
     @Column(name = "pct", nullable = false, precision = 5, scale = 2)
     private BigDecimal pct;
 
-    /** Commission rules only: the agency's commission may exceed Voyra's estimated earning. */
-    @Column(name = "allow_above_earned", nullable = false)
-    private boolean allowAboveEarned;
-
     @Column(name = "is_default", nullable = false)
     private boolean isDefault;
 

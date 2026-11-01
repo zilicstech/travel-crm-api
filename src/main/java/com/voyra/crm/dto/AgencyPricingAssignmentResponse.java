@@ -5,7 +5,6 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Builder;
 import lombok.Data;
 
-import java.math.BigDecimal;
 import java.time.Instant;
 
 @Data
@@ -21,12 +20,6 @@ public class AgencyPricingAssignmentResponse {
 
     @Schema(description = "The commission rule in force")
     private PricingRuleResponse commissionRule;
-
-    @Schema(description = "Voyra's worst case per 10,000 of fare on the reference basket", example = "250.00")
-    private BigDecimal worstCaseNetPer10k;
-
-    @Schema(description = "True when the worst case is below zero")
-    private boolean lossMaking;
 
     @Schema(description = "False when the agency is on the Default rules (no assignment)")
     private boolean assigned;

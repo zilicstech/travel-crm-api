@@ -24,7 +24,6 @@ import com.voyra.crm.enums.SupplierEnvironment;
 import com.voyra.crm.enums.SupplierProvider;
 import com.voyra.crm.enums.TenantStatus;
 import com.voyra.crm.enums.UserType;
-import com.voyra.crm.enums.VoyraEarnedSource;
 import com.voyra.crm.enums.WalletEntryType;
 import com.voyra.crm.exception.BookingConflictException;
 import com.voyra.crm.exception.InsufficientBalanceException;
@@ -133,9 +132,7 @@ class PlatformBookingServiceTest {
         BigDecimal c = new BigDecimal(commission);
         BigDecimal t = new BigDecimal(tds);
         BigDecimal d = new BigDecimal(displayed);
-        BigDecimal earned = new BigDecimal("127.50");
-        return new PriceQuote(d, c.subtract(t), earned, c, t,
-                earned.subtract(new BigDecimal("5000.00").subtract(d)).subtract(c), pricingId, BigDecimal.TEN, new BigDecimal("2.35"));
+        return new PriceQuote(d, c.subtract(t), c, t, pricingId, BigDecimal.TEN, new BigDecimal("2.35"));
     }
 
     private final HotelBookingProviderConfig hotelConfig = new HotelBookingProviderConfig();
@@ -237,6 +234,16 @@ class PlatformBookingServiceTest {
     }
 
     @Test
+    void reviewSnapshotCarriesNoVoyraFigures() {
+        PlatformBooking b = rows.get(service.review(reviewRequest()).getBookingId());
+
+        assertThat(b.getPricingSnapshot()).doesNotContainKeys("voyraEarned", "voyraNet");
+        assertThat(b.getVoyraNet()).isNull();
+        assertThat(b.getVoyraEarned()).isNull();
+        assertThat(b.getVoyraEarnedSource()).isNull();
+    }
+
+    @Test
     void reviewStampsPricingSnapshot() {
         PlatformBookingReviewResponse res = service.review(reviewRequest());
 
@@ -251,10 +258,7 @@ class PlatformBookingServiceTest {
         assertThat(b.getBase()).isEqualByComparingTo("4250.00");
         assertThat(b.getDisplayed()).isEqualByComparingTo("4500.00");
         assertThat(b.getDiscountPct()).isEqualByComparingTo("10");
-        assertThat(b.getVoyraEarned()).isEqualByComparingTo("127.50");
-        assertThat(b.getVoyraEarnedSource()).isEqualTo(VoyraEarnedSource.ESTIMATE);
         assertThat(b.getAgencyCommission()).isEqualByComparingTo("100.00");
-        assertThat(b.getVoyraNet()).isEqualByComparingTo("-472.50");
         assertThat(b.getPricingSnapshot()).containsEntry("pricingId", "P1");
         assertThat(b.getPaxCount()).isEqualTo(3);
         assertThat(b.getBookedBy()).isEqualTo("OWNER1");
@@ -840,15 +844,16 @@ class PlatformBookingServiceTest {
     }
 
     @Test
-    void negativeVoyraNetAlertsAndVarianceIsRecordedOnVoyraNet() {
+    void aFareVarianceAlertsButWritesNoVoyraNet() {
         String id = reviewed();
         when(provider.book(any())).thenReturn(ticketed(new BigDecimal("5100.00")));
 
         PlatformBooking b = service.confirm(id, confirmRequest("key-00000001", "4500.00"));
 
         verify(walletService).debitHeld("H1", new BigDecimal("4500.00"), "pb-debit:" + id, REF, id);
-        assertThat(b.getVoyraNet()).isEqualByComparingTo("-572.50");
-        verify(notificationService, times(2)).platformAlert(anyString(), anyString());
+        assertThat(b.getVoyraNet()).isNull();
+        verify(notificationService, times(1)).platformAlert(eq("Supplier fare variance on booking " + id), anyString());
+        verify(notificationService, times(1)).platformAlert(anyString(), anyString()); // no "Loss-making" alert
         assertThat(savedEvents).extracting(PlatformBookingEvent::getType).contains("VARIANCE");
     }
 
@@ -960,7 +965,7 @@ class PlatformBookingServiceTest {
     }
 
     @Test
-    void timeoutThenTicketedWithoutAChargedAmountKeepsVoyraNet() {
+    void timeoutThenTicketedWithoutAChargedAmountRaisesNoAlert() {
         String id = reviewed();
         when(provider.book(any())).thenThrow(new SupplierTimeoutException("timed out", null));
         service.confirm(id, confirmRequest("key-00000001", "4500.00"));
@@ -970,9 +975,8 @@ class PlatformBookingServiceTest {
                 List.of("TKT-1"), "Ticketed", BigDecimal.ZERO));
 
         assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
-        assertThat(b.getVoyraNet()).isEqualByComparingTo("-472.50");
         assertThat(savedEvents).extracting(PlatformBookingEvent::getType).doesNotContain("VARIANCE");
-        verify(notificationService, times(1)).platformAlert(anyString(), anyString());
+        verify(notificationService, never()).platformAlert(anyString(), anyString());
     }
 
     @Test
@@ -1883,7 +1887,6 @@ class PlatformBookingServiceTest {
         PlatformBooking b = service.confirm(id, confirmRequest("key-00000001", "4500.00"));
 
         assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
-        assertThat(b.getVoyraNet()).isEqualByComparingTo("-472.50");
         assertThat(b.getSupplierMessage()).hasSize(500);
         assertThat(savedEvents).extracting(PlatformBookingEvent::getType).doesNotContain("VARIANCE");
     }

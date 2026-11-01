@@ -8,11 +8,9 @@ import com.voyra.crm.entity.PaymentReceipt;
 import com.voyra.crm.enums.BookingStatus;
 import com.voyra.crm.enums.BookingType;
 import com.voyra.crm.enums.CreditNoteReason;
-import com.voyra.crm.enums.DiscountBase;
 import com.voyra.crm.enums.PaymentMode;
 import com.voyra.crm.enums.ServiceType;
 import com.voyra.crm.enums.WalletEntryType;
-import com.voyra.crm.models.ReferenceFare;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.domain.Sort;
 
@@ -171,15 +169,6 @@ class UtilEdgeCasesTest {
     }
 
     // ---------------------------------------------------------------- money helpers
-
-    @Test
-    void aBasketMustExistAndEveryFareNeedsAGross() {
-        assertThatThrownBy(() -> PricingMath.worstCaseNetPer10k(null, BigDecimal.ONE, BigDecimal.ONE, BigDecimal.ONE, DiscountBase.GROSS))
-                .isInstanceOf(IllegalStateException.class).hasMessage("Reference fare basket is empty");
-        assertThatThrownBy(() -> PricingMath.worstCaseNetPer10k(List.of(new ReferenceFare("F0", BigDecimal.ZERO, BigDecimal.ZERO)),
-                BigDecimal.ONE, BigDecimal.ONE, BigDecimal.ONE, DiscountBase.GROSS))
-                .isInstanceOf(IllegalStateException.class).hasMessage("Reference fare F0 has no gross fare");
-    }
 
     @Test
     void releasingMoreThanIsHeldIsRefused() {

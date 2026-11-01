@@ -167,8 +167,8 @@ class PlatformBookingCancelTest {
         return PlatformBooking.builder().id(ID).tenantId(T).product(PricingProduct.FLIGHT).status(status)
                 .environment(SupplierEnvironment.MOCK).supplierReviewId("rv-1").supplierBookingId("SB-1").pnr("PNR123")
                 .gross(new BigDecimal("5000.00")).base(new BigDecimal("4250.00")).displayed(new BigDecimal("4500.00"))
-                .voyraEarned(new BigDecimal("127.50")).agencyCommission(new BigDecimal("100.00")).tds(new BigDecimal("5.00"))
-                .voyraNet(new BigDecimal("-472.50")).holdEntryId("H1").debitEntryId("D1")
+                .agencyCommission(new BigDecimal("100.00")).tds(new BigDecimal("5.00"))
+                .holdEntryId("H1").debitEntryId("D1")
                 .pricingSnapshot(new LinkedHashMap<>(Map.of("pricingId", "P1"))).createdAt(Instant.now()).build();
     }
 
@@ -483,44 +483,18 @@ class PlatformBookingCancelTest {
     }
 
     @Test
-    void voyraNetRecomputedWithReversal() {
+    void cancelPostsRefundAndRecallAndTouchesNoVoyraFigure() {
         when(settings.voyraCancelFee()).thenReturn(new BigDecimal("250.00"));
         supplierRefunds("4000.00");
 
         PlatformBooking b = service.cancel(ID, "ck-1");
 
-        // earned reversed (-127.50), commission recovered (+100), Voyra keeps R - refund = 250:
-        // -472.50 - 127.50 + 100 + 250 = -250.00
-        assertThat(b.getVoyraEarnedReversal()).isEqualByComparingTo("127.50");
-        assertThat(b.getVoyraNet()).isEqualByComparingTo("-250.00");
-        verify(notificationService, never()).platformAlert(anyString(), anyString()); // better than -472.50: no loss alert
-    }
-
-    @Test
-    void cancellationReversesTheStatementEarningWhenOneIsInForce() {
-        when(settings.voyraCancelFee()).thenReturn(new BigDecimal("250.00"));
-        supplierRefunds("4000.00");
-        // a statement said Voyra earned 140 (not the 127.50 estimate): net was re-derived to -460.00
-        rows.put(ID, ticketedRow(PlatformBookingStatus.TICKETED).toBuilder().voyraEarnedActual(new BigDecimal("140.00"))
-                .voyraEarnedSource(com.voyra.crm.enums.VoyraEarnedSource.STATEMENT).voyraNet(new BigDecimal("-460.00")).build());
-
-        PlatformBooking b = service.cancel(ID, "ck-1");
-
-        // -460 - 140 + 100 + 250 = -250.00: the actual is reversed, the estimate stays as stamped
-        assertThat(b.getVoyraEarnedReversal()).isEqualByComparingTo("140.00");
-        assertThat(b.getVoyraEarned()).isEqualByComparingTo("127.50");
-        assertThat(b.getVoyraNet()).isEqualByComparingTo("-250.00");
-    }
-
-    @Test
-    void lossAlertOnlyWhenTheCancelMakesVoyraNetWorse() {
-        supplierRefunds("4000.00");
-
-        PlatformBooking b = service.cancel(ID, "ck-1");
-
-        // -472.50 - 127.50 + 100 + 0 = -500.00, worse than at ticket
-        assertThat(b.getVoyraNet()).isEqualByComparingTo("-500.00");
-        verify(notificationService).platformAlert(contains(ID), anyString());
+        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
+        assertThat(b.getVoyraNet()).isNull();
+        assertThat(b.getVoyraEarnedReversal()).isNull();
+        verify(walletService).credit(eq(T), eq(WalletEntryType.REFUND_CREDIT), any(), anyString(), anyString(), anyString(), anyString());
+        verify(walletService).debitOrReceivable(eq(T), eq(WalletEntryType.COMMISSION_RECALL), any(), anyString(), anyString(), anyString(), any());
+        verify(notificationService, never()).platformAlert(anyString(), anyString()); // no "Loss-making" alert
     }
 
     @Test

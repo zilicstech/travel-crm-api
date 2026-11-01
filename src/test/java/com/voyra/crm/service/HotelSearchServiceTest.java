@@ -29,8 +29,8 @@ class HotelSearchServiceTest {
     private final HotelSearchService service = new HotelSearchService(provider, quoter);
 
     private static com.voyra.crm.service.booking.PriceQuote quoteOf(BigDecimal displayed) {
-        return new com.voyra.crm.service.booking.PriceQuote(displayed, BigDecimal.ONE, BigDecimal.ZERO, BigDecimal.ONE,
-                BigDecimal.ZERO, BigDecimal.ZERO, "P1", BigDecimal.ONE, BigDecimal.ONE);
+        return new com.voyra.crm.service.booking.PriceQuote(displayed, BigDecimal.ONE, BigDecimal.ONE,
+                BigDecimal.ZERO, "P1", BigDecimal.ONE, BigDecimal.ONE);
     }
 
     private static HotelOfferResponse offer(BigDecimal base) {

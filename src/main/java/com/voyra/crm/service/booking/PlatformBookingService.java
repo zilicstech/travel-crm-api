@@ -25,7 +25,6 @@ import com.voyra.crm.enums.SupplierEnvironment;
 import com.voyra.crm.enums.Sku;
 import com.voyra.crm.enums.SupplierProvider;
 import com.voyra.crm.enums.TenantStatus;
-import com.voyra.crm.enums.VoyraEarnedSource;
 import com.voyra.crm.enums.WalletEntryType;
 import com.voyra.crm.enums.WalletStatus;
 import com.voyra.crm.exception.BookingConflictException;
@@ -695,15 +694,10 @@ public class PlatformBookingService {
             return b; // already settled
         }
         String id = b.getId();
-        BigDecimal netBefore = b.getVoyraNet();
-        // the earning in force: the statement figure once imported, else the estimate stamped at review
-        BigDecimal earned = nz(b.getVoyraEarnedActual() != null ? b.getVoyraEarnedActual() : b.getVoyraEarned());
-        b.setVoyraEarnedReversal(earned); // the supplier claws back Voyra's commission on the fare
         Map<String, Object> detail = new LinkedHashMap<>();
         boolean offline = false;
         if (!known(supplierRefund)) {
             // accepted without a usable figure: nothing is posted until Voyra confirms the refund with the supplier
-            b.setVoyraNet(b.getVoyraNet().subtract(earned));
             detail.put("refund", "UNKNOWN");
             notificationService.platformAlert("Cancelled booking " + id + " needs a manual refund",
                     "The supplier cancelled booking " + id + " for agency " + b.getTenantId() + " without a usable refund figure ("
@@ -731,9 +725,6 @@ public class PlatformBookingService {
                 }
             }
             b.setCancelRefund(refund);
-            // earned reversed, the commission recovered in full (net recall + TDS reversed in the quarterly return),
-            // and Voyra keeps whatever of the supplier refund it did not pass on (its fee, or above the cap)
-            b.setVoyraNet(b.getVoyraNet().subtract(earned).add(nz(b.getAgencyCommission())).add(supplierRefund.subtract(refund)));
             detail.put("refund", refund);
             detail.put("recall", recall);
         }
@@ -743,10 +734,6 @@ public class PlatformBookingService {
         b.setSupplierMessage(truncate(message));
         events.record(id, "CANCELLED", detail);
         notificationService.bookingCancelled(b, offline);
-        if (b.getVoyraNet().signum() < 0 && b.getVoyraNet().compareTo(netBefore) < 0) {
-            notificationService.platformAlert("Loss-making booking " + id,
-                    "Voyra net on cancelled booking " + id + " for agency " + b.getTenantId() + " fell to " + b.getVoyraNet());
-        }
         return bookingRepository.save(b);
     }
 
@@ -935,14 +922,9 @@ public class PlatformBookingService {
         // a null or non-positive amount means the supplier did not say what it charged - not a variance
         if (positive(result.amount()) && result.amount().compareTo(b.getGross()) != 0) {
             BigDecimal variance = result.amount().subtract(b.getGross());
-            b.setVoyraNet(b.getVoyraNet().subtract(variance));
             events.record(id, "VARIANCE", Map.of("reviewed", b.getGross(), "charged", result.amount()));
             notificationService.platformAlert("Supplier fare variance on booking " + id,
                     "Reviewed " + b.getGross() + ", supplier charged " + result.amount() + "; the agency was debited the reviewed fare.");
-        }
-        if (b.getVoyraNet().signum() < 0) {
-            notificationService.platformAlert("Loss-making booking " + id,
-                    "Voyra net on booking " + id + " for agency " + b.getTenantId() + " is " + b.getVoyraNet());
         }
         events.record(id, "TICKETED", Map.of("pnr", String.valueOf(result.pnr()), "debitEntryId", debit.getId()));
         notificationService.bookingTicketed(b);
@@ -972,11 +954,8 @@ public class PlatformBookingService {
         Map<String, Object> previous = b.getPricingSnapshot() == null ? Map.of() : b.getPricingSnapshot(); // mix and date survive a re-price
         b.setDiscountPct(q.discountPct());
         b.setDisplayed(q.displayed());
-        b.setVoyraEarned(q.voyraEarned());
-        b.setVoyraEarnedSource(VoyraEarnedSource.ESTIMATE);
         b.setAgencyCommission(q.agencyCommission());
         b.setTds(q.tds());
-        b.setVoyraNet(q.voyraNet());
         Map<String, Object> snapshot = new LinkedHashMap<>();
         snapshot.put("pricingId", q.pricingId());
         snapshot.put("discountPct", q.discountPct());
@@ -984,11 +963,9 @@ public class PlatformBookingService {
         snapshot.put("gross", b.getGross());
         snapshot.put("base", b.getBase());
         snapshot.put("displayed", q.displayed());
-        snapshot.put("voyraEarned", q.voyraEarned());
         snapshot.put("agencyCommission", q.agencyCommission());
         snapshot.put("tds", q.tds());
         snapshot.put("agencyEarns", q.agencyEarns());
-        snapshot.put("voyraNet", q.voyraNet());
         for (String kept : List.of(PAX_MIX, TRAVEL_DATE)) {
             if (previous.get(kept) != null) {
                 snapshot.put(kept, previous.get(kept));

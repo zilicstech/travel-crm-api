@@ -1,7 +1,6 @@
 package com.voyra.crm.controller;
 
 import com.voyra.crm.dto.PricingRuleCreateRequest;
-import com.voyra.crm.dto.PricingRuleImpactResponse;
 import com.voyra.crm.dto.PricingRuleResponse;
 import com.voyra.crm.dto.PricingRuleUpdateRequest;
 import com.voyra.crm.enums.PricingProduct;
@@ -23,7 +22,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.math.BigDecimal;
 import java.util.List;
 
 @RestController
@@ -58,12 +56,5 @@ public class PlatformPricingRuleController {
     public ResponseEntity<Void> delete(@PathVariable String ruleId) {
         service.deleteRule(ruleId);
         return ResponseEntity.noContent().build();
-    }
-
-    @GetMapping("/{ruleId}/impact")
-    @Operation(summary = "Which agencies a proposed value reaches, and which it would make loss-making")
-    public ResponseEntity<PricingRuleImpactResponse> impact(@PathVariable String ruleId, @RequestParam BigDecimal pct,
-                                                            @RequestParam(defaultValue = "false") boolean allowAboveEarned) {
-        return ResponseEntity.ok(service.impact(ruleId, pct, allowAboveEarned));
     }
 }

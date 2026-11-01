@@ -2,28 +2,22 @@ package com.voyra.crm.service;
 
 import com.voyra.crm.dto.AgencyPricingAssignRequest;
 import com.voyra.crm.dto.AgencyPricingAssignmentResponse;
-import com.voyra.crm.dto.PricingPreviewResponse;
 import com.voyra.crm.dto.PricingRuleCreateRequest;
-import com.voyra.crm.dto.PricingRuleImpactResponse;
 import com.voyra.crm.dto.PricingRuleResponse;
 import com.voyra.crm.dto.PricingRuleUpdateRequest;
 import com.voyra.crm.entity.AgencyPricingAssignment;
 import com.voyra.crm.entity.PricingRule;
-import com.voyra.crm.entity.Tenant;
-import com.voyra.crm.enums.DiscountBase;
 import com.voyra.crm.enums.PlatformAuditAction;
 import com.voyra.crm.enums.PricingProduct;
 import com.voyra.crm.enums.PricingRuleKind;
 import com.voyra.crm.exception.BookingConflictException;
 import com.voyra.crm.exception.NotFoundException;
 import com.voyra.crm.exception.PricingNotConfiguredException;
-import com.voyra.crm.models.ReferenceFare;
 import com.voyra.crm.repository.AgencyPricingAssignmentRepository;
 import com.voyra.crm.repository.PricingRuleRepository;
 import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.security.SecurityContextUtil;
-import com.voyra.crm.util.PricingMath;
 import com.voyra.crm.util.UniqueIdResolver;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -38,13 +32,11 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 
 /**
  * Shared pricing rules (design 2026-10-27-pricing-rules-design.md): named discount and commission percentages per
  * product, the agencies' assignment to them (no assignment = the Default rules), and the pair a booking is priced
- * with. Any platform admin creates, edits and assigns; a loss-making pair is shown and audited, never blocked.
+ * with. Any platform admin creates, edits and assigns;
  */
 @Service
 @RequiredArgsConstructor
@@ -56,8 +48,6 @@ public class AgencyPricingService {
     private final PricingRuleRepository ruleRepository;
     private final AgencyPricingAssignmentRepository assignmentRepository;
     private final TenantRepository tenantRepository;
-    private final PlatformSettingService settings;
-    private final PlatformSupplierCredentialService suppliers;
     private final PlatformAuditService auditService;
 
     /** The discount and commission rule a booking is priced with. {@link #pricingId()} changes on any edit or reassignment. */
@@ -91,7 +81,6 @@ public class AgencyPricingService {
                 .id(UniqueIdResolver.resolve(ruleRepository::existsById))
                 .kind(request.getKind()).product(request.getProduct()).name(name)
                 .pct(scaled(request.getPct()))
-                .allowAboveEarned(request.getKind() == PricingRuleKind.COMMISSION && request.isAllowAboveEarned())
                 .isDefault(false).version(1)
                 .createdBy(actor.userId()).createdAt(now)
                 .updatedBy(actor.userId()).updatedByName(actor.username()).updatedAt(now)
@@ -100,7 +89,7 @@ public class AgencyPricingService {
         return toResponse(saved, 0);
     }
 
-    /** Applies at once to every agency on the rule (from their next review); the audit row says how many and which turn loss-making. */
+    /** Applies at once to every agency on the rule (from their next review); the audit row says how many. */
     @Transactional
     public PricingRuleResponse updateRule(String ruleId, PricingRuleUpdateRequest request) {
         PricingRule rule = ruleRepository.findByIdForUpdate(ruleId).orElseThrow(() -> new NotFoundException("Pricing rule not found"));
@@ -109,19 +98,15 @@ public class AgencyPricingService {
             throw new IllegalStateException("A " + label(rule.getKind(), rule.getProduct()) + " rule named \"" + name + "\" already exists");
         }
         BigDecimal pct = scaled(request.getPct());
-        boolean above = rule.getKind() == PricingRuleKind.COMMISSION && request.isAllowAboveEarned();
-        PricingRuleImpactResponse impact = impactOf(rule, pct, above);
         Map<String, Object> detail = new HashMap<>();
         detail.put("kind", rule.getKind().name());
         detail.put("product", rule.getProduct().name());
         detail.put("nameBefore", rule.getName());
         detail.put("pctBefore", rule.getPct());
-        detail.put("allowAboveEarnedBefore", rule.isAllowAboveEarned());
-        boolean valueChanged = pct.compareTo(rule.getPct()) != 0 || above != rule.isAllowAboveEarned();
+        boolean valueChanged = pct.compareTo(rule.getPct()) != 0;
         CustomUserPrincipal actor = SecurityContextUtil.getCurrentUserOrThrow();
         rule.setName(name);
         rule.setPct(pct);
-        rule.setAllowAboveEarned(above);
         if (valueChanged) {
             rule.setVersion(rule.getVersion() + 1);
         }
@@ -131,11 +116,10 @@ public class AgencyPricingService {
         PricingRule saved = ruleRepository.save(rule);
         detail.put("name", name);
         detail.put("pct", pct);
-        detail.put("allowAboveEarned", above);
-        detail.put("agencyCount", impact.getAgencyCount());
-        detail.put("lossMakingAgencies", impact.getLossMaking().stream().map(PricingRuleImpactResponse.LossMakingAgency::getTenantId).toList());
+        long agencyCount = usage().count(saved);
+        detail.put("agencyCount", agencyCount);
         auditService.record(PlatformAuditAction.PRICING_RULE_UPDATE, RULE_ENTITY, ruleId, detail);
-        return toResponse(saved, impact.getAgencyCount());
+        return toResponse(saved, agencyCount);
     }
 
     /** Only an unused, non-default rule; the foreign keys refuse it too if an assignment races in. */
@@ -152,13 +136,6 @@ public class AgencyPricingService {
         }
         ruleRepository.delete(rule);
         auditService.record(PlatformAuditAction.PRICING_RULE_DELETE, RULE_ENTITY, ruleId, ruleDetail(rule));
-    }
-
-    @Transactional(readOnly = true)
-    public PricingRuleImpactResponse impact(String ruleId, BigDecimal pct, boolean allowAboveEarned) {
-        PricingRule rule = ruleRepository.findById(ruleId).orElseThrow(() -> new NotFoundException("Pricing rule not found"));
-        requirePct(pct);
-        return impactOf(rule, scaled(pct), rule.getKind() == PricingRuleKind.COMMISSION && allowAboveEarned);
     }
 
     // ---- assignment
@@ -192,37 +169,12 @@ public class AgencyPricingService {
         row.setUpdatedByName(actor.username());
         row.setUpdatedAt(Instant.now());
         assignmentRepository.save(row);
-        BigDecimal worst = worst(product, discount.getPct(), commission.getPct(), commission.isAllowAboveEarned());
         detail.put("discountRule", discount.getName());
         detail.put("discountPct", discount.getPct());
         detail.put("commissionRule", commission.getName());
         detail.put("commissionPct", commission.getPct());
-        detail.put("allowCommissionAboveEarned", commission.isAllowAboveEarned());
-        detail.put("worstCaseNetPer10k", worst);
-        detail.put("lossMaking", worst.signum() < 0);
         auditService.record(PlatformAuditAction.PRICING_ASSIGN, ASSIGN_ENTITY, tenantId, detail);
         return toAssignmentResponse(tenantId, product, row);
-    }
-
-    @Transactional(readOnly = true)
-    public PricingPreviewResponse preview(String tenantId, PricingProduct product, String discountRuleId, String commissionRuleId) {
-        requireAgency(tenantId);
-        PricingRule discount = ruleOf(discountRuleId, PricingRuleKind.DISCOUNT, product);
-        PricingRule commission = ruleOf(commissionRuleId, PricingRuleKind.COMMISSION, product);
-        BigDecimal earned = suppliers.commissionEstimatePct(product);
-        DiscountBase db = settings.discountBase();
-        List<ReferenceFare> basket = settings.referenceFareBasket(product);
-        BigDecimal d = discount.getPct();
-        BigDecimal c = commission.getPct();
-        boolean above = commission.isAllowAboveEarned();
-        return PricingPreviewResponse.builder()
-                .worstCaseNetPer10k(PricingMath.worstCaseNetPer10k(basket, d, c, earned, db, above))
-                .basketLines(basket.stream().map(f -> PricingPreviewResponse.BasketLine.builder()
-                        .label(f.label())
-                        .displayed(PricingMath.displayed(f.gross(), f.base(), d, db))
-                        .voyraNet(PricingMath.voyraNet(f.gross(), f.base(), d, c, earned, db, above))
-                        .build()).toList())
-                .build();
     }
 
     // ---- booking time
@@ -267,57 +219,13 @@ public class AgencyPricingService {
         return new Usage(explicit, unassigned);
     }
 
-    /** The agencies on {@code rule} and which of them the proposed value makes loss-making with their other rule. */
-    private PricingRuleImpactResponse impactOf(PricingRule rule, BigDecimal pct, boolean above) {
-        PricingProduct product = rule.getProduct();
-        Map<String, AgencyPricingAssignment> byTenant = assignmentRepository.findByProduct(product).stream()
-                .collect(Collectors.toMap(AgencyPricingAssignment::getTenantId, Function.identity()));
-        // shortcut: loads every agency to find who is on a Default rule - fine for hundreds; move to a query past that
-        List<Tenant> agencies = tenantRepository.findAll();
-        PricingRule defaultOther = ruleRepository.findByKindAndProductAndIsDefaultTrue(other(rule.getKind()), product).orElse(null);
-        Map<String, PricingRule> rules = ruleRepository.findByProduct(product).stream()
-                .collect(Collectors.toMap(PricingRule::getId, Function.identity()));
-        long count = 0;
-        List<PricingRuleImpactResponse.LossMakingAgency> loss = new ArrayList<>();
-        for (Tenant t : agencies) {
-            AgencyPricingAssignment a = byTenant.get(t.getId());
-            String onRule = a == null ? null : rule.getKind() == PricingRuleKind.DISCOUNT ? a.getDiscountRuleId() : a.getCommissionRuleId();
-            boolean on = a == null ? rule.isDefault() : rule.getId().equals(onRule);
-            if (!on) {
-                continue;
-            }
-            count++;
-            PricingRule otherRule = a == null ? defaultOther
-                    : rules.get(rule.getKind() == PricingRuleKind.DISCOUNT ? a.getCommissionRuleId() : a.getDiscountRuleId());
-            if (otherRule == null) {
-                continue;
-            }
-            BigDecimal worst = rule.getKind() == PricingRuleKind.DISCOUNT
-                    ? worst(product, pct, otherRule.getPct(), otherRule.isAllowAboveEarned())
-                    : worst(product, otherRule.getPct(), pct, above);
-            if (worst.signum() < 0) {
-                loss.add(PricingRuleImpactResponse.LossMakingAgency.builder()
-                        .tenantId(t.getId()).agencyName(t.getAgencyName()).worstCaseNetPer10k(worst).build());
-            }
-        }
-        return PricingRuleImpactResponse.builder().agencyCount(count).lossMaking(loss).build();
-    }
-
-    private BigDecimal worst(PricingProduct product, BigDecimal discountPct, BigDecimal commissionPct, boolean above) {
-        return PricingMath.worstCaseNetPer10k(settings.referenceFareBasket(product), discountPct, commissionPct,
-                suppliers.commissionEstimatePct(product), settings.discountBase(), above);
-    }
-
     private AgencyPricingAssignmentResponse toAssignmentResponse(String tenantId, PricingProduct product, AgencyPricingAssignment row) {
         EffectivePricing p = resolve(tenantId, product).orElseThrow(PricingNotConfiguredException::new);
-        BigDecimal worst = worst(product, p.discount().getPct(), p.commission().getPct(), p.commission().isAllowAboveEarned());
         Usage usage = usage();
         return AgencyPricingAssignmentResponse.builder()
                 .product(product)
                 .discountRule(toResponse(p.discount(), usage.count(p.discount())))
                 .commissionRule(toResponse(p.commission(), usage.count(p.commission())))
-                .worstCaseNetPer10k(worst)
-                .lossMaking(worst.signum() < 0)
                 .assigned(row != null)
                 .updatedAt(row == null ? null : row.getUpdatedAt())
                 .updatedByName(row == null ? null : row.getUpdatedByName())
@@ -338,18 +246,8 @@ public class AgencyPricingService {
         }
     }
 
-    private static void requirePct(BigDecimal pct) {
-        if (pct == null || pct.signum() < 0 || pct.compareTo(BigDecimal.valueOf(100)) > 0) {
-            throw new IllegalArgumentException("The percentage must be between 0 and 100");
-        }
-    }
-
     private static BigDecimal scaled(BigDecimal pct) {
         return pct.setScale(2, RoundingMode.HALF_UP);
-    }
-
-    private static PricingRuleKind other(PricingRuleKind kind) {
-        return kind == PricingRuleKind.DISCOUNT ? PricingRuleKind.COMMISSION : PricingRuleKind.DISCOUNT;
     }
 
     private static String label(PricingRuleKind kind, PricingProduct product) {
@@ -362,14 +260,13 @@ public class AgencyPricingService {
         d.put("product", r.getProduct().name());
         d.put("name", r.getName());
         d.put("pct", r.getPct());
-        d.put("allowAboveEarned", r.isAllowAboveEarned());
         return d;
     }
 
     private static PricingRuleResponse toResponse(PricingRule r, long agencyCount) {
         return PricingRuleResponse.builder()
                 .id(r.getId()).kind(r.getKind()).product(r.getProduct()).name(r.getName()).pct(r.getPct())
-                .allowAboveEarned(r.isAllowAboveEarned()).isDefault(r.isDefault()).version(r.getVersion())
+                .isDefault(r.isDefault()).version(r.getVersion())
                 .agencyCount(agencyCount).updatedAt(r.getUpdatedAt()).updatedByName(r.getUpdatedByName())
                 .build();
     }

@@ -243,22 +243,6 @@ class PlatformSupplierCredentialServiceTest {
     }
 
     @Test
-    void commissionEstimateComesFromTheActiveSupplierElseFive() {
-        PlatformSupplierCredential active = stored("k_12345", true);
-        when(repository.findByProviderAndIsActiveTrue(SupplierProvider.TRIPJACK)).thenReturn(Optional.of(active));
-        when(productRepository.findByCredentialIdAndProduct("C1", PricingProduct.FLIGHT)).thenReturn(Optional.of(
-                PlatformSupplierProduct.builder().credentialId("C1").product(PricingProduct.FLIGHT)
-                        .commissionEstimatePct(new BigDecimal("3.5")).build()));
-        when(productRepository.findByCredentialIdAndProduct("C1", PricingProduct.HOTEL)).thenReturn(Optional.empty());
-
-        assertThat(service.commissionEstimatePct(PricingProduct.FLIGHT)).isEqualByComparingTo("3.5");
-        assertThat(service.commissionEstimatePct(PricingProduct.HOTEL)).isEqualByComparingTo("5");
-
-        when(repository.findByProviderAndIsActiveTrue(SupplierProvider.TRIPJACK)).thenReturn(Optional.empty());
-        assertThat(service.commissionEstimatePct(PricingProduct.FLIGHT)).isEqualByComparingTo("5");
-    }
-
-    @Test
     void resolvedCredentialToStringMasksTheKey() {
         ResolvedCredential c = new ResolvedCredential(SupplierProvider.TRIPJACK, SupplierEnvironment.UAT,
                 "https://apitest.tripjack.com", "tj_live_key_9f3a", "voyra-user-0042");

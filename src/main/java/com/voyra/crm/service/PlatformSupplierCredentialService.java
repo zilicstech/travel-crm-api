@@ -168,18 +168,6 @@ public class PlatformSupplierCredentialService {
         return toResponse(credential, productRepository.findByCredentialIdIn(List.of(id)));
     }
 
-    /**
-     * Voyra's estimated commission % for a product, from the active supplier serving it. Tripjack is the only
-     * integration today and serves both products; mock mode prices with the same row, as the old global setting did.
-     */
-    @Transactional(readOnly = true)
-    public BigDecimal commissionEstimatePct(PricingProduct product) {
-        return repository.findByProviderAndIsActiveTrue(SupplierProvider.TRIPJACK)
-                .flatMap(c -> productRepository.findByCredentialIdAndProduct(c.getId(), product))
-                .map(PlatformSupplierProduct::getCommissionEstimatePct)
-                .orElse(DEFAULT_COMMISSION_PCT);
-    }
-
     /** The only way a search or booking provider gets a key - resolved per call, so a key change applies to the next call. */
     @Transactional(readOnly = true)
     public ResolvedCredential resolveActive(SupplierProvider provider) {

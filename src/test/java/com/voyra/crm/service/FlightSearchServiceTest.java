@@ -213,7 +213,7 @@ class FlightSearchServiceTest {
     void pricedOffersCarryDisplayedFareAndEarnings() {
         org.mockito.Mockito.when(quoter.quoterFor("t1", com.voyra.crm.enums.PricingProduct.FLIGHT)).thenReturn(java.util.Optional.of(
                 (gross, base) -> new com.voyra.crm.service.booking.PriceQuote(gross.subtract(BigDecimal.TEN), BigDecimal.ONE,
-                        BigDecimal.ZERO, BigDecimal.ONE, BigDecimal.ZERO, BigDecimal.ZERO, "P1", BigDecimal.ONE, BigDecimal.ONE)));
+                        BigDecimal.ONE, BigDecimal.ZERO, "P1", BigDecimal.ONE, BigDecimal.ONE)));
         FlightSearchService withBase = new FlightSearchService(q -> {
             FlightOfferResponse x = FlightOfferResponse.builder().offerId("a").airline("A").flightNumber("F1")
                     .price(new BigDecimal("100")).totalPrice(new BigDecimal("200")).baseFare(new BigDecimal("170")).build();
@@ -240,8 +240,8 @@ class FlightSearchServiceTest {
     }
 
     private static com.voyra.crm.service.booking.PriceQuote quoteOf(BigDecimal displayed) {
-        return new com.voyra.crm.service.booking.PriceQuote(displayed, BigDecimal.ONE, BigDecimal.ZERO, BigDecimal.ONE,
-                BigDecimal.ZERO, BigDecimal.ZERO, "P1", BigDecimal.ONE, BigDecimal.ONE);
+        return new com.voyra.crm.service.booking.PriceQuote(displayed, BigDecimal.ONE, BigDecimal.ONE,
+                BigDecimal.ZERO, "P1", BigDecimal.ONE, BigDecimal.ONE);
     }
 
     private FlightSearchService withBase(BigDecimal base) {

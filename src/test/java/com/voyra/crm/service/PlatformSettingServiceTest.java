@@ -1,7 +1,6 @@
 package com.voyra.crm.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.voyra.crm.enums.DiscountBase;
 import com.voyra.crm.repository.PlatformSettingRepository;
 import com.voyra.crm.entity.PlatformSetting;
 import com.voyra.crm.enums.PlatformAuditAction;
@@ -9,6 +8,8 @@ import com.voyra.crm.enums.UserType;
 import com.voyra.crm.security.CustomUserPrincipal;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -40,10 +41,10 @@ class PlatformSettingServiceTest {
         return new PlatformSettingService(repository, auditService, MAPPER);
     }
 
-    @Test
-    void discountBaseDefaultsToGross() {
-        assertThat(service().discountBase()).isEqualTo(DiscountBase.GROSS);
-        assertThat(service().referenceFareBasket(com.voyra.crm.enums.PricingProduct.FLIGHT)).hasSize(3);
+    @ParameterizedTest
+    @ValueSource(strings = {"discount_base", "commission_estimate_pct", "reference_fare_basket", "reference_fare_basket_hotel"})
+    void retiredKeysAreUnknown(String key) {
+        assertThatThrownBy(() -> service().set(key, "1")).isInstanceOf(IllegalArgumentException.class).hasMessage("Unknown setting: " + key);
     }
 
     @Test
@@ -58,14 +59,6 @@ class PlatformSettingServiceTest {
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("tds_rate");
     }
 
-    @Test
-    void basketParsesAndRejectsBaseAboveGross() {
-        assertThatThrownBy(() -> service().set("reference_fare_basket", "[{\"label\":\"x\",\"gross\":100,\"base\":200}]"))
-                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("flight reference fare basket");
-        assertThatThrownBy(() -> service().set("reference_fare_basket", "[]"))
-                .isInstanceOf(IllegalArgumentException.class);
-    }
-
     @AfterEach
     void clear() {
         SecurityContextHolder.clearContext();
@@ -73,46 +66,11 @@ class PlatformSettingServiceTest {
 
     private void bad(String key, String value) {
         assertThatThrownBy(() -> service().set(key, value)).isInstanceOf(IllegalArgumentException.class)
-                .satisfies(e -> assertThat(e.getMessage()).containsAnyOf(key, "reference fare basket")); // baskets are named in words
-    }
-
-    @Test
-    void basketRejectsAZeroGrossFare() {
-        assertThatThrownBy(() -> service().set("reference_fare_basket", "[{\"label\":\"Z\",\"gross\":0,\"base\":0}]"))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("The flight reference fare basket needs at least one fare, each with a label and 0 <= base <= gross, gross above 0");
-    }
-
-    /** R17: the refusal names the basket in words, never the raw setting key. */
-    @Test
-    void anUnreadableBasketIsNamedInWords() {
-        assertThatThrownBy(() -> service().set("reference_fare_basket_hotel", "{not json"))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("The hotel reference fare basket must be a JSON list of fares, each with a label, gross and base");
-    }
-
-    @Test
-    void basketRejectsNullJson() {
-        assertThatThrownBy(() -> service().set("reference_fare_basket", "null")).isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("flight reference fare basket");
-    }
-
-    @Test
-    void basketRejectsANullFare() {
-        bad("reference_fare_basket", "[null]");
-    }
-
-    @Test
-    void basketRejectsBlankLabelMalformedJsonAndOverlongValue() {
-        bad("reference_fare_basket", "[{\"label\":\" \",\"gross\":100,\"base\":50}]");
-        bad("reference_fare_basket", "{not json");
-        bad("reference_fare_basket", "x".repeat(4001));
+                .satisfies(e -> assertThat(e.getMessage()).contains(key));
     }
 
     @Test
     void scalarSettingsRejectBadValues() {
-        bad("discount_base", "NET");
-        bad("commission_estimate_pct", "101");
         bad("tds_rate", "abc");
     }
 
@@ -202,7 +160,7 @@ class PlatformSettingServiceTest {
         when(repository.save(any(PlatformSetting.class))).thenAnswer(i -> i.getArgument(0));
         assertThat(service().set("voyra_state_code", "  ").getValue()).isEmpty();
         assertThat(service().set("voyra_state_code", "27").getValue()).isEqualTo("27");
-        for (String key : java.util.List.of("tds_rate", "voyra_legal_name", "voyra_address", "voyra_gstin", "discount_base")) {
+        for (String key : java.util.List.of("tds_rate", "voyra_legal_name", "voyra_address", "voyra_gstin")) {
             assertThatThrownBy(() -> service().set(key, " ")).as(key)
                     .isInstanceOf(IllegalArgumentException.class).hasMessage(key + " must not be blank");
         }
@@ -217,20 +175,6 @@ class PlatformSettingServiceTest {
 
         assertThat(legal.stateCode()).isEqualTo("27");
         assertThat(legal.legalName()).isEqualTo("Voyra Travel Pvt Ltd");
-    }
-
-    /** Slice 4 minor 3: hotel rates are guarded against a hotel basket, flights keep theirs. */
-    @Test
-    void hotelPricingHasItsOwnReferenceBasket() {
-        var flight = service().referenceFareBasket(com.voyra.crm.enums.PricingProduct.FLIGHT);
-        var hotel = service().referenceFareBasket(com.voyra.crm.enums.PricingProduct.HOTEL);
-        assertThat(hotel).isNotEmpty().isNotEqualTo(flight);
-        assertThat(hotel).allSatisfy(f -> assertThat(f.base()).isLessThanOrEqualTo(f.gross()));
-        when(repository.findById("reference_fare_basket_hotel"))
-                .thenReturn(Optional.of(PlatformSetting.builder().key("reference_fare_basket_hotel").value("[{\"label\":\"Goa 3*\",\"gross\":4720,\"base\":4000}]").build()));
-        assertThat(service().referenceFareBasket(com.voyra.crm.enums.PricingProduct.HOTEL)).singleElement()
-                .satisfies(f -> assertThat(f.label()).isEqualTo("Goa 3*"));
-        bad("reference_fare_basket_hotel", "[{\"label\":\"Z\",\"gross\":100,\"base\":200}]");
     }
 
     /** Owner ruling 2026-10-27: the live switch is off by default and one platform admin turns it on with a plain, audited write. */
