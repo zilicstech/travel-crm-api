@@ -81,7 +81,7 @@ class TripjackHotelSearchProviderCoverageTest {
 
     private void setUp(SupplierEnvironment env, boolean ordered) {
         when(credentials.resolveActive(SupplierProvider.TRIPJACK))
-                .thenReturn(new ResolvedCredential(SupplierProvider.TRIPJACK, env, "https://unused.example.test", "test-key", null));
+                .thenReturn(new ResolvedCredential("s1", "Tripjack", SupplierProvider.TRIPJACK, env, "https://unused.example.test", "test-key", null, null));
         RestClient.Builder builder = RestClient.builder();
         server = MockRestServiceServer.bindTo(builder).ignoreExpectOrder(!ordered).build();
         provider = new TripjackHotelSearchProvider(credentials, builder, UAT, PROD);

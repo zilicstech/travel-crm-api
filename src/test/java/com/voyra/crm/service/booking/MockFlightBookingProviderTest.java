@@ -169,7 +169,7 @@ class MockFlightBookingProviderTest {
             query.setAdults(2);
             query.setChildren(1);
             query.setInfants(1);
-            for (com.voyra.crm.dto.FlightOfferResponse offer : new com.voyra.crm.service.MockFlightSearchProvider().search(query)) {
+            for (com.voyra.crm.dto.FlightOfferResponse offer : new com.voyra.crm.service.MockFlightSearchProvider().search(query, null)) {
                 FareReview review = provider.review(offer.getOfferId(), 2, 1, 1);
                 assertThat(review.totalFare()).as(offer.getOfferId()).isEqualByComparingTo(offer.getTotalPrice());
                 assertThat(review.baseFare()).as(offer.getOfferId()).isEqualByComparingTo(offer.getBaseFare());

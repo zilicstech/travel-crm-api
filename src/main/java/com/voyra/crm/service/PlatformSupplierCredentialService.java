@@ -35,6 +35,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -171,9 +173,25 @@ public class PlatformSupplierCredentialService {
         return decrypt(require(id));
     }
 
+    /** Every supplier with search switched on for the product, by name. */
     @Transactional(readOnly = true)
-    public boolean hasActive(SupplierProvider provider) {
-        return repository.findByProviderAndIsActiveTrue(provider).isPresent();
+    public List<ResolvedCredential> searchEnabled(PricingProduct product) {
+        return repository.findAllById(productRepository.findByProductAndSearchEnabledTrue(product).stream()
+                        .map(PlatformSupplierProduct::getCredentialId).toList()).stream()
+                .sorted(Comparator.comparing(PlatformSupplierCredential::getName))
+                .map(this::decrypt).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<ResolvedCredential> find(String id) {
+        return repository.findById(id).map(this::decrypt);
+    }
+
+    /** Ids of the suppliers open for booking the product. */
+    @Transactional(readOnly = true)
+    public Set<String> bookingEnabledIds(PricingProduct product) {
+        return productRepository.findByProductAndBookingEnabledTrue(product).stream()
+                .map(PlatformSupplierProduct::getCredentialId).collect(Collectors.toSet());
     }
 
     /** Accepts only the hosts the integration may talk to and returns the stored form of the URL with its environment. */
@@ -210,8 +228,9 @@ public class PlatformSupplierCredentialService {
         if (normalizeBaseUrl(c.getProvider(), c.getBaseUrl()).environment() != c.getEnvironment()) {
             throw new IllegalArgumentException("Base URL does not match the supplier's environment");
         }
-        return new ResolvedCredential(c.getProvider(), c.getEnvironment(), c.getBaseUrl(), plainKey(c),
-                c.getUserIdEncrypted() != null ? PasswordEncryptionUtil.decrypt(c.getUserIdEncrypted(), encryptionKey) : null);
+        return new ResolvedCredential(c.getId(), c.getName(), c.getProvider(), c.getEnvironment(), c.getBaseUrl(), plainKey(c),
+                c.getUserIdEncrypted() != null ? PasswordEncryptionUtil.decrypt(c.getUserIdEncrypted(), encryptionKey) : null,
+                c.getUpdatedAt());
     }
 
     /** A blank stored key (the migrated mock row) means no key. */

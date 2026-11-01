@@ -104,6 +104,14 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    void suppliersUnavailableIs503WithItsCode() throws Exception {
+        mockMvc.perform(get("/test/suppliers-unavailable"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.code").value("SUPPLIERS_UNAVAILABLE"))
+                .andExpect(jsonPath("$.message").value("Suppliers are not responding; try again in a minute"));
+    }
+
+    @Test
     void accessDeniedMapsTo403() throws Exception {
         mockMvc.perform(get("/test/access-denied"))
                 .andExpect(status().isForbidden());

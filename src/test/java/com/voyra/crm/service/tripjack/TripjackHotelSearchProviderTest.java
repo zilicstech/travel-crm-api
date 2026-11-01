@@ -46,8 +46,8 @@ class TripjackHotelSearchProviderTest {
 
     @BeforeEach
     void setUp() {
-        org.mockito.Mockito.lenient().when(platformSupplierCredentialService.resolveActive(SupplierProvider.TRIPJACK)).thenReturn(new ResolvedCredential(SupplierProvider.TRIPJACK, SupplierEnvironment.UAT,
-                "https://apitest.tripjack.com", "test-key", null));
+        org.mockito.Mockito.lenient().when(platformSupplierCredentialService.resolveActive(SupplierProvider.TRIPJACK)).thenReturn(new ResolvedCredential("s1", "Tripjack", SupplierProvider.TRIPJACK, SupplierEnvironment.UAT,
+                "https://apitest.tripjack.com", "test-key", null, null));
         RestClient.Builder builder = RestClient.builder();
         server = MockRestServiceServer.bindTo(builder).build();
         provider = new TripjackHotelSearchProvider(platformSupplierCredentialService, builder, HOST, "https://hms-search.tripjack.com");

@@ -361,8 +361,8 @@ class PlatformSupplierCredentialServiceTest {
 
     @Test
     void resolvedCredentialToStringMasksTheKey() {
-        ResolvedCredential c = new ResolvedCredential(SupplierProvider.TRIPJACK, SupplierEnvironment.UAT,
-                "https://apitest.tripjack.com", "tj_live_key_9f3a", "voyra-user-0042");
+        ResolvedCredential c = new ResolvedCredential("s1", "Tripjack", SupplierProvider.TRIPJACK, SupplierEnvironment.UAT,
+                "https://apitest.tripjack.com", "tj_live_key_9f3a", "voyra-user-0042", null);
 
         assertThat(c.toString()).doesNotContain("tj_live_key_9f3a").doesNotContain("voyra-user-0042")
                 .contains("••••••9f3a").contains("••••••0042");
@@ -448,11 +448,37 @@ class PlatformSupplierCredentialServiceTest {
     }
 
     @Test
-    void hasActiveTellsWhetherAnActiveRowExists() {
-        when(repository.findByProviderAndIsActiveTrue(SupplierProvider.TRIPJACK)).thenReturn(Optional.empty(), Optional.of(stored("k")));
+    void searchEnabledReturnsTheSwitchedOnRowsByNameWithTheirIdentity() {
+        PlatformSupplierCredential b = stored("kb").toBuilder().id("C2").name("Beta").build();
+        PlatformSupplierCredential a = stored("ka").toBuilder().id("C3").name("Alpha").build();
+        when(productRepository.findByProductAndSearchEnabledTrue(PricingProduct.FLIGHT))
+                .thenReturn(List.of(row(PricingProduct.FLIGHT, true, false).toBuilder().credentialId("C2").build(),
+                        row(PricingProduct.FLIGHT, true, false).toBuilder().credentialId("C3").build()));
+        when(repository.findAllById(List.of("C2", "C3"))).thenReturn(List.of(b, a));
 
-        assertThat(service.hasActive(SupplierProvider.TRIPJACK)).isFalse();
-        assertThat(service.hasActive(SupplierProvider.TRIPJACK)).isTrue();
+        List<ResolvedCredential> found = service.searchEnabled(PricingProduct.FLIGHT);
+
+        assertThat(found).extracting(ResolvedCredential::name).containsExactly("Alpha", "Beta");
+        assertThat(found).extracting(ResolvedCredential::id).containsExactly("C3", "C2");
+        assertThat(found.get(0).apiKey()).isEqualTo("ka");
+        assertThat(found.get(0).updatedAt()).isEqualTo(OLD);
+    }
+
+    @Test
+    void findResolvesOneRowOrNothing() {
+        when(repository.findById("C1")).thenReturn(Optional.of(stored("k")));
+        when(repository.findById("nope")).thenReturn(Optional.empty());
+
+        assertThat(service.find("C1")).get().extracting(ResolvedCredential::name).isEqualTo("Tripjack");
+        assertThat(service.find("nope")).isEmpty();
+    }
+
+    @Test
+    void bookingEnabledIdsAreTheRowsOpenForBooking() {
+        when(productRepository.findByProductAndBookingEnabledTrue(PricingProduct.HOTEL))
+                .thenReturn(List.of(row(PricingProduct.HOTEL, false, true)));
+
+        assertThat(service.bookingEnabledIds(PricingProduct.HOTEL)).containsExactly("C1");
     }
 
     @Test

@@ -35,10 +35,10 @@ class ModelHelpersTest {
 
     @Test
     void aCredentialNeverPrintsItsSecrets() {
-        String text = new ResolvedCredential(SupplierProvider.TRIPJACK, SupplierEnvironment.values()[0], "https://api.example.test",
-                "key-123456789", "abc").toString();
+        String text = new ResolvedCredential("s1", "Tripjack", SupplierProvider.TRIPJACK, SupplierEnvironment.values()[0], "https://api.example.test",
+                "key-123456789", "abc", null).toString();
         assertThat(text).contains("apiKey=••••••6789", "userId=••••••").doesNotContain("key-123456789", "abc]");
-        assertThat(new ResolvedCredential(SupplierProvider.TRIPJACK, null, null, null, null).toString())
+        assertThat(new ResolvedCredential("s1", "Tripjack", SupplierProvider.TRIPJACK, null, null, null, null, null).toString())
                 .contains("apiKey=null, userId=null");
     }
 }

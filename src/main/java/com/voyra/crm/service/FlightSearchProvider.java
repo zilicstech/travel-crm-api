@@ -2,19 +2,22 @@ package com.voyra.crm.service;
 
 import com.voyra.crm.dto.FlightOfferResponse;
 import com.voyra.crm.dto.FlightSearchQuery;
+import com.voyra.crm.enums.SupplierProvider;
+import com.voyra.crm.models.ResolvedCredential;
 
 import java.math.BigDecimal;
 import java.util.List;
 
 /**
- * Supplier abstraction so the search endpoint never knows which vendor answered it. The
- * mock implementation ships now for dev/testing and to exercise the flight-search modal
- * end to end; a real vendor (Tripjack or otherwise) is a new implementation behind
- * {@code app.flight-supplier.provider}, no caller changes - same shape as FileStorageService.
+ * Supplier abstraction so the search endpoint never knows which vendor answered it: one implementation per
+ * {@link SupplierProvider}, called once for every supplier row that has flight search switched on.
  */
 public interface FlightSearchProvider {
 
-    List<FlightOfferResponse> search(FlightSearchQuery query);
+    SupplierProvider provider();
+
+    /** Searches with the given supplier row (the mock ignores it). */
+    List<FlightOfferResponse> search(FlightSearchQuery query, ResolvedCredential supplier);
 
     /**
      * The fare for the whole searched party. A passenger type the supplier did not price is

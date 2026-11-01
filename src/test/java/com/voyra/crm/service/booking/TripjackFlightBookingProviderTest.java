@@ -45,7 +45,7 @@ class TripjackFlightBookingProviderTest {
     @BeforeEach
     void setUp() {
         lenient().when(credentials.resolveActive(SupplierProvider.TRIPJACK)).thenReturn(
-                new ResolvedCredential(SupplierProvider.TRIPJACK, SupplierEnvironment.UAT, BASE, "test-key", null));
+                new ResolvedCredential("s1", "Tripjack", SupplierProvider.TRIPJACK, SupplierEnvironment.UAT, BASE, "test-key", null, null));
         RestClient.Builder builder = RestClient.builder();
         server = MockRestServiceServer.bindTo(builder).build();
         provider = new TripjackFlightBookingProvider(credentials, builder);

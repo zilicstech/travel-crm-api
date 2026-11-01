@@ -14,4 +14,8 @@ public interface PlatformSupplierProductRepository extends JpaRepository<Platfor
 
     List<PlatformSupplierProduct> findByCredentialIdIn(Collection<String> credentialIds);
 
+    List<PlatformSupplierProduct> findByProductAndSearchEnabledTrue(PricingProduct product);
+
+    List<PlatformSupplierProduct> findByProductAndBookingEnabledTrue(PricingProduct product);
+
 }

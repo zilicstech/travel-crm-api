@@ -48,7 +48,7 @@ class TripjackHotelBookingProviderTest {
     @BeforeEach
     void setUp() {
         lenient().when(credentials.resolveActive(SupplierProvider.TRIPJACK)).thenReturn(
-                new ResolvedCredential(SupplierProvider.TRIPJACK, SupplierEnvironment.UAT, BASE, "test-key", null));
+                new ResolvedCredential("s1", "Tripjack", SupplierProvider.TRIPJACK, SupplierEnvironment.UAT, BASE, "test-key", null, null));
         RestClient.Builder builder = RestClient.builder();
         server = MockRestServiceServer.bindTo(builder).build();
         provider = new TripjackHotelBookingProvider(credentials, builder, BASE, BASE);
@@ -361,7 +361,7 @@ class TripjackHotelBookingProviderTest {
     @Test
     void prodCredentialsUseTheProdHostAndTransportFailuresAreClassified() {
         org.mockito.Mockito.when(credentials.resolveActive(SupplierProvider.TRIPJACK)).thenReturn(
-                new ResolvedCredential(SupplierProvider.TRIPJACK, SupplierEnvironment.PROD, BASE, "prod-key", null));
+                new ResolvedCredential("s1", "Tripjack", SupplierProvider.TRIPJACK, SupplierEnvironment.PROD, BASE, "prod-key", null, null));
         RestClient.Builder builder = RestClient.builder();
         MockRestServiceServer prod = MockRestServiceServer.bindTo(builder).build();
         TripjackHotelBookingProvider p = new TripjackHotelBookingProvider(credentials, builder, BASE, "https://prod-hms.example.test");

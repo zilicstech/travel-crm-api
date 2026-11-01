@@ -1,19 +1,19 @@
 package com.voyra.crm.service;
 
+import com.voyra.crm.dto.FlightOfferResponse;
 import com.voyra.crm.dto.FlightSearchQuery;
 import com.voyra.crm.dto.SupplierTestResult;
 import com.voyra.crm.enums.PlatformAuditAction;
 import com.voyra.crm.enums.SupplierEnvironment;
 import com.voyra.crm.enums.SupplierProvider;
 import com.voyra.crm.models.ResolvedCredential;
-import com.voyra.crm.service.tripjack.TripjackFlightSearchProvider;
+import com.voyra.crm.service.booking.SupplierRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.beans.factory.ObjectProvider;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -29,11 +29,11 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class PlatformSupplierTestServiceTest {
 
-    private static final ResolvedCredential ROW = new ResolvedCredential(SupplierProvider.TRIPJACK, SupplierEnvironment.PROD,
-            "https://api.tripjack.com", "tj_row_key_4444", null);
+    private static final ResolvedCredential ROW = new ResolvedCredential("s1", "Tripjack", SupplierProvider.TRIPJACK, SupplierEnvironment.PROD,
+            "https://api.tripjack.com", "tj_row_key_4444", null, null);
 
-    @Mock private ObjectProvider<TripjackFlightSearchProvider> flightProvider;
-    @Mock private TripjackFlightSearchProvider tripjack;
+    @Mock private SupplierRegistry registry;
+    @Mock private FlightSearchProvider integration;
     @Mock private PlatformSupplierCredentialService credentialService;
     @Mock private PlatformAuditService platformAuditService;
 
@@ -43,7 +43,7 @@ class PlatformSupplierTestServiceTest {
     }
 
     private PlatformSupplierTestService service() {
-        return new PlatformSupplierTestService(flightProvider, credentialService, platformAuditService);
+        return new PlatformSupplierTestService(registry, credentialService, platformAuditService);
     }
 
     @SuppressWarnings("unchecked")
@@ -55,27 +55,28 @@ class PlatformSupplierTestServiceTest {
     }
 
     @Test
-    void searchesDelhiToMumbaiAMonthOutWithThatRowsKey() {
-        when(flightProvider.getIfAvailable()).thenReturn(tripjack);
-        when(tripjack.search(any(), eq(ROW))).thenReturn(List.of());
+    void testsTheRowThroughItsOwnIntegration() {
+        when(registry.flightSearch(SupplierProvider.TRIPJACK)).thenReturn(integration);
+        when(integration.search(any(), eq(ROW))).thenReturn(List.of(new FlightOfferResponse(), new FlightOfferResponse()));
 
         SupplierTestResult result = service().testCall("C1");
 
         ArgumentCaptor<FlightSearchQuery> query = ArgumentCaptor.forClass(FlightSearchQuery.class);
-        verify(tripjack).search(query.capture(), eq(ROW));
+        verify(integration).search(query.capture(), eq(ROW));
         assertThat(query.getValue().getOrigin()).isEqualTo("DEL");
         assertThat(query.getValue().getDestination()).isEqualTo("BOM");
         assertThat(query.getValue().getDepartDate()).isEqualTo(LocalDate.now().plusDays(30));
         assertThat(query.getValue().getAdults()).isEqualTo(1);
         assertThat(result.isOk()).isTrue();
+        assertThat(result.getMessage()).isEqualTo("Tripjack answered with 2 offers");
         assertThat(auditDetail()).containsEntry("credentialId", "C1").containsEntry("provider", "TRIPJACK")
                 .containsEntry("ok", true).containsKey("millis");
     }
 
     @Test
     void aFailingCallIsNotOkAndCarriesTheMessage() {
-        when(flightProvider.getIfAvailable()).thenReturn(tripjack);
-        when(tripjack.search(any(), eq(ROW))).thenThrow(new IllegalStateException("Tripjack flight search failed: HTTP 401"));
+        when(registry.flightSearch(SupplierProvider.TRIPJACK)).thenReturn(integration);
+        when(integration.search(any(), eq(ROW))).thenThrow(new IllegalStateException("Tripjack flight search failed: HTTP 401"));
 
         SupplierTestResult result = service().testCall("C1");
 
@@ -86,8 +87,8 @@ class PlatformSupplierTestServiceTest {
 
     @Test
     void aFailureWithNoMessageIsNamedByItsType() {
-        when(flightProvider.getIfAvailable()).thenReturn(tripjack);
-        when(tripjack.search(any(), eq(ROW))).thenThrow(new NullPointerException());
+        when(registry.flightSearch(SupplierProvider.TRIPJACK)).thenReturn(integration);
+        when(integration.search(any(), eq(ROW))).thenThrow(new NullPointerException());
 
         SupplierTestResult result = service().testCall("C1");
 
@@ -96,13 +97,26 @@ class PlatformSupplierTestServiceTest {
     }
 
     @Test
-    void mockSupplierReportsDisabledWithoutCallingAnything() {
-        when(flightProvider.getIfAvailable()).thenReturn(null);
+    void anIntegrationMissingFromTheBuildIsReportedNotThrown() {
+        when(registry.flightSearch(SupplierProvider.TRIPJACK)).thenThrow(new IllegalStateException("No flight search integration for TRIPJACK"));
 
         SupplierTestResult result = service().testCall("C1");
 
         assertThat(result.isOk()).isFalse();
-        assertThat(result.getMessage()).isEqualTo("Tripjack provider is disabled (FLIGHT_SUPPLIER=mock)");
+        assertThat(result.getMessage()).isEqualTo("No flight search integration for TRIPJACK");
         assertThat(auditDetail()).containsEntry("ok", false);
+    }
+
+    @Test
+    void aMockRowIsTestedThroughTheMockIntegration() {
+        ResolvedCredential mockRow = new ResolvedCredential("s0", "Mock supplier", SupplierProvider.MOCK, SupplierEnvironment.MOCK,
+                "mock://local", "", null, null);
+        when(credentialService.resolve("C1")).thenReturn(mockRow);
+        when(registry.flightSearch(SupplierProvider.MOCK)).thenReturn(new MockFlightSearchProvider());
+
+        SupplierTestResult result = service().testCall("C1");
+
+        assertThat(result.isOk()).isTrue();
+        assertThat(result.getMessage()).isEqualTo("Mock supplier answered with 20 offers"); // 5 flights x 4 fares
     }
 }

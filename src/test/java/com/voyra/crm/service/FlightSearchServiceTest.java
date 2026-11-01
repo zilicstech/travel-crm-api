@@ -5,7 +5,14 @@ import com.voyra.crm.dto.FlightSearchPageRequest;
 import com.voyra.crm.dto.FlightSearchPageResponse;
 import com.voyra.crm.dto.FlightSearchQuery;
 import com.voyra.crm.enums.FlightSortOrder;
+import com.voyra.crm.enums.PricingProduct;
+import com.voyra.crm.enums.SupplierEnvironment;
+import com.voyra.crm.enums.SupplierProvider;
 import com.voyra.crm.enums.UserType;
+import com.voyra.crm.exception.BookingConflictException;
+import com.voyra.crm.exception.SuppliersUnavailableException;
+import com.voyra.crm.models.ResolvedCredential;
+import com.voyra.crm.service.booking.SupplierRegistry;
 import com.voyra.crm.security.CustomUserPrincipal;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -13,20 +20,27 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.context.SecurityContextHolder;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BiFunction;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class FlightSearchServiceTest {
 
     private final AtomicInteger supplierCalls = new AtomicInteger();
 
     /** 25 flights x 2 fares; flight i costs 1000+i (so price order == index order) and departs later as i grows. */
-    private final FlightSearchProvider provider = query -> {
+    private final BiFunction<FlightSearchQuery, ResolvedCredential, List<FlightOfferResponse>> provider = (query, supplier) -> {
         supplierCalls.incrementAndGet();
         List<FlightOfferResponse> offers = new ArrayList<>();
         for (int i = 0; i < 25; i++) {
@@ -46,7 +60,37 @@ class FlightSearchServiceTest {
 
     private final com.voyra.crm.service.booking.AgencyPriceQuoter quoter = org.mockito.Mockito.mock(com.voyra.crm.service.booking.AgencyPriceQuoter.class);
 
-    private final FlightSearchService service = new FlightSearchService(provider, quoter);
+    private final SupplierFanOut fanOut = new SupplierFanOut();
+
+    private static ResolvedCredential supplier(String id, String name) {
+        return new ResolvedCredential(id, name, SupplierProvider.MOCK, SupplierEnvironment.MOCK, "mock://local", "", null,
+                Instant.parse("2026-11-01T00:00:00Z"));
+    }
+
+    /** One MOCK supplier "Mock supplier" (s1) answering through {@code answer}. */
+    private FlightSearchService serviceOf(BiFunction<FlightSearchQuery, ResolvedCredential, List<FlightOfferResponse>> answer) {
+        return serviceOf(List.of(supplier("s1", "Mock supplier")), answer);
+    }
+
+    private FlightSearchService serviceOf(List<ResolvedCredential> suppliers,
+                                          BiFunction<FlightSearchQuery, ResolvedCredential, List<FlightOfferResponse>> answer) {
+        SupplierRegistry registry = mock(SupplierRegistry.class);
+        when(registry.searchable(PricingProduct.FLIGHT)).thenReturn(suppliers);
+        lenient().when(registry.flightSearch(SupplierProvider.MOCK)).thenReturn(new FlightSearchProvider() {
+            @Override
+            public SupplierProvider provider() {
+                return SupplierProvider.MOCK;
+            }
+
+            @Override
+            public List<FlightOfferResponse> search(FlightSearchQuery query, ResolvedCredential supplier) {
+                return answer.apply(query, supplier);
+            }
+        });
+        return new FlightSearchService(registry, fanOut, quoter);
+    }
+
+    private final FlightSearchService service = serviceOf(provider);
 
     @AfterEach
     void clearAuth() {
@@ -214,11 +258,11 @@ class FlightSearchServiceTest {
         org.mockito.Mockito.when(quoter.quoterFor("t1", com.voyra.crm.enums.PricingProduct.FLIGHT)).thenReturn(java.util.Optional.of(
                 (gross, base) -> new com.voyra.crm.service.booking.PriceQuote(gross.subtract(BigDecimal.TEN), BigDecimal.ONE,
                         BigDecimal.ONE, BigDecimal.ZERO, "P1", BigDecimal.ONE, BigDecimal.ONE)));
-        FlightSearchService withBase = new FlightSearchService(q -> {
+        FlightSearchService withBase = serviceOf((q, s) -> {
             FlightOfferResponse x = FlightOfferResponse.builder().offerId("a").airline("A").flightNumber("F1")
                     .price(new BigDecimal("100")).totalPrice(new BigDecimal("200")).baseFare(new BigDecimal("170")).build();
             return new ArrayList<>(List.of(x));
-        }, quoter);
+        });
         loginAsTenant("t1");
         FlightOfferResponse o = withBase.search(new FlightSearchQuery()).get(0);
         assertThat(o.isBookable()).isTrue();
@@ -245,8 +289,8 @@ class FlightSearchServiceTest {
     }
 
     private FlightSearchService withBase(BigDecimal base) {
-        return new FlightSearchService(q -> new ArrayList<>(List.of(FlightOfferResponse.builder().offerId("a").airline("A")
-                .flightNumber("F1").price(new BigDecimal("100")).totalPrice(new BigDecimal("200")).baseFare(base).build())), quoter);
+        return serviceOf((q, s) -> new ArrayList<>(List.of(FlightOfferResponse.builder().offerId("a").airline("A")
+                .flightNumber("F1").price(new BigDecimal("100")).totalPrice(new BigDecimal("200")).baseFare(base).build())));
     }
 
     @Test
@@ -277,7 +321,7 @@ class FlightSearchServiceTest {
     @Test
     void roundTripSplitPagesOnwardAndListsEveryReturnWithTheSameFiltersAndSort() {
         // the mock answers a round trip as ONWARD + RETURN (5 flights x 4 fares each way)
-        FlightSearchService svc = new FlightSearchService(new MockFlightSearchProvider(), quoter);
+        FlightSearchService svc = serviceOf((q, s) -> new MockFlightSearchProvider().search(q, s));
         loginAsTenant("t1");
         FlightSearchPageRequest req = request(1);
         req.getQuery().setReturnDate(LocalDate.of(2026, 11, 28));
@@ -305,7 +349,7 @@ class FlightSearchServiceTest {
                 .legs(List.of(com.voyra.crm.dto.FlightLegResponse.builder().flightNumber("6E-1").build(),
                         com.voyra.crm.dto.FlightLegResponse.builder().flightNumber("6E-2").departTime(LocalTime.of(9, 0)).build()))
                 .build();
-        FlightSearchService svc = new FlightSearchService(q -> new ArrayList<>(List.of(combo)), quoter);
+        FlightSearchService svc = serviceOf((q, s) -> new ArrayList<>(List.of(combo)));
         loginAsTenant("t1");
         FlightSearchPageRequest req = request(1);
         req.getQuery().setReturnDate(LocalDate.of(2026, 11, 28));
@@ -328,5 +372,104 @@ class FlightSearchServiceTest {
         assertThat(validator.validate(q)).extracting(v -> v.getMessage()).contains("Return can't be before departure");
         q.setReturnDate(q.getDepartDate());
         assertThat(validator.validate(q)).extracting(v -> v.getMessage()).doesNotContain("Return can't be before departure");
+    }
+
+    private static FlightOfferResponse offer(String id, String... pairsWith) {
+        return FlightOfferResponse.builder().offerId(id).airline("A").flightNumber("F1").price(new BigDecimal("100"))
+                .pairsWith(pairsWith.length == 0 ? null : List.of(pairsWith)).build();
+    }
+
+    @Test
+    void offersFromEverySupplierCarryItsIdAndNameAndNamespacedIds() {
+        FlightSearchService svc = serviceOf(List.of(supplier("s1", "Mock supplier"), supplier("s2", "Mock supplier 2")),
+                (q, s) -> new ArrayList<>(List.of(offer("mock-6E-1", "r1"))));
+        loginAsTenant("t1");
+
+        List<FlightOfferResponse> offers = svc.search(new FlightSearchQuery());
+
+        assertThat(offers).extracting(FlightOfferResponse::getOfferId).containsExactly("s1:mock-6E-1", "s2:mock-6E-1");
+        assertThat(offers).extracting(FlightOfferResponse::getSupplierName, FlightOfferResponse::getSupplier)
+                .containsExactly(tuple("Mock supplier", "Mock supplier"), tuple("Mock supplier 2", "Mock supplier 2"));
+        assertThat(offers).extracting(FlightOfferResponse::getSupplierId).containsExactly("s1", "s2");
+        assertThat(offers.get(1).getPairsWith()).containsExactly("s2:r1");
+    }
+
+    @Test
+    void aSpecialReturnIdIsNamespacedAndAnAbsentOneStaysAbsent() {
+        FlightOfferResponse special = offer("o1");
+        special.setSpecialReturnId("sr-1");
+        FlightSearchService svc = serviceOf((q, s) -> new ArrayList<>(List.of(special, offer("o2"))));
+        loginAsTenant("t1");
+
+        List<FlightOfferResponse> offers = svc.search(new FlightSearchQuery());
+
+        assertThat(offers.get(0).getSpecialReturnId()).isEqualTo("s1:sr-1");
+        assertThat(offers.get(1).getSpecialReturnId()).isNull();
+        assertThat(offers.get(1).getPairsWith()).isNull();
+    }
+
+    @Test
+    void noSearchableSupplierIs409() {
+        FlightSearchService svc = serviceOf(List.of(), (q, s) -> List.of());
+        loginAsTenant("t1");
+
+        assertThatThrownBy(() -> svc.search(new FlightSearchQuery())).isInstanceOf(BookingConflictException.class)
+                .hasMessage("No supplier is enabled for flight search")
+                .extracting(e -> ((BookingConflictException) e).getCode()).isEqualTo("NO_SUPPLIER");
+    }
+
+    @Test
+    void everySupplierFailingIs503() {
+        FlightSearchService svc = serviceOf((q, s) -> {
+            throw new IllegalStateException("down");
+        });
+        loginAsTenant("t1");
+
+        assertThatThrownBy(() -> svc.searchPage(request(1))).isInstanceOf(SuppliersUnavailableException.class);
+    }
+
+    @Test
+    void aPartialPageNamesTheFailedSupplierAndIsNotCached() {
+        AtomicInteger calls = new AtomicInteger();
+        FlightSearchService svc = serviceOf(List.of(supplier("s1", "Mock supplier"), supplier("s2", "Tripjack")), (q, s) -> {
+            calls.incrementAndGet();
+            if (s.id().equals("s2")) {
+                throw new IllegalStateException("down");
+            }
+            return new ArrayList<>(List.of(offer("o1")));
+        });
+        loginAsTenant("t1");
+
+        FlightSearchPageResponse first = svc.searchPage(request(1));
+        svc.searchPage(request(1));
+
+        assertThat(first.getSuppliersFailed()).containsExactly("Tripjack");
+        assertThat(first.getTotalFlights()).isEqualTo(1);
+        assertThat(calls.get()).isEqualTo(4); // both suppliers asked again: the partial page was not cached
+    }
+
+    @Test
+    void aCompletePageIsCachedAndReportsNoFailure() {
+        loginAsTenant("t1");
+
+        assertThat(service.searchPage(request(1)).getSuppliersFailed()).isEmpty();
+        assertThat(service.searchPage(request(2)).getSuppliersFailed()).isEmpty();
+        assertThat(supplierCalls.get()).isEqualTo(1);
+    }
+
+    @Test
+    void aToggleOrEditOfASupplierMissesTheCache() {
+        FlightSearchQuery q = request(1).getQuery();
+        ResolvedCredential s1 = supplier("s1", "Mock supplier");
+        ResolvedCredential s1Edited = new ResolvedCredential("s1", "Mock supplier", SupplierProvider.MOCK, SupplierEnvironment.MOCK,
+                "mock://local", "", null, Instant.parse("2026-11-02T00:00:00Z"));
+        ResolvedCredential s2 = supplier("s2", "Other");
+
+        String base = FlightSearchService.cacheKey("t1", q, List.of(s1));
+
+        assertThat(FlightSearchService.cacheKey("t1", q, List.of(s1))).isEqualTo(base);
+        assertThat(FlightSearchService.cacheKey("t1", q, List.of(s1, s2))).isNotEqualTo(base);
+        assertThat(FlightSearchService.cacheKey("t1", q, List.of(s1Edited))).isNotEqualTo(base);
+        assertThat(FlightSearchService.cacheKey("t1", q, List.of(s2, s1))).isEqualTo(FlightSearchService.cacheKey("t1", q, List.of(s1, s2)));
     }
 }

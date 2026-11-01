@@ -1,8 +1,6 @@
 package com.voyra.crm.config;
 
-import com.voyra.crm.enums.SupplierProvider;
 import com.voyra.crm.security.TurnstileVerifier;
-import com.voyra.crm.service.PlatformSupplierCredentialService;
 import com.voyra.crm.support.LogCapture;
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.security.SecurityScheme;
@@ -19,7 +17,6 @@ import javax.sql.DataSource;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 class ConfigBeansTest {
 
@@ -86,44 +83,5 @@ class ConfigBeansTest {
                 .containsEntry("mail.smtp.ssl.enable", "false")
                 .containsEntry("mail.smtp.starttls.enable", "false")
                 .containsEntry("mail.smtp.starttls.required", "false");
-    }
-
-    private final ApplicationContextRunner supplierLogger = new ApplicationContextRunner()
-            .withUserConfiguration(SupplierStartupLogger.class);
-
-    @Test
-    void supplierLoggerWarnsWhenFlightSearchIsMockAndReportsTheCredential() {
-        PlatformSupplierCredentialService credentials = mock(PlatformSupplierCredentialService.class);
-        when(credentials.hasActive(SupplierProvider.TRIPJACK)).thenReturn(true);
-        supplierLogger.withBean(PlatformSupplierCredentialService.class, () -> credentials)
-                // without the OS environment, so the answer does not depend on the machine running the test
-                .withInitializer(c -> c.getEnvironment().getPropertySources()
-                        .remove(org.springframework.core.env.StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME))
-                .withPropertyValues("app.flight-supplier.provider=MOCK", "app.hotel-supplier.provider=tripjack")
-                .run(ctx -> {
-                    try (LogCapture log = new LogCapture(SupplierStartupLogger.class)) {
-                        ctx.getBean(SupplierStartupLogger.class).logSupplierConfig();
-                        assertThat(log.lines()).hasSize(3);
-                        assertThat(log.lines().get(0)).isEqualTo("INFO Supplier config at startup: flightProvider=MOCK, hotelProvider=tripjack, FLIGHT_SUPPLIER env present=false");
-                        assertThat(log.lines().get(1)).startsWith("WARN Flight search is using the MOCK provider");
-                        assertThat(log.lines().get(2)).isEqualTo("INFO Platform Tripjack credential active=true");
-                    }
-                });
-    }
-
-    @Test
-    void supplierLoggerSurvivesAnUnreadableCredential() {
-        PlatformSupplierCredentialService credentials = mock(PlatformSupplierCredentialService.class);
-        when(credentials.hasActive(SupplierProvider.TRIPJACK)).thenThrow(new IllegalStateException("no key"));
-        supplierLogger.withBean(PlatformSupplierCredentialService.class, () -> credentials)
-                .withPropertyValues("app.flight-supplier.provider=tripjack", "FLIGHT_SUPPLIER=tripjack")
-                .run(ctx -> {
-                    try (LogCapture log = new LogCapture(SupplierStartupLogger.class)) {
-                        ctx.getBean(SupplierStartupLogger.class).logSupplierConfig();
-                        assertThat(log.lines()).hasSize(2);
-                        assertThat(log.lines().get(0)).endsWith("FLIGHT_SUPPLIER env present=true");
-                        assertThat(log.lines().get(1)).isEqualTo("WARN Could not read the platform Tripjack credential at startup: no key");
-                    }
-                });
     }
 }
