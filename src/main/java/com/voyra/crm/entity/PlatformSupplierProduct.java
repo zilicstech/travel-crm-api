@@ -16,10 +16,9 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 import java.io.Serializable;
-import java.math.BigDecimal;
 import java.time.Instant;
 
-/** A supplier's commission terms for one product (public schema): what Voyra expects to earn, used to price agency fares. */
+/** A supplier's switches for one product (public schema): searched in every agency's results, and open for booking. */
 @Entity
 @Table(name = "platform_supplier_product")
 @IdClass(PlatformSupplierProduct.Key.class)
@@ -39,8 +38,11 @@ public class PlatformSupplierProduct {
     @Column(name = "product", length = 10)
     private PricingProduct product;
 
-    @Column(name = "commission_estimate_pct", nullable = false, precision = 5, scale = 2)
-    private BigDecimal commissionEstimatePct;
+    @Column(name = "search_enabled", nullable = false)
+    private boolean searchEnabled;
+
+    @Column(name = "booking_enabled", nullable = false)
+    private boolean bookingEnabled;
 
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;

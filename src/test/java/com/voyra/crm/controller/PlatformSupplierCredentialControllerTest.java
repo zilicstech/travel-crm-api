@@ -2,7 +2,7 @@ package com.voyra.crm.controller;
 
 import com.voyra.crm.config.SecurityConfig;
 import com.voyra.crm.dto.PlatformSupplierCredentialResponse;
-import com.voyra.crm.dto.SupplierProductTerms;
+import com.voyra.crm.dto.SupplierProductSettings;
 import com.voyra.crm.dto.SupplierTestResult;
 import com.voyra.crm.enums.PricingProduct;
 import com.voyra.crm.enums.SupplierProvider;
@@ -20,7 +20,6 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
-import java.math.BigDecimal;
 import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -42,7 +41,7 @@ class PlatformSupplierCredentialControllerTest {
 
     private static final String BASE = "/api/platform/supplier-credentials";
     private static final String BODY = "{\"name\":\"Tripjack\",\"provider\":\"TRIPJACK\",\"apiKey\":\"tj_live_key_9f3a\","
-            + "\"isActive\":true,\"products\":[{\"product\":\"FLIGHT\",\"commissionEstimatePct\":5}]}";
+            + "\"baseUrl\":\"https://api.tripjack.com\",\"products\":[{\"product\":\"FLIGHT\",\"searchEnabled\":true,\"bookingEnabled\":false}]}";
 
     @Autowired private MockMvc mockMvc;
     @MockBean private PlatformSupplierCredentialService credentialService;
@@ -50,8 +49,8 @@ class PlatformSupplierCredentialControllerTest {
 
     private static PlatformSupplierCredentialResponse response() {
         return PlatformSupplierCredentialResponse.builder().id("C1").name("Tripjack").provider(SupplierProvider.TRIPJACK)
-                .maskedApiKey("••••••9f3a").isActive(true)
-                .products(List.of(new SupplierProductTerms(PricingProduct.FLIGHT, new BigDecimal("5")))).build();
+                .baseUrl("https://api.tripjack.com").maskedApiKey("••••••9f3a")
+                .products(List.of(new SupplierProductSettings(PricingProduct.FLIGHT, true, false))).build();
     }
 
     @Test
@@ -62,25 +61,24 @@ class PlatformSupplierCredentialControllerTest {
                         .contentType(MediaType.APPLICATION_JSON).content(BODY))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.maskedApiKey").value("••••••9f3a"))
-                .andExpect(jsonPath("$.products[0].commissionEstimatePct").value(5))
-                .andExpect(jsonPath("$.apiKey").doesNotExist())
-                .andExpect(jsonPath("$.baseUrl").doesNotExist());
+                .andExpect(jsonPath("$.products[0].product").value("FLIGHT"))
+                .andExpect(jsonPath("$.products[0].searchEnabled").value(true))
+                .andExpect(jsonPath("$.products[0].bookingEnabled").value(false))
+                .andExpect(jsonPath("$.baseUrl").value("https://api.tripjack.com"))
+                .andExpect(jsonPath("$.isActive").doesNotExist())
+                .andExpect(jsonPath("$.apiKey").doesNotExist());
     }
 
     @Test
-    void superAdminCanListEditAndChangeTerms() throws Exception {
+    void superAdminCanListAndEdit() throws Exception {
         when(credentialService.list()).thenReturn(List.of(response()));
         when(credentialService.update(eq("C1"), any())).thenReturn(response());
-        when(credentialService.updateProducts(eq("C1"), any())).thenReturn(response());
 
         mockMvc.perform(get(BASE).with(user("root").roles("SUPER_ADMIN")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].name").value("Tripjack"));
         mockMvc.perform(put(BASE + "/C1").with(user("root").roles("SUPER_ADMIN"))
-                        .contentType(MediaType.APPLICATION_JSON).content("{\"name\":\"Tripjack\",\"isActive\":true}"))
-                .andExpect(status().isOk());
-        mockMvc.perform(put(BASE + "/C1/products").with(user("root").roles("SUPER_ADMIN"))
-                        .contentType(MediaType.APPLICATION_JSON).content("[{\"product\":\"HOTEL\",\"commissionEstimatePct\":6}]"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"name\":\"Tripjack\",\"baseUrl\":\"https://api.tripjack.com\",\"products\":[{\"product\":\"HOTEL\"}]}"))
                 .andExpect(status().isOk());
     }
 
@@ -113,11 +111,18 @@ class PlatformSupplierCredentialControllerTest {
     }
 
     @Test
-    void anEnvironmentOrBaseUrlInTheBodyIsIgnored() throws Exception {
-        when(credentialService.create(any())).thenReturn(response());
+    void anEmptyProductListIsABadRequest() throws Exception {
         mockMvc.perform(post(BASE).with(user("root").roles("SUPER_ADMIN")).contentType(MediaType.APPLICATION_JSON)
-                        .content(BODY.replace("{\"name\"", "{\"environment\":\"UAT\",\"baseUrl\":\"https://x.example\",\"name\"")))
-                .andExpect(status().isCreated());
+                        .content(BODY.replaceAll("\"products\":\\[.*\\]", "\"products\":[]")))
+                .andExpect(status().isBadRequest());
+        verifyNoInteractions(credentialService);
+    }
+
+    @Test
+    void productsEndpointIsGone() throws Exception {
+        mockMvc.perform(put(BASE + "/C1/products").with(user("root").roles("SUPER_ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON).content("[]"))
+                .andExpect(status().is4xxClientError());
     }
 
     @Test

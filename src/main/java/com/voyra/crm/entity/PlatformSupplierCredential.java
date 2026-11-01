@@ -19,9 +19,10 @@ import lombok.Setter;
 import java.time.Instant;
 
 /**
- * Voyra's own account with an external supplier (public schema) - one row per provider (unique since V34), with
- * its commission terms per product in {@link PlatformSupplierProduct}. Every agency's searches run on it. The encrypted columns never leave the service:
- * responses carry a masked key and nothing reveals the plaintext.
+ * One of Voyra's accounts with an external supplier (public schema). Several rows may share an integration (name is
+ * unique); {@link PlatformSupplierProduct} says which products each row is searched and booked for. The encrypted columns
+ * never leave the service: responses carry a masked key and nothing reveals the plaintext. {@code isActive} is read only
+ * by the old single-supplier providers and goes with them.
  */
 @Entity
 @Table(name = "platform_supplier_credential")
