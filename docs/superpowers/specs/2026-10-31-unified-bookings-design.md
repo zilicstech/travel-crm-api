@@ -398,3 +398,12 @@ cancel; failed: cancelled, nothing charged). Costs: up to 10 minutes after an up
 a booking whose passengers were purged comes in without traveller names; a CRM agency's failed bookings from before
 unified bookings (never mirrored) are backfilled as cancelled, nothing charged. A CRM booking that already exists stays
 in line after a downgrade.
+
+Second ruling the same day: **real dates everywhere**. Every mirror phase dates what it writes on the platform's own time,
+backfill or not: the booking date and FX rate on when the platform booking was made, the voucher, supplier bill,
+approval journal and Voyra-wallet payment on when it was ticketed, the cancel, supplier credit note and wallet refund on
+when Voyra cancelled it, and a failed booking's cancel time on its FAILED event. A backfilled booking can therefore post
+into an earlier month or financial year. The client's own tax documents on a mirror cancel (credit notes on the agency's
+invoices, the cancellation-charges invoice) stay dated today, because an invoice series refuses an issue date earlier
+than one already issued. Backfill takes only rows queued since unified bookings (a `MIRROR_QUEUED` event), so older rows
+that never had a CRM booking are left alone.
