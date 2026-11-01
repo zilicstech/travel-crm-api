@@ -189,18 +189,20 @@ class FlightResultPagingTest {
 
     @Test
     void aCachedGroupIsNeverMutated() {
+        // The cheaper fare is second, so an in-place sort would change the cached order.
         List<FlightGroupResponse> groups = FlightResultPaging.group(List.of(
-                supplied("s1", "Mock supplier", "6E", "206", "5000", true, false, null),
-                supplied("s2", "Mock supplier 2", "6E", "206", "5200", true, true, null)));
+                supplied("s2", "Mock supplier 2", "6E", "206", "5200", true, true, null),
+                supplied("s1", "Mock supplier", "6E", "206", "5000", true, false, null)));
         FlightSearchPageRequest refundable = req();
         refundable.setRefundableOnly(true);
         FlightSearchPageRequest second = req();
-        second.setSuppliers(List.of("s1"));
+        second.setSuppliers(List.of("s1", "s2"));
 
         FlightResultPaging.page(groups, refundable, NONE);
-        FlightResultPaging.page(groups, second, Set.of("s1"));
+        FlightGroupResponse led = FlightResultPaging.page(groups, second, Set.of("s1")).getFlights().get(0);
 
-        assertThat(groups.get(0).getFares()).extracting(FlightOfferResponse::getSupplierId).containsExactly("s1", "s2");
+        assertThat(led.getFares()).extracting(FlightOfferResponse::getSupplierId).containsExactly("s1", "s2");
+        assertThat(groups.get(0).getFares()).extracting(FlightOfferResponse::getSupplierId).containsExactly("s2", "s1");
         assertThat(groups.get(0).getCheapestPrice()).isNull();
     }
 

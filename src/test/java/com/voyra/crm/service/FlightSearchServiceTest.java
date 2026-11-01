@@ -74,7 +74,13 @@ class FlightSearchServiceTest {
 
     private FlightSearchService serviceOf(List<ResolvedCredential> suppliers,
                                           BiFunction<FlightSearchQuery, ResolvedCredential, List<FlightOfferResponse>> answer) {
+        return serviceOf(suppliers, java.util.Set.of(), answer);
+    }
+
+    private FlightSearchService serviceOf(List<ResolvedCredential> suppliers, java.util.Set<String> bookingEnabled,
+                                          BiFunction<FlightSearchQuery, ResolvedCredential, List<FlightOfferResponse>> answer) {
         SupplierRegistry registry = mock(SupplierRegistry.class);
+        lenient().when(registry.bookingEnabledIds(PricingProduct.FLIGHT)).thenReturn(bookingEnabled);
         when(registry.searchable(PricingProduct.FLIGHT)).thenReturn(suppliers);
         lenient().when(registry.flightSearch(SupplierProvider.MOCK)).thenReturn(new FlightSearchProvider() {
             @Override
@@ -251,6 +257,27 @@ class FlightSearchServiceTest {
         assertThat(o.getNotBookableReason()).isEqualTo("PRICING_NOT_CONFIGURED");
         assertThat(o.getDisplayedFare()).isEqualByComparingTo(o.getPublishedFare());
         assertThat(o.getAgencyEarns()).isEqualByComparingTo("0");
+    }
+
+    @Test
+    void theRegistrysBookingEnabledSuppliersLeadTheRowAndFlagThePageSuppliers() {
+        org.mockito.Mockito.when(quoter.quoterFor("t1", PricingProduct.FLIGHT)).thenReturn(java.util.Optional.of(
+                (gross, base) -> new com.voyra.crm.service.booking.PriceQuote(gross, BigDecimal.ONE,
+                        BigDecimal.ONE, BigDecimal.ZERO, "P1", BigDecimal.ONE, BigDecimal.ONE)));
+        FlightSearchService two = serviceOf(List.of(supplier("s1", "Mock supplier"), supplier("s2", "Mock supplier 2")),
+                java.util.Set.of("s2"), (q, s) -> new ArrayList<>(List.of(FlightOfferResponse.builder().offerId("a").airline("A")
+                        .airlineCode("AA").flightNumber("F1").origin("BLR").destination("GOI")
+                        .departTime(LocalTime.of(6, 0)).arriveTime(LocalTime.of(8, 0))
+                        .price(new BigDecimal(s.id().equals("s1") ? "100" : "120")).baseFare(new BigDecimal("90")).build())));
+        loginAsTenant("t1");
+
+        FlightSearchPageResponse res = two.searchPage(request(1));
+
+        assertThat(res.getSuppliers()).extracting("supplierId", "bookingEnabled").containsExactly(tuple("s1", false), tuple("s2", true));
+        assertThat(res.getFlights()).singleElement().satisfies(g -> {
+            assertThat(g.getCheapestSupplierName()).isEqualTo("Mock supplier 2");
+            assertThat(g.getSupplierCount()).isEqualTo(2);
+        });
     }
 
     @Test
