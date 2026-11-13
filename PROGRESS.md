@@ -353,8 +353,10 @@ the migrator), and writing the seed rows as the old migrations' own expressions 
 dumped literals. A database built from the two baselines was compared with one built by the old chain: the schema dumps differ
 only in how Postgres prints `IN (...)` check lists after a round trip, and every seed row matches. The schema is kept exactly as
 the chain left it: retired columns and settings (`is_active`, `commission_estimate_pct`, `allow_above_earned`, `voyra_earned*`,
-`voyra_net`, the statement tables, `tripjack_live_ready`, the old `sku_prices` keys) and the "Mock supplier" row (switches off)
-are still there; dropping them is the next public migration, `V2`. `PlatformSuppliersMigrationIT` (V36 to V37 on old data) was
+`voyra_net`, the statement tables, `tripjack_live_ready`, the old `sku_prices` keys) are still there; dropping them is the next
+public migration, `V3`. Public `V2__remove_seeded_mock_supplier.sql` deletes the baseline's "Mock supplier" row (and its two
+product rows) while no platform booking names it, so production starts with no mock row; local QA creates one through the API
+(`.claude/run/seed-mock-supplier.py`, the e2e fixtures' `ensureMockSupplier`). `PlatformSuppliersMigrationIT` (V36 to V37 on old data) was
 deleted with the chain. Existing databases need a re-baseline, not a migrate: the local `voyra_crm_dev` keeps its old history as
 `flyway_schema_history_pre_squash` in public and every tenant schema, with one `BASELINE` row at version 1 in a new history table.
 
