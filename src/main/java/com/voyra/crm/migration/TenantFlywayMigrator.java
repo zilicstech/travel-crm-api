@@ -43,12 +43,9 @@ public class TenantFlywayMigrator {
     }
 
     /**
-     * V15 runs {@code CREATE EXTENSION IF NOT EXISTS pg_trgm} with no schema, which installs the
-     * extension into whichever tenant schema happens to migrate first. An extension exists once
-     * per database, so every later tenant then skips the CREATE yet cannot resolve
-     * {@code gin_trgm_ops} and its V15 fails - a second Agency could never be created. V15 is
-     * already applied on live tenants and its checksum must not change, so the extension is put
-     * (or moved) into {@code public} here instead, before any tenant migration runs. Idempotent.
+     * The tenant baseline's trigram indexes use {@code public.gin_trgm_ops}, and an extension exists
+     * once per database, so pg_trgm is put (or moved) into {@code public} here, before any tenant
+     * migration runs. Idempotent.
      */
     private void ensureTrigramExtensionInPublic() {
         try (Connection conn = dataSource.getConnection()) {

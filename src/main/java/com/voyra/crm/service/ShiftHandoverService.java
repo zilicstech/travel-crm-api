@@ -19,7 +19,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * A note per shift, not rostering/clock-in - see V17__shift_handover.sql. Any AGENT or the
+ * A note per shift, not rostering/clock-in - see the shift_handover table in the tenant baseline. Any AGENT or the
  * AGENCY_OWNER may leave one; a null {@code toAgentId} addresses the whole team.
  */
 @Service
