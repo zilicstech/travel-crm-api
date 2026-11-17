@@ -159,8 +159,14 @@ public class MockFlightSearchProvider implements FlightSearchProvider {
 
     /** True for a mock Student or Senior Citizen offer id: its review asks for each traveller's ID number. */
     public static boolean needsDocumentId(String offerId) {
+        return fareCategory(offerId) != FareCategory.REGULAR;
+    }
+
+    /** The fare category of a mock offer id from its tier; REGULAR for any other id. */
+    public static FareCategory fareCategory(String offerId) {
         String[] p = offerId.split("-");
-        return p.length >= 5 && FARE_TIERS.stream().anyMatch(x -> x.category() != FareCategory.REGULAR && x.name().equals(p[3]));
+        return p.length < 5 ? FareCategory.REGULAR
+                : FARE_TIERS.stream().filter(x -> x.name().equals(p[3])).map(FareTier::category).findFirst().orElse(FareCategory.REGULAR);
     }
 
     /** Like Tripjack: the adult fare, child and infant fares off it, totalled for the party (at least one adult). */

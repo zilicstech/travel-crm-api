@@ -73,6 +73,7 @@ public class ClientService {
      */
     @Transactional
     public ClientDetailResponse createClient(ClientCreateRequest request) {
+        rejectWalkInIdentifier(request.getIdentifier());
         if (clientRepository.existsByIdentifierAndIsActiveTrue(request.getIdentifier())) {
             throw new IllegalStateException("A client already exists with identifier " + request.getIdentifier());
         }
@@ -219,6 +220,7 @@ public class ClientService {
         Map<String, String> before = AuditSnapshot.of(client, AUDITED);
 
         if (request.getIdentifier() != null && !request.getIdentifier().equals(client.getIdentifier())) {
+            rejectWalkInIdentifier(request.getIdentifier());
             if (clientRepository.existsByIdentifierAndIsActiveTrue(request.getIdentifier())) {
                 throw new IllegalStateException("A client already exists with identifier " + request.getIdentifier());
             }
@@ -347,6 +349,15 @@ public class ClientService {
     static BookingConflictException systemClientLocked() {
         return new BookingConflictException("SYSTEM_CLIENT",
                 "The Walk-in client is managed by Voyra and can't be changed", Map.of());
+    }
+
+    /** Lookup hides the Walk-in client, so a clash with its identifier says so instead of "a client already exists". */
+    private void rejectWalkInIdentifier(String identifier) {
+        clientRepository.findByIsSystemTrue()
+                .filter(walkIn -> walkIn.getIdentifier().equalsIgnoreCase(identifier.trim()))
+                .ifPresent(walkIn -> {
+                    throw new IllegalStateException(walkIn.getIdentifier() + " is reserved for the Walk-in client; use another identifier");
+                });
     }
 
     private static boolean isOwner() {

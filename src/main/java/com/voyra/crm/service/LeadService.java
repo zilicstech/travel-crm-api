@@ -110,6 +110,9 @@ public class LeadService {
         }
         AuthorResolver.AuthorInfo author = authorResolver.resolveCurrentAuthor();
         Client client = clientService.findAccessibleClient(request.getClientId());
+        if (ClientService.isSystem(client)) { // Walk-in is only for Voyra bookings without a named client
+            throw new IllegalArgumentException("The Walk-in client can't be used on a lead; pick or create the client");
+        }
         GuestDetails guests = request.getGuestDetails() != null ? request.getGuestDetails() : new GuestDetails();
 
         int adults = guests.getAdults() != null ? guests.getAdults() : 1;

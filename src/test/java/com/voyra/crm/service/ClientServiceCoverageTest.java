@@ -464,4 +464,29 @@ class ClientServiceCoverageTest {
         assertThat(service.lookupByIdentifier("WALK-IN").isFound()).isFalse();
         assertThat(service.checkDuplicates(check)).isEmpty();
     }
+
+    @Test
+    void theWalkInIdentifierIsReservedOnCreateAndUpdate() {
+        as("O1", UserType.AGENCY_OWNER);
+        when(clientRepository.findByIsSystemTrue()).thenReturn(Optional.of(walkIn()));
+        ClientCreateRequest create = new ClientCreateRequest();
+        create.setIdentifier(" walk-in ");
+        create.setType(ClientType.B2B);
+        assertThatThrownBy(() -> service.createClient(create))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("WALK-IN is reserved for the Walk-in client; use another identifier");
+
+        when(clientRepository.findById("C1")).thenReturn(Optional.of(client("C1", ClientType.B2B, "acme", "Acme")));
+        ClientUpdateRequest update = new ClientUpdateRequest();
+        update.setIdentifier("Walk-In");
+        assertThatThrownBy(() -> service.updateClient("C1", update))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("WALK-IN is reserved for the Walk-in client; use another identifier");
+        verify(clientRepository, never()).existsByIdentifierAndIsActiveTrue(any());
+        verify(clientRepository, never()).save(any());
+
+        create.setIdentifier("walk-in-2");
+        service.createClient(create);
+        verify(clientRepository).save(any(Client.class));
+    }
 }

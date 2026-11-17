@@ -3,6 +3,7 @@ package com.voyra.crm.service.booking;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.voyra.crm.dto.FlightReviewRequest;
+import com.voyra.crm.enums.FareCategory;
 import com.voyra.crm.enums.SupplierProvider;
 import com.voyra.crm.exception.FareUnavailableException;
 import com.voyra.crm.exception.SupplierTimeoutException;
@@ -80,8 +81,10 @@ public class MockFlightBookingProvider implements FlightBookingProvider {
             returnSeg.put("isRs", true); // Tripjack's marker for the way back in one segment list; the ticket splits directions on it
             sI.add(returnSeg);
         }
-        // the fare facts the ticket prints (a mock has no tax breakdown, so the ticket shows one tax line)
-        var fd = itinerary.putArray("totalPriceList").addObject().put("fareIdentifier", "PUBLISHED").putObject("fd").putObject("ADULT");
+        // the fare facts the ticket prints (a mock has no tax breakdown, so the ticket shows one tax line); a Student or Senior Citizen offer prints its category
+        FareCategory category = MockFlightSearchProvider.fareCategory(FlightBookingProvider.offerIds(r).get(0));
+        var fd = itinerary.putArray("totalPriceList").addObject()
+                .put("fareIdentifier", category == FareCategory.REGULAR ? "PUBLISHED" : category.name()).putObject("fd").putObject("ADULT");
         fd.put("cc", "ECONOMY").put("rT", 1).putObject("bI").put("iB", "15 Kg").put("cB", "7 Kg");
         return new FareReview(base.reviewId(), base.totalFare(), base.baseFare(), base.currency(), base.fareRules(), base.expiresAt(), itinerary,
                 null, null, base.documentIdRequired());

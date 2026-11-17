@@ -140,6 +140,17 @@ class LeadServiceCoverageTest {
     }
 
     @Test
+    void refusesALeadOnTheWalkInClient() {
+        when(clientService.findAccessibleClient("W1")).thenReturn(Client.builder().id("W1").name("Walk-in Client").isSystem(true).build());
+        LeadCreateRequest r = new LeadCreateRequest();
+        r.setClientId("W1");
+        assertThatThrownBy(() -> leadService.createLead(r))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("The Walk-in client can't be used on a lead; pick or create the client");
+        verifyNoInteractions(leadRepository);
+    }
+
+    @Test
     void createDefaultsTheHeadcountSourcePriorityAndDropsBlankNotes() {
         as("O1", UserType.AGENCY_OWNER);
         when(authorResolver.resolveCurrentAuthor()).thenReturn(new AuthorResolver.AuthorInfo("O1", "Owner"));

@@ -266,5 +266,11 @@ class MockFlightBookingProviderTest {
         FareReview withItinerary = provider.review(request, BookingSuppliers.S1);
         assertThat(withItinerary.documentIdRequired()).isTrue();
         assertThat(withItinerary.itinerary()).isNotNull();
+        // the ticket prints the category as the fare type, not Published
+        assertThat(withItinerary.itinerary().path("totalPriceList").path(0).path("fareIdentifier").asText()).isEqualTo("SENIOR_CITIZEN");
+        request.setOfferId("mock-indigo-06:15-STUDENT_FLEXI-ECONOMY");
+        request.setReturnOfferId(null);
+        assertThat(provider.review(request, BookingSuppliers.S1).itinerary().path("totalPriceList").path(0).path("fareIdentifier").asText())
+                .isEqualTo("STUDENT");
     }
 }
