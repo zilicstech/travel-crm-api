@@ -1427,6 +1427,7 @@ class PlatformBookingServiceTest {
 
         verify(hotelProvider).review(eq("O1"), eq("H1"), any(), any(), anyList(), eq(S1));
         assertThat(saved.getCredentialId()).isEqualTo("s1");
+        assertThat(saved.getPricingSnapshot()).doesNotContainKeys("fareCategory", "documentIdRequired"); // flight-only
     }
 
     private static HotelReviewRequest hotelReviewRequest() {
@@ -1754,6 +1755,77 @@ class PlatformBookingServiceTest {
                 .hasMessageContaining("Traveller 3")
                 .extracting("code").isEqualTo("PAX_DOB_REQUIRED");
         verify(walletService, never()).hold(any(), any(), any(), any(), any());
+    }
+
+    /** A supplier answer that makes the fare need each traveller's ID number (Tripjack conditions.dc.idm; the mock's special fares). */
+    private String reviewedNeedingDocumentIds() {
+        when(provider.review(any(FlightReviewRequest.class), any())).thenReturn(new FareReview("rv-student", new BigDecimal("5000.00"),
+                new BigDecimal("4250.00"), "INR", "Refundable", Instant.now().plus(15, ChronoUnit.MINUTES), null, null, null, true));
+        FlightReviewRequest request = reviewRequest();
+        request.setFareCategory(com.voyra.crm.enums.FareCategory.STUDENT);
+        PlatformBookingReviewResponse res = service.review(request);
+        assertThat(res.isDocumentIdRequired()).isTrue();
+        assertThat(res.getFareCategory()).isEqualTo(com.voyra.crm.enums.FareCategory.STUDENT);
+        return res.getBookingId();
+    }
+
+    private static PlatformBookingConfirmRequest withDocumentIds(String first, String second, String third) {
+        PlatformBookingConfirmRequest r = confirmRequest("key-00000001", "4500.00");
+        String[] ids = {first, second, third};
+        for (int i = 0; i < ids.length; i++) {
+            r.getPassengers().get(i).setDocumentId(ids[i]);
+        }
+        return r;
+    }
+
+    @Test
+    void aRegularReviewStampsItsCategoryAndAsksForNoDocumentId() {
+        PlatformBookingReviewResponse res = service.review(reviewRequest());
+
+        assertThat(res.isDocumentIdRequired()).isFalse();
+        assertThat(res.getFareCategory()).isEqualTo(com.voyra.crm.enums.FareCategory.REGULAR);
+        assertThat(rows.get(res.getBookingId()).getPricingSnapshot()).containsEntry("fareCategory", "REGULAR").doesNotContainKey("documentIdRequired");
+
+        // an ID typed anyway goes to the supplier trimmed, a blank one as none
+        service.confirm(res.getBookingId(), withDocumentIds(" AB-12/3 ", " ", null));
+        ArgumentCaptor<BookRequest> sent = ArgumentCaptor.forClass(BookRequest.class);
+        verify(provider).book(sent.capture(), any());
+        assertThat(sent.getValue().passengers()).extracting("documentId").containsExactly("AB-12/3", null, null);
+    }
+
+    @Test
+    void aSpecialFareIsConfirmedOnlyWithEveryTravellersIdNumber() {
+        String id = reviewedNeedingDocumentIds();
+        assertThat(rows.get(id).getPricingSnapshot()).containsEntry("fareCategory", "STUDENT").containsEntry("documentIdRequired", true);
+
+        for (PlatformBookingConfirmRequest missing : List.of(confirmRequest("key-00000001", "4500.00"), withDocumentIds("S1", "S2", " "))) {
+            assertThatThrownBy(() -> service.confirm(id, missing))
+                    .isInstanceOf(BookingRequestException.class)
+                    .hasMessage("Each traveller needs an ID number for this fare")
+                    .extracting("code").isEqualTo("DOCUMENT_ID_REQUIRED");
+        }
+        verify(walletService, never()).hold(any(), any(), any(), any(), any());
+        verify(provider, never()).book(any(), any());
+
+        assertThat(service.confirm(id, withDocumentIds("STU-1", "STU-2", "STU-3")).getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
+        ArgumentCaptor<BookRequest> sent = ArgumentCaptor.forClass(BookRequest.class);
+        verify(provider).book(sent.capture(), any());
+        assertThat(sent.getValue().passengers()).extracting("documentId").containsExactly("STU-1", "STU-2", "STU-3");
+        // the ID numbers live only in the encrypted passenger blob, never in an event
+        assertThat(rows.get(id).getPaxEnc()).doesNotContain("STU-1");
+        assertThat(savedEvents).noneMatch(e -> String.valueOf(e.getPayload()).contains("STU-"));
+    }
+
+    /** A re-price at confirm re-stamps the snapshot; the category and the ID rule survive it. */
+    @Test
+    void aRepriceKeepsTheFareCategoryAndTheDocumentIdRule() {
+        String id = reviewedNeedingDocumentIds();
+        when(quoter.quote(eq(T), eq(PricingProduct.FLIGHT), any(), any())).thenReturn(quote("P2", "4600.00", "50.00", "0.00"));
+
+        assertThatThrownBy(() -> service.confirm(id, withDocumentIds("STU-1", "STU-2", "STU-3"))).isInstanceOf(BookingConflictException.class);
+
+        assertThat(rows.get(id).getPricingSnapshot()).containsEntry("pricingId", "P2")
+                .containsEntry("fareCategory", "STUDENT").containsEntry("documentIdRequired", true);
     }
 
     /** Slice 3 minor 5: the CRM client, lead and service are checked in the caller's tenant before the supplier is asked. */

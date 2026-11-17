@@ -98,7 +98,7 @@ class TripjackHotelBookingProviderTest {
     }
 
     private BookRequest request() {
-        PaxDetail lead = new PaxDetail("ADULT", "Mr", "Asha", "Rao", null, null, null, null);
+        PaxDetail lead = new PaxDetail("ADULT", "Mr", "Asha", "Rao", null, null, null, null, null);
         return new BookRequest("TJH1", new BigDecimal("12000.50"), List.of(lead), "a@b.com", "9999999999");
     }
 
@@ -119,9 +119,9 @@ class TripjackHotelBookingProviderTest {
 
     @Test
     void book_sendsOneRoomTravellerInfoPerRoomWithTheLeadPanOnTheFirstLead() {
-        PaxDetail asha = new PaxDetail("ADULT", "Mr", "Asha", "Rao", null, null, null, null);
-        PaxDetail ravi = new PaxDetail("ADULT", null, "Ravi", "Rao", null, null, null, null);
-        PaxDetail meera = new PaxDetail("ADULT", "Ms", "Meera", "Iyer", null, null, null, null);
+        PaxDetail asha = new PaxDetail("ADULT", "Mr", "Asha", "Rao", null, null, null, null, null);
+        PaxDetail ravi = new PaxDetail("ADULT", null, "Ravi", "Rao", null, null, null, null, null);
+        PaxDetail meera = new PaxDetail("ADULT", "Ms", "Meera", "Iyer", null, null, null, null, null);
         server.expect(requestTo(BASE + "/oms/v3/hotel/book"))
                 .andExpect(jsonPath("$.roomTravellerInfo.length()").value(2))
                 .andExpect(jsonPath("$.roomTravellerInfo[0].travellerInfo[0].fN").value("Asha"))
@@ -287,7 +287,7 @@ class TripjackHotelBookingProviderTest {
                 .andExpect(jsonPath("$.roomTravellerInfo[0].travellerInfo[0].fN").value("Asha"))
                 .andExpect(jsonPath("$.roomTravellerInfo[0].travellerInfo[0].pan").doesNotExist())
                 .andRespond(withSuccess(OK + "}", MediaType.APPLICATION_JSON));
-        PaxDetail lead = new PaxDetail("ADULT", "Mr", "Asha", "Rao", null, null, null, null);
+        PaxDetail lead = new PaxDetail("ADULT", "Mr", "Asha", "Rao", null, null, null, null, null);
 
         assertThat(provider.book(new BookRequest("TJH1", BigDecimal.TEN, List.of(), null, null, List.of(List.of()), "ABCDE1234F"), ROW).status())
                 .isEqualTo(SupplierBookingStatus.PENDING);
@@ -419,7 +419,7 @@ class TripjackHotelBookingProviderTest {
         server.expect(requestTo(BASE + "/oms/v3/hotel/book")).andExpect(jsonPath("$.roomTravellerInfo[0].travellerInfo[0].pan").value("ABCDE1234F"))
                 .andRespond(withSuccess(OK + "}", MediaType.APPLICATION_JSON));
         server.expect(requestTo(BASE + "/oms/v3/hotel/booking-details")).andRespond(withSuccess("", MediaType.APPLICATION_JSON));
-        PaxDetail lead = new PaxDetail("ADULT", "Mr", "Asha", "Rao", null, null, null, null);
+        PaxDetail lead = new PaxDetail("ADULT", "Mr", "Asha", "Rao", null, null, null, null, null);
 
         provider.book(new BookRequest("TJH1", BigDecimal.TEN, List.of(lead), null, null, List.of(), "ABCDE1234F"), ROW);
         BookResult details = provider.bookingDetails("TJH1", ROW);

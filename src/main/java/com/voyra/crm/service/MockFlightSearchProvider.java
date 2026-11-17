@@ -3,6 +3,7 @@ package com.voyra.crm.service;
 import com.voyra.crm.dto.FlightLegResponse;
 import com.voyra.crm.dto.FlightOfferResponse;
 import com.voyra.crm.dto.FlightSearchQuery;
+import com.voyra.crm.enums.FareCategory;
 import com.voyra.crm.enums.FlightCabin;
 import com.voyra.crm.enums.FlightDirection;
 import com.voyra.crm.enums.FlightRefundType;
@@ -37,7 +38,11 @@ public class MockFlightSearchProvider implements FlightSearchProvider {
             new Template("Emirates", "EK", LocalTime.of(22, 45), 210, 0, new BigDecimal("6900"), true, "Flexi")
     );
 
-    private record FareTier(String name, BigDecimal multiplier, FlightRefundType refundType, String baggage, Integer seatsLeft, Boolean meal) {
+    private record FareTier(String name, BigDecimal multiplier, FlightRefundType refundType, String baggage, Integer seatsLeft, Boolean meal,
+                            FareCategory category) {
+        FareTier(String name, BigDecimal multiplier, FlightRefundType refundType, String baggage, Integer seatsLeft, Boolean meal) {
+            this(name, multiplier, refundType, baggage, seatsLeft, meal, FareCategory.REGULAR);
+        }
     }
 
     // A mix of refund types, baggage, seats and meals, so every result filter has something to find.
@@ -45,7 +50,13 @@ public class MockFlightSearchProvider implements FlightSearchProvider {
             new FareTier("PUBLISHED", BigDecimal.ONE, FlightRefundType.NON_REFUNDABLE, "15 Kg", 4, false),
             new FareTier("FLEXI_PLUS", new BigDecimal("1.18"), FlightRefundType.REFUNDABLE, "20 Kg", 9, true),
             new FareTier("CORPORATE", new BigDecimal("1.25"), FlightRefundType.PARTIAL, "Hand baggage only", null, null),
-            new FareTier("SME", new BigDecimal("1.30"), FlightRefundType.REFUNDABLE, "25 Kg", 12, true)
+            new FareTier("SME", new BigDecimal("1.30"), FlightRefundType.REFUNDABLE, "25 Kg", 12, true),
+            // What a Student or Senior Citizen search answers instead: two fares a little under the published one. The tier
+            // name goes into the offer id, so the mock booking provider knows at review that the fare needs an ID number.
+            new FareTier("STUDENT", new BigDecimal("0.92"), FlightRefundType.NON_REFUNDABLE, "15 Kg", 6, false, FareCategory.STUDENT),
+            new FareTier("STUDENT_FLEXI", new BigDecimal("0.97"), FlightRefundType.REFUNDABLE, "25 Kg", 9, true, FareCategory.STUDENT),
+            new FareTier("SENIOR_CITIZEN", new BigDecimal("0.92"), FlightRefundType.NON_REFUNDABLE, "15 Kg", 6, false, FareCategory.SENIOR_CITIZEN),
+            new FareTier("SENIOR_CITIZEN_FLEXI", new BigDecimal("0.97"), FlightRefundType.REFUNDABLE, "20 Kg", 9, true, FareCategory.SENIOR_CITIZEN)
     );
 
     /** Like the mock booking provider: the commissionable base is 85 % of the total fare. */
@@ -87,7 +98,8 @@ public class MockFlightSearchProvider implements FlightSearchProvider {
                     .origin(origin).destination(destination)
                     .departDate(departDate).departTime(t.depart()).arriveDate(arriveDate).arriveTime(arrive)
                     .duration(formatDuration(t.durationMinutes())).stops(t.stops()).build();
-            for (FareTier tier : FARE_TIERS) {
+            FareCategory category = FareCategory.orRegular(query.getFareCategory());
+            for (FareTier tier : FARE_TIERS.stream().filter(x -> x.category() == category).toList()) {
                 // The price is a function of the offer id alone, so the mock booking provider's review prices it the same.
                 String offerId = "mock-" + key(t) + "-" + t.depart() + "-" + tier.name() + "-" + cabin.name()
                         + (direction == FlightDirection.RETURN ? RETURN_SUFFIX : "");
@@ -120,7 +132,7 @@ public class MockFlightSearchProvider implements FlightSearchProvider {
                         .cabinBaggage("7 Kg")
                         .seatsLeft(tier.seatsLeft())
                         .mealIncluded(tier.meal())
-                        .fareType(tier.name())
+                        .fareType(category == FareCategory.REGULAR ? tier.name() : category.name())
                         .build());
             }
         }
@@ -143,6 +155,12 @@ public class MockFlightSearchProvider implements FlightSearchProvider {
             return null;
         }
         return t.baseFare().multiply(cabinMultiplier(cabin)).multiply(tier.multiplier()).setScale(2, java.math.RoundingMode.HALF_UP);
+    }
+
+    /** True for a mock Student or Senior Citizen offer id: its review asks for each traveller's ID number. */
+    public static boolean needsDocumentId(String offerId) {
+        String[] p = offerId.split("-");
+        return p.length >= 5 && FARE_TIERS.stream().anyMatch(x -> x.category() != FareCategory.REGULAR && x.name().equals(p[3]));
     }
 
     /** Like Tripjack: the adult fare, child and infant fares off it, totalled for the party (at least one adult). */

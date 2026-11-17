@@ -376,3 +376,24 @@ the kept list on every page request; the response adds `priceMin`, `priceMax`, `
 listing is left out while a star filter is on. Agencies no longer see supplier names on screen (the API still sends them).
 Waiting for the owner: optional client (FIT), airline-wise name format, calendar fare, multicity, hold, special fare types,
 hotel amenity / category filters and hotel name in the search bar.
+
+## Walk-in client and special fare types (2026-11-17, owner rulings)
+
+**Walk-in client** replaces "client required". Tenant `V2__walk_in_client.sql` adds `client.is_system` (one per tenant,
+`uq_client_system`) and seeds "Walk-in Client" (B2C, identifier `WALK-IN`, or `WALK-IN-VOYRA` when taken, no credit limit) with
+its primary member. It cannot be edited or deactivated and its primary member cannot be changed (409 `SYSTEM_CLIENT`); lookup
+and duplicate checks leave it out; the list returns it first; `isSystem` is on the list and detail responses. `clientId` is
+optional on the flight and hotel review: a lead keeps its own client; without a lead, an agency with CRM Core gets the client
+it sent, and a blank one or any agency without CRM Core gets Walk-in (`PlatformBookingService.effectiveClientId`). At confirm the
+passengers of a Walk-in booking are saved as its travellers (`PlatformBookingMirrorTenantService`, own `REQUIRES_NEW`, as the
+system, never failing the booking): matched by name and date of birth, else created with relation OTHER; no title and no
+document ID is stored on the member. Consequence: a CRM agency's walk-in customers share one ledger and advance pool, and its
+invoices carry no GSTIN. Tenant migrations are now V1 and V2; the next is V3.
+
+**Fare categories.** `FareCategory` REGULAR / STUDENT / SENIOR_CITIZEN on `FlightSearchQuery` and `FlightReviewRequest`
+(null = REGULAR); the search cache key includes it. Tripjack gets `searchModifiers.pfts: ["STUDENT"]` for a non-regular
+search only; review reads `conditions.dc.idm` into `documentIdRequired`; both are stamped in `pricing_snapshot` and returned on
+the review response; confirm then needs `PaxInput.documentId` on every passenger (400 `DOCUMENT_ID_REQUIRED`) and sends it as
+`di`. These Tripjack shapes come from other integrators' code and are **unverified with Tripjack**: confirm them from the
+production console before relying on them. Armed Forces is reported unsupported; NDC and corporate fares arrive in a normal
+search; Series was not found. The ID is kept only in the encrypted passenger blob and is never logged.

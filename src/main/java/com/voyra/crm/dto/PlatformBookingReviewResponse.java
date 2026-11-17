@@ -1,5 +1,6 @@
 package com.voyra.crm.dto;
 
+import com.voyra.crm.enums.FareCategory;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Builder;
 import lombok.Data;
@@ -41,4 +42,10 @@ public class PlatformBookingReviewResponse {
 
     @Schema(description = "Wallet balance available to book right now", example = "10000.00")
     private BigDecimal walletAvailable;
+
+    @Schema(description = "Flights: true when the fare needs each traveller's ID number at confirm (documentId)", example = "false")
+    private boolean documentIdRequired;
+
+    @Schema(description = "Flights: the fare category the review was made for", example = "REGULAR")
+    private FareCategory fareCategory;
 }

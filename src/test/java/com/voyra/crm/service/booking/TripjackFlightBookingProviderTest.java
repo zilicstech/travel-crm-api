@@ -83,6 +83,17 @@ class TripjackFlightBookingProviderTest {
         assertThat(r.baseFare()).isEqualByComparingTo("7000");
         assertThat(r.fareRules()).contains("Rs 3000");
         assertThat(r.itinerary().isArray()).isTrue();
+        assertThat(r.documentIdRequired()).isFalse(); // no conditions.dc in the answer
+    }
+
+    @Test
+    void review_readsTheMandatoryDocumentIdFlag() {
+        server.expect(requestTo(BASE + "/fms/v1/review")).andRespond(withSuccess(OK + ",\"bookingId\":\"TJS1\","
+                + "\"totalPriceInfo\":{\"totalFareDetail\":{\"fC\":{\"TF\":9000.5,\"BF\":7000}}},"
+                + "\"conditions\":{\"dc\":{\"ida\":true,\"idm\":true}}}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(BASE + "/fms/v2/farerule")).andRespond(withSuccess(OK + "}", MediaType.APPLICATION_JSON));
+
+        assertThat(provider.review(List.of("off-1"), 1, 0, 0, ROW).documentIdRequired()).isTrue();
     }
 
     @Test
@@ -100,7 +111,7 @@ class TripjackFlightBookingProviderTest {
     }
 
     private BookRequest request() {
-        PaxDetail pax = new PaxDetail("ADULT", "Mr", "Asha", "Rao", LocalDate.of(1990, 1, 2), "P1234567", LocalDate.of(2030, 1, 1), "IN");
+        PaxDetail pax = new PaxDetail("ADULT", "Mr", "Asha", "Rao", LocalDate.of(1990, 1, 2), "P1234567", LocalDate.of(2030, 1, 1), "IN", "STU-118");
         return new BookRequest("TJS1", new BigDecimal("9000.50"), List.of(pax), "a@b.com", "9999999999");
     }
 
@@ -111,6 +122,7 @@ class TripjackFlightBookingProviderTest {
                 .andExpect(jsonPath("$.paymentInfos[0].amount").value(9000.5))
                 .andExpect(jsonPath("$.travellerInfo[0].fN").value("Asha"))
                 .andExpect(jsonPath("$.travellerInfo[0].pt").value("ADULT"))
+                .andExpect(jsonPath("$.travellerInfo[0].di").value("STU-118"))
                 .andExpect(jsonPath("$.deliveryInfo.emails[0]").value("a@b.com"))
                 .andExpect(jsonPath("$.deliveryInfo.contacts[0]").value("9999999999"))
                 .andRespond(withSuccess(OK + ",\"bookingId\":\"TJS1\"}", MediaType.APPLICATION_JSON));
@@ -399,12 +411,13 @@ class TripjackFlightBookingProviderTest {
 
     @Test
     void aBookingWithoutContactsOrOptionalPassengerFieldsSendsEmptyLists() {
-        PaxDetail bare = new PaxDetail("CHILD", "Ms", "Pax", "Child", null, null, null, null);
+        PaxDetail bare = new PaxDetail("CHILD", "Ms", "Pax", "Child", null, null, null, null, null);
         server.expect(requestTo(BASE + "/oms/v1/air/book"))
                 .andExpect(jsonPath("$.deliveryInfo.emails").isEmpty())
                 .andExpect(jsonPath("$.deliveryInfo.contacts").isEmpty())
                 .andExpect(jsonPath("$.travellerInfo[0].dob").doesNotExist())
                 .andExpect(jsonPath("$.travellerInfo[0].pNum").doesNotExist())
+                .andExpect(jsonPath("$.travellerInfo[0].di").doesNotExist())
                 .andRespond(withSuccess(OK + "}", MediaType.APPLICATION_JSON));
 
         BookResult r = provider.book(new BookRequest("TJS1", new BigDecimal("100"), List.of(bare), null, null), ROW);

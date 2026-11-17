@@ -120,4 +120,18 @@ class FlightSearchControllerTest {
                     .andExpect(status().isBadRequest());
         }
     }
+
+    @Test
+    void theSearchCarriesItsFareCategoryAndRefusesAnUnknownOne() throws Exception {
+        when(flightSearchService.search(any())).thenReturn(List.of());
+        String body = "{\"origin\":\"BLR\",\"destination\":\"GOI\",\"departDate\":\"2099-11-25\",\"adults\":1,\"fareCategory\":\"%s\"}";
+        mockMvc.perform(post("/api/flights/search").with(SecurityMockMvcRequestPostProcessors.user("o").roles("AGENCY_OWNER"))
+                        .contentType(MediaType.APPLICATION_JSON).content(body.formatted("SENIOR_CITIZEN")))
+                .andExpect(status().isOk());
+        org.mockito.Mockito.verify(flightSearchService).search(org.mockito.ArgumentMatchers.argThat(
+                q -> q.getFareCategory() == com.voyra.crm.enums.FareCategory.SENIOR_CITIZEN));
+        mockMvc.perform(post("/api/flights/search").with(SecurityMockMvcRequestPostProcessors.user("o").roles("AGENCY_OWNER"))
+                        .contentType(MediaType.APPLICATION_JSON).content(body.formatted("ARMED_FORCES")))
+                .andExpect(status().isBadRequest());
+    }
 }

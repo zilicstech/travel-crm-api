@@ -75,4 +75,32 @@ class MockFlightSearchProviderTest {
         assertThat(MockFlightSearchProvider.adultFare(r.getOfferId())).isEqualByComparingTo(r.getPrice());
         assertThat(MockFlightSearchProvider.adultFare("mock-indigo-06:15-PUBLISHED-ECONOMY-X")).isNull();
     }
+
+    @Test
+    void aStudentOrSeniorCitizenSearchReturnsTheSameFlightsWithSpecialFaresUnderThePublishedOne() {
+        FlightSearchQuery query = new FlightSearchQuery();
+        query.setOrigin("DEL");
+        query.setDestination("BOM");
+        query.setDepartDate(LocalDate.of(2026, 11, 26));
+        var regular = new MockFlightSearchProvider().search(query, null);
+        java.math.BigDecimal published = regular.get(0).getPrice(); // IndiGo 06:15 PUBLISHED
+
+        for (var category : java.util.List.of(com.voyra.crm.enums.FareCategory.STUDENT, com.voyra.crm.enums.FareCategory.SENIOR_CITIZEN)) {
+            query.setFareCategory(category);
+            var special = new MockFlightSearchProvider().search(query, null);
+
+            assertThat(special).hasSize(10).allMatch(o -> o.getFareType().equals(category.name())); // two fares on each of the five flights
+            assertThat(special).extracting(FlightOfferResponse::getFlightNumber).containsOnlyElementsOf(
+                    regular.stream().map(FlightOfferResponse::getFlightNumber).toList());
+            FlightOfferResponse first = special.get(0);
+            assertThat(first.getOfferId()).isEqualTo("mock-indigo-06:15-" + category.name() + "-ECONOMY");
+            assertThat(first.getPrice()).isLessThan(published).isEqualByComparingTo(published.multiply(new java.math.BigDecimal("0.92")));
+            assertThat(MockFlightSearchProvider.adultFare(first.getOfferId())).isEqualByComparingTo(first.getPrice());
+            assertThat(special).allMatch(o -> MockFlightSearchProvider.needsDocumentId(o.getOfferId()));
+        }
+        assertThat(regular).noneMatch(o -> MockFlightSearchProvider.needsDocumentId(o.getOfferId()))
+                .noneMatch(o -> o.getFareType().equals("STUDENT"));
+        assertThat(MockFlightSearchProvider.needsDocumentId("o")).isFalse();
+        assertThat(MockFlightSearchProvider.needsDocumentId("mock-indigo-06:15-STUDENT_FLEXI-ECONOMY-R")).isTrue();
+    }
 }

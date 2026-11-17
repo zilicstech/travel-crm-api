@@ -8,6 +8,7 @@ import com.voyra.crm.dto.FlightLegResponse;
 import com.voyra.crm.dto.FlightOfferResponse;
 import com.voyra.crm.dto.FlightSearchQuery;
 import com.voyra.crm.models.ResolvedCredential;
+import com.voyra.crm.enums.FareCategory;
 import com.voyra.crm.enums.FlightDirection;
 import com.voyra.crm.enums.FlightRefundType;
 import com.voyra.crm.enums.SupplierProvider;
@@ -123,6 +124,13 @@ public class TripjackFlightSearchProvider implements FlightSearchProvider {
         searchQuery.put("cabinClass", query.getCabin() != null ? query.getCabin().name() : "ECONOMY");
         searchQuery.put("paxInfo", paxInfo);
         searchQuery.put("routeInfos", routes);
+        // Not from Tripjack's own document: the shape other integrators send. pfts is an ARRAY (a plain string was refused
+        // live with "Expected BEGIN_ARRAY but was STRING"); known values REGULAR, STUDENT, SENIOR_CITIZEN. A Regular
+        // search sends no searchModifiers at all, so its request stays as it always was.
+        FareCategory category = FareCategory.orRegular(query.getFareCategory());
+        if (category != FareCategory.REGULAR) {
+            searchQuery.put("searchModifiers", Map.of("pfts", List.of(category.name())));
+        }
 
         return Map.of("searchQuery", searchQuery);
     }

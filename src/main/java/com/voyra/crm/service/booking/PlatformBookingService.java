@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.voyra.crm.dto.FlightReviewRequest;
+import com.voyra.crm.enums.FareCategory;
 import com.voyra.crm.dto.HotelReviewRequest;
 import com.voyra.crm.dto.PaxInput;
 import com.voyra.crm.dto.PlatformBookingConfirmRequest;
@@ -84,6 +85,10 @@ public class PlatformBookingService {
     private static final String PAX_MIX = "paxMix";
     /** Pricing-snapshot key of the travel date (flight: first departure, hotel: check-in) the age check runs against. */
     private static final String TRAVEL_DATE = "travelDate";
+    /** Pricing-snapshot key, present (true) when the reviewed flight fare needs each traveller's ID number at confirm. */
+    private static final String DOCUMENT_ID_REQUIRED = "documentIdRequired";
+    /** Pricing-snapshot key of the fare category (REGULAR, STUDENT, SENIOR_CITIZEN) a flight was reviewed for. */
+    private static final String FARE_CATEGORY = "fareCategory";
     /** Event marking that Voyra was alerted about a row its supplier no longer serves (once per row). */
     static final String SUPPLIER_MISMATCH = "SUPPLIER_MISMATCH";
     static final String NOT_SERVED_MESSAGE = "This booking can't be changed right now. Voyra has been notified.";
@@ -246,7 +251,7 @@ public class PlatformBookingService {
                 request.getLeadId(), request.getServiceId(), request.getAdults() + request.getChildren() + request.getInfants(),
                 itinerary, request.getSearchDisplayedFare(),
                 Map.of("adults", request.getAdults(), "children", request.getChildren(), "infants", request.getInfants()),
-                travelDate != null ? travelDate : dateOrNull(request.getDepartDate()));
+                travelDate != null ? travelDate : dateOrNull(request.getDepartDate()), FareCategory.orRegular(request.getFareCategory()));
     }
 
     /**
@@ -272,7 +277,7 @@ public class PlatformBookingService {
         int guests = request.getRooms().stream()
                 .mapToInt(r -> r.getAdults() + (r.getChildAges() == null ? 0 : r.getChildAges().size())).sum();
         return stampReview(principal, PricingProduct.HOTEL, supplier, fare, request.getClientId(), request.getLeadId(),
-                request.getServiceId(), guests, hotelItinerary(request, fare), request.getSearchDisplayedFare(), null, request.getCheckIn());
+                request.getServiceId(), guests, hotelItinerary(request, fare), request.getSearchDisplayedFare(), null, request.getCheckIn(), null);
     }
 
     /** A search id split into its supplier and that supplier's own id; an id with no namespace is a stale offer (400). */
@@ -323,7 +328,8 @@ public class PlatformBookingService {
     private PlatformBookingReviewResponse stampReview(CustomUserPrincipal principal, PricingProduct product, ResolvedCredential supplier,
                                                       FareReview fare, String clientId, String leadId, String serviceId,
                                                       int paxCount, Map<String, Object> itinerary, BigDecimal searched,
-                                                      Map<String, Integer> paxMix, java.time.LocalDate travelDate) {
+                                                      Map<String, Integer> paxMix, java.time.LocalDate travelDate,
+                                                      FareCategory fareCategory) {
         String tenantId = principal.tenantId();
         if (fare.baseFare() == null) {
             // discount and commission are worked off the base fare, so there is no price to show without it
@@ -359,6 +365,12 @@ public class PlatformBookingService {
         if (travelDate != null) {
             booking.getPricingSnapshot().put(TRAVEL_DATE, travelDate.toString());
         }
+        if (fareCategory != null) {
+            booking.getPricingSnapshot().put(FARE_CATEGORY, fareCategory.name());
+        }
+        if (fare.documentIdRequired()) {
+            booking.getPricingSnapshot().put(DOCUMENT_ID_REQUIRED, true); // confirm refuses a traveller without an ID number
+        }
         tx.executeWithoutResult(s -> {
             bookingRepository.save(booking);
             events.record(booking.getId(), "REVIEWED", Map.of("displayed", booking.getDisplayed(), "pricingId", quote.pricingId()));
@@ -378,6 +390,8 @@ public class PlatformBookingService {
                 .reviewExpiresAt(booking.getReviewExpiresAt())
                 .walletAvailable(walletRepository.findByTenantId(tenantId)
                         .map(w -> w.getBalance().subtract(w.getHeld())).orElse(BigDecimal.ZERO))
+                .documentIdRequired(fare.documentIdRequired())
+                .fareCategory(fareCategory)
                 .build();
     }
 
@@ -841,6 +855,7 @@ public class PlatformBookingService {
         } else {
             requireReviewedMix(b, request.getPassengers());
             requirePaxTypesFit(request.getPassengers(), travelDateOf(b));
+            requireDocumentIds(b, request.getPassengers());
         }
         if (request.getAcceptedDisplayedFare().compareTo(b.getDisplayed()) != 0) {
             throw priceChanged(b.getProduct(), b.getDisplayed());
@@ -998,7 +1013,7 @@ public class PlatformBookingService {
         snapshot.put("agencyCommission", q.agencyCommission());
         snapshot.put("tds", q.tds());
         snapshot.put("agencyEarns", q.agencyEarns());
-        for (String kept : List.of(PAX_MIX, TRAVEL_DATE)) {
+        for (String kept : List.of(PAX_MIX, TRAVEL_DATE, FARE_CATEGORY, DOCUMENT_ID_REQUIRED)) {
             if (previous.get(kept) != null) {
                 snapshot.put(kept, previous.get(kept));
             }
@@ -1115,7 +1130,18 @@ public class PlatformBookingService {
 
     private static PaxDetail toPax(PaxInput p) {
         return new PaxDetail(p.getType(), p.getTitle(), p.getFirstName(), p.getLastName(), p.getDob(),
-                p.getPassportNo(), p.getPassportExpiry(), p.getNationality());
+                p.getPassportNo(), p.getPassportExpiry(), p.getNationality(), blankId(p) ? null : p.getDocumentId().trim());
+    }
+
+    private static boolean blankId(PaxInput p) {
+        return p.getDocumentId() == null || p.getDocumentId().isBlank();
+    }
+
+    /** A fare reviewed as needing a document ID (student, senior citizen) is booked only with every traveller's ID number. */
+    private static void requireDocumentIds(PlatformBooking b, List<PaxInput> passengers) {
+        if (Boolean.TRUE.equals(b.getPricingSnapshot().get(DOCUMENT_ID_REQUIRED)) && passengers.stream().anyMatch(PlatformBookingService::blankId)) {
+            throw new BookingRequestException("DOCUMENT_ID_REQUIRED", "Each traveller needs an ID number for this fare");
+        }
     }
 
     /**

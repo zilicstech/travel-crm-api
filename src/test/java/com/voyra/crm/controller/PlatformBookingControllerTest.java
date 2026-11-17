@@ -272,6 +272,41 @@ class PlatformBookingControllerTest {
                         .content(CONFIRM.replace("\"lastName\":\"Sharma\"", "\"lastName\":\"D'Souza-Rao Jr.\"")))
                 .andExpect(status().isOk());
     }
+
+    /** A special fare's ID number: letters, digits, space, dash and slash, at most 30; the review answer says when it is needed. */
+    @Test
+    void theDocumentIdIsValidatedAndTheReviewSaysWhenItIsRequired() throws Exception {
+        for (String bad : List.of("STU#1", "A".repeat(31))) {
+            mockMvc.perform(post("/api/platform-bookings/B1/confirm").with(as(UserType.AGENT)).contentType(MediaType.APPLICATION_JSON)
+                            .content(CONFIRM.replace("\"lastName\":\"Sharma\"", "\"lastName\":\"Sharma\",\"documentId\":\"" + bad + "\"")))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.details.errors").value(org.hamcrest.Matchers.hasKey("passengers[0].documentId")));
+        }
+        verifyNoInteractions(service);
+
+        PlatformBooking row = PlatformBooking.builder().id("B1").status(PlatformBookingStatus.TICKETED).build();
+        given(service.confirm(eq("B1"), any())).willReturn(row);
+        given(queryService.view(row)).willReturn(PlatformBookingResponse.builder().id("B1").build());
+        mockMvc.perform(post("/api/platform-bookings/B1/confirm").with(as(UserType.AGENT)).contentType(MediaType.APPLICATION_JSON)
+                        .content(CONFIRM.replace("\"lastName\":\"Sharma\"", "\"lastName\":\"Sharma\",\"documentId\":\"STU-2026/118 A\"")))
+                .andExpect(status().isOk());
+        verify(service).confirm(eq("B1"), org.mockito.ArgumentMatchers.argThat(r -> "STU-2026/118 A".equals(r.getPassengers().get(0).getDocumentId())));
+
+        given(service.confirm(eq("B2"), any())).willThrow(
+                new com.voyra.crm.exception.BookingRequestException("DOCUMENT_ID_REQUIRED", "Each traveller needs an ID number for this fare"));
+        mockMvc.perform(post("/api/platform-bookings/B2/confirm").with(as(UserType.AGENT)).contentType(MediaType.APPLICATION_JSON).content(CONFIRM))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("DOCUMENT_ID_REQUIRED"))
+                .andExpect(jsonPath("$.message").value("Each traveller needs an ID number for this fare"));
+
+        given(service.review(any())).willReturn(PlatformBookingReviewResponse.builder().bookingId("B1").documentIdRequired(true)
+                .fareCategory(com.voyra.crm.enums.FareCategory.STUDENT).build());
+        mockMvc.perform(post("/api/platform-bookings/flights/review").with(as(UserType.AGENCY_OWNER)).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"offerId\":\"o1\",\"adults\":1,\"fareCategory\":\"STUDENT\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.documentIdRequired").value(true))
+                .andExpect(jsonPath("$.fareCategory").value("STUDENT"));
+        verify(service).review(org.mockito.ArgumentMatchers.argThat(r -> r.getFareCategory() == com.voyra.crm.enums.FareCategory.STUDENT));
+    }
+
     private static TicketDownloadResponse download() {
         return TicketDownloadResponse.builder().id("K1").seq(1).createdAt(java.time.Instant.parse("2026-10-31T05:00:00Z"))
                 .createdByName("Olga Owner").markup(new BigDecimal("500.00")).ticketPrice(new BigDecimal("5500.00")).build();

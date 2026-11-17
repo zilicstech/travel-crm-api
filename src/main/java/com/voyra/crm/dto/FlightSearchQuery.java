@@ -1,5 +1,6 @@
 package com.voyra.crm.dto;
 
+import com.voyra.crm.enums.FareCategory;
 import com.voyra.crm.enums.FlightCabin;
 import io.swagger.v3.oas.annotations.media.Schema;
 import com.fasterxml.jackson.annotation.JsonIgnore;
@@ -50,4 +51,7 @@ public class FlightSearchQuery {
 
     @Schema(example = "0")
     private int infants;
+
+    @Schema(description = "Passenger fare category asked of the supplier; omit for Regular", example = "STUDENT")
+    private FareCategory fareCategory;
 }

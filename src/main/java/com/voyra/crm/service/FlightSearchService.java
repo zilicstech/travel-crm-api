@@ -5,6 +5,7 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 import com.voyra.crm.dto.FlightFareRulesResponse;
 import com.voyra.crm.dto.FlightGroupResponse;
 import com.voyra.crm.dto.FlightOfferResponse;
+import com.voyra.crm.enums.FareCategory;
 import com.voyra.crm.enums.PricingProduct;
 import com.voyra.crm.exception.BookingConflictException;
 import com.voyra.crm.exception.BookingRequestException;
@@ -159,6 +160,7 @@ public class FlightSearchService {
         return String.join("|", String.valueOf(tenantId), q.getOrigin(), q.getDestination(),
                 String.valueOf(q.getDepartDate()), String.valueOf(q.getReturnDate()), String.valueOf(q.getCabin()),
                 String.valueOf(q.getAdults()), String.valueOf(q.getChildren()), String.valueOf(q.getInfants()),
+                FareCategory.orRegular(q.getFareCategory()).name(), // a Student search is never served a Regular result
                 suppliers.stream().map(s -> s.id() + "@" + s.updatedAt()).sorted().collect(Collectors.joining(",")));
     }
 }

@@ -83,7 +83,8 @@ public class MockFlightBookingProvider implements FlightBookingProvider {
         // the fare facts the ticket prints (a mock has no tax breakdown, so the ticket shows one tax line)
         var fd = itinerary.putArray("totalPriceList").addObject().put("fareIdentifier", "PUBLISHED").putObject("fd").putObject("ADULT");
         fd.put("cc", "ECONOMY").put("rT", 1).putObject("bI").put("iB", "15 Kg").put("cB", "7 Kg");
-        return new FareReview(base.reviewId(), base.totalFare(), base.baseFare(), base.currency(), base.fareRules(), base.expiresAt(), itinerary);
+        return new FareReview(base.reviewId(), base.totalFare(), base.baseFare(), base.currency(), base.fareRules(), base.expiresAt(), itinerary,
+                null, null, base.documentIdRequired());
     }
 
     private static ObjectNode segment(String airline, String airlineCode, String flightNumber, String origin, String destination,
@@ -125,7 +126,8 @@ public class MockFlightBookingProvider implements FlightBookingProvider {
         BigDecimal base = total.multiply(BASE_SHARE).setScale(2, RoundingMode.HALF_UP);
         // a fresh id per review, like Tripjack: platform_booking.supplier_review_id is UNIQUE
         return new FareReview("mock-rv-" + offerId + "-" + UUID.randomUUID().toString().replace("-", ""), total, base, "INR", FARE_RULES,
-                Instant.now().plus(15, ChronoUnit.MINUTES), null);
+                Instant.now().plus(15, ChronoUnit.MINUTES), null, null, null,
+                offerIds.stream().anyMatch(MockFlightSearchProvider::needsDocumentId)); // a Student or Senior Citizen fare, like Tripjack's conditions.dc.idm
     }
 
     @Override

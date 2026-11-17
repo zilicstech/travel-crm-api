@@ -252,4 +252,19 @@ class MockFlightBookingProviderTest {
         assertThat(provider.searchFareRules("mock-indigo-0615-PUBLISHED", BookingSuppliers.S1))
                 .isEqualTo(provider.review(List.of("o"), 1, 0, 0, BookingSuppliers.S1).fareRules()).isNotBlank();
     }
+
+    /** Like Tripjack's conditions.dc.idm: a Student or Senior Citizen offer is reviewed as needing each traveller's ID number. */
+    @Test
+    void aSpecialFareReviewNeedsADocumentId() {
+        assertThat(provider.review(List.of("mock-indigo-06:15-PUBLISHED-ECONOMY"), 1, 0, 0, BookingSuppliers.S1).documentIdRequired()).isFalse();
+        assertThat(provider.review(List.of("mock-indigo-06:15-STUDENT-ECONOMY"), 1, 0, 0, BookingSuppliers.S1).documentIdRequired()).isTrue();
+
+        com.voyra.crm.dto.FlightReviewRequest request = new com.voyra.crm.dto.FlightReviewRequest();
+        request.setOfferId("mock-indigo-06:15-SENIOR_CITIZEN-ECONOMY");
+        request.setReturnOfferId("mock-indigo-06:15-SENIOR_CITIZEN_FLEXI-ECONOMY-R");
+        request.setAdults(1);
+        FareReview withItinerary = provider.review(request, BookingSuppliers.S1);
+        assertThat(withItinerary.documentIdRequired()).isTrue();
+        assertThat(withItinerary.itinerary()).isNotNull();
+    }
 }

@@ -46,7 +46,7 @@ public class PlatformBookingPurgeTxService {
     /** Event payload keys (lower case, no underscores; exact match, never substrings) that can hold a passenger's details or supplier free text naming one. */
     private static final Set<String> PERSONAL_KEYS = Set.of("title", "firstname", "lastname", "name", "email", "phone", "mobile", "pan",
             "dob", "dateofbirth", "contact", "address", "message", "note", "reason", "error", "passport", "passportno", "nationality",
-            "contactemail", "contactphone");
+            "contactemail", "contactphone", "documentid", "di");
     /** A ticketed booking with no readable travel date is treated as travelling a year after ticketing (the longest an airline sells ahead). */
     private static final Duration UNDATED_TRAVEL_ALLOWANCE = Duration.ofDays(365);
 

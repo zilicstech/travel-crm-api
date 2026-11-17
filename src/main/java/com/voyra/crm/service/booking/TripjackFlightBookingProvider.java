@@ -85,8 +85,11 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
         }
         log.info("Tripjack review ok: priceIds={}, bookingId={}, total={}, base={}, conditions={}", offerIds, reviewId, total,
                 decimal(fare.path("BF")), res.path("conditions").isMissingNode() ? "-" : res.path("conditions").toString());
+        // Not from Tripjack's own document (other integrators' code): conditions.dc.ida = a document ID applies,
+        // conditions.dc.idm = it is mandatory (a STUDENT fare's review answered both true); booking then needs travellerInfo[].di
         return new FareReview(reviewId, total, decimal(fare.path("BF")), "INR",
-                fareRules(supplier, reviewId, "REVIEW"), null, res.path("tripInfos").isMissingNode() ? null : res.path("tripInfos"));
+                fareRules(supplier, reviewId, "REVIEW"), null, res.path("tripInfos").isMissingNode() ? null : res.path("tripInfos"),
+                null, null, res.path("conditions").path("dc").path("idm").asBoolean(false));
     }
 
     @Override
@@ -100,10 +103,11 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
         delivery.put("contacts", r.phone() == null ? List.of() : List.of(r.phone()));
         body.put("deliveryInfo", delivery);
 
-        // shape only, never names, passport numbers, email or phone (DPDP): enough to see what Tripjack is objecting to
+        // shape only, never names, passport or ID numbers, email or phone (DPDP): enough to see what Tripjack is objecting to
         log.info("Tripjack book request: bookingId={}, amount={}, travellers={}, email={}, phoneDigits={}", r.reviewId(), r.totalFare(),
                 r.passengers().stream().map(p -> p.type() + "/" + p.title() + (p.dateOfBirth() != null ? "/dob" : "")
-                        + (p.passportNumber() != null ? "/passport" : "") + (p.nationality() != null ? "/" + p.nationality() : "")).toList(),
+                        + (p.passportNumber() != null ? "/passport" : "") + (p.nationality() != null ? "/" + p.nationality() : "")
+                        + (p.documentId() != null ? "/id" : "")).toList(),
                 r.email() != null && !r.email().isBlank(), r.phone() == null ? 0 : r.phone().replaceAll("\\D", "").length());
         JsonNode res;
         try {
@@ -233,6 +237,7 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
         putIfPresent(t, "pNum", p.passportNumber());
         putIfPresent(t, "eD", p.passportExpiry());
         putIfPresent(t, "pNat", p.nationality());
+        putIfPresent(t, "di", p.documentId()); // the ID a special fare (student, senior citizen) asks for; unverified shape, see review
         return t;
     }
 

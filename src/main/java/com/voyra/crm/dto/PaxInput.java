@@ -57,6 +57,11 @@ public class PaxInput {
     @Schema(description = "Nationality, ISO country code", example = "IN")
     private String nationality;
 
+    @Size(max = 30)
+    @Pattern(regexp = "[A-Za-z0-9 /-]*", message = "ID number can have letters, digits, spaces, dashes and slashes only")
+    @Schema(description = "Flight only: the traveller's ID number (student ID, age proof), when the reviewed fare requires one", example = "STU-2026/118")
+    private String documentId;
+
     @Schema(description = "CRM member this traveller was picked from, if any", example = "m1d2e3f4-0000-0000-0000-000000000001")
     private String memberId;
 

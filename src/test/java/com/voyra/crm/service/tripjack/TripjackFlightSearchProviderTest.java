@@ -74,6 +74,7 @@ class TripjackFlightSearchProviderTest {
                 .andExpect(jsonPath("$.searchQuery.routeInfos[0].fromCityOrAirport.code").value("BLR"))
                 .andExpect(jsonPath("$.searchQuery.routeInfos[0].toCityOrAirport.code").value("HKT"))
                 .andExpect(jsonPath("$.searchQuery.routeInfos[0].travelDate").value("2026-10-09"))
+                .andExpect(jsonPath("$.searchQuery.searchModifiers").doesNotExist()) // a Regular search is the request it always was
                 .andRespond(withSuccess(fixture("tripjack/flight-search-response.json"), MediaType.APPLICATION_JSON));
 
         TripjackFlightSearchProvider provider = new TripjackFlightSearchProvider(builder);
@@ -101,6 +102,29 @@ class TripjackFlightSearchProviderTest {
         assertThat(flexi.isRefundable()).isTrue();
         assertThat(flexi.getRefundType()).isEqualTo(com.voyra.crm.enums.FlightRefundType.REFUNDABLE);
         assertThat(flexi.getFareType()).isEqualTo("Flexi");
+    }
+
+    /** pfts must be an array: Tripjack refused a plain string live ("Expected BEGIN_ARRAY but was STRING"). */
+    @Test
+    void search_sendsASpecialFareCategoryAsAPftsArrayAndNothingForRegular() throws Exception {
+        for (var category : com.voyra.crm.enums.FareCategory.values()) {
+            RestClient.Builder builder = RestClient.builder();
+            MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+            var expectation = server.expect(requestTo("https://apitest.tripjack.com/fms/v1/air-search-all"));
+            if (category == com.voyra.crm.enums.FareCategory.REGULAR) {
+                expectation.andExpect(jsonPath("$.searchQuery.searchModifiers").doesNotExist());
+            } else {
+                expectation.andExpect(jsonPath("$.searchQuery.searchModifiers.pfts.length()").value(1))
+                        .andExpect(jsonPath("$.searchQuery.searchModifiers.pfts[0]").value(category.name()));
+            }
+            expectation.andRespond(withSuccess(fixture("tripjack/flight-search-response.json"), MediaType.APPLICATION_JSON));
+            FlightSearchQuery q = query();
+            q.setFareCategory(category);
+
+            new TripjackFlightSearchProvider(builder).search(q, credential());
+
+            server.verify();
+        }
     }
 
     /** A real production answer (DEL-BOM, 2026-11-17); only the third fare's rT was changed to 0 to cover non-refundable. */

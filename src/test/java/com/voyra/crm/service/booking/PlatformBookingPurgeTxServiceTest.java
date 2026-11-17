@@ -263,8 +263,10 @@ class PlatformBookingPurgeTxServiceTest {
     @Test
     void passportNationalityAndContactKeysAreRedactedExactly() {
         Map<String, Object> redacted = PlatformBookingPurgeTxService.redact(Map.of("passport", "N1234567", "PassportNo", "N1234567",
-                "nationality", "IN", "contactEmail", "a@b.test", "contact_phone", "98765", "passportExpiryWarning", "soon", "phoneCount", 2));
+                "nationality", "IN", "contactEmail", "a@b.test", "contact_phone", "98765", "passportExpiryWarning", "soon", "phoneCount", 2,
+                "documentId", "STU-118", "di", "STU-118"));
 
+        assertThat(redacted).containsEntry("documentId", "[removed]").containsEntry("di", "[removed]");
         assertThat(redacted).containsEntry("passport", "[removed]").containsEntry("PassportNo", "[removed]")
                 .containsEntry("nationality", "[removed]").containsEntry("contactEmail", "[removed]").containsEntry("contact_phone", "[removed]")
                 .containsEntry("passportExpiryWarning", "soon").containsEntry("phoneCount", 2);

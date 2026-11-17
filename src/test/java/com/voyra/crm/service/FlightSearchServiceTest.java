@@ -500,6 +500,22 @@ class FlightSearchServiceTest {
         assertThat(FlightSearchService.cacheKey("t1", q, List.of(s2, s1))).isEqualTo(FlightSearchService.cacheKey("t1", q, List.of(s1, s2)));
     }
 
+    /** A Student search is never served a Regular cached result; no category and REGULAR are the same search. */
+    @Test
+    void theFareCategoryIsPartOfTheCacheKey() {
+        FlightSearchQuery q = request(1).getQuery();
+        List<ResolvedCredential> suppliers = List.of(supplier("s1", "Mock supplier"));
+        String regular = FlightSearchService.cacheKey("t1", q, suppliers);
+
+        q.setFareCategory(com.voyra.crm.enums.FareCategory.REGULAR);
+        assertThat(FlightSearchService.cacheKey("t1", q, suppliers)).isEqualTo(regular);
+        q.setFareCategory(com.voyra.crm.enums.FareCategory.STUDENT);
+        String student = FlightSearchService.cacheKey("t1", q, suppliers);
+        assertThat(student).isNotEqualTo(regular);
+        q.setFareCategory(com.voyra.crm.enums.FareCategory.SENIOR_CITIZEN);
+        assertThat(FlightSearchService.cacheKey("t1", q, suppliers)).isNotEqualTo(regular).isNotEqualTo(student);
+    }
+
     @Test
     void fareRulesComeFromTheOffersOwnSupplierWithTheSuppliersOwnId() {
         SupplierRegistry registry = mock(SupplierRegistry.class);

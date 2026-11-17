@@ -1,5 +1,6 @@
 package com.voyra.crm.dto;
 
+import com.voyra.crm.enums.FareCategory;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -43,6 +44,9 @@ public class FlightReviewRequest {
 
     @Schema(description = "Optional displayed fare the agency saw in the search results; when the review differs, priceChanged is true", example = "4500.00")
     private BigDecimal searchDisplayedFare;
+
+    @Schema(description = "Fare category the offer was searched with (covers both legs of a round trip); omit for Regular", example = "STUDENT")
+    private FareCategory fareCategory;
 
     @Size(max = 60)
     @Schema(description = "Display hint: airline name; only the mock supplier uses it to draw a route", example = "IndiGo")
