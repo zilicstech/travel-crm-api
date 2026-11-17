@@ -154,6 +154,9 @@ class TripjackHotelSearchProviderCoverageTest {
         server.expect(requestTo(UAT + "/hms/v3/hotel/listing")).andExpect(jsonPath("$.hids[0]").value(201))
                 .andExpect(jsonPath("$.hids.length()").value(100))
                 .andRespond(withStatus(HttpStatus.INTERNAL_SERVER_ERROR));
+        // a failed content call only costs the cards their stars, type and amenities
+        server.expect(requestTo(UAT + "/hms/v3/content/fetch-hotel-content")).andExpect(jsonPath("$.hotelIds.length()").value(2))
+                .andRespond(withStatus(HttpStatus.INTERNAL_SERVER_ERROR));
         provider.refreshStaticData(cred);
 
         List<HotelOfferResponse> offers = provider.search(query("Goa", "IN"), cred);
@@ -161,6 +164,7 @@ class TripjackHotelSearchProviderCoverageTest {
         server.verify();
         assertThat(offers).extracting(HotelOfferResponse::getOfferId).containsExactly("A1", "B1");
         assertThat(offers).allSatisfy(o -> assertThat(o.getNights()).isEqualTo(2));
+        assertThat(offers).allSatisfy(o -> assertThat(o.getAmenities()).isEmpty());
     }
 
     @Test
@@ -170,11 +174,16 @@ class TripjackHotelSearchProviderCoverageTest {
         json(UAT, "/hms/v3/content/fetch-hotel-mapping", "{\"hotels\":[{\"tjHotelId\":\"5\"}]}");
         String listing = "{\"hotels\":[{\"tjHotelId\":\"5\",\"name\":\"H\",\"options\":[" + option("O5", 100) + "]}]}";
         json(UAT, "/hms/v3/hotel/listing", listing);
+        json(UAT, "/hms/v3/content/fetch-hotel-content", "{\"hotels\":[{\"tjHotelId\":\"5\",\"star_rating\":3,\"property_type\":{\"name\":\" \"}}]}");
         json(UAT, "/hms/v3/hotel/listing", listing);
         provider.refreshStaticData(cred);
 
         assertThat(provider.search(query("Goa", " "), cred)).extracting(HotelOfferResponse::getOfferId).containsExactly("O5");
-        assertThat(provider.search(query("Goa", "IN"), cred)).extracting(HotelOfferResponse::getOfferId).containsExactly("O5");
+        // the second search reads the content from the week-long cache
+        assertThat(provider.search(query("Goa", "IN"), cred)).singleElement().satisfies(o -> {
+            assertThat(o.getStarRating()).isEqualTo(3);
+            assertThat(o.getPropertyType()).isNull();
+        });
         server.verify();
     }
 
@@ -402,8 +411,10 @@ class TripjackHotelSearchProviderCoverageTest {
         String listing = "{\"hotels\":[{\"tjHotelId\":\"5\",\"name\":\"H\",\"options\":[" + option("O5", 100) + "]}]}";
         json(UAT, "/hms/v3/content/fetch-hotel-mapping", "{\"hotels\":[{\"tjHotelId\":\"5\"}]}");
         json(UAT, "/hms/v3/hotel/listing", listing);
+        json(UAT, "/hms/v3/content/fetch-hotel-content", "{\"hotels\":[]}");
         json(UAT, "/hms/v3/content/fetch-hotel-mapping", "{\"hotels\":[{\"tjHotelId\":\"5\"}]}");
         json(UAT, "/hms/v3/hotel/listing", listing);
+        json(UAT, "/hms/v3/content/fetch-hotel-content", "{\"hotels\":[]}");
         provider.refreshStaticData(cred);
 
         provider.search(query("Goa", "IN"), cred);
@@ -411,6 +422,46 @@ class TripjackHotelSearchProviderCoverageTest {
         assertThat(provider.search(query("Goa", "IN"), cred)).extracting(HotelOfferResponse::getOfferId).containsExactly("O5");
 
         server.verify();
+    }
+
+    /** What the listing itself carries wins; the content only fills the gaps. */
+    @Test
+    void theListingsOwnStarsAddressAndPhotoWinOverTheContent() {
+        com.fasterxml.jackson.databind.ObjectMapper m = new com.fasterxml.jackson.databind.ObjectMapper();
+        try {
+            com.fasterxml.jackson.databind.JsonNode hotel = m.readTree("{\"tjHotelId\":\"5\",\"name\":\"H\",\"starRating\":2,"
+                    + "\"address\":{\"fulladdr\":\"Listing Road\"},\"heroImage\":\"https://img.example.test/listing.jpg\",\"options\":[" + option("O5", 100) + "]}");
+            com.fasterxml.jackson.databind.JsonNode content = m.readTree("{\"tjHotelId\":\"5\",\"star_rating\":5,"
+                    + "\"locale\":{\"address\":{\"fulladdr\":\"Content Road\"}},\"images\":[{\"links\":{\"Standard\":{\"href\":\"https://img.example.test/c.jpg\"}}}]}");
+            HotelOfferResponse o = TripjackHotelSearchProvider.toOffer(hotel, "Goa", 1, "c", content);
+            assertThat(o.getStarRating()).isEqualTo(2);
+            assertThat(o.getAddress()).isEqualTo("Listing Road");
+            assertThat(o.getImageUrl()).isEqualTo("https://img.example.test/listing.jpg");
+            assertThat(o.getAmenities()).isEmpty();
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    /** The search waits a bounded time for hotel content: a slow answer leaves the cards plain, the search goes on. */
+    @Test
+    void aSlowContentAnswerDoesNotHoldTheSearchUp() {
+        setUp(SupplierEnvironment.UAT, true);
+        expectUatStaticData();
+        json(UAT, "/hms/v3/content/fetch-hotel-mapping", "{\"hotels\":[{\"tjHotelId\":\"5\"}]}");
+        json(UAT, "/hms/v3/hotel/listing", "{\"hotels\":[{\"tjHotelId\":\"5\",\"name\":\"H\",\"options\":[" + option("O5", 100) + "]}]}");
+        server.expect(requestTo(UAT + "/hms/v3/content/fetch-hotel-content")).andRespond(request -> {
+            try {
+                Thread.sleep(400);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return withSuccess("{\"hotels\":[{\"tjHotelId\":\"5\",\"star_rating\":5}]}", MediaType.APPLICATION_JSON).createResponse(request);
+        });
+        provider.refreshStaticData(cred);
+        provider.searchContentWait = Duration.ofMillis(20);
+
+        assertThat(provider.search(query("Goa", "IN"), cred)).singleElement().satisfies(o -> assertThat(o.getStarRating()).isZero());
     }
 
     @Test

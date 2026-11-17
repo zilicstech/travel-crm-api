@@ -106,7 +106,15 @@ class TripjackHotelSearchProviderTest {
                             {"optionId":"A-1","roomInfo":[{"name":"Deluxe Room"}],"mealBasis":"Room Only","pricing":{"totalPrice":21000.5,"currency":"INR"},
                              "cancellation":{"isRefundable":true,"deadlineDateTime":"2026-11-28T12:00"}}]},
                           {"tjHotelId":"1002","name":"Hotel B","options":[]}]}""", MediaType.APPLICATION_JSON));
-        // No city list, nationality or content call during the search (server.verify() fails on any unexpected call).
+        // Content only for the hotels with an option; no city list or nationality call during the search.
+        server.expect(requestTo(HOST + "/hms/v3/content/fetch-hotel-content")).andExpect(jsonPath("$.hotelIds.length()").value(1))
+                .andExpect(jsonPath("$.hotelIds[0]").value("1001"))
+                .andRespond(withSuccess("""
+                        {"hotels":[{"tjHotelId":"1001","star_rating":"4","property_type":{"id":"Resort","name":"Resort"},
+                          "locale":{"address":{"fulladdr":"1 Beach Road, Paris"}},
+                          "amenities":{"0":{"id":"1","name":"Swimming Pool"},"1":{"id":"2","name":" "},"2":{"id":"3","name":"Free WiFi"}},
+                          "images":[{"is_hero_image":true,"links":{"Standard":{"href":"https://img.example.test/1.jpg"}}}]}]}""",
+                        MediaType.APPLICATION_JSON));
 
         provider.refreshStaticData(cred);
         List<HotelOfferResponse> offers = provider.search(query("Paris", "FR"), cred);
@@ -117,9 +125,12 @@ class TripjackHotelSearchProviderTest {
         assertThat(o.getOfferId()).isEqualTo("A-1");
         assertThat(o.getHotelName()).isEqualTo("Hotel A");
         assertThat(o.getHotelId()).isEqualTo("1001");
-        // The listing carries no photo, stars or address here, so the card goes without them.
-        assertThat(o.getImageUrl()).isNull();
-        assertThat(o.getStarRating()).isZero();
+        // The listing carries no photo, stars or address: the hotel content gives them, with the type and amenities.
+        assertThat(o.getImageUrl()).isEqualTo("https://img.example.test/1.jpg");
+        assertThat(o.getStarRating()).isEqualTo(4);
+        assertThat(o.getAddress()).isEqualTo("1 Beach Road, Paris");
+        assertThat(o.getPropertyType()).isEqualTo("Resort");
+        assertThat(o.getAmenities()).containsExactly("Swimming Pool", "Free WiFi");
         assertThat(o.getRoomType()).isEqualTo("Deluxe Room");
         assertThat(o.getBoardBasis()).isEqualTo("Room Only");
         assertThat(o.getNights()).isEqualTo(3);

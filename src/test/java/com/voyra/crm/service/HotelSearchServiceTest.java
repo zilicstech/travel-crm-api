@@ -348,6 +348,41 @@ class HotelSearchServiceTest {
         verify(provider, times(1)).search(any(), any());
     }
 
+    /** Property type matches any ticked type; amenities must all be there; the facets describe the whole search. */
+    @Test
+    void propertyTypeAndAmenityFiltersAndTheirFacets() {
+        HotelOfferResponse resort = hotel("a", "Sea Breeze", 4, "100", true, "Breakfast");
+        resort.setPropertyType("Resort");
+        resort.setAmenities(List.of("Swimming Pool", "Free WiFi", "Spa", "Free WiFi"));
+        HotelOfferResponse hotelB = hotel("b", "Hill View", 3, "200", true, "Room Only");
+        hotelB.setPropertyType("Hotel");
+        hotelB.setAmenities(List.of("Free WiFi", "Gym"));
+        HotelOfferResponse unknown = hotel("c", "No Content", 0, "300", true, "Room Only"); // its content did not arrive
+        when(provider.search(any(), any())).thenReturn(List.of(resort, hotelB, unknown));
+
+        HotelSearchPageResponse first = service.search(query(null, 0));
+        String sid = first.getSearchId();
+        assertThat(first.getPropertyTypes()).containsExactly("Hotel", "Resort");
+        assertThat(first.getAmenities()).containsExactly("Free WiFi", "Gym", "Spa", "Swimming Pool");
+
+        HotelSearchQuery q = query(sid, 0);
+        q.setPropertyTypes(List.of("resort", "VILLA"));
+        assertThat(ids(q)).containsExactly("s1:a");
+
+        q = query(sid, 0);
+        q.setAmenities(List.of("free wifi"));
+        assertThat(ids(q)).containsExactly("s1:a", "s1:b");
+
+        q = query(sid, 0);
+        q.setAmenities(List.of("Free WiFi", "Spa"));
+        assertThat(ids(q)).containsExactly("s1:a");
+
+        q = query(sid, 0);
+        q.setPropertyTypes(List.of());
+        q.setAmenities(List.of());
+        assertThat(ids(q)).hasSize(3);
+    }
+
     @Test
     void starSortRunsOverTheWholeFilteredListThenCheapestAndPagesAfterIt() {
         when(provider.search(any(), any())).thenReturn(IntStream.range(0, 25)
@@ -374,6 +409,8 @@ class HotelSearchServiceTest {
         assertThat(page.getPriceMin()).isNull();
         assertThat(page.getPriceMax()).isNull();
         assertThat(page.getBoardBases()).isEmpty();
+        assertThat(page.getPropertyTypes()).isEmpty();
+        assertThat(page.getAmenities()).isEmpty();
     }
 
     @Test

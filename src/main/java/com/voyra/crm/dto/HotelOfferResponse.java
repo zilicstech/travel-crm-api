@@ -41,6 +41,12 @@ public class HotelOfferResponse {
     @Schema(example = "Patong Beach Road, Phuket")
     private String address;
 
+    @Schema(description = "Property type from the supplier's hotel content (Hotel, Resort, Apartment...); null when unknown", example = "Resort")
+    private String propertyType;
+
+    @Schema(description = "Hotel amenities from the supplier's hotel content; empty when unknown", example = "[\"Swimming Pool\", \"Free WiFi\"]")
+    private java.util.List<String> amenities;
+
     @Schema(example = "Deluxe Room")
     private String roomType;
 

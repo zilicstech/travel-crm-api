@@ -24,7 +24,7 @@ import java.util.stream.IntStream;
 public class MockHotelSearchProvider implements HotelSearchProvider {
 
     private record Template(String hotelName, int starRating, String roomType, String boardBasis,
-                             BigDecimal baseRatePerNight, boolean refundable) {
+                             BigDecimal baseRatePerNight, boolean refundable, String propertyType, List<String> amenities) {
         String id() {
             return "mock-" + hotelName.toLowerCase().replace(" ", "-");
         }
@@ -32,13 +32,13 @@ public class MockHotelSearchProvider implements HotelSearchProvider {
 
     private static final List<Template> TEMPLATES = List.of(
             new Template("Amari Beach Resort", 4, "Deluxe Room", "Breakfast Included",
-                    new BigDecimal("6500"), true),
+                    new BigDecimal("6500"), true, "Resort", List.of("Free WiFi", "Swimming Pool", "Restaurant", "Beach Access")),
             new Template("Ibis Budget", 3, "Standard Room", "Room Only",
-                    new BigDecimal("3200"), false),
+                    new BigDecimal("3200"), false, "Hotel", List.of("Free WiFi", "Air Conditioning")),
             new Template("Grand Palace Hotel", 5, "Executive Suite", "Half Board",
-                    new BigDecimal("11500"), true),
+                    new BigDecimal("11500"), true, "Hotel", List.of("Free WiFi", "Swimming Pool", "Spa", "Restaurant", "Gym")),
             new Template("Sunset Inn", 3, "Superior Room", "Breakfast Included",
-                    new BigDecimal("4100"), false)
+                    new BigDecimal("4100"), false, "Guest House", List.of("Free WiFi", "Air Conditioning", "Restaurant"))
     );
 
     private static final List<String> HOTEL_PHOTOS = List.of("Exterior", "Lobby", "Pool", "Restaurant", "Spa", "View");
@@ -62,6 +62,8 @@ public class MockHotelSearchProvider implements HotelSearchProvider {
                         .starRating(t.starRating())
                         .city(query.getCity())
                         .address(t.hotelName() + ", " + query.getCity())
+                        .propertyType(t.propertyType())
+                        .amenities(t.amenities())
                         .roomType(t.roomType())
                         .boardBasis(t.boardBasis())
                         .nights(nights)

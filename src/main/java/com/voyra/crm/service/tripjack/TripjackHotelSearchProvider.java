@@ -59,6 +59,8 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
     static final int MAX_BATCHES = 3;
     /** Content is asked a few hotels per call, all calls at once - a small call answers sooner than one of 20. */
     static final int CONTENT_BATCH = 5;
+    /** The search reads content for up to 300 hotels: bigger calls (Tripjack allows 100 ids), all at once. */
+    static final int SEARCH_CONTENT_BATCH = 20;
     static final int DEFAULT_CHILD_AGE = 8;
     static final Duration STATIC_DATA_TTL = Duration.ofDays(7);
     private static final Duration HOTEL_IDS_TTL = Duration.ofDays(1);
@@ -86,6 +88,8 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
     private final String prodBaseUrl;
     /** The caches' ages are read from this; tests swap in a clock they can move. */
     Clock clock = Clock.systemUTC();
+    /** How long a search waits for hotel content (stars, type, amenities); late batches still fill the cache. */
+    Duration searchContentWait = Duration.ofSeconds(6);
 
     private final Map<String, StaticData> staticData = new ConcurrentHashMap<>();
     private final Set<String> loading = ConcurrentHashMap.newKeySet();
@@ -166,8 +170,11 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
 
         List<JsonNode> withOptions = listed.stream().filter(h -> h.path("options").size() > 0).toList();
         int nights = (int) Math.max(1, ChronoUnit.DAYS.between(query.getCheckIn(), query.getCheckOut()));
+        // Stars, property type and amenities come only from the content call: read before the list is filtered.
+        Map<String, JsonNode> content = contentFor(client, host, withOptions.stream().map(TripjackHotelSearchProvider::hotelIdOf).toList(),
+                SEARCH_CONTENT_BATCH, searchContentWait);
         List<HotelOfferResponse> offers = withOptions.stream()
-                .map(h -> toOffer(h, query.getCity(), nights, correlationId))
+                .map(h -> toOffer(h, query.getCity(), nights, correlationId, content.get(hotelIdOf(h))))
                 .sorted(Comparator.comparing(HotelOfferResponse::getPrice))
                 .toList();
         log.info("Tripjack hotel search ok: {} hotels from {} ids in {} ms", offers.size(), hids.size(), System.currentTimeMillis() - startedAt);
@@ -212,6 +219,14 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
      * address show only when the listing itself carries them; the hotel's own page fetches everything else.
      */
     static HotelOfferResponse toOffer(JsonNode hotel, String city, int nights, String correlationId) {
+        return toOffer(hotel, city, nights, correlationId, null);
+    }
+
+    /**
+     * One hotel of the listing, with its content ({@code fetch-hotel-content}, null when it did not arrive in time)
+     * filling what the listing lacks: stars, address and photo, and giving the property type and amenities.
+     */
+    static HotelOfferResponse toOffer(JsonNode hotel, String city, int nights, String correlationId, JsonNode content) {
         JsonNode best = null;
         for (JsonNode o : hotel.path("options")) {
             if (best == null || o.path("pricing").path("totalPrice").asDouble() < best.path("pricing").path("totalPrice").asDouble()) {
@@ -222,15 +237,31 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
         best.path("roomInfo").forEach(r -> roomNames.add(r.path("name").asText()));
         boolean refundable = best.path("cancellation").path("isRefundable").asBoolean(false);
         JsonNode address = hotel.path("address");
+        int stars = (int) Math.round(firstNumber(hotel, "starRating", "star_rating", "rating"));
+        String street = address.isObject() ? address.path("fulladdr").asText(address.path("line_1").asText("")) : address.asText("");
+        String image = listingImage(hotel);
+        List<String> amenities = new ArrayList<>();
+        String propertyType = null;
+        if (content != null) {
+            HotelThumbnailResponse t = toThumbnail(hotelIdOf(hotel), content);
+            stars = stars > 0 ? stars : t.getStarRating();
+            street = street.isBlank() ? t.getAddress() : street;
+            image = image != null ? image : t.getImageUrl();
+            content.path("amenities").forEach(a -> { String n = a.path("name").asText("").trim(); if (!n.isEmpty()) amenities.add(n); });
+            String type = content.path("property_type").path("name").asText("").trim();
+            propertyType = type.isEmpty() ? null : type;
+        }
         return HotelOfferResponse.builder()
                 .offerId(best.path("optionId").asText())
                 .hotelId(hotelIdOf(hotel).isBlank() ? null : hotelIdOf(hotel))
-                .imageUrl(listingImage(hotel))
+                .imageUrl(image)
                 .correlationId(correlationId)
                 .hotelName(hotel.path("name").asText())
-                .starRating((int) Math.round(firstNumber(hotel, "starRating", "star_rating", "rating")))
+                .starRating(stars)
                 .city(city)
-                .address(address.isObject() ? address.path("fulladdr").asText(address.path("line_1").asText("")) : address.asText(""))
+                .address(street)
+                .propertyType(propertyType)
+                .amenities(amenities)
                 .roomType(String.join(" / ", roomNames))
                 .boardBasis(best.path("mealBasis").asText(""))
                 .nights(nights)
@@ -668,8 +699,16 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
         return id;
     }
 
-    /** Star rating, address and photos, cached a week; a failure only costs the list those. Batches go out together. */
     private Map<String, JsonNode> contentFor(RestClient client, String host, List<String> hids) {
+        return contentFor(client, host, hids, CONTENT_BATCH, null);
+    }
+
+    /**
+     * Star rating, address, photos, property type and amenities, cached a week; a failure only costs the list those.
+     * Batches go out together; with a {@code wait} the answer holds what arrived by then and later batches still fill
+     * the cache.
+     */
+    private Map<String, JsonNode> contentFor(RestClient client, String host, List<String> hids, int batchSize, Duration wait) {
         Map<String, JsonNode> out = new java.util.concurrent.ConcurrentHashMap<>();
         List<String> missing = new ArrayList<>();
         for (String hid : hids) {
@@ -678,8 +717,8 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
             if (c != null && c.at().plus(STATIC_DATA_TTL).isAfter(clock.instant())) out.put(hid, c.value()); else missing.add(hid);
         }
         List<java.util.concurrent.CompletableFuture<Void>> calls = new ArrayList<>();
-        for (int i = 0; i < missing.size(); i += CONTENT_BATCH) {
-            List<String> batch = missing.subList(i, Math.min(i + CONTENT_BATCH, missing.size()));
+        for (int i = 0; i < missing.size(); i += batchSize) {
+            List<String> batch = missing.subList(i, Math.min(i + batchSize, missing.size()));
             calls.add(java.util.concurrent.CompletableFuture.runAsync(() -> {
                 try {
                     JsonNode res = call(client, "POST", "/hms/v3/content/fetch-hotel-content", Map.of("hotelIds", batch));
@@ -694,8 +733,9 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
                 }
             }, CALLS));
         }
-        calls.forEach(java.util.concurrent.CompletableFuture::join);
-        return out;
+        var all = java.util.concurrent.CompletableFuture.allOf(calls.toArray(java.util.concurrent.CompletableFuture[]::new));
+        (wait == null ? all : all.completeOnTimeout(null, wait.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS)).join();
+        return Map.copyOf(out);
     }
 
     /**

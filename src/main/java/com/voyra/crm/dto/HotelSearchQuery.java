@@ -74,6 +74,12 @@ public class HotelSearchQuery {
     @Schema(description = "Only offers with one of these meal plans, ignoring case", example = "[\"Breakfast Included\"]")
     private java.util.List<@NotBlank(message = "Meal plan can't be blank") String> boardBasis;
 
+    @Schema(description = "Only hotels of one of these property types, ignoring case", example = "[\"Resort\"]")
+    private java.util.List<@NotBlank(message = "Property type can't be blank") String> propertyTypes;
+
+    @Schema(description = "Only hotels that have every one of these amenities, ignoring case", example = "[\"Swimming Pool\"]")
+    private java.util.List<@NotBlank(message = "Amenity can't be blank") String> amenities;
+
     @Schema(description = "PRICE (default, cheapest first) or STARS (highest rated first, then cheapest)", example = "PRICE")
     private com.voyra.crm.enums.HotelSortOrder sort;
 }

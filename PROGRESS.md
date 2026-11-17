@@ -426,3 +426,15 @@ Tripjack requires its 14-case hotel certification in UAT before live access.
   `PASSPORT_REQUIRED`; review response `panRequired` / `passportRequired`, pricing-snapshot keys `panRequired`,
   `passportRequired`, `gstRequired`). Mock switches `app.hotel-booking.mock.pan-required` / `passport-required`.
 - Not done: hotel hold (`onholdAllowed`, confirm-book), showing the management fee as its own line, the booking list API.
+
+## Hotel property type and amenity filters (2026-11-17, client correction list)
+
+Tripjack's hotel listing carries no stars, type or amenities, so the Stars filter hid every live Tripjack hotel. The
+search now reads `fetch-hotel-content` for the listed hotels before the list is kept (20 ids per call, all at once,
+cached a week, waiting at most 6 seconds; late batches still fill the cache and a hotel without content simply has
+none): stars, address and photo fill what the listing lacks, and `HotelOfferResponse.propertyType` /
+`amenities` come from `property_type.name` and `amenities[].name`. `HotelSearchQuery.propertyTypes` (any of) and
+`amenities` (all of, ignoring case) filter the kept list; the page carries `propertyTypes` (sorted) and `amenities`
+(most hotels first) for the filter. The mock supplier's hotels have types and amenities. Search Hotels shows Property
+type and Amenities (the 12 most common, Show all) in the filter column, and each card shows its type and first four
+amenities. Amenity names are Tripjack's own, unseen until it runs on production.

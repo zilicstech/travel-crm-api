@@ -42,4 +42,10 @@ public class HotelSearchPageResponse {
 
     @Schema(description = "Every meal plan in the whole search, before filters, sorted")
     private List<String> boardBases;
+
+    @Schema(description = "Property types across the whole result, for the filter", example = "[\"Hotel\", \"Resort\"]")
+    private List<String> propertyTypes;
+
+    @Schema(description = "Amenities across the whole result, most common first, for the filter", example = "[\"Free WiFi\", \"Swimming Pool\"]")
+    private List<String> amenities;
 }

@@ -40,7 +40,7 @@ import java.util.function.BiFunction;
  * kept in memory for 30 minutes under a random searchId and later pages are sliced from it - never searched again.
  * Every supplier with hotel search on is asked at once and a hotel two suppliers both list stays two rows (ids
  * namespaced by supplier), cheapest first; a partial result is kept with the names that did not answer, so later pages
- * slice the same list. Filters (name, stars, price, refundable, meal plan) and the sort are applied to the kept list on
+ * slice the same list. Filters (name, stars, price, refundable, meal plan, property type, amenities) and the sort are applied to the kept list on
  * every request, so changing one never asks a supplier again. A result belongs to the agency that ran it (its own supplier rates); an expired or unknown searchId searches anew.
  * Offers and room options are priced for that agency once, when the result is kept, so the cache is tenant-keyed by
  * construction; a platform admin (no tenant) gets them undecorated.
@@ -101,7 +101,18 @@ public class HotelSearchService {
                 .priceMin(amounts.stream().min(Comparator.naturalOrder()).orElse(null))
                 .priceMax(amounts.stream().max(Comparator.naturalOrder()).orElse(null))
                 .boardBases(all.stream().map(HotelOfferResponse::getBoardBasis).filter(Objects::nonNull).distinct().sorted().toList())
+                .propertyTypes(all.stream().map(HotelOfferResponse::getPropertyType).filter(Objects::nonNull).distinct().sorted().toList())
+                .amenities(amenityFacet(all))
                 .build();
+    }
+
+    /** Every amenity in the result, the most hotels first, then by name. */
+    private static List<String> amenityFacet(List<HotelOfferResponse> all) {
+        Map<String, Long> counts = all.stream().filter(o -> o.getAmenities() != null).flatMap(o -> o.getAmenities().stream().distinct())
+                .collect(java.util.stream.Collectors.groupingBy(a -> a, java.util.stream.Collectors.counting()));
+        return counts.entrySet().stream()
+                .sorted(Map.Entry.<String, Long>comparingByValue().reversed().thenComparing(Map.Entry.comparingByKey()))
+                .map(Map.Entry::getKey).toList();
     }
 
     /** What the list is sorted and price-filtered by: the agency's fare, or the supplier price for a platform admin. */
@@ -113,12 +124,15 @@ public class HotelSearchService {
         String name = q.getName() == null ? "" : q.getName().trim().toLowerCase(Locale.ROOT);
         BigDecimal amount = amount(o);
         return (name.isEmpty() || (o.getHotelName() != null && o.getHotelName().toLowerCase(Locale.ROOT).contains(name)))
-                // shortcut: a hotel whose listing carries no star rating is left out while a star filter is on, until stars come with the search.
+                // stars come from the supplier's hotel content: a hotel whose content did not arrive in time has none
                 && (isEmpty(q.getStars()) || q.getStars().contains(o.getStarRating()))
                 && (q.getMinPrice() == null || (amount != null && amount.compareTo(q.getMinPrice()) >= 0))
                 && (q.getMaxPrice() == null || (amount != null && amount.compareTo(q.getMaxPrice()) <= 0))
                 && (!Boolean.TRUE.equals(q.getRefundableOnly()) || o.isRefundable())
-                && (isEmpty(q.getBoardBasis()) || q.getBoardBasis().stream().anyMatch(b -> b.equalsIgnoreCase(o.getBoardBasis())));
+                && (isEmpty(q.getBoardBasis()) || q.getBoardBasis().stream().anyMatch(b -> b.equalsIgnoreCase(o.getBoardBasis())))
+                && (isEmpty(q.getPropertyTypes()) || q.getPropertyTypes().stream().anyMatch(t -> t.equalsIgnoreCase(o.getPropertyType())))
+                && (isEmpty(q.getAmenities()) || q.getAmenities().stream().allMatch(a -> o.getAmenities() != null
+                        && o.getAmenities().stream().anyMatch(a::equalsIgnoreCase)));
     }
 
     private static boolean isEmpty(List<?> list) {
