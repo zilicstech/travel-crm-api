@@ -48,4 +48,10 @@ public class PlatformBookingReviewResponse {
 
     @Schema(description = "Flights: the fare category the review was made for", example = "REGULAR")
     private FareCategory fareCategory;
+
+    @Schema(description = "Hotels: true when the room needs the lead guest's PAN at confirm", example = "false")
+    private boolean panRequired;
+
+    @Schema(description = "Hotels: true when the room needs every guest's passport number at confirm", example = "false")
+    private boolean passportRequired;
 }

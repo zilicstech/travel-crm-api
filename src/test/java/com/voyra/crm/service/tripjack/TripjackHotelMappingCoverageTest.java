@@ -68,6 +68,9 @@ class TripjackHotelMappingCoverageTest {
     @Test
     void theBaseRateIsReadOnlyFromPositiveAllowListedFieldsOrAnExplicitTax() {
         assertThat(TripjackHotelSearchProvider.baseRate(j("{\"baseFare\":\"120.5\"}"))).isEqualByComparingTo("120.50");
+        // v3: the total is base + taxes + management fee (mf, mft), so basePrice wins over total minus taxes
+        assertThat(TripjackHotelSearchProvider.baseRate(j("{\"basePrice\":1000,\"totalPrice\":1300,\"taxes\":180,\"mf\":100,\"mft\":20}")))
+                .isEqualByComparingTo("1000.00");
         assertThat(TripjackHotelSearchProvider.baseRate(j("{\"baseRate\":0,\"totalPrice\":100,\"taxes\":18}"))).isEqualByComparingTo("82.00");
         assertThat(TripjackHotelSearchProvider.baseRate(j("{\"baseRate\":\"abc\",\"totalPrice\":100,\"tax\":\"18\"}"))).isNull();
         assertThat(TripjackHotelSearchProvider.baseRate(j("{\"totalPrice\":100,\"totalTax\":-1}"))).isNull();
@@ -130,10 +133,10 @@ class TripjackHotelMappingCoverageTest {
                   {"optionId":"B","pricing":{"totalPrice":300},"roomInfo":[{"id":"r1","name":"Double"},{"id":"r1","name":"Double"}],
                    "inclusions":["Wifi"," "],"bookingNotes":"<p>Note &amp; more</p>"},
                   {"optionId":"A","pricing":{"totalPrice":200,"currency":"USD"},"cancellation":{"isRefundable":true}}]}"""),
-                null, "Goa", 2);
+                null, "Goa", 2, "c");
 
         assertThat(d.getName()).isEmpty();
-        assertThat(d.getOptions()).extracting(HotelDetailResponse.RoomOption::getOptionId).containsExactly("A", "B");
+        assertThat(d.getOptions()).extracting(HotelDetailResponse.RoomOption::getOptionId).containsExactly("A||c", "B||c");
         HotelDetailResponse.RoomOption b = d.getOptions().get(1);
         assertThat(b.getRooms()).singleElement().satisfies(r -> {
             assertThat(r.getCount()).isEqualTo(2);
@@ -170,7 +173,7 @@ class TripjackHotelMappingCoverageTest {
 
         HotelDetailResponse d = TripjackHotelSearchProvider.toDetail("H1", j("""
                 {"options":[{"optionId":"A","pricing":{"totalPrice":100},"roomInfo":[{"id":"r1","name":"Sea Room"},{"id":"r2","name":"Plain"}]}]}"""),
-                info, "Goa", 1);
+                info, "Goa", 1, "c");
 
         assertThat(d.getName()).isEqualTo("Static Name");
         assertThat(d.getStarRating()).isEqualTo(4);
@@ -197,6 +200,17 @@ class TripjackHotelMappingCoverageTest {
         assertThat(plain.getMaxOccupancy()).isNull();
     }
 
+    /** Tripjack's review needs the pricing call's reviewHash and the search's correlationId: both ride in the option id. */
+    @Test
+    void anOptionIdCarriesTheReviewHashAndCorrelationIdAndParsesBack() {
+        HotelDetailResponse d = TripjackHotelSearchProvider.toDetail("H1",
+                j("{\"reviewHash\":\"rh-1\",\"options\":[{\"optionId\":\"A\",\"pricing\":{\"totalPrice\":1}}]}"), null, "Goa", 1, "corr-1");
+        String id = d.getOptions().get(0).getOptionId();
+        assertThat(id).isEqualTo("A|rh-1|corr-1");
+        assertThat(TripjackHotelSearchProvider.OptionRef.parse(id)).isEqualTo(new TripjackHotelSearchProvider.OptionRef("A", "rh-1", "corr-1"));
+        assertThat(TripjackHotelSearchProvider.OptionRef.parse("A")).isEqualTo(new TripjackHotelSearchProvider.OptionRef("A", null, null));
+    }
+
     @Test
     void numericRoomFactsAreReadToo() {
         JsonNode info = j("""
@@ -204,7 +218,7 @@ class TripjackHotelMappingCoverageTest {
 
         HotelDetailResponse.Room r = TripjackHotelSearchProvider.toDetail("H1",
                 j("{\"options\":[{\"optionId\":\"A\",\"pricing\":{\"totalPrice\":1},\"roomInfo\":[{\"id\":\"r1\",\"name\":\"N\"}]}]}"),
-                info, "Goa", 1).getOptions().get(0).getRooms().get(0);
+                info, "Goa", 1, "c").getOptions().get(0).getRooms().get(0);
 
         assertThat(r.getAreaSqft()).isEqualTo(250);
         assertThat(r.getMaxOccupancy()).isEqualTo(2);

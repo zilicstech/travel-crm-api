@@ -38,6 +38,7 @@ import com.voyra.crm.models.booking.BookResult;
 import com.voyra.crm.models.booking.CancelQuote;
 import com.voyra.crm.models.booking.CancelResult;
 import com.voyra.crm.models.booking.FareReview;
+import com.voyra.crm.models.booking.HotelCompliance;
 import com.voyra.crm.models.booking.PaxDetail;
 import com.voyra.crm.models.booking.SupplierBookingStatus;
 import com.voyra.crm.repository.AgentRepository;
@@ -89,6 +90,11 @@ public class PlatformBookingService {
     private static final String DOCUMENT_ID_REQUIRED = "documentIdRequired";
     /** Pricing-snapshot key of the fare category (REGULAR, STUDENT, SENIOR_CITIZEN) a flight was reviewed for. */
     private static final String FARE_CATEGORY = "fareCategory";
+    /** Pricing-snapshot keys, present (true) when the reviewed hotel room needs the lead guest's PAN, every guest's
+     * passport number, or Voyra's GST details at booking. */
+    private static final String PAN_REQUIRED = "panRequired";
+    private static final String PASSPORT_REQUIRED = "passportRequired";
+    private static final String GST_REQUIRED = "gstRequired";
     /** Event marking that Voyra was alerted about a row its supplier no longer serves (once per row). */
     static final String SUPPLIER_MISMATCH = "SUPPLIER_MISMATCH";
     static final String NOT_SERVED_MESSAGE = "This booking can't be changed right now. Voyra has been notified.";
@@ -371,6 +377,16 @@ public class PlatformBookingService {
         if (fare.documentIdRequired()) {
             booking.getPricingSnapshot().put(DOCUMENT_ID_REQUIRED, true); // confirm refuses a traveller without an ID number
         }
+        HotelCompliance compliance = fare.compliance(); // NONE for flights and suppliers that ask for nothing
+        if (compliance.panRequired()) {
+            booking.getPricingSnapshot().put(PAN_REQUIRED, true);
+        }
+        if (compliance.passportRequired()) {
+            booking.getPricingSnapshot().put(PASSPORT_REQUIRED, true);
+        }
+        if (compliance.gstRequired()) {
+            booking.getPricingSnapshot().put(GST_REQUIRED, true);
+        }
         tx.executeWithoutResult(s -> {
             bookingRepository.save(booking);
             events.record(booking.getId(), "REVIEWED", Map.of("displayed", booking.getDisplayed(), "pricingId", quote.pricingId()));
@@ -392,6 +408,8 @@ public class PlatformBookingService {
                         .map(w -> w.getBalance().subtract(w.getHeld())).orElse(BigDecimal.ZERO))
                 .documentIdRequired(fare.documentIdRequired())
                 .fareCategory(fareCategory)
+                .panRequired(compliance.panRequired())
+                .passportRequired(compliance.passportRequired())
                 .build();
     }
 
@@ -850,6 +868,7 @@ public class PlatformBookingService {
         }
         if (b.getProduct() == PricingProduct.HOTEL) {
             requireGuestsPerRoom(b, request.getPassengers());
+            requireHotelDocuments(b, request.getPassengers());
         } else if (request.getPassengers().size() != b.getPaxCount()) {
             throw new IllegalArgumentException("Enter " + b.getPaxCount() + " travellers, as reviewed");
         } else {
@@ -1013,7 +1032,7 @@ public class PlatformBookingService {
         snapshot.put("agencyCommission", q.agencyCommission());
         snapshot.put("tds", q.tds());
         snapshot.put("agencyEarns", q.agencyEarns());
-        for (String kept : List.of(PAX_MIX, TRAVEL_DATE, FARE_CATEGORY, DOCUMENT_ID_REQUIRED)) {
+        for (String kept : List.of(PAX_MIX, TRAVEL_DATE, FARE_CATEGORY, DOCUMENT_ID_REQUIRED, PAN_REQUIRED, PASSPORT_REQUIRED, GST_REQUIRED)) {
             if (previous.get(kept) != null) {
                 snapshot.put(kept, previous.get(kept));
             }
@@ -1230,41 +1249,71 @@ public class PlatformBookingService {
     private static BookRequest bookRequest(PlatformBooking b, PlatformBookingConfirmRequest request) {
         java.util.TreeMap<Integer, List<PaxInput>> byRoom = new java.util.TreeMap<>();
         request.getPassengers().forEach(p -> byRoom.computeIfAbsent(roomOf(p), k -> new java.util.ArrayList<>()).add(p));
-        String leadPan = byRoom.values().stream().map(g -> g.get(0).getPan())
-                .filter(pan -> pan != null && !pan.isBlank()).findFirst().orElse(null);
+        Map<String, Object> snapshot = b.getPricingSnapshot();
+        HotelCompliance compliance = new HotelCompliance(Boolean.TRUE.equals(snapshot.get(PAN_REQUIRED)),
+                Boolean.TRUE.equals(snapshot.get(PASSPORT_REQUIRED)), Boolean.TRUE.equals(snapshot.get(GST_REQUIRED)));
         return new BookRequest(b.getSupplierReviewId(), b.getGross(),
                 request.getPassengers().stream().map(PlatformBookingService::toPax).toList(),
                 request.getContactEmail(), request.getContactPhone(),
-                byRoom.values().stream().map(g -> g.stream().map(PlatformBookingService::toPax).toList()).toList(), leadPan);
+                byRoom.values().stream().map(g -> g.stream().map(PlatformBookingService::toPax).toList()).toList(),
+                leadPan(request.getPassengers()),
+                compliance, request.getContactDialCode());
     }
 
     /**
-     * Hotels: every reviewed room has a lead guest with a title (the first guest given for it) and no more guests than its
-     * reviewed adults + children; other guests are optional.
+     * Hotels: every reviewed guest is named, room by room (the supplier wants one entry per adult and child), each with a
+     * title, and no two rooms share a lead guest's name (Tripjack refuses that). A row without its reviewed rooms is
+     * checked as one room of its reviewed party size.
      */
     private static void requireGuestsPerRoom(PlatformBooking b, List<PaxInput> guests) {
         Object reviewed = b.getItinerary() == null ? null : b.getItinerary().get("rooms");
         List<?> occupancy = reviewed instanceof List<?> list ? list : List.of();
         int rooms = occupancy.isEmpty() ? 1 : occupancy.size();
-        if (guests.size() > b.getPaxCount()) {
-            throw new IllegalArgumentException("Enter at most " + b.getPaxCount() + " guests, as reviewed");
-        }
-        for (int room = 0; room < rooms; room++) {
-            int r = room;
-            PaxInput lead = guests.stream().filter(g -> roomOf(g) == r).findFirst()
-                    .orElseThrow(() -> new IllegalArgumentException("Enter the lead guest of room " + (r + 1)));
-            if (lead.getTitle() == null || lead.getTitle().isBlank()) {
-                throw new IllegalArgumentException("Enter the title of the lead guest of room " + (r + 1));
-            }
-            if (r < occupancy.size() && occupancy.get(r) instanceof Map<?, ?> m && m.get("adults") instanceof Number adults) {
-                int cap = adults.intValue() + (m.get("childAges") instanceof List<?> ages ? ages.size() : 0);
-                if (guests.stream().filter(g -> roomOf(g) == r).count() > cap) {
-                    throw new IllegalArgumentException("Enter at most " + cap + " guests in room " + (r + 1) + ", as reviewed");
-                }
-            }
-        }
         if (guests.stream().anyMatch(g -> roomOf(g) >= rooms)) {
             throw new IllegalArgumentException("A guest is in a room that was not reviewed");
+        }
+        java.util.Set<String> leads = new java.util.HashSet<>();
+        for (int room = 0; room < rooms; room++) {
+            int r = room;
+            List<PaxInput> inRoom = guests.stream().filter(g -> roomOf(g) == r).toList();
+            int expected = occupancy.isEmpty() ? b.getPaxCount() : guestsIn(occupancy.get(r));
+            if (inRoom.size() != expected) {
+                throw new IllegalArgumentException("Enter all " + expected + (expected == 1 ? " guest" : " guests") + " of room " + (r + 1) + ", as reviewed");
+            }
+            if (inRoom.stream().anyMatch(g -> g.getTitle() == null || g.getTitle().isBlank())) {
+                throw new IllegalArgumentException("Enter the title of every guest in room " + (r + 1));
+            }
+            PaxInput lead = inRoom.get(0);
+            if (!leads.add((lead.getFirstName() + " " + lead.getLastName()).trim().toLowerCase(java.util.Locale.ROOT))) {
+                throw new IllegalArgumentException("Each room needs a different lead guest");
+            }
+        }
+    }
+
+    /** The first PAN among the room leads (each room's first guest), or null. */
+    private static String leadPan(List<PaxInput> guests) {
+        java.util.TreeMap<Integer, PaxInput> leads = new java.util.TreeMap<>();
+        guests.forEach(g -> leads.putIfAbsent(roomOf(g), g));
+        return leads.values().stream().map(PaxInput::getPan).filter(pan -> pan != null && !pan.isBlank()).findFirst().orElse(null);
+    }
+
+    /** Adults plus children of one reviewed room ({@code {adults, childAges}}); an unreadable room holds its lead only. */
+    private static int guestsIn(Object room) {
+        if (!(room instanceof Map<?, ?> m)) {
+            return 1;
+        }
+        int adults = m.get("adults") instanceof Number n ? n.intValue() : 1;
+        return adults + (m.get("childAges") instanceof List<?> ages ? ages.size() : 0);
+    }
+
+    /** A hotel room reviewed as needing the lead guest's PAN or every guest's passport number is booked only with them. */
+    private static void requireHotelDocuments(PlatformBooking b, List<PaxInput> guests) {
+        if (Boolean.TRUE.equals(b.getPricingSnapshot().get(PAN_REQUIRED)) && leadPan(guests) == null) {
+            throw new BookingRequestException("PAN_REQUIRED", "This hotel needs the lead guest's PAN");
+        }
+        if (Boolean.TRUE.equals(b.getPricingSnapshot().get(PASSPORT_REQUIRED))
+                && guests.stream().anyMatch(g -> g.getPassportNo() == null || g.getPassportNo().isBlank())) {
+            throw new BookingRequestException("PASSPORT_REQUIRED", "This hotel needs every guest's passport number");
         }
     }
 

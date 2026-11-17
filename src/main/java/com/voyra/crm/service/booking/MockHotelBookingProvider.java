@@ -75,7 +75,8 @@ public class MockHotelBookingProvider implements HotelBookingProvider {
         return new FareReview(REVIEW_PREFIX + checkIn.format(DAY) + "-" + UUID.randomUUID().toString().replace("-", ""),
                 total, MockHotelSearchProvider.baseOf(total), "INR", "Mock rate rules: free cancellation until two days before check-in.",
                 Instant.now().plus(15, ChronoUnit.MINUTES), null,
-                "Free cancellation until " + deadline, deadline.atStartOfDay(ZoneOffset.UTC).toInstant());
+                "Free cancellation until " + deadline, deadline.atStartOfDay(ZoneOffset.UTC).toInstant(), false,
+                new HotelCompliance(mock.isPanRequired(), mock.isPassportRequired(), false));
     }
 
     @Override

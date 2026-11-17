@@ -1444,13 +1444,14 @@ class PlatformBookingServiceTest {
         return r;
     }
 
-    /** Lead guests of both rooms (room 0's with a PAN) and one more guest in room 0; the child's name is left out. */
+    /** Every reviewed guest: room 0's lead (with a PAN), its second adult and its child, then room 1's lead. */
     private static PlatformBookingConfirmRequest hotelConfirmRequest(String key, String accepted) {
         PlatformBookingConfirmRequest r = confirmRequest(key, accepted);
         r.setPassengers(List.of(
                 PaxInput.builder().type("ADULT").title("Mr").firstName("Rahul").lastName("Sharma").roomIndex(0).pan("ABCDE1234F").build(),
-                PaxInput.builder().type("ADULT").title("Mr").firstName("Vikram").lastName("Rao").roomIndex(1).build(),
-                PaxInput.builder().type("ADULT").firstName("Priya").lastName("Sharma").roomIndex(0).build()));
+                PaxInput.builder().type("ADULT").title("Mrs").firstName("Priya").lastName("Sharma").roomIndex(0).build(),
+                PaxInput.builder().type("CHILD").title("Mstr").firstName("Aarav").lastName("Sharma").roomIndex(0).build(),
+                PaxInput.builder().type("ADULT").title("Mr").firstName("Vikram").lastName("Rao").roomIndex(1).build()));
         return r;
     }
 
@@ -1556,7 +1557,7 @@ class PlatformBookingServiceTest {
         verify(provider, never()).book(any(), any());
         assertThat(sent.getValue().reviewId()).isEqualTo("hrv-1");
         assertThat(sent.getValue().rooms()).hasSize(2);
-        assertThat(sent.getValue().rooms().get(0)).extracting(p -> p.firstName()).containsExactly("Rahul", "Priya");
+        assertThat(sent.getValue().rooms().get(0)).extracting(p -> p.firstName()).containsExactly("Rahul", "Priya", "Aarav");
         assertThat(sent.getValue().rooms().get(1)).extracting(p -> p.firstName()).containsExactly("Vikram");
         assertThat(sent.getValue().leadPan()).isEqualTo("ABCDE1234F");
         assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
@@ -1627,12 +1628,12 @@ class PlatformBookingServiceTest {
         hotelSupplierQuotes("5000.00");
         String id = service.reviewHotel(hotelReviewRequest()).getBookingId();
         PlatformBookingConfirmRequest req = hotelConfirmRequest("key-00000001", "4500.00");
-        req.setPassengers(List.of(
-                PaxInput.builder().type("ADULT").title("Mr").firstName("Rahul").lastName("Sharma").roomIndex(0).build(),
-                PaxInput.builder().type("ADULT").title("Mr").firstName("Vikram").lastName("Rao").roomIndex(1).build(),
-                PaxInput.builder().type("ADULT").firstName("Asha").lastName("Rao").roomIndex(1).build()));
+        List<PaxInput> withExtra = new ArrayList<>(req.getPassengers());
+        withExtra.add(PaxInput.builder().type("ADULT").title("Ms").firstName("Asha").lastName("Rao").roomIndex(1).build());
+        req.setPassengers(withExtra);
 
-        assertThatThrownBy(() -> service.confirm(id, req)).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("room 2");
+        assertThatThrownBy(() -> service.confirm(id, req)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Enter all 1 guest of room 2, as reviewed");
         verify(walletService, never()).hold(any(), any(), any(), any(), any());
         verify(hotelProvider, never()).book(any(), any());
     }
@@ -2094,39 +2095,87 @@ class PlatformBookingServiceTest {
         String id = service.reviewHotel(hotelReviewRequest()).getBookingId();
         PlatformBooking b = rows.get(id);
 
-        PlatformBookingConfirmRequest tooMany = hotelConfirmRequest("key-00000001", "4500.00");
-        List<PaxInput> five = new ArrayList<>(tooMany.getPassengers());
-        five.add(PaxInput.builder().type("ADULT").firstName("A").lastName("B").roomIndex(1).build());
-        five.add(PaxInput.builder().type("ADULT").firstName("C").lastName("D").roomIndex(1).build());
-        tooMany.setPassengers(five);
-        assertThatThrownBy(() -> service.confirm(id, tooMany)).isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Enter at most 4 guests, as reviewed");
+        PlatformBookingConfirmRequest missingChild = hotelConfirmRequest("key-00000001", "4500.00");
+        List<PaxInput> three = new ArrayList<>(missingChild.getPassengers());
+        three.remove(2);
+        missingChild.setPassengers(three);
+        assertThatThrownBy(() -> service.confirm(id, missingChild)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Enter all 3 guests of room 1, as reviewed");
 
-        PlatformBookingConfirmRequest roomTwoFull = hotelConfirmRequest("key-00000002", "4500.00");
-        List<PaxInput> four = new ArrayList<>(roomTwoFull.getPassengers());
-        four.add(PaxInput.builder().type("ADULT").firstName("A").lastName("B").roomIndex(1).build());
-        roomTwoFull.setPassengers(four);
-        assertThatThrownBy(() -> service.confirm(id, roomTwoFull)).isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Enter at most 1 guests in room 2, as reviewed");
+        PlatformBookingConfirmRequest untitledChild = hotelConfirmRequest("key-00000002", "4500.00");
+        untitledChild.getPassengers().get(2).setTitle(" ");
+        assertThatThrownBy(() -> service.confirm(id, untitledChild)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Enter the title of every guest in room 1");
+
+        PlatformBookingConfirmRequest sameLead = hotelConfirmRequest("key-00000003", "4500.00");
+        sameLead.getPassengers().get(3).setFirstName("RAHUL");
+        sameLead.getPassengers().get(3).setLastName("sharma");
+        assertThatThrownBy(() -> service.confirm(id, sameLead)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Each room needs a different lead guest");
 
         b.setItinerary(new java.util.LinkedHashMap<>(Map.of("rooms", "not a list")));
-        PlatformBookingConfirmRequest outside = hotelConfirmRequest("key-00000003", "4500.00");
-        assertThatThrownBy(() -> service.confirm(id, outside)).isInstanceOf(IllegalArgumentException.class)
+        assertThatThrownBy(() -> service.confirm(id, hotelConfirmRequest("key-00000004", "4500.00"))).isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("A guest is in a room that was not reviewed");
 
         b.setItinerary(null);
-        assertThatThrownBy(() -> service.confirm(id, hotelConfirmRequest("key-00000004", "4500.00")))
+        assertThatThrownBy(() -> service.confirm(id, hotelConfirmRequest("key-00000005", "4500.00")))
                 .isInstanceOf(IllegalArgumentException.class).hasMessage("A guest is in a room that was not reviewed");
+        PlatformBookingConfirmRequest oneRoom = hotelConfirmRequest("key-00000006", "4500.00");
+        oneRoom.setPassengers(oneRoom.getPassengers().subList(0, 3));
+        assertThatThrownBy(() -> service.confirm(id, oneRoom)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Enter all 4 guests of room 1, as reviewed"); // no reviewed rooms: one room of the reviewed party
 
         b.setItinerary(new java.util.LinkedHashMap<>(Map.of("rooms", List.of(Map.of("adults", 3, "childAges", "x"), "odd"))));
-        PlatformBookingConfirmRequest roomOneOver = hotelConfirmRequest("key-00000005", "4500.00");
-        List<PaxInput> given = roomOneOver.getPassengers();
-        roomOneOver.setPassengers(List.of(given.get(0), given.get(2),
-                PaxInput.builder().type("ADULT").firstName("E").lastName("F").roomIndex(0).build(),
-                PaxInput.builder().type("ADULT").firstName("G").lastName("H").roomIndex(0).build()));
-        assertThatThrownBy(() -> service.confirm(id, roomOneOver)).isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Enter at most 3 guests in room 1, as reviewed");
+        PlatformBookingConfirmRequest unreadableRooms = hotelConfirmRequest("key-00000007", "4500.00");
+        unreadableRooms.getPassengers().get(3).setFirstName("Rahul");
+        unreadableRooms.getPassengers().get(3).setLastName("Sharma");
+        assertThatThrownBy(() -> service.confirm(id, unreadableRooms)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Each room needs a different lead guest");
         verify(walletService, never()).hold(any(), any(), any(), any(), any());
+    }
+
+    /** A room reviewed as needing PAN or passports is confirmed only with them; the flags reach the supplier with the dial code. */
+    @Test
+    void aHotelThatNeedsPanOrPassportsIsBookedOnlyWithThem() {
+        lenient().when(pricingService.requireInForce(T, PricingProduct.HOTEL)).thenReturn(rules());
+        when(hotelProvider.review(eq("O1"), eq("H1"), any(), any(), anyList(), any()))
+                .thenReturn(new FareReview("hrv-1", new BigDecimal("5000.00"), new BigDecimal("4250.00"), "INR", "Rate rules",
+                        Instant.now().plus(15, ChronoUnit.MINUTES), null, "Free cancellation until 2026-11-29", FREE_UNTIL, false,
+                        new com.voyra.crm.models.booking.HotelCompliance(true, true, true)));
+        when(quoter.quote(eq(T), eq(PricingProduct.HOTEL), any(), any())).thenReturn(quote("PH", "4500.00", "100.00", "0.00"));
+        when(hotelProvider.book(any(), any())).thenReturn(ticketed(null));
+
+        PlatformBookingReviewResponse res = service.reviewHotel(hotelReviewRequest());
+        assertThat(res.isPanRequired()).isTrue();
+        assertThat(res.isPassportRequired()).isTrue();
+        String id = res.getBookingId();
+        assertThat(rows.get(id).getPricingSnapshot()).containsEntry("panRequired", true).containsEntry("passportRequired", true)
+                .containsEntry("gstRequired", true);
+
+        PlatformBookingConfirmRequest noPan = hotelConfirmRequest("key-00000001", "4500.00");
+        noPan.getPassengers().get(0).setPan(null);
+        assertThatThrownBy(() -> service.confirm(id, noPan)).isInstanceOfSatisfying(BookingRequestException.class,
+                e -> assertThat(e.getCode()).isEqualTo("PAN_REQUIRED"));
+        PlatformBookingConfirmRequest noPassport = hotelConfirmRequest("key-00000002", "4500.00");
+        noPassport.getPassengers().forEach(p -> p.setPassportNo("N1234567"));
+        noPassport.getPassengers().get(2).setPassportNo(" ");
+        assertThatThrownBy(() -> service.confirm(id, noPassport)).isInstanceOfSatisfying(BookingRequestException.class,
+                e -> assertThat(e.getCode()).isEqualTo("PASSPORT_REQUIRED"));
+        PlatformBookingConfirmRequest nullPassport = hotelConfirmRequest("key-00000003", "4500.00");
+        assertThatThrownBy(() -> service.confirm(id, nullPassport)).isInstanceOfSatisfying(BookingRequestException.class,
+                e -> assertThat(e.getCode()).isEqualTo("PASSPORT_REQUIRED"));
+        verify(walletService, never()).hold(any(), any(), any(), any(), any());
+
+        PlatformBookingConfirmRequest ok = hotelConfirmRequest("key-00000004", "4500.00");
+        ok.getPassengers().forEach(p -> p.setPassportNo("N1234567"));
+        ok.setContactDialCode("971");
+        service.confirm(id, ok);
+
+        org.mockito.ArgumentCaptor<BookRequest> sent = org.mockito.ArgumentCaptor.forClass(BookRequest.class);
+        verify(hotelProvider).book(sent.capture(), any());
+        assertThat(sent.getValue().compliance()).isEqualTo(new com.voyra.crm.models.booking.HotelCompliance(true, true, true));
+        assertThat(sent.getValue().dialCode()).isEqualTo("971");
+        assertThat(sent.getValue().rooms().get(0).get(2).passportNumber()).isEqualTo("N1234567");
     }
 
     @Test
@@ -2229,11 +2278,13 @@ class PlatformBookingServiceTest {
         List<PaxInput> given = blankTitle.getPassengers();
         given.get(0).setTitle(" ");
         assertThatThrownBy(() -> service.confirm(id, blankTitle)).isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Enter the title of the lead guest of room 1");
+                .hasMessage("Enter the title of every guest in room 1");
 
         rows.get(id).setItinerary(new java.util.LinkedHashMap<>(Map.of("rooms", List.of(Map.of("adults", "two"), "odd"))));
         PlatformBookingConfirmRequest blankPan = hotelConfirmRequest("key-00000002", "4500.00");
-        List<PaxInput> pax = blankPan.getPassengers();
+        List<PaxInput> all = blankPan.getPassengers();
+        List<PaxInput> pax = List.of(all.get(0), all.get(3)); // the unreadable rooms hold their lead only
+        blankPan.setPassengers(pax);
         pax.get(0).setPan(" ");
         pax.get(1).setPan("PQRSX6789K");
 

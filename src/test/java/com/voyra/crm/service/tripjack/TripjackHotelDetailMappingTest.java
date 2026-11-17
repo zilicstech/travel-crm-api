@@ -39,7 +39,7 @@ class TripjackHotelDetailMappingTest {
                    "views":{"4146":{"id":"4146","name":"Courtyard view"}},"occupancy":{"max_allowed":{"total":3}}}}}
                 """);
 
-        HotelDetailResponse d = TripjackHotelSearchProvider.toDetail("100", pricing, stat, "Delhi", 2);
+        HotelDetailResponse d = TripjackHotelSearchProvider.toDetail("100", pricing, stat, "Delhi", 2, "corr-9");
 
         assertThat(d.getName()).isEqualTo("Pride Plaza");
         assertThat(d.getStarRating()).isEqualTo(5);
@@ -54,7 +54,7 @@ class TripjackHotelDetailMappingTest {
         assertThat(d.getCheckInFrom()).isEqualTo("13:00");
 
         // Cheapest first; two rooms of one type merge with a count, joined to the room type's facts.
-        assertThat(d.getOptions()).extracting(HotelDetailResponse.RoomOption::getOptionId).containsExactly("A", "B");
+        assertThat(d.getOptions()).extracting(HotelDetailResponse.RoomOption::getOptionId).containsExactly("A||corr-9", "B||corr-9");
         HotelDetailResponse.RoomOption b = d.getOptions().get(1);
         assertThat(b.getRooms()).singleElement().satisfies(r -> {
             assertThat(r.getCount()).isEqualTo(2);
@@ -75,7 +75,7 @@ class TripjackHotelDetailMappingTest {
         JsonNode pricing = M.readTree("""
                 {"hotelName":"X","options":[{"optionId":"A","roomInfo":[{"id":"R","name":"Std"}],"pricing":{"totalPrice":100}}]}
                 """);
-        HotelDetailResponse d = TripjackHotelSearchProvider.toDetail("1", pricing, null, "Goa", 1);
+        HotelDetailResponse d = TripjackHotelSearchProvider.toDetail("1", pricing, null, "Goa", 1, "corr-9");
         assertThat(d.getImages()).isEmpty();
         assertThat(d.getOptions()).singleElement().satisfies(o -> assertThat(o.getRooms().get(0).getName()).isEqualTo("Std"));
         assertThat(d.getCity()).isEqualTo("Goa");

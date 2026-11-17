@@ -397,3 +397,32 @@ the review response; confirm then needs `PaxInput.documentId` on every passenger
 `di`. These Tripjack shapes come from other integrators' code and are **unverified with Tripjack**: confirm them from the
 production console before relying on them. Armed Forces is reported unsupported; NDC and corporate fares arrive in a normal
 search; Series was not found. The ID is kept only in the encrypted passenger blob and is never logged.
+
+## Tripjack hotel booking aligned with the v3 documentation (2026-11-17)
+
+Tripjack's public API documentation (tripjack.com/page/api-doc, Hotel API v3) showed the hotel booking provider was
+written to guessed shapes and would have failed every live booking. No live hotel booking had been made (the Hotel
+booking switch stays off in production). Fixed to the documented contract; still unverified against a live answer, and
+Tripjack requires its 14-case hotel certification in UAT before live access.
+
+- **Review** (`/hms/v3/hotel/review`, search host) sends `correlationId`, `optionId`, `reviewHash`, `hid` only. The
+  pricing call's `reviewHash` and the search's `correlationId` ride in the option id the screens carry
+  (`<optionId>|<reviewHash>|<correlationId>`, `TripjackHotelSearchProvider.OptionRef`; `HotelReviewRequest.optionId`
+  now allows 600 characters). Review reads `option.compliance` (`panRequired`, `passportRequired`, `gstType`; also
+  `ipr` / `ipm`) into `FareReview.compliance` (`HotelCompliance`).
+- **Book, booking-details, cancel** run on the separate booker host (`app.hotel-supplier.tripjack.uat-booker-url`,
+  default `https://apitest-hotel-booker.tripjack.com`; `prod-booker-url`, default `https://hms-booker.tripjack.com`).
+  Book sends `type: HOTEL`, every guest per room (titles mapped, Mstr becomes Master; pt ADULT / CHILD), the lead PAN
+  (on every guest when PAN is required), each guest's passport number when given, `deliveryInfo.code` (the dial code,
+  new optional `PlatformBookingConfirmRequest.contactDialCode`, default 91) with the national number, and Voyra's GSTIN
+  and legal name (platform settings) as `gstInfo` for a RESELLER or PASSTHROUGH rate. Booking-details maps the
+  documented statuses (SUCCESS, FAILED/ABORTED, CANCELLED; IN_PROGRESS, PAYMENT_*, PENDING, ON_HOLD and
+  CANCELLATION_PENDING stay pending), `hotelConfirmationNumber` and `order.amount` (variance check). Cancel is
+  `POST /oms/v3/hotel/cancel-booking/{bookingId}` with no body; the quote and the accepted cancel work the refund out
+  of `order.amount` less the penalty slab (`cnp.pd`, India time) in force now (non-refundable `cnp.inra`: 0).
+- **Pricing**: the hotel base is `basePrice` when given (the total also holds the management fee `mf` / `mft`).
+- **Guests**: every reviewed guest is required at confirm (one entry per adult and child, each titled), no two rooms
+  may share a lead name, a room reviewed as needing PAN or passports is refused without them (400 `PAN_REQUIRED`,
+  `PASSPORT_REQUIRED`; review response `panRequired` / `passportRequired`, pricing-snapshot keys `panRequired`,
+  `passportRequired`, `gstRequired`). Mock switches `app.hotel-booking.mock.pan-required` / `passport-required`.
+- Not done: hotel hold (`onholdAllowed`, confirm-book), showing the management fee as its own line, the booking list API.

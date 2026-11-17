@@ -27,7 +27,7 @@ public class PlatformBookingConfirmRequest {
 
     @NotEmpty
     @Valid
-    @Schema(description = "Flights: one entry per traveller, matching the reviewed party size. Hotels: at least the lead guest of every room (roomIndex), other guests optional")
+    @Schema(description = "Flights: one entry per traveller, matching the reviewed party size. Hotels: every reviewed guest, room by room (roomIndex), the lead first")
     private List<PaxInput> passengers;
 
     @NotBlank
@@ -39,4 +39,9 @@ public class PlatformBookingConfirmRequest {
     @Size(max = 20)
     @Schema(description = "Contact phone sent to the airline", example = "9876543210")
     private String contactPhone;
+
+    @jakarta.validation.constraints.Pattern(regexp = "\\d{1,4}", message = "Country code must be 1 to 4 digits")
+    @Schema(description = "The contact phone's country dialling code, digits only (hotels send it to the supplier on its own); "
+            + "absent means India (91)", example = "91")
+    private String contactDialCode;
 }

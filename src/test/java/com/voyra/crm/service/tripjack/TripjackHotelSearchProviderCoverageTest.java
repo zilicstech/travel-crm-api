@@ -274,7 +274,7 @@ class TripjackHotelSearchProviderCoverageTest {
     void theHotelPageUsesTheSearchsCorrelationIdAndCachesTheStaticDetail() {
         setUp(SupplierEnvironment.UAT, true);
         expectUatStaticData();
-        String pricing = "{\"hotelName\":\"Priced Hotel\",\"options\":[" + option("O1", 700) + "]}";
+        String pricing = "{\"hotelName\":\"Priced Hotel\",\"reviewHash\":\"rh-1\",\"options\":[" + option("O1", 700) + "]}";
         server.expect(requestTo(UAT + "/hms/v3/hotel/pricing")).andExpect(jsonPath("$.correlationId").value("corr-9"))
                 .andExpect(jsonPath("$.hid").value("H1")).andExpect(jsonPath("$.nationality").value("106"))
                 .andRespond(withSuccess(pricing, MediaType.APPLICATION_JSON));
@@ -292,7 +292,9 @@ class TripjackHotelSearchProviderCoverageTest {
         assertThat(first.getName()).isEqualTo("Priced Hotel");
         assertThat(first.getStarRating()).isEqualTo(5);
         assertThat(second.getStarRating()).isEqualTo(5);
-        assertThat(first.getOptions()).extracting(HotelDetailResponse.RoomOption::getOptionId).containsExactly("O1");
+        assertThat(first.getOptions()).extracting(HotelDetailResponse.RoomOption::getOptionId).containsExactly("O1|rh-1|corr-9");
+        // a blank search correlation id gets a fresh one, which the option carries to the review
+        assertThat(second.getOptions().get(0).getOptionId()).startsWith("O1|rh-1|").doesNotEndWith("|corr-9");
     }
 
     @Test

@@ -22,8 +22,8 @@ public class HotelReviewRequest {
     private String hotelId;
 
     @NotBlank
-    @Size(max = 200)
-    @Schema(description = "Room option id from the hotel detail", example = "mock-opt-1")
+    @Size(max = 600)
+    @Schema(description = "Room option id from the hotel detail (opaque; a Tripjack one carries its review hash)", example = "mock-opt-1")
     private String optionId;
 
     @NotNull

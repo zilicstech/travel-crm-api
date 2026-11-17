@@ -245,12 +245,13 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
 
     /**
      * The room rate excluding taxes of an option's {@code pricing} node, or null when the supplier does not give it
-     * (never 0: the option is then not bookable). An allow-list, not a guess: only {@code baseRate} / {@code baseFare},
+     * (never 0: the option is then not bookable). An allow-list, not a guess: only {@code basePrice} (the v3 name; the
+     * total also holds taxes and the management fee {@code mf} / {@code mft}) / {@code baseRate} / {@code baseFare},
      * else {@code totalPrice} minus an explicit numeric tax. A net or room rate is never read as the base - commission is
      * worked off it, so a wrong field would misprice every booking. Confirm the names in slice 0.
      */
     public static BigDecimal baseRate(JsonNode pricing) {
-        for (String key : List.of("baseRate", "baseFare")) {
+        for (String key : List.of("basePrice", "baseRate", "baseFare")) {
             BigDecimal v = positive(pricing.path(key));
             if (v != null) return v.setScale(2, java.math.RoundingMode.HALF_UP);
         }
@@ -316,8 +317,9 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
     public HotelDetailResponse detail(String hotelId, HotelSearchQuery query, ResolvedCredential supplier) {
         Conn conn = connect(supplier);
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("correlationId", query.getCorrelationId() != null && !query.getCorrelationId().isBlank()
-                ? query.getCorrelationId() : UUID.randomUUID().toString().replace("-", ""));
+        String correlationId = query.getCorrelationId() != null && !query.getCorrelationId().isBlank()
+                ? query.getCorrelationId() : UUID.randomUUID().toString().replace("-", "");
+        body.put("correlationId", correlationId);
         body.put("hid", hotelId);
         body.put("checkIn", query.getCheckIn().toString());
         body.put("checkOut", query.getCheckOut().toString());
@@ -328,10 +330,27 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
         JsonNode stat = staticDetail(conn.client(), conn.host(), hotelId);
         JsonNode info = stat != null ? stat : contentFor(conn.client(), conn.host(), List.of(hotelId)).get(hotelId);
         int nights = (int) Math.max(1, ChronoUnit.DAYS.between(query.getCheckIn(), query.getCheckOut()));
-        return toDetail(hotelId, pricing, info, query.getCity(), nights);
+        return toDetail(hotelId, pricing, info, query.getCity(), nights, correlationId);
     }
 
-    static HotelDetailResponse toDetail(String hotelId, JsonNode pricing, JsonNode info, String city, int nights) {
+    /**
+     * A room option's id as the screens carry it: Tripjack's review needs the option, the pricing call's {@code reviewHash}
+     * and the search's {@code correlationId}, so all three travel in the one opaque id, joined by {@code |}.
+     */
+    public record OptionRef(String optionId, String reviewHash, String correlationId) {
+
+        static String of(String optionId, String reviewHash, String correlationId) {
+            return optionId + "|" + reviewHash + "|" + correlationId;
+        }
+
+        /** An id without the two extra parts (an old screen) keeps them null, and Tripjack refuses the review. */
+        public static OptionRef parse(String id) {
+            String[] parts = id.split("\\|", 3);
+            return parts.length == 3 ? new OptionRef(parts[0], parts[1], parts[2]) : new OptionRef(id, null, null);
+        }
+    }
+
+    static HotelDetailResponse toDetail(String hotelId, JsonNode pricing, JsonNode info, String city, int nights, String correlationId) {
         JsonNode none = OBJECT_MAPPER.createObjectNode();
         JsonNode i = info != null ? info : none;
         Map<String, JsonNode> roomTypes = new HashMap<>();
@@ -355,7 +374,7 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
             }
             boolean refundable = o.path("cancellation").path("isRefundable").asBoolean(false);
             options.add(HotelDetailResponse.RoomOption.builder()
-                    .optionId(o.path("optionId").asText())
+                    .optionId(OptionRef.of(o.path("optionId").asText(), pricing.path("reviewHash").asText(""), correlationId))
                     .rooms(new ArrayList<>(rooms.values()))
                     .mealBasis(o.path("mealBasis").asText(""))
                     .inclusions(strings(o.path("inclusions")))

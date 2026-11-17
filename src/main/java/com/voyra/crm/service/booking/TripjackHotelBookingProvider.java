@@ -10,8 +10,11 @@ import com.voyra.crm.exception.FareUnavailableException;
 import com.voyra.crm.exception.SupplierException;
 import com.voyra.crm.exception.SupplierTimeoutException;
 import com.voyra.crm.models.ResolvedCredential;
+import com.voyra.crm.models.VoyraLegal;
 import com.voyra.crm.models.booking.*;
+import com.voyra.crm.service.PlatformSettingService;
 import com.voyra.crm.service.tripjack.TripjackHotelSearchProvider;
+import com.voyra.crm.service.tripjack.TripjackHotelSearchProvider.OptionRef;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
@@ -22,47 +25,61 @@ import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.net.SocketTimeoutException;
+import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
- * Tripjack hotel booking with the key of the supplier row each call is given, on the hotel host of
- * {@code app.hotel-supplier.tripjack.*} for that row's environment.
+ * Tripjack hotel booking (Hotel API v3) with the key of the supplier row each call is given. Review runs on the search
+ * host ({@code app.hotel-supplier.tripjack.*-base-url}); book, booking-details and cancel run on the separate booker
+ * host ({@code app.hotel-supplier.tripjack.*-booker-url}), per the v3 documentation.
  *
- * <p><b>Unverified.</b> No real hotel booking response has been captured. The endpoints
- * ({@code /hms/v3/hotel/review}, {@code /oms/v3/hotel/book}, {@code booking-details}, {@code cancel-booking}) and every
- * field name below are best guesses modelled on the flight booking shapes and the hotel search response; each is read
- * defensively (missing becomes null, never an NPE or a 0) and the mapping is to be corrected once real fixtures exist.
- * Same rulings as the flight provider: FAILED only on an explicit {@code status.success=false}; an empty or odd body is
- * a {@link SupplierException}; guessed statuses are PENDING; an unknown refund is null; book error bodies are never
- * logged (guest PII), others are cut to 200 characters. The cancel quote reads booking-details and never calls
- * cancel-booking, because a guessed dry-run flag could really cancel, and quotes a refund only while that order is
- * still confirmed (SUCCESS / CONFIRMED).
+ * <p>Written to Tripjack's v3 documentation; no live hotel booking has been captured yet. Rulings shared with the
+ * flight provider: FAILED only on an explicit {@code status.success=false}; an empty or odd body is a
+ * {@link SupplierException}; a status not in the documented list is PENDING; an unknown refund is null; book error
+ * bodies are never logged (guest PII), others are cut to 200 characters. The cancel quote reads booking-details and
+ * works the refund out of the booking's penalty slabs; it never calls cancel-booking, which has no dry run.
  */
 @Service
 @Slf4j
 public class TripjackHotelBookingProvider implements HotelBookingProvider {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
-    /** shortcut: Tripjack deadlines carry no zone in the search shape, read as India time; correct after the spike. */
+    /** Tripjack's cancellation and penalty times are India time (GMT+5:30) with no zone in the string. */
     private static final ZoneId HOTEL_ZONE = ZoneId.of("Asia/Kolkata");
+    /** Tripjack's titles; the booking form's short "Mstr" is its "Master". */
+    private static final Map<String, String> TITLES = Map.of("MR", "Mr", "MRS", "Mrs", "MS", "Ms", "MISS", "Miss", "MSTR", "Master", "MASTER", "Master");
 
     private final RestClient.Builder restClientBuilder;
+    private final PlatformSettingService settings;
     private final String uatBaseUrl;
     private final String prodBaseUrl;
+    private final String uatBookerUrl;
+    private final String prodBookerUrl;
+    /** Which penalty slab applies is read from this; tests swap in a fixed clock. */
+    Clock clock = Clock.systemUTC();
 
     public TripjackHotelBookingProvider(@Qualifier("tripjackRestClientBuilder") RestClient.Builder restClientBuilder,
+                                        PlatformSettingService settings,
                                         @Value("${app.hotel-supplier.tripjack.uat-base-url:https://apitest-hms.tripjack.com}") String uatBaseUrl,
-                                        @Value("${app.hotel-supplier.tripjack.prod-base-url:https://hms-search.tripjack.com}") String prodBaseUrl) {
+                                        @Value("${app.hotel-supplier.tripjack.prod-base-url:https://hms-search.tripjack.com}") String prodBaseUrl,
+                                        @Value("${app.hotel-supplier.tripjack.uat-booker-url:https://apitest-hotel-booker.tripjack.com}") String uatBookerUrl,
+                                        @Value("${app.hotel-supplier.tripjack.prod-booker-url:https://hms-booker.tripjack.com}") String prodBookerUrl) {
         this.restClientBuilder = restClientBuilder;
+        this.settings = settings;
         this.uatBaseUrl = uatBaseUrl;
         this.prodBaseUrl = prodBaseUrl;
+        this.uatBookerUrl = uatBookerUrl;
+        this.prodBookerUrl = prodBookerUrl;
     }
 
     @Override
@@ -76,49 +93,69 @@ public class TripjackHotelBookingProvider implements HotelBookingProvider {
         return true;
     }
 
+    /**
+     * {@code POST /hms/v3/hotel/review} with the option, the pricing call's review hash and the search's correlation id
+     * (all three carried in the option id, see {@link OptionRef}). The stay and rooms are not sent: Tripjack reviews the
+     * option as priced.
+     */
     @Override
     public FareReview review(String optionId, String hotelId, LocalDate checkIn, LocalDate checkOut, List<HotelRoomRequest> rooms,
                              ResolvedCredential supplier) {
+        OptionRef ref = OptionRef.parse(optionId);
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("optionId", optionId);
+        body.put("correlationId", ref.correlationId());
+        body.put("optionId", ref.optionId());
+        body.put("reviewHash", ref.reviewHash());
         body.put("hid", hotelId);
-        body.put("checkIn", checkIn.toString());
-        body.put("checkOut", checkOut.toString());
-        body.put("rooms", rooms(rooms));
-        JsonNode res = post(supplier, "/hms/v3/hotel/review", body, "review", true);
+        JsonNode res = post(searchHost(supplier), supplier, "/hms/v3/hotel/review", body, "review", true);
         if (!succeeded(res)) {
-            log.warn("Tripjack hotel review refused option {}: {}", optionId, message(res, "no message"));
+            log.warn("Tripjack hotel review refused option {}: {}", ref.optionId(), message(res, "no message"));
             throw new FareUnavailableException(AgencySupplierMessage.NOT_CONFIRMED_HOTEL);
         }
-        JsonNode option = res.path("option").isObject() ? res.path("option") : res.path("options").path(0);
+        JsonNode option = res.path("option");
         JsonNode pricing = option.path("pricing");
         String reviewId = text(res.path("bookingId"));
         BigDecimal total = decimal(pricing.path("totalPrice"));
         if (reviewId == null || reviewId.isBlank() || total == null) {
-            throw new SupplierException("Tripjack hotel review response is missing the review id or total", null);
+            throw new SupplierException("Tripjack hotel review response is missing the booking id or total", null);
         }
         JsonNode cancellation = option.path("cancellation");
         boolean refundable = cancellation.path("isRefundable").asBoolean(false);
         String notes = text(option.path("bookingNotes"));
         return new FareReview(reviewId, total, TripjackHotelSearchProvider.baseRate(pricing), pricing.path("currency").asText("INR"),
-                notes == null || notes.isBlank() ? null : notes, null, option, // a missing option has no total, refused above
-                TripjackHotelSearchProvider.cancellationPolicy(cancellation, refundable), refundable ? freeUntil(cancellation) : null);
+                notes == null || notes.isBlank() ? null : notes, null, option,
+                TripjackHotelSearchProvider.cancellationPolicy(cancellation, refundable), refundable ? freeUntil(cancellation) : null,
+                false, compliance(res, option));
+    }
+
+    /**
+     * {@code option.compliance} of the review (the Book docs also name the flags {@code ipr} / {@code ipm}, so those count
+     * too); a RESELLER or PASSTHROUGH GST type means Voyra's GST details go with the booking.
+     */
+    static HotelCompliance compliance(JsonNode res, JsonNode option) {
+        JsonNode c = option.path("compliance");
+        String gstType = c.path("gstType").asText("NA").toUpperCase(Locale.ROOT);
+        return new HotelCompliance(c.path("panRequired").asBoolean(false) || res.path("ipr").asBoolean(false),
+                c.path("passportRequired").asBoolean(false) || res.path("ipm").asBoolean(false),
+                gstType.equals("RESELLER") || gstType.equals("PASSTHROUGH"));
     }
 
     @Override
     public BookResult book(BookRequest r, ResolvedCredential supplier) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("bookingId", r.reviewId());
-        body.put("paymentInfos", List.of(Map.of("amount", r.totalFare())));
+        body.put("type", "HOTEL");
         body.put("roomTravellerInfo", roomTravellerInfo(r));
-        Map<String, Object> delivery = new LinkedHashMap<>();
-        delivery.put("emails", r.email() == null ? List.of() : List.of(r.email()));
-        delivery.put("contacts", r.phone() == null ? List.of() : List.of(r.phone()));
-        body.put("deliveryInfo", delivery);
+        body.put("deliveryInfo", deliveryInfo(r));
+        Map<String, Object> gst = gstInfo(r);
+        if (gst != null) {
+            body.put("gstInfo", gst);
+        }
+        body.put("paymentInfos", List.of(Map.of("amount", r.totalFare())));
 
         JsonNode res;
         try {
-            res = post(supplier, "/oms/v3/hotel/book", body, "book", false);
+            res = post(bookerHost(supplier), supplier, "/oms/v3/hotel/book", body, "book", false);
         } catch (SupplierException e) {
             String refusal = SupplierRefusal.of(e, log);
             if (refusal == null) {
@@ -133,45 +170,80 @@ public class TripjackHotelBookingProvider implements HotelBookingProvider {
             // Empty or unexpected answer: the supplier may have booked, so this is unknown, not failed.
             throw new SupplierException("Tripjack hotel book returned an ambiguous response", null);
         }
-        // Accepted is not confirmed: the caller polls bookingDetails.
-        return new BookResult(r.reviewId(), SupplierBookingStatus.PENDING, null, List.of(), null, null);
+        // Accepted is not confirmed (Tripjack confirms within 180 seconds): the caller polls bookingDetails.
+        String bookingId = text(res.path("bookingId"));
+        return new BookResult(bookingId == null || bookingId.isBlank() ? r.reviewId() : bookingId,
+                SupplierBookingStatus.PENDING, null, List.of(), null, null);
+    }
+
+    /** Voyra's GSTIN and legal name for a RESELLER / PASSTHROUGH rate; null when not needed or not set (warned). */
+    private Map<String, Object> gstInfo(BookRequest r) {
+        if (r.compliance() == null || !r.compliance().gstRequired()) {
+            return null;
+        }
+        VoyraLegal legal = settings.voyraLegal();
+        if (legal.gstin() == null || legal.legalName() == null) {
+            log.warn("Tripjack hotel {} asks for GST details but Voyra's GSTIN or legal name is not set; booking without them", r.reviewId());
+            return null;
+        }
+        Map<String, Object> gst = new LinkedHashMap<>();
+        gst.put("gstNumber", legal.gstin());
+        gst.put("registeredName", legal.legalName().length() > 35 ? legal.legalName().substring(0, 35) : legal.legalName());
+        return gst;
+    }
+
+    /** The contact phone split as Tripjack wants it: the number in {@code contacts}, its dialling code in {@code code}. */
+    static Map<String, Object> deliveryInfo(BookRequest r) {
+        String dial = r.dialCode() == null || r.dialCode().isBlank() ? "91" : r.dialCode();
+        String phone = r.phone() == null ? "" : r.phone().trim();
+        String digits = phone.replaceAll("\\D", "");
+        if (phone.startsWith("+") && digits.startsWith(dial)) {
+            digits = digits.substring(dial.length());
+        }
+        Map<String, Object> delivery = new LinkedHashMap<>();
+        delivery.put("emails", r.email() == null ? List.of() : List.of(r.email()));
+        delivery.put("contacts", digits.isEmpty() ? List.of() : List.of(digits));
+        delivery.put("code", digits.isEmpty() ? List.of() : List.of("+" + dial));
+        return delivery;
     }
 
     @Override
     public BookResult bookingDetails(String supplierBookingId, ResolvedCredential supplier) {
-        JsonNode res = post(supplier, "/oms/v3/hotel/booking-details", Map.of("bookingId", supplierBookingId), "booking-details", true);
+        JsonNode res = details(supplierBookingId, supplier, "booking-details");
         if (!succeeded(res)) {
             return new BookResult(supplierBookingId, SupplierBookingStatus.PENDING, null, List.of(), message(res, null), null);
         }
-        String orderStatus = res.path("order").path("status").asText("").toUpperCase();
+        String orderStatus = res.path("order").path("status").asText("").toUpperCase(Locale.ROOT);
         SupplierBookingStatus status = switch (orderStatus) {
-            case "SUCCESS", "CONFIRMED" -> SupplierBookingStatus.TICKETED;
-            case "FAILED" -> SupplierBookingStatus.FAILED;
+            case "SUCCESS" -> SupplierBookingStatus.TICKETED;
+            case "FAILED", "ABORTED" -> SupplierBookingStatus.FAILED;
             case "CANCELLED" -> SupplierBookingStatus.CANCELLED; // how an accepted cancellation is confirmed
+            // IN_PROGRESS, PAYMENT_SUCCESS, PAYMENT_PENDING, PENDING, CANCELLATION_PENDING (Tripjack cancels offline)
             default -> SupplierBookingStatus.PENDING;
         };
-        String confirmation = firstText(res.path("itemInfos").path("HOTEL").path("confirmationNumber"),
-                res.path("itemInfos").path("HOTEL").path("hotelInfo").path("confirmationNumber"), res.path("order").path("confirmationNumber"));
-        // shortcut: the charged amount is not parsed (field unknown), so no variance is detected here
-        return new BookResult(supplierBookingId, status, confirmation, List.of(), orderStatus.isEmpty() ? null : orderStatus, null);
+        String confirmation = text(res.path("hotelConfirmationNumber"));
+        return new BookResult(supplierBookingId, status, confirmation == null || confirmation.isBlank() ? null : confirmation,
+                List.of(), orderStatus.isEmpty() ? null : orderStatus, decimal(res.path("order").path("amount")));
     }
 
     @Override
     public CancelQuote cancelQuote(String supplierBookingId, ResolvedCredential supplier) {
-        JsonNode res = post(supplier, "/oms/v3/hotel/booking-details", Map.of("bookingId", supplierBookingId), "cancel quote", true);
-        String orderStatus = res == null ? "" : res.path("order").path("status").asText("").toUpperCase();
-        if (!orderStatus.equals("SUCCESS") && !orderStatus.equals("CONFIRMED")) {
+        JsonNode res = details(supplierBookingId, supplier, "cancel quote");
+        String orderStatus = res == null ? "" : res.path("order").path("status").asText("").toUpperCase(Locale.ROOT);
+        if (!orderStatus.equals("SUCCESS")) {
             // only a booking the supplier still shows as confirmed gets a figure; anything else is Voyra support's (refund unknown)
             return new CancelQuote(null, "The supplier shows this booking as " + (orderStatus.isEmpty() ? "unknown" : orderStatus));
         }
-        JsonNode cancellation = res.path("cancellation");
-        BigDecimal refund = decimal(cancellation.path("refundAmount"));
-        return new CancelQuote(refund != null && refund.signum() >= 0 ? refund : null, message(res, null));
+        return new CancelQuote(refundNow(res), null);
     }
 
+    /**
+     * {@code POST /oms/v3/hotel/cancel-booking/{bookingId}} with no body. Tripjack's answer carries no refund, so the
+     * booking's penalty slabs are read afterwards (best effort: a failed read leaves the refund unknown for Voyra).
+     */
     @Override
     public CancelResult cancel(String supplierBookingId, ResolvedCredential supplier) {
-        JsonNode res = post(supplier, "/oms/v3/hotel/cancel-booking", Map.of("bookingId", supplierBookingId, "remarks", "Cancelled by agency"), "cancel", true);
+        JsonNode res = post(bookerHost(supplier), supplier, "/oms/v3/hotel/cancel-booking/" + supplierBookingId, null, "cancel", true);
         if (explicitlyFailed(res)) {
             return new CancelResult(false, null, message(res, null));
         }
@@ -179,8 +251,54 @@ public class TripjackHotelBookingProvider implements HotelBookingProvider {
             // Empty or unexpected answer: the supplier may have cancelled, so this is unknown, not refused.
             throw new SupplierException("Tripjack hotel cancel returned an ambiguous response", null);
         }
-        BigDecimal refund = decimal(res.path("totalRefundAmount"));
-        return new CancelResult(true, refund != null && refund.signum() >= 0 ? refund : null, message(res, null));
+        BigDecimal refund;
+        try {
+            refund = refundNow(details(supplierBookingId, supplier, "cancel refund"));
+        } catch (SupplierException e) {
+            refund = null;
+        }
+        return new CancelResult(true, refund, null);
+    }
+
+    private JsonNode details(String supplierBookingId, ResolvedCredential supplier, String what) {
+        return post(bookerHost(supplier), supplier, "/oms/v3/hotel/booking-details", Map.of("bookingId", supplierBookingId), what, true);
+    }
+
+    /**
+     * The refund if cancelled now: {@code order.amount} less the penalty of the slab ({@code cnp.pd[]}: {@code fdt},
+     * {@code tdt}, {@code am}) that holds this moment; before the first slab nothing is kept, after the last everything
+     * is. A non-refundable booking ({@code cnp.inra}) refunds 0. Null when the amount or the slabs are missing or unreadable.
+     */
+    BigDecimal refundNow(JsonNode res) {
+        BigDecimal amount = decimal(res.path("order").path("amount"));
+        JsonNode cnp = res.path("itemInfos").path("HOTEL").path("hInfo").path("ops").path(0).path("cnp");
+        if (amount == null) {
+            return null;
+        }
+        if (cnp.path("inra").asBoolean(false)) {
+            return BigDecimal.ZERO.setScale(2);
+        }
+        List<JsonNode> slabs = new ArrayList<>();
+        cnp.path("pd").forEach(slabs::add);
+        if (slabs.isEmpty()) {
+            return null;
+        }
+        LocalDateTime now = LocalDateTime.now(clock.withZone(HOTEL_ZONE));
+        BigDecimal penalty = amount; // past the last slab: the stay has started
+        try {
+            if (now.isBefore(LocalDateTime.parse(slabs.get(0).path("fdt").asText()))) {
+                penalty = BigDecimal.ZERO;
+            }
+            for (JsonNode slab : slabs) {
+                if (!now.isBefore(LocalDateTime.parse(slab.path("fdt").asText())) && now.isBefore(LocalDateTime.parse(slab.path("tdt").asText()))) {
+                    penalty = decimal(slab.path("am"));
+                    break;
+                }
+            }
+        } catch (java.time.format.DateTimeParseException e) {
+            return null;
+        }
+        return penalty == null ? null : amount.subtract(penalty).max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP);
     }
 
     /** The end of the last free slab (or the single deadline); null when the supplier gives none or it does not parse. */
@@ -197,30 +315,19 @@ public class TripjackHotelBookingProvider implements HotelBookingProvider {
     }
 
     /**
-     * Each reviewed room's occupancy as {@code rooms}, the name and per-room shape ({@code adults}, {@code children},
-     * {@code childAge}) the live v3 listing/pricing calls use. Unverified for the review endpoint (slice 0).
+     * One entry per room, each listing every guest (Tripjack wants one per adult and child). The lead PAN goes on the
+     * first room's lead, or on every guest when the hotel requires PAN; a passport number goes with each guest who has one.
      */
-    private static List<Map<String, Object>> rooms(List<HotelRoomRequest> rooms) {
-        return rooms.stream().map(r -> {
-            List<Integer> ages = r.getChildAges() == null ? List.of() : r.getChildAges();
-            Map<String, Object> room = new LinkedHashMap<>();
-            room.put("adults", r.getAdults());
-            if (!ages.isEmpty()) {
-                room.put("children", ages.size());
-                room.put("childAge", ages);
-            }
-            return room;
-        }).toList();
-    }
-
-    /** One entry per room (first guest = lead); the lead PAN goes on the first room's lead. Field names unverified (slice 0). */
     private static List<Map<String, Object>> roomTravellerInfo(BookRequest r) {
         List<List<PaxDetail>> rooms = r.rooms() == null || r.rooms().isEmpty() ? List.of(r.passengers()) : r.rooms();
-        List<Map<String, Object>> out = new java.util.ArrayList<>();
+        boolean panOnAll = r.compliance() != null && r.compliance().panRequired();
+        List<Map<String, Object>> out = new ArrayList<>();
         for (List<PaxDetail> room : rooms) {
             List<Map<String, Object>> travellers = room.stream().map(TripjackHotelBookingProvider::traveller).toList();
-            if (out.isEmpty() && r.leadPan() != null && !travellers.isEmpty()) {
-                travellers.get(0).put("pan", r.leadPan());
+            if (r.leadPan() != null) {
+                for (int i = 0; i < travellers.size(); i++) {
+                    if (panOnAll || (out.isEmpty() && i == 0)) travellers.get(i).put("pan", r.leadPan());
+                }
             }
             out.add(Map.of("travellerInfo", travellers));
         }
@@ -229,10 +336,14 @@ public class TripjackHotelBookingProvider implements HotelBookingProvider {
 
     private static Map<String, Object> traveller(PaxDetail p) {
         Map<String, Object> t = new LinkedHashMap<>();
-        t.put("ti", p.title());
+        String title = p.title() == null ? "" : p.title().trim();
+        t.put("ti", TITLES.getOrDefault(title.toUpperCase(Locale.ROOT), title));
+        t.put("pt", "ADULT".equals(p.type()) ? "ADULT" : "CHILD");
         t.put("fN", p.firstName());
         t.put("lN", p.lastName());
-        t.put("pt", p.type());
+        if (p.passportNumber() != null && !p.passportNumber().isBlank()) {
+            t.put("pNum", p.passportNumber());
+        }
         return t;
     }
 
@@ -246,24 +357,17 @@ public class TripjackHotelBookingProvider implements HotelBookingProvider {
         return res != null && res.path("status").path("success").asBoolean(false);
     }
 
+    /** The v3 error envelope's {@code error.message}, else an {@code errors[0].message}; else the fallback. */
     private static String message(JsonNode res, String fallback) {
         if (res == null) {
             return fallback;
         }
-        String m = res.path("errors").path(0).path("message").asText("");
+        String m = res.path("error").path("message").asText(res.path("errors").path(0).path("message").asText(""));
         return m.isBlank() ? fallback : m;
     }
 
     private static String text(JsonNode n) {
         return n.isMissingNode() || n.isNull() ? null : n.asText();
-    }
-
-    private static String firstText(JsonNode... nodes) {
-        for (JsonNode n : nodes) {
-            String t = text(n);
-            if (t != null && !t.isBlank()) return t;
-        }
-        return null;
     }
 
     private static BigDecimal decimal(JsonNode n) {
@@ -274,13 +378,21 @@ public class TripjackHotelBookingProvider implements HotelBookingProvider {
         }
     }
 
-    /** {@code logBody=false} for calls whose error body may echo guest data. */
-    private JsonNode post(ResolvedCredential supplier, String path, Object body, String what, boolean logBody) {
-        String host = supplier.environment() == SupplierEnvironment.PROD ? prodBaseUrl : uatBaseUrl;
+    private String searchHost(ResolvedCredential supplier) {
+        return supplier.environment() == SupplierEnvironment.PROD ? prodBaseUrl : uatBaseUrl;
+    }
+
+    private String bookerHost(ResolvedCredential supplier) {
+        return supplier.environment() == SupplierEnvironment.PROD ? prodBookerUrl : uatBookerUrl;
+    }
+
+    /** {@code logBody=false} for calls whose error body may echo guest data; a null body posts nothing. */
+    private JsonNode post(String host, ResolvedCredential supplier, String path, Object body, String what, boolean logBody) {
         RestClient client = restClientBuilder.clone().baseUrl(host).defaultHeader("apikey", supplier.apiKey()).build();
         String raw;
         try {
-            raw = client.post().uri(path).body(body).retrieve().body(String.class);
+            RestClient.RequestBodySpec request = client.post().uri(path);
+            raw = (body == null ? request : request.body(body)).retrieve().body(String.class);
         } catch (RestClientResponseException e) {
             String text = logBody ? e.getResponseBodyAsString() : "";
             log.error("Tripjack hotel {} HTTP {}: {}", what, e.getStatusCode().value(), text.length() > 200 ? text.substring(0, 200) : text);

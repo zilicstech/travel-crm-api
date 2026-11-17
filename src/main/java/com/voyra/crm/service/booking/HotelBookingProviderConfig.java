@@ -30,5 +30,9 @@ public class HotelBookingProviderConfig {
         private boolean cancelTimeout;
         /** cancel() is refused ("Mock: cancellation not allowed"). */
         private boolean cancelFail;
+        /** review() says the room needs the lead guest's PAN, as some Tripjack hotels do. */
+        private boolean panRequired;
+        /** review() says the room needs every guest's passport number, as some international Tripjack hotels do. */
+        private boolean passportRequired;
     }
 }
