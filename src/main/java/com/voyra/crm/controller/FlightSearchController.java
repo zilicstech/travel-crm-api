@@ -1,5 +1,7 @@
 package com.voyra.crm.controller;
 
+import com.voyra.crm.dto.FlightFareRulesRequest;
+import com.voyra.crm.dto.FlightFareRulesResponse;
 import com.voyra.crm.dto.FlightOfferResponse;
 import com.voyra.crm.dto.FlightSearchPageRequest;
 import com.voyra.crm.dto.FlightSearchPageResponse;
@@ -49,5 +51,13 @@ public class FlightSearchController {
                     + "Send refresh=true to force a fresh supplier search.")
     public ResponseEntity<FlightSearchPageResponse> searchPaged(@Valid @RequestBody FlightSearchPageRequest request) {
         return ResponseEntity.ok(flightSearchService.searchPage(request));
+    }
+
+    @PostMapping("/fare-rules")
+    @Operation(summary = "Fare rules of a search offer",
+            description = "Asks the offer's supplier for its fare rules before any review. fareRules is null when the supplier "
+                    + "published none or did not answer. The supplier's SEARCH-flow answer is unverified live.")
+    public ResponseEntity<FlightFareRulesResponse> fareRules(@Valid @RequestBody FlightFareRulesRequest request) {
+        return ResponseEntity.ok(flightSearchService.fareRules(request.getOfferId()));
     }
 }

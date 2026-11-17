@@ -82,8 +82,21 @@ public class FlightOfferResponse {
     @Schema(example = "false")
     private boolean refundable;
 
-    @Schema(example = "15kg check-in")
+    @Schema(description = "NON_REFUNDABLE, REFUNDABLE or PARTIAL (refundable less airline charges); refundable is true for the last two",
+            example = "REFUNDABLE")
+    private com.voyra.crm.enums.FlightRefundType refundType;
+
+    @Schema(description = "Check-in baggage allowance", example = "15 Kg")
     private String baggage;
+
+    @Schema(description = "Cabin baggage allowance; null when the supplier sent none", example = "7 Kg")
+    private String cabinBaggage;
+
+    @Schema(description = "Seats left at this fare; null when the supplier sent none", example = "4")
+    private Integer seatsLeft;
+
+    @Schema(description = "Whether a meal is included; null when the supplier did not say", example = "true")
+    private Boolean mealIncluded;
 
     @Schema(example = "Saver")
     private String fareType;

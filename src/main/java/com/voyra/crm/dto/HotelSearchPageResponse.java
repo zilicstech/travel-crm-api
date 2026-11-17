@@ -6,6 +6,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 @Data
@@ -24,7 +25,7 @@ public class HotelSearchPageResponse {
     @Schema(example = "20")
     private int pageSize;
 
-    @Schema(description = "Hotels in the whole search", example = "143")
+    @Schema(description = "Hotels in the search that pass the filters sent", example = "143")
     private int total;
 
     @Schema(description = "This page's hotels")
@@ -32,4 +33,13 @@ public class HotelSearchPageResponse {
 
     @Schema(description = "Names of the suppliers that did not answer this search; their hotels are missing from the list")
     private List<String> suppliersFailed;
+
+    @Schema(description = "Lowest price in the whole search, before filters; null when no hotel has a price", example = "3200.00")
+    private BigDecimal priceMin;
+
+    @Schema(description = "Highest price in the whole search, before filters", example = "48000.00")
+    private BigDecimal priceMax;
+
+    @Schema(description = "Every meal plan in the whole search, before filters, sorted")
+    private List<String> boardBases;
 }

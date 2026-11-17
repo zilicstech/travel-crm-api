@@ -50,4 +50,30 @@ public class HotelSearchQuery {
     @jakarta.validation.constraints.Min(value = 0, message = "Page can't be negative")
     @Schema(description = "0-based page of 20 hotels, cheapest first", example = "0")
     private int page;
+
+    // The filters below narrow the kept search on every page request; none of them re-asks the supplier.
+    @jakarta.validation.constraints.Size(max = 100, message = "Hotel name can be at most 100 characters")
+    @Schema(description = "Only hotels whose name contains this, ignoring case", example = "amari")
+    private String name;
+
+    @Schema(description = "Only hotels with one of these star ratings", example = "[4, 5]")
+    private java.util.List<@NotNull(message = "Star rating must be 1 to 5") @Min(value = 1, message = "Star rating must be 1 to 5")
+            @jakarta.validation.constraints.Max(value = 5, message = "Star rating must be 1 to 5") Integer> stars;
+
+    @jakarta.validation.constraints.DecimalMin(value = "0", message = "Minimum price can't be negative")
+    @Schema(description = "Lowest price to show, against the amount the list is sorted by", example = "5000")
+    private java.math.BigDecimal minPrice;
+
+    @jakarta.validation.constraints.DecimalMin(value = "0", message = "Maximum price can't be negative")
+    @Schema(description = "Highest price to show", example = "20000")
+    private java.math.BigDecimal maxPrice;
+
+    @Schema(description = "True shows only refundable offers", example = "true")
+    private Boolean refundableOnly;
+
+    @Schema(description = "Only offers with one of these meal plans, ignoring case", example = "[\"Breakfast Included\"]")
+    private java.util.List<@NotBlank(message = "Meal plan can't be blank") String> boardBasis;
+
+    @Schema(description = "PRICE (default, cheapest first) or STARS (highest rated first, then cheapest)", example = "PRICE")
+    private com.voyra.crm.enums.HotelSortOrder sort;
 }

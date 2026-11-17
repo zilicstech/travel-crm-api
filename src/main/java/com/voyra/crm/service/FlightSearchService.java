@@ -2,10 +2,12 @@ package com.voyra.crm.service;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import com.voyra.crm.dto.FlightFareRulesResponse;
 import com.voyra.crm.dto.FlightGroupResponse;
 import com.voyra.crm.dto.FlightOfferResponse;
 import com.voyra.crm.enums.PricingProduct;
 import com.voyra.crm.exception.BookingConflictException;
+import com.voyra.crm.exception.BookingRequestException;
 import com.voyra.crm.exception.SuppliersUnavailableException;
 import com.voyra.crm.models.ResolvedCredential;
 import com.voyra.crm.service.booking.AgencyPriceQuoter;
@@ -139,6 +141,17 @@ public class FlightSearchService {
         FlightSearchPageResponse page = FlightResultPaging.page(groups, req, registry.bookingEnabledIds(PricingProduct.FLIGHT));
         page.setSuppliersFailed(failed);
         return page;
+    }
+
+    /** Fare rules of a search offer from the offer's own supplier; null rules when it published none or did not answer. */
+    public FlightFareRulesResponse fareRules(String offerId) {
+        SupplierIds.Scoped scoped = SupplierIds.parse(offerId).orElseThrow(FlightSearchService::offerUnavailable);
+        ResolvedCredential supplier = registry.find(scoped.supplierId()).orElseThrow(FlightSearchService::offerUnavailable);
+        return new FlightFareRulesResponse(registry.flightBooking(supplier.provider()).searchFareRules(scoped.id(), supplier));
+    }
+
+    private static BookingRequestException offerUnavailable() {
+        return new BookingRequestException("OFFER_UNAVAILABLE", "This fare is no longer available; search again");
     }
 
     /** A toggle or an edit of a supplier changes the key, so it never serves fares of a supplier that was switched off. */

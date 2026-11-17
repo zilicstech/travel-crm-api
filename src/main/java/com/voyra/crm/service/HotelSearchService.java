@@ -12,6 +12,7 @@ import com.voyra.crm.exception.SuppliersUnavailableException;
 import com.voyra.crm.models.ResolvedCredential;
 import com.voyra.crm.service.booking.SupplierRegistry;
 import com.voyra.crm.util.SupplierIds;
+import com.voyra.crm.enums.HotelSortOrder;
 import com.voyra.crm.enums.PricingProduct;
 import com.voyra.crm.service.booking.AgencyPriceQuoter;
 import com.voyra.crm.service.booking.PriceQuote;
@@ -26,6 +27,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -38,7 +40,8 @@ import java.util.function.BiFunction;
  * kept in memory for 30 minutes under a random searchId and later pages are sliced from it - never searched again.
  * Every supplier with hotel search on is asked at once and a hotel two suppliers both list stays two rows (ids
  * namespaced by supplier), cheapest first; a partial result is kept with the names that did not answer, so later pages
- * slice the same list. A result belongs to the agency that ran it (its own supplier rates); an expired or unknown searchId searches anew.
+ * slice the same list. Filters (name, stars, price, refundable, meal plan) and the sort are applied to the kept list on
+ * every request, so changing one never asks a supplier again. A result belongs to the agency that ran it (its own supplier rates); an expired or unknown searchId searches anew.
  * Offers and room options are priced for that agency once, when the result is kept, so the cache is tenant-keyed by
  * construction; a platform admin (no tenant) gets them undecorated.
  */
@@ -74,21 +77,52 @@ public class HotelSearchService {
             searchId = UUID.randomUUID().toString();
             SupplierFanOut.Result<HotelOfferResponse> asked = ask(query);
             List<HotelOfferResponse> offers = priced(tenantId, asked.answers());
-            offers.sort(Comparator.comparing(o -> o.getDisplayedFare() != null ? o.getDisplayedFare() : o.getPrice(),
-                    Comparator.nullsLast(Comparator.naturalOrder())));
+            offers.sort(Comparator.comparing(HotelSearchService::amount, Comparator.nullsLast(Comparator.naturalOrder())));
             result = new Result(tenantId, offers, asked.failed(), now);
             results.put(searchId, result);
         }
-        int total = result.offers().size();
+        // The kept list stays whole and cheapest first; filters and the star sort are applied per request.
+        List<HotelOfferResponse> all = result.offers();
+        List<HotelOfferResponse> shown = all.stream().filter(o -> matches(o, query)).toList();
+        if (query.getSort() == HotelSortOrder.STARS) {
+            // Stable, so hotels of equal stars stay cheapest first.
+            shown = shown.stream().sorted(Comparator.comparingInt(HotelOfferResponse::getStarRating).reversed()).toList();
+        }
+        List<BigDecimal> amounts = all.stream().map(HotelSearchService::amount).filter(Objects::nonNull).toList();
+        int total = shown.size();
         int from = Math.min(query.getPage() * PAGE_SIZE, total);
         return HotelSearchPageResponse.builder()
                 .searchId(searchId)
                 .page(query.getPage())
                 .pageSize(PAGE_SIZE)
                 .total(total)
-                .offers(result.offers().subList(from, Math.min(from + PAGE_SIZE, total)))
+                .offers(shown.subList(from, Math.min(from + PAGE_SIZE, total)))
                 .suppliersFailed(result.failed())
+                .priceMin(amounts.stream().min(Comparator.naturalOrder()).orElse(null))
+                .priceMax(amounts.stream().max(Comparator.naturalOrder()).orElse(null))
+                .boardBases(all.stream().map(HotelOfferResponse::getBoardBasis).filter(Objects::nonNull).distinct().sorted().toList())
                 .build();
+    }
+
+    /** What the list is sorted and price-filtered by: the agency's fare, or the supplier price for a platform admin. */
+    private static BigDecimal amount(HotelOfferResponse o) {
+        return o.getDisplayedFare() != null ? o.getDisplayedFare() : o.getPrice();
+    }
+
+    private static boolean matches(HotelOfferResponse o, HotelSearchQuery q) {
+        String name = q.getName() == null ? "" : q.getName().trim().toLowerCase(Locale.ROOT);
+        BigDecimal amount = amount(o);
+        return (name.isEmpty() || (o.getHotelName() != null && o.getHotelName().toLowerCase(Locale.ROOT).contains(name)))
+                // shortcut: a hotel whose listing carries no star rating is left out while a star filter is on, until stars come with the search.
+                && (isEmpty(q.getStars()) || q.getStars().contains(o.getStarRating()))
+                && (q.getMinPrice() == null || (amount != null && amount.compareTo(q.getMinPrice()) >= 0))
+                && (q.getMaxPrice() == null || (amount != null && amount.compareTo(q.getMaxPrice()) <= 0))
+                && (!Boolean.TRUE.equals(q.getRefundableOnly()) || o.isRefundable())
+                && (isEmpty(q.getBoardBasis()) || q.getBoardBasis().stream().anyMatch(b -> b.equalsIgnoreCase(o.getBoardBasis())));
+    }
+
+    private static boolean isEmpty(List<?> list) {
+        return list == null || list.isEmpty();
     }
 
     /** Asks every supplier at once; 409 when none is on, 503 when none answered. Each offer is stamped with its supplier and its ids namespaced by it. */

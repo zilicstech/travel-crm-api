@@ -5,6 +5,7 @@ import com.voyra.crm.dto.FlightOfferResponse;
 import com.voyra.crm.dto.FlightSearchQuery;
 import com.voyra.crm.enums.FlightCabin;
 import com.voyra.crm.enums.FlightDirection;
+import com.voyra.crm.enums.FlightRefundType;
 import com.voyra.crm.enums.SupplierProvider;
 import com.voyra.crm.models.ResolvedCredential;
 import lombok.extern.slf4j.Slf4j;
@@ -36,14 +37,15 @@ public class MockFlightSearchProvider implements FlightSearchProvider {
             new Template("Emirates", "EK", LocalTime.of(22, 45), 210, 0, new BigDecimal("6900"), true, "Flexi")
     );
 
-    private record FareTier(String name, BigDecimal multiplier, boolean refundable, String baggage) {
+    private record FareTier(String name, BigDecimal multiplier, FlightRefundType refundType, String baggage, Integer seatsLeft, Boolean meal) {
     }
 
+    // A mix of refund types, baggage, seats and meals, so every result filter has something to find.
     private static final List<FareTier> FARE_TIERS = List.of(
-            new FareTier("PUBLISHED", BigDecimal.ONE, false, "15kg check-in"),
-            new FareTier("FLEXI_PLUS", new BigDecimal("1.18"), true, "20kg check-in + 7kg cabin"),
-            new FareTier("CORPORATE", new BigDecimal("1.25"), true, "20kg check-in"),
-            new FareTier("SME", new BigDecimal("1.30"), true, "25kg check-in + 7kg cabin")
+            new FareTier("PUBLISHED", BigDecimal.ONE, FlightRefundType.NON_REFUNDABLE, "15 Kg", 4, false),
+            new FareTier("FLEXI_PLUS", new BigDecimal("1.18"), FlightRefundType.REFUNDABLE, "20 Kg", 9, true),
+            new FareTier("CORPORATE", new BigDecimal("1.25"), FlightRefundType.PARTIAL, "Hand baggage only", null, null),
+            new FareTier("SME", new BigDecimal("1.30"), FlightRefundType.REFUNDABLE, "25 Kg", 12, true)
     );
 
     /** Like the mock booking provider: the commissionable base is 85 % of the total fare. */
@@ -112,8 +114,12 @@ public class MockFlightSearchProvider implements FlightSearchProvider {
                         .baseFare(party.multiply(BASE_SHARE).setScale(2, java.math.RoundingMode.HALF_UP))
                         .passengers(FlightSearchProvider.passengers(query))
                         .currency("INR")
-                        .refundable(tier.refundable())
+                        .refundable(tier.refundType() != FlightRefundType.NON_REFUNDABLE)
+                        .refundType(tier.refundType())
                         .baggage(tier.baggage())
+                        .cabinBaggage("7 Kg")
+                        .seatsLeft(tier.seatsLeft())
+                        .mealIncluded(tier.meal())
                         .fareType(tier.name())
                         .build());
             }

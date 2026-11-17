@@ -58,4 +58,20 @@ class MockFlightSearchProviderCoverageTest {
         assertThat(MockFlightSearchProvider.adultFare("mock-" + p[1] + "-" + p[2] + "-NOTIER-" + p[4])).isNull();
         assertThat(MockFlightSearchProvider.adultFare("mock-" + p[1] + "-" + p[2] + "-" + p[3] + "-NOCABIN")).isNull();
     }
+
+    @Test
+    void faresCarryAMixOfRefundTypesBaggageSeatsAndMealsForTheFilters() {
+        List<FlightOfferResponse> offers = new MockFlightSearchProvider().search(query(FlightCabin.ECONOMY), null);
+
+        assertThat(offers).extracting(FlightOfferResponse::getRefundType).contains(com.voyra.crm.enums.FlightRefundType.values());
+        assertThat(offers).allSatisfy(o -> {
+            assertThat(o.isRefundable()).isEqualTo(o.getRefundType() != com.voyra.crm.enums.FlightRefundType.NON_REFUNDABLE);
+            assertThat(o.getCabinBaggage()).isEqualTo("7 Kg");
+        });
+        FlightOfferResponse published = offers.get(0);
+        assertThat(published.getBaggage()).isEqualTo("15 Kg");
+        assertThat(published.getSeatsLeft()).isEqualTo(4);
+        assertThat(published.getMealIncluded()).isFalse();
+        assertThat(offers).anySatisfy(o -> assertThat(o.getBaggage()).isEqualTo("Hand baggage only"));
+    }
 }

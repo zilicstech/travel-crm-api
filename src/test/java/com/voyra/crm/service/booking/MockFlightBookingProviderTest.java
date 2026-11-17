@@ -246,4 +246,10 @@ class MockFlightBookingProviderTest {
         assertThat(sI.get(1).path("dt").asText()).isEqualTo("2026-12-04T18:00");
         assertThat(sI.get(1).path("fD").path("fN").asText()).isEqualTo("AI-210");
     }
+
+    @Test
+    void searchFareRulesAreTheReviewsRules() {
+        assertThat(provider.searchFareRules("mock-indigo-0615-PUBLISHED", BookingSuppliers.S1))
+                .isEqualTo(provider.review(List.of("o"), 1, 0, 0, BookingSuppliers.S1).fareRules()).isNotBlank();
+    }
 }

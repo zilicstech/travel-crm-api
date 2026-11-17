@@ -72,6 +72,7 @@ class TripjackFlightBookingProviderTest {
                 .andRespond(withSuccess(OK + ",\"bookingId\":\"TJS1\",\"totalPriceInfo\":{\"totalFareDetail\":{\"fC\":{\"TF\":9000.5,\"BF\":7000}}},\"tripInfos\":[{\"x\":1}]}",
                         MediaType.APPLICATION_JSON));
         server.expect(requestTo(BASE + "/fms/v2/farerule")).andExpect(jsonPath("$.id").value("TJS1"))
+                .andExpect(jsonPath("$.flowType").value("REVIEW"))
                 .andRespond(withSuccess(OK + ",\"fareRule\":{\"cancel\":\"Rs 3000\"}}", MediaType.APPLICATION_JSON));
 
         FareReview r = provider.review(List.of("off-1"), 1, 0, 0, ROW);
@@ -468,5 +469,24 @@ class TripjackFlightBookingProviderTest {
                 .hasMessage("Tripjack booking-details call failed");
         assertThatThrownBy(() -> provider.bookingDetails("TJS1", ROW))
                 .isInstanceOf(SupplierException.class).hasMessage("Tripjack booking-details returned an unparseable response");
+    }
+
+    @Test
+    void searchFareRulesAskTheSearchFlowWithThePriceId() {
+        server.expect(requestTo(BASE + "/fms/v2/farerule")).andExpect(jsonPath("$.id").value("price-1"))
+                .andExpect(jsonPath("$.flowType").value("SEARCH"))
+                .andRespond(withSuccess(OK + ",\"fareRule\":{\"cancel\":\"Rs 3000\"}}", MediaType.APPLICATION_JSON));
+
+        assertThat(provider.searchFareRules("price-1", ROW)).contains("Rs 3000");
+        server.verify();
+    }
+
+    @Test
+    void searchFareRulesAreNullWhenTheSupplierRefusesOrSendsNone() {
+        server.expect(requestTo(BASE + "/fms/v2/farerule")).andRespond(withStatus(org.springframework.http.HttpStatus.BAD_REQUEST));
+        server.expect(requestTo(BASE + "/fms/v2/farerule")).andRespond(withSuccess(OK + "}", MediaType.APPLICATION_JSON));
+
+        assertThat(provider.searchFareRules("price-1", ROW)).isNull();
+        assertThat(provider.searchFareRules("price-1", ROW)).isNull();
     }
 }

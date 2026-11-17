@@ -277,6 +277,105 @@ class HotelSearchServiceTest {
                         org.assertj.core.api.Assertions.tuple("s1:h1", "s1:o-h1", "s1:c1", "Mock supplier 1", "Mock supplier 1", "s1"));
     }
 
+    private static HotelOfferResponse hotel(String id, String name, int stars, String price, boolean refundable, String board) {
+        return HotelOfferResponse.builder().hotelId(id).hotelName(name).starRating(stars)
+                .price(price == null ? null : new BigDecimal(price)).refundable(refundable).boardBasis(board).build();
+    }
+
+    private List<String> ids(HotelSearchQuery q) {
+        return service.search(q).getOffers().stream().map(HotelOfferResponse::getHotelId).toList();
+    }
+
+    @Test
+    void filtersNarrowTheKeptListWithoutAskingTheSupplierAgain() {
+        when(provider.search(any(), any())).thenReturn(List.of(
+                hotel("a", "Sea Breeze", 3, "100", true, "Breakfast"),
+                hotel("b", "Hill View", 5, "300", false, "Room Only"),
+                hotel("c", null, 4, "200", true, null),
+                hotel("d", "Sea Cliff", 0, null, false, "Half Board")));
+        HotelSearchPageResponse first = service.search(query(null, 0));
+        String sid = first.getSearchId();
+
+        assertThat(first.getTotal()).isEqualTo(4);
+        assertThat(first.getPriceMin()).isEqualByComparingTo("100");
+        assertThat(first.getPriceMax()).isEqualByComparingTo("300");
+        assertThat(first.getBoardBases()).containsExactly("Breakfast", "Half Board", "Room Only");
+
+        HotelSearchQuery q = query(sid, 0);
+        q.setName("  SEA ");
+        HotelSearchPageResponse named = service.search(q);
+        assertThat(named.getOffers()).extracting(HotelOfferResponse::getHotelId).containsExactly("s1:a", "s1:d");
+        assertThat(named.getTotal()).isEqualTo(2);
+        // facets describe the whole search, not the filtered one
+        assertThat(named.getPriceMax()).isEqualByComparingTo("300");
+        assertThat(named.getBoardBases()).hasSize(3);
+
+        q = query(sid, 0);
+        q.setName(" ");
+        q.setStars(List.of());
+        q.setBoardBasis(List.of());
+        q.setRefundableOnly(false);
+        assertThat(ids(q)).hasSize(4);
+
+        q = query(sid, 0);
+        q.setStars(List.of(4, 5));
+        assertThat(ids(q)).containsExactly("s1:c", "s1:b");
+
+        q = query(sid, 0);
+        q.setMinPrice(new BigDecimal("200"));
+        assertThat(ids(q)).containsExactly("s1:c", "s1:b");
+
+        q = query(sid, 0);
+        q.setMaxPrice(new BigDecimal("200"));
+        assertThat(ids(q)).containsExactly("s1:a", "s1:c");
+
+        q = query(sid, 0);
+        q.setRefundableOnly(true);
+        assertThat(ids(q)).containsExactly("s1:a", "s1:c");
+
+        q = query(sid, 0);
+        q.setBoardBasis(List.of("room only", "BREAKFAST"));
+        assertThat(ids(q)).containsExactly("s1:a", "s1:b");
+
+        q = query(sid, 0);
+        q.setName("sea");
+        q.setStars(List.of(5));
+        HotelSearchPageResponse none = service.search(q);
+        assertThat(none.getOffers()).isEmpty();
+        assertThat(none.getTotal()).isZero();
+        assertThat(none.getSearchId()).isEqualTo(sid);
+
+        verify(provider, times(1)).search(any(), any());
+    }
+
+    @Test
+    void starSortRunsOverTheWholeFilteredListThenCheapestAndPagesAfterIt() {
+        when(provider.search(any(), any())).thenReturn(IntStream.range(0, 25)
+                .mapToObj(i -> hotel("h" + i, "Hotel " + i, i % 5 + 1, String.valueOf(100 + i), true, "Breakfast")).toList());
+        HotelSearchQuery q = query(null, 0);
+        q.setSort(com.voyra.crm.enums.HotelSortOrder.STARS);
+        HotelSearchPageResponse first = service.search(q);
+        assertThat(first.getOffers()).extracting(HotelOfferResponse::getHotelId)
+                .startsWith("s1:h4", "s1:h9", "s1:h14", "s1:h19", "s1:h24", "s1:h3");
+
+        q = query(first.getSearchId(), 1);
+        q.setSort(com.voyra.crm.enums.HotelSortOrder.STARS);
+        assertThat(ids(q)).containsExactly("s1:h0", "s1:h5", "s1:h10", "s1:h15", "s1:h20");
+
+        q = query(first.getSearchId(), 0);
+        q.setSort(com.voyra.crm.enums.HotelSortOrder.PRICE);
+        assertThat(ids(q)).startsWith("s1:h0", "s1:h1");
+    }
+
+    @Test
+    void aSearchWithNoPricedHotelHasNoPriceRange() {
+        when(provider.search(any(), any())).thenReturn(List.of(hotel("a", "Sea Breeze", 3, null, true, null)));
+        HotelSearchPageResponse page = service.search(query(null, 0));
+        assertThat(page.getPriceMin()).isNull();
+        assertThat(page.getPriceMax()).isNull();
+        assertThat(page.getBoardBases()).isEmpty();
+    }
+
     @Test
     void noSearchableHotelSupplierIs409() {
         when(registry.searchable(PricingProduct.HOTEL)).thenReturn(List.of());

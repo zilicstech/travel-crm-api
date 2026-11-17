@@ -6,9 +6,11 @@ import com.voyra.crm.dto.FlightSearchPageRequest;
 import com.voyra.crm.dto.FlightSearchPageResponse;
 import com.voyra.crm.dto.SearchSupplierResponse;
 import com.voyra.crm.dto.FlightLegResponse;
+import com.voyra.crm.enums.BaggageFilter;
 import com.voyra.crm.enums.FlightDirection;
 import com.voyra.crm.enums.FlightSearchTripType;
 import com.voyra.crm.enums.FlightSortOrder;
+import com.voyra.crm.enums.TimeBucket;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -20,6 +22,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.regex.Matcher;
@@ -162,7 +165,9 @@ public final class FlightResultPaging {
         FlightSearchTripType tripType = req.getQuery() == null || req.getQuery().getReturnDate() == null ? FlightSearchTripType.ONE_WAY
                 : !main.isEmpty() && returns.isEmpty() && main.stream().allMatch(g -> g.getDirection() == FlightDirection.COMBO)
                 ? FlightSearchTripType.ROUND_TRIP_COMBO : FlightSearchTripType.ROUND_TRIP_SPLIT;
-        List<FlightGroupResponse> filtered = filterAndSort(main, req, bookingSupplierIds);
+        List<FlightGroupResponse> filtered = filterAndSort(main, req, bookingSupplierIds, false);
+        List<BigDecimal> prices = all.stream().flatMap(g -> g.getFares().stream()).map(FlightResultPaging::shown)
+                .filter(Objects::nonNull).sorted().toList();
 
         String cheapestKey = filtered.stream().min(Comparator.comparing(FlightGroupResponse::getCheapestPrice))
                 .map(FlightGroupResponse::getKey).orElse(null);
@@ -187,29 +192,50 @@ public final class FlightResultPaging {
                 .suppliers(suppliers.values().stream()
                         .sorted(Comparator.comparing(SearchSupplierResponse::getSupplierName, Comparator.nullsLast(Comparator.naturalOrder())))
                         .toList())
+                .priceMin(prices.isEmpty() ? null : prices.get(0))
+                .priceMax(prices.isEmpty() ? null : prices.get(prices.size() - 1))
+                .fareTypes(all.stream().flatMap(g -> g.getFares().stream()).map(FlightOfferResponse::getFareType)
+                        .filter(t -> !isBlank(t)).distinct().sorted().toList())
+                .origins(main.stream().map(FlightGroupResponse::getOrigin).filter(c -> !isBlank(c)).distinct().sorted().toList())
+                .destinations(main.stream().map(FlightGroupResponse::getDestination).filter(c -> !isBlank(c)).distinct().sorted().toList())
                 .cheapestKey(cheapestKey)
                 .fastestKey(fastestKey)
                 .tripType(tripType)
                 // shortcut: the return list is not paged (filters and sort apply); page it too if a busy route makes the payload heavy
-                .returnFlights(tripType == FlightSearchTripType.ROUND_TRIP_SPLIT ? filterAndSort(returns, req, bookingSupplierIds) : List.of())
+                .returnFlights(tripType == FlightSearchTripType.ROUND_TRIP_SPLIT ? filterAndSort(returns, req, bookingSupplierIds, true) : List.of())
                 .build();
     }
 
-    /** The filters and sort of the request over one list; every kept group is a fresh summarised copy, a cached group is never mutated. */
+    /**
+     * The filters and sort of the request over one list; every kept group is a fresh summarised copy, a cached group is never mutated.
+     * Stops, airline, times, flight number and airports drop a flight; price, fare type, refund type, baggage and supplier drop a fare,
+     * and a flight with no fare left goes too. {@code back}: the list is the way back, so the airport filters are read the other way round.
+     */
     private static List<FlightGroupResponse> filterAndSort(List<FlightGroupResponse> groups, FlightSearchPageRequest req,
-                                                           Set<String> bookingSupplierIds) {
+                                                           Set<String> bookingSupplierIds, boolean back) {
+        String typedNumber = alnum(req.getFlightNumber());
         List<FlightGroupResponse> filtered = new ArrayList<>();
         for (FlightGroupResponse g : groups) {
-            // 0 and 1 are exact ("1 stop" must not also list non-stop flights); 2 means two or more.
-            if (req.getStops() != null && (req.getStops() >= 2 ? g.getStops() < 2 : g.getStops() != req.getStops())) {
+            // 0, 1 and 2 are exact ("1 stop" must not also list non-stop flights); 3 means three or more.
+            if (req.getStops() != null && (req.getStops() >= 3 ? g.getStops() < 3 : g.getStops() != req.getStops())) {
                 continue;
             }
-            if (req.getAirlines() != null && !req.getAirlines().isEmpty() && !req.getAirlines().contains(g.getAirline())) {
+            if (!in(req.getAirlines(), g.getAirline()) && !in(req.getAirlines(), g.getAirlineCode())) {
+                continue;
+            }
+            if (!inBucket(req.getDepartBuckets(), g.getDepartTime()) || !inBucket(req.getArriveBuckets(), g.getArriveTime())
+                    || !in(req.getOrigins(), back ? g.getDestination() : g.getOrigin())
+                    || !in(req.getDestinations(), back ? g.getOrigin() : g.getDestination())
+                    || !hasNumber(g, typedNumber)) {
                 continue;
             }
             List<FlightOfferResponse> kept = g.getFares().stream()
                     .filter(f -> !req.isRefundableOnly() || f.isRefundable())
-                    .filter(f -> req.getSuppliers() == null || req.getSuppliers().isEmpty() || req.getSuppliers().contains(f.getSupplierId()))
+                    .filter(f -> in(req.getSuppliers(), f.getSupplierId()))
+                    .filter(f -> inPrice(req, shown(f)))
+                    .filter(f -> off(req.getFareTypes()) || req.getFareTypes().stream().anyMatch(t -> t.equalsIgnoreCase(f.getFareType())))
+                    .filter(f -> in(req.getRefundTypes(), f.getRefundType()))
+                    .filter(f -> req.getBaggage() == null || hasCheckIn(f.getBaggage()) == (req.getBaggage() == BaggageFilter.CHECK_IN))
                     .toList();
             if (!kept.isEmpty()) {
                 filtered.add(summarise(g, kept, bookingSupplierIds));
@@ -218,6 +244,48 @@ public final class FlightResultPaging {
 
         filtered.sort(comparator(req.getSort()));
         return filtered;
+    }
+
+    private static boolean off(List<?> filter) {
+        return filter == null || filter.isEmpty();
+    }
+
+    private static boolean in(List<?> filter, Object value) {
+        return off(filter) || value != null && filter.contains(value);
+    }
+
+    private static boolean inBucket(List<TimeBucket> buckets, LocalTime time) {
+        return off(buckets) || time != null && buckets.contains(TimeBucket.of(time));
+    }
+
+    /** Against the fare the agency is shown for the whole party; a fare with no amount fails any price filter. */
+    private static boolean inPrice(FlightSearchPageRequest req, BigDecimal shown) {
+        if (req.getMinPrice() == null && req.getMaxPrice() == null) {
+            return true;
+        }
+        return shown != null && (req.getMinPrice() == null || shown.compareTo(req.getMinPrice()) >= 0)
+                && (req.getMaxPrice() == null || shown.compareTo(req.getMaxPrice()) <= 0);
+    }
+
+    /** "671", "SG671" and "6E-204" all find their flight: letters and digits only, against each leg's number with and without its airline code. */
+    private static boolean hasNumber(FlightGroupResponse g, String typed) {
+        return typed.isEmpty() || numbered(g.getAirlineCode(), g.getFlightNumber(), typed)
+                || g.getLegs() != null && g.getLegs().stream().anyMatch(l -> numbered(l.getAirlineCode(), l.getFlightNumber(), typed));
+    }
+
+    private static boolean numbered(String airlineCode, String flightNumber, String typed) {
+        String number = alnum(flightNumber);
+        return number.contains(typed) || (alnum(airlineCode) + number).contains(typed);
+    }
+
+    private static String alnum(String s) {
+        return upper(s).replaceAll("[^A-Z0-9]", "");
+    }
+
+    /** A check-in allowance that is not blank, zero ("0 Kg") or hand-baggage-only wording. */
+    static boolean hasCheckIn(String baggage) {
+        String b = upper(baggage);
+        return !b.isEmpty() && !b.matches("0\\D*") && !b.contains("HAND");
     }
 
     private static Comparator<FlightGroupResponse> comparator(FlightSortOrder sort) {

@@ -76,6 +76,30 @@ class HotelSearchControllerTest {
                 .andExpect(status().isOk());
     }
 
+    @Test
+    void search_bindsTheFiltersAndRefusesBadOnes() throws Exception {
+        when(hotelSearchService.search(any())).thenReturn(new com.voyra.crm.dto.HotelSearchPageResponse());
+        String base = "{\"city\":\"Phuket\",\"checkIn\":\"2026-10-09\",\"checkOut\":\"2026-10-12\",";
+        mockMvc.perform(post("/api/hotels/search")
+                        .with(SecurityMockMvcRequestPostProcessors.user("agent1").roles("AGENT"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(base + "\"name\":\"amari\",\"stars\":[4,5],\"minPrice\":0,\"maxPrice\":20000.50,"
+                                + "\"refundableOnly\":true,\"boardBasis\":[\"Breakfast\"],\"sort\":\"STARS\"}"))
+                .andExpect(status().isOk());
+        org.mockito.Mockito.verify(hotelSearchService).search(org.mockito.ArgumentMatchers.argThat(q -> "amari".equals(q.getName())
+                && q.getStars().equals(List.of(4, 5)) && q.getMaxPrice().compareTo(new java.math.BigDecimal("20000.50")) == 0
+                && q.getRefundableOnly() && q.getBoardBasis().equals(List.of("Breakfast"))
+                && q.getSort() == com.voyra.crm.enums.HotelSortOrder.STARS));
+        for (String bad : List.of("\"name\":\"" + "x".repeat(101) + "\"", "\"stars\":[0]", "\"stars\":[6]", "\"stars\":[null]",
+                "\"minPrice\":-1", "\"maxPrice\":-0.01", "\"boardBasis\":[\" \"]", "\"sort\":\"NAME\"")) {
+            mockMvc.perform(post("/api/hotels/search")
+                            .with(SecurityMockMvcRequestPostProcessors.user("agent1").roles("AGENT"))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(base + bad + "}"))
+                    .andExpect(status().isBadRequest());
+        }
+    }
+
     /** Same isolation rule as flight search: platform admins manage agencies, never business data. */
     @Test
     void search_superAdminForbidden() throws Exception {

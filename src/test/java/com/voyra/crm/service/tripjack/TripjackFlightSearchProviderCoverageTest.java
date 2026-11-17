@@ -208,4 +208,21 @@ class TripjackFlightSearchProviderCoverageTest {
         ipLookup(provider, withServerError());
         assertThat(provider.outboundIp()).isEqualTo("unknown (lookup failed: InternalServerError)");
     }
+
+    @Test
+    void aPartlyRefundableFareIsRefundableAndAnUnknownRefundTypeOrMissingExtrasAreNot() {
+        String partial = "{\"id\":\"F2\",\"fd\":{\"ADULT\":{\"fC\":{\"TF\":5000},\"rT\":2,\"sR\":\"few\",\"mI\":\"yes\",\"bI\":{\"iB\":\"15 Kg\"}}}}";
+        String unknown = "{\"id\":\"F3\",\"fd\":{\"ADULT\":{\"fC\":{\"TF\":5000},\"rT\":7}}}";
+        List<FlightOfferResponse> offers = search(query(), credential("abcd"), ok(
+                "{\"sI\":[" + seg("2026-10-09T08:00", "2026-10-09T10:00", "120") + "],\"totalPriceList\":[" + partial + "," + unknown + "]}"));
+
+        assertThat(offers).hasSize(2);
+        assertThat(offers.get(0).getRefundType()).isEqualTo(com.voyra.crm.enums.FlightRefundType.PARTIAL);
+        assertThat(offers.get(0).isRefundable()).isTrue();
+        assertThat(offers.get(0).getCabinBaggage()).isNull();
+        assertThat(offers.get(0).getSeatsLeft()).isNull();
+        assertThat(offers.get(0).getMealIncluded()).isNull();
+        assertThat(offers.get(1).getRefundType()).isEqualTo(com.voyra.crm.enums.FlightRefundType.NON_REFUNDABLE);
+        assertThat(offers.get(1).isRefundable()).isFalse();
+    }
 }

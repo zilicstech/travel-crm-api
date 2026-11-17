@@ -360,3 +360,19 @@ product rows) while no platform booking names it, so production starts with no m
 deleted with the chain. Existing databases need a re-baseline, not a migrate: the local `voyra_crm_dev` keeps its old history as
 `flyway_schema_history_pre_squash` in public and every tenant schema, with one `BASELINE` row at version 1 in a new history table.
 
+
+## Client correction round (2026-11-17)
+
+From the client's "VOYRA B2B CORRECTION" list. **Flight result filters**: `FlightSearchPageRequest` gains `minPrice`, `maxPrice`,
+`departBuckets` / `arriveBuckets` (`TimeBucket` EARLY, MORNING, AFTERNOON, EVENING), `fareTypes`, `refundTypes`, `flightNumber`,
+`origins`, `destinations`, `baggage` (`BaggageFilter` CHECK_IN / HAND_ONLY); `stops` is now 0, 1, 2 (exactly two) or 3 (three or
+more); the airline filter matches name or code. The page response carries facets from the unfiltered result (`priceMin`,
+`priceMax`, `fareTypes`, `origins`, `destinations`, `airlineCodes`). Offers carry `refundType` (`FlightRefundType`; Tripjack `rT`
+0 / 1 / 2, anything else non-refundable), `cabinBaggage`, `seatsLeft`, `mealIncluded`. **Fare rules before booking**:
+`POST /api/flights/fare-rules {offerId}` asks the offer's supplier (`FlightBookingProvider.searchFareRules`; Tripjack
+`/fms/v2/farerule` with `flowType: SEARCH`, unverified live; a refusal returns null rules). **Hotel filters**: `HotelSearchQuery`
+gains `name`, `stars`, `minPrice`, `maxPrice`, `refundableOnly`, `boardBasis`, `sort` (`HotelSortOrder` PRICE / STARS), applied to
+the kept list on every page request; the response adds `priceMin`, `priceMax`, `boardBases`; a hotel with no star rating in the
+listing is left out while a star filter is on. Agencies no longer see supplier names on screen (the API still sends them).
+Waiting for the owner: optional client (FIT), airline-wise name format, calendar fare, multicity, hold, special fare types,
+hotel amenity / category filters and hotel name in the search bar.

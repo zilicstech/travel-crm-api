@@ -72,4 +72,52 @@ class FlightSearchControllerTest {
                 .andExpect(jsonPath("$[0].voyraNet").doesNotExist())
                 .andExpect(jsonPath("$[0].baseFare").doesNotExist());
     }
+
+    @Test
+    void fareRulesNeedAnOfferAndCarryOnlyTheRules() throws Exception {
+        when(flightSearchService.fareRules("s1:o1")).thenReturn(new com.voyra.crm.dto.FlightFareRulesResponse("Rules"));
+        mockMvc.perform(post("/api/flights/fare-rules").with(SecurityMockMvcRequestPostProcessors.user("a").roles("AGENT"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"offerId\":\"s1:o1\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.fareRules").value("Rules"))
+                .andExpect(jsonPath("$.length()").value(1));
+        mockMvc.perform(post("/api/flights/fare-rules").with(SecurityMockMvcRequestPostProcessors.user("a").roles("AGENT"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"offerId\":\" \"}"))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(post("/api/flights/fare-rules").with(SecurityMockMvcRequestPostProcessors.user("p").roles("SUPER_ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"offerId\":\"s1:o1\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void thePagedSearchCarriesTheNewFareFieldsAndFacetsAndRefusesBadFilters() throws Exception {
+        FlightOfferResponse offer = FlightOfferResponse.builder().offerId("s1:o1").refundType(com.voyra.crm.enums.FlightRefundType.PARTIAL)
+                .refundable(true).cabinBaggage("7 Kg").seatsLeft(3).mealIncluded(true).build();
+        when(flightSearchService.searchPage(any())).thenReturn(com.voyra.crm.dto.FlightSearchPageResponse.builder()
+                .flights(List.of(com.voyra.crm.dto.FlightGroupResponse.builder().fares(List.of(offer)).build()))
+                .priceMin(new BigDecimal("4000.50")).priceMax(new BigDecimal("9000")).fareTypes(List.of("PUBLISHED"))
+                .origins(List.of("DEL")).destinations(List.of("BOM", "NMI")).build());
+        String query = "\"query\":{\"origin\":\"BLR\",\"destination\":\"GOI\",\"departDate\":\"2026-11-25\",\"adults\":1}";
+        mockMvc.perform(post("/api/flights/search/paged").with(SecurityMockMvcRequestPostProcessors.user("o").roles("AGENCY_OWNER"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{" + query + ",\"stops\":3,\"minPrice\":0,\"maxPrice\":9000,"
+                                + "\"departBuckets\":[\"EARLY\"],\"arriveBuckets\":[\"EVENING\"],\"fareTypes\":[\"PUBLISHED\"],"
+                                + "\"refundTypes\":[\"PARTIAL\"],\"flightNumber\":\"SG671\",\"origins\":[\"DEL\"],"
+                                + "\"destinations\":[\"BOM\"],\"baggage\":\"CHECK_IN\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.flights[0].fares[0].refundType").value("PARTIAL"))
+                .andExpect(jsonPath("$.flights[0].fares[0].cabinBaggage").value("7 Kg"))
+                .andExpect(jsonPath("$.flights[0].fares[0].seatsLeft").value(3))
+                .andExpect(jsonPath("$.flights[0].fares[0].mealIncluded").value(true))
+                .andExpect(jsonPath("$.priceMin").value(4000.50))
+                .andExpect(jsonPath("$.priceMax").value(9000))
+                .andExpect(jsonPath("$.fareTypes[0]").value("PUBLISHED"))
+                .andExpect(jsonPath("$.origins[0]").value("DEL"))
+                .andExpect(jsonPath("$.destinations[1]").value("NMI"));
+        for (String bad : List.of("\"stops\":4", "\"minPrice\":-1", "\"maxPrice\":-0.01", "\"flightNumber\":\"ABCDEFGHIJK\"",
+                "\"fareTypes\":[\" \"]")) {
+            mockMvc.perform(post("/api/flights/search/paged").with(SecurityMockMvcRequestPostProcessors.user("o").roles("AGENCY_OWNER"))
+                            .contentType(MediaType.APPLICATION_JSON).content("{" + query + "," + bad + "}"))
+                    .andExpect(status().isBadRequest());
+        }
+    }
 }

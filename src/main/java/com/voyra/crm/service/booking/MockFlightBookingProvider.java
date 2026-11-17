@@ -39,6 +39,8 @@ public class MockFlightBookingProvider implements FlightBookingProvider {
     private static final BigDecimal REFUND_SHARE = new BigDecimal("0.80");
     private static final BigDecimal BASE_SHARE = new BigDecimal("0.85");
 
+    private static final String FARE_RULES = "Mock fare rules: refundable, 80% back.";
+
     private static final ObjectMapper JSON = new ObjectMapper();
 
     private final FlightBookingProviderConfig config;
@@ -122,8 +124,13 @@ public class MockFlightBookingProvider implements FlightBookingProvider {
         total = total.multiply(BigDecimal.ONE.add(mock.getRepricePct().movePointLeft(2))).setScale(2, RoundingMode.HALF_UP);
         BigDecimal base = total.multiply(BASE_SHARE).setScale(2, RoundingMode.HALF_UP);
         // a fresh id per review, like Tripjack: platform_booking.supplier_review_id is UNIQUE
-        return new FareReview("mock-rv-" + offerId + "-" + UUID.randomUUID().toString().replace("-", ""), total, base, "INR", "Mock fare rules: refundable, 80% back.",
+        return new FareReview("mock-rv-" + offerId + "-" + UUID.randomUUID().toString().replace("-", ""), total, base, "INR", FARE_RULES,
                 Instant.now().plus(15, ChronoUnit.MINUTES), null);
+    }
+
+    @Override
+    public String searchFareRules(String priceId, ResolvedCredential supplier) {
+        return FARE_RULES;
     }
 
     @Override

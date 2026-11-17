@@ -499,4 +499,23 @@ class FlightSearchServiceTest {
         assertThat(FlightSearchService.cacheKey("t1", q, List.of(s1Edited))).isNotEqualTo(base);
         assertThat(FlightSearchService.cacheKey("t1", q, List.of(s2, s1))).isEqualTo(FlightSearchService.cacheKey("t1", q, List.of(s1, s2)));
     }
+
+    @Test
+    void fareRulesComeFromTheOffersOwnSupplierWithTheSuppliersOwnId() {
+        SupplierRegistry registry = mock(SupplierRegistry.class);
+        ResolvedCredential s2 = supplier("s2", "Mock supplier 2");
+        when(registry.find("s2")).thenReturn(java.util.Optional.of(s2));
+        when(registry.find("gone")).thenReturn(java.util.Optional.empty());
+        com.voyra.crm.service.booking.FlightBookingProvider booking = mock(com.voyra.crm.service.booking.FlightBookingProvider.class);
+        when(registry.flightBooking(SupplierProvider.MOCK)).thenReturn(booking);
+        when(booking.searchFareRules("off:1", s2)).thenReturn("Rules");
+        FlightSearchService fareRules = new FlightSearchService(registry, fanOut, quoter);
+
+        assertThat(fareRules.fareRules("s2:off:1").getFareRules()).isEqualTo("Rules");
+        assertThat(fareRules.fareRules("s2:silent").getFareRules()).isNull(); // the supplier published none
+        assertThatThrownBy(() -> fareRules.fareRules("no-namespace")).isInstanceOf(com.voyra.crm.exception.BookingRequestException.class)
+                .hasMessage("This fare is no longer available; search again");
+        assertThatThrownBy(() -> fareRules.fareRules("gone:off-1")).isInstanceOf(com.voyra.crm.exception.BookingRequestException.class)
+                .extracting("code").isEqualTo("OFFER_UNAVAILABLE");
+    }
 }

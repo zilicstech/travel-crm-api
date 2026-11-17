@@ -41,6 +41,21 @@ public class FlightSearchPageResponse {
     @Schema(description = "Airline name to IATA code for every airline in the unfiltered result, so the filter list can show logos")
     private Map<String, String> airlineCodes;
 
+    @Schema(description = "Lowest fare shown in the unfiltered result (null when it has none), for the price filter")
+    private java.math.BigDecimal priceMin;
+
+    @Schema(description = "Highest fare shown in the unfiltered result (null when it has none)")
+    private java.math.BigDecimal priceMax;
+
+    @Schema(description = "Every fare type in the unfiltered result, sorted")
+    private List<String> fareTypes;
+
+    @Schema(description = "Departure airports of the unfiltered result (onward flights), sorted")
+    private List<String> origins;
+
+    @Schema(description = "Arrival airports of the unfiltered result (onward flights), sorted")
+    private List<String> destinations;
+
     @Schema(description = "Key of the cheapest flight in the filtered set (null when empty)")
     private String cheapestKey;
 

@@ -24,6 +24,9 @@ public interface FlightBookingProvider extends BookingSupplier {
         return review(offerIds(r), r.getAdults(), r.getChildren(), r.getInfants(), supplier);
     }
 
+    /** The fare rules of a search offer, before any review, as the supplier sent them; null when it published none or did not answer. */
+    String searchFareRules(String priceId, ResolvedCredential supplier);
+
     static List<String> offerIds(FlightReviewRequest r) {
         return r.getReturnOfferId() == null || r.getReturnOfferId().isBlank()
                 ? List.of(r.getOfferId()) : List.of(r.getOfferId(), r.getReturnOfferId());

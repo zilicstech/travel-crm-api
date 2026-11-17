@@ -6,9 +6,12 @@ import com.voyra.crm.dto.FlightOfferResponse;
 import com.voyra.crm.dto.FlightSearchPageRequest;
 import com.voyra.crm.dto.FlightSearchPageResponse;
 import com.voyra.crm.dto.FlightSearchQuery;
+import com.voyra.crm.enums.BaggageFilter;
 import com.voyra.crm.enums.FlightDirection;
+import com.voyra.crm.enums.FlightRefundType;
 import com.voyra.crm.enums.FlightSearchTripType;
 import com.voyra.crm.enums.FlightSortOrder;
+import com.voyra.crm.enums.TimeBucket;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
@@ -307,7 +310,14 @@ class FlightResultPagingTest {
         twoPlus.setStops(2);
         twoPlus.setAirlines(List.of());
         assertThat(FlightResultPaging.page(groups, twoPlus, NONE).getFlights()).extracting(FlightGroupResponse::getFlightNumber)
-                .containsExactly("UK1", "UK3");
+                .containsExactly("UK1");
+        twoPlus.setStops(3);
+        assertThat(FlightResultPaging.page(groups, twoPlus, NONE).getFlights()).extracting(FlightGroupResponse::getFlightNumber)
+                .containsExactly("UK3");
+        twoPlus.setStops(4); // anything from 3 up means three or more
+        twoPlus.setAirlines(List.of("VI"));
+        assertThat(FlightResultPaging.page(groups, twoPlus, NONE).getFlights()).extracting(FlightGroupResponse::getFlightNumber)
+                .containsExactly("UK3");
 
         FlightSearchPageRequest vistara = req();
         vistara.setAirlines(List.of("Vistara"));
@@ -387,5 +397,147 @@ class FlightResultPagingTest {
     void zeroIfNullDefaultsAMissingAmount() {
         assertThat(FlightResultPaging.zeroIfNull(null)).isEqualByComparingTo("0");
         assertThat(FlightResultPaging.zeroIfNull(BigDecimal.TEN)).isEqualByComparingTo("10");
+    }
+
+    private static List<String> numbers(List<FlightGroupResponse> groups, java.util.function.Consumer<FlightSearchPageRequest> filter) {
+        FlightSearchPageRequest r = req();
+        filter.accept(r);
+        return FlightResultPaging.page(groups, r, NONE).getFlights().stream().map(FlightGroupResponse::getFlightNumber).toList();
+    }
+
+    /** SG 671 05:00-07:00 DEL-BOM (three fares), 6E-204 13:00-15:00 DED-BOM, AI 9 19:00-21:00 DEL-NMI with no times on a second copy. */
+    private static List<FlightGroupResponse> filterable() {
+        FlightOfferResponse saver = offer("SpiceJet", "671", 5, "4000", 0, "2h", false, null);
+        saver.setAirlineCode("SG");
+        saver.setOrigin("DEL");
+        saver.setDestination("BOM");
+        saver.setFareType("Saver");
+        saver.setRefundType(FlightRefundType.NON_REFUNDABLE);
+        saver.setBaggage("Hand baggage only");
+        FlightOfferResponse flexi = offer("SpiceJet", "671", 5, "5000", 0, "2h", true, null);
+        flexi.setAirlineCode("SG");
+        flexi.setOrigin("DEL");
+        flexi.setDestination("BOM");
+        flexi.setFareType("FLEXI");
+        flexi.setRefundType(FlightRefundType.REFUNDABLE);
+        flexi.setBaggage("15 Kg");
+        FlightOfferResponse unpriced = offer("SpiceJet", "671", 5, "1", 0, "2h", true, null);
+        unpriced.setAirlineCode("SG");
+        unpriced.setOrigin("DEL");
+        unpriced.setDestination("BOM");
+        unpriced.setPrice(null);
+        unpriced.setFareType(" ");
+        unpriced.setBaggage("0 Kg");
+        FlightOfferResponse indigo = offer("IndiGo", "6E-204", 13, "6000", 0, "2h", true, null);
+        indigo.setAirlineCode("6E");
+        indigo.setOrigin("DED");
+        indigo.setDestination("BOM");
+        indigo.setRefundType(FlightRefundType.PARTIAL);
+        indigo.setLegs(List.of(FlightLegResponse.builder().airlineCode("6E").flightNumber("6E-204").build(),
+                FlightLegResponse.builder().airlineCode("QP").flightNumber("1410").build()));
+        FlightOfferResponse air = offer("Air India", "9", 19, "7000", 0, "2h", true, null);
+        air.setAirlineCode("AI");
+        air.setOrigin("DEL");
+        air.setDestination("NMI");
+        air.setDisplayedFare(new BigDecimal("6500"));
+        FlightOfferResponse timeless = offer("Air India", "77", 20, "8000", 0, "2h", true, null);
+        timeless.setAirlineCode(null);
+        timeless.setDepartTime(null);
+        timeless.setArriveTime(null);
+        timeless.setOrigin(null);
+        timeless.setDestination(" ");
+        return FlightResultPaging.group(List.of(saver, flexi, unpriced, indigo, air, timeless));
+    }
+
+    @Test
+    void timeAirportAndFlightNumberFiltersDropWholeFlights() {
+        List<FlightGroupResponse> groups = filterable();
+
+        assertThat(numbers(groups, r -> r.setDepartBuckets(List.of(TimeBucket.EARLY, TimeBucket.EVENING)))).containsExactly("671", "9");
+        assertThat(numbers(groups, r -> r.setDepartBuckets(List.of()))).hasSize(4);
+        assertThat(numbers(groups, r -> r.setArriveBuckets(List.of(TimeBucket.AFTERNOON)))).containsExactly("6E-204");
+        assertThat(numbers(groups, r -> r.setArriveBuckets(List.of(TimeBucket.MORNING)))).containsExactly("671");
+        assertThat(numbers(groups, r -> r.setOrigins(List.of("DED")))).containsExactly("6E-204");
+        assertThat(numbers(groups, r -> r.setDestinations(List.of("NMI")))).containsExactly("9");
+        assertThat(numbers(groups, r -> r.setFlightNumber("671"))).containsExactly("671");
+        assertThat(numbers(groups, r -> r.setFlightNumber("sg 671"))).containsExactly("671");
+        assertThat(numbers(groups, r -> r.setFlightNumber("6E-204"))).containsExactly("6E-204");
+        assertThat(numbers(groups, r -> r.setFlightNumber("qp1410"))).containsExactly("6E-204"); // a later leg's number
+        assertThat(numbers(groups, r -> r.setFlightNumber("999"))).isEmpty();
+        assertThat(numbers(groups, r -> r.setFlightNumber(" - "))).hasSize(4);
+        assertThat(TimeBucket.of(LocalTime.of(5, 59))).isEqualTo(TimeBucket.EARLY);
+        assertThat(TimeBucket.of(LocalTime.of(6, 0))).isEqualTo(TimeBucket.MORNING);
+        assertThat(TimeBucket.of(LocalTime.of(23, 59))).isEqualTo(TimeBucket.EVENING);
+    }
+
+    @Test
+    void priceFareTypeRefundTypeAndBaggageFiltersDropFaresAndAFlightWithNoneLeft() {
+        List<FlightGroupResponse> groups = filterable();
+
+        FlightSearchPageRequest fromFive = req();
+        fromFive.setMinPrice(new BigDecimal("5000"));
+        assertThat(FlightResultPaging.page(groups, fromFive, NONE).getFlights()).first()
+                .satisfies(g -> assertThat(g.getFares()).extracting(FlightOfferResponse::getFareType).containsExactly("FLEXI"));
+        // the displayed fare (6500), not the supplier's price (7000), is what a price filter reads
+        assertThat(numbers(groups, r -> r.setMaxPrice(new BigDecimal("6500")))).containsExactly("671", "6E-204", "9");
+        assertThat(numbers(groups, r -> {
+            r.setMinPrice(new BigDecimal("4500"));
+            r.setMaxPrice(new BigDecimal("5500"));
+        })).containsExactly("671");
+        assertThat(numbers(groups, r -> r.setFareTypes(List.of("flexi")))).containsExactly("671");
+        assertThat(numbers(groups, r -> r.setFareTypes(List.of()))).hasSize(4);
+        assertThat(numbers(groups, r -> r.setRefundTypes(List.of(FlightRefundType.PARTIAL, FlightRefundType.NON_REFUNDABLE))))
+                .containsExactly("671", "6E-204");
+
+        FlightSearchPageRequest handOnly = req();
+        handOnly.setBaggage(BaggageFilter.HAND_ONLY);
+        // hand-baggage wording, "0 Kg" and no allowance at all are hand only
+        assertThat(FlightResultPaging.page(groups, handOnly, NONE).getFlights()).extracting(g -> g.getFares().size()).containsExactly(2, 1, 1, 1);
+        assertThat(numbers(groups, r -> r.setBaggage(BaggageFilter.CHECK_IN))).containsExactly("671");
+        assertThat(FlightResultPaging.hasCheckIn(null)).isFalse();
+    }
+
+    @Test
+    void thePageCarriesPriceFareTypeAndAirportFacetsOfTheUnfilteredResult() {
+        FlightSearchPageRequest r = req();
+        r.setStops(1); // filters nothing in, so the facets below are not from the filtered list
+
+        FlightSearchPageResponse page = FlightResultPaging.page(filterable(), r, NONE);
+
+        assertThat(page.getFlights()).isEmpty();
+        assertThat(page.getPriceMin()).isEqualByComparingTo("4000");
+        assertThat(page.getPriceMax()).isEqualByComparingTo("8000");
+        assertThat(page.getFareTypes()).containsExactly("FLEXI", "Saver");
+        assertThat(page.getOrigins()).containsExactly("DED", "DEL");
+        assertThat(page.getDestinations()).containsExactly("BOM", "NMI");
+        FlightSearchPageResponse empty = FlightResultPaging.page(List.of(), req(), NONE);
+        assertThat(empty.getPriceMin()).isNull();
+        assertThat(empty.getPriceMax()).isNull();
+    }
+
+    @Test
+    void onTheWayBackTheAirportFiltersAreReadTheOtherWayRound() {
+        FlightOfferResponse out = offer("IndiGo", "6E1", 6, "4000", 0, "2h", false, FlightDirection.ONWARD);
+        out.setOrigin("DEL");
+        out.setDestination("BOM");
+        FlightOfferResponse back = offer("IndiGo", "6E2", 9, "4000", 0, "2h", false, FlightDirection.RETURN);
+        back.setOrigin("BOM");
+        back.setDestination("DEL");
+        FlightOfferResponse backToHindon = offer("IndiGo", "6E4", 9, "4000", 0, "2h", false, FlightDirection.RETURN);
+        backToHindon.setOrigin("NMI");
+        backToHindon.setDestination("HDO");
+        FlightSearchPageRequest r = req();
+        r.getQuery().setReturnDate(LocalDate.of(2026, 12, 5));
+        r.setOrigins(List.of("DEL"));
+        r.setDestinations(List.of("BOM"));
+
+        FlightSearchPageResponse page = FlightResultPaging.page(FlightResultPaging.group(List.of(out, back, backToHindon)), r, NONE);
+
+        assertThat(page.getFlights()).extracting(FlightGroupResponse::getFlightNumber).containsExactly("6E1");
+        assertThat(page.getReturnFlights()).extracting(FlightGroupResponse::getFlightNumber).containsExactly("6E2");
+        assertThat(page.getOrigins()).containsExactly("DEL"); // the facets are the onward airports
+        r.setOrigins(null);
+        assertThat(FlightResultPaging.page(FlightResultPaging.group(List.of(out, back, backToHindon)), r, NONE).getReturnFlights())
+                .extracting(FlightGroupResponse::getFlightNumber).containsExactly("6E2");
     }
 }

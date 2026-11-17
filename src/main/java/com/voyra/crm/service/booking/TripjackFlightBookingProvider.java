@@ -32,7 +32,7 @@ import java.util.Map;
  * B2B design spec section 7.3 (review, air/book, booking-details, farerule, amendment), not
  * from a real booking response. Every field is read defensively - a missing field becomes a
  * null or an empty list, never an NPE - and the field mapping is expected to be corrected
- * once real fixtures exist. Transport conventions are copied from {@code TripjackFlightSearchProvider}:
+ * once real fixtures exist. The SEARCH flow of farerule ({@link #searchFareRules}) is likewise unverified live. Transport conventions are copied from {@code TripjackFlightSearchProvider}:
  * raw-string reads (Tripjack's content type is unreliable) and an {@code apikey} header that is never logged.
  */
 @Service
@@ -86,7 +86,7 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
         log.info("Tripjack review ok: priceIds={}, bookingId={}, total={}, base={}, conditions={}", offerIds, reviewId, total,
                 decimal(fare.path("BF")), res.path("conditions").isMissingNode() ? "-" : res.path("conditions").toString());
         return new FareReview(reviewId, total, decimal(fare.path("BF")), "INR",
-                fareRules(supplier, reviewId), null, res.path("tripInfos").isMissingNode() ? null : res.path("tripInfos"));
+                fareRules(supplier, reviewId, "REVIEW"), null, res.path("tripInfos").isMissingNode() ? null : res.path("tripInfos"));
     }
 
     @Override
@@ -199,9 +199,15 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
         return new CancelResult(true, refundOf(res), message(res, null));
     }
 
-    private String fareRules(ResolvedCredential supplier, String reviewId) {
+    /** Unverified live: the SEARCH flow of farerule is from Tripjack's documentation only, so any refusal or odd answer is "no rules". */
+    @Override
+    public String searchFareRules(String priceId, ResolvedCredential supplier) {
+        return fareRules(supplier, priceId, "SEARCH");
+    }
+
+    private String fareRules(ResolvedCredential supplier, String id, String flowType) {
         try {
-            JsonNode res = post(supplier, "/fms/v2/farerule", Map.of("id", reviewId, "flowType", "REVIEW"), "farerule");
+            JsonNode res = post(supplier, "/fms/v2/farerule", Map.of("id", id, "flowType", flowType), "farerule");
             if (res == null) {
                 return null; // 200 with an empty body: the review goes on without fare rules
             }

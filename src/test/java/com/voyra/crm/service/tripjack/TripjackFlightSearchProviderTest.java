@@ -99,6 +99,7 @@ class TripjackFlightSearchProviderTest {
         FlightOfferResponse flexi = offers.get(1);
         assertThat(flexi.getOfferId()).isEqualTo("off-flexi-1");
         assertThat(flexi.isRefundable()).isTrue();
+        assertThat(flexi.getRefundType()).isEqualTo(com.voyra.crm.enums.FlightRefundType.REFUNDABLE);
         assertThat(flexi.getFareType()).isEqualTo("Flexi");
     }
 
@@ -132,7 +133,13 @@ class TripjackFlightSearchProviderTest {
         assertThat(corporate.getBaggage()).isEqualTo("15 Kg");
         assertThat(corporate.getFareType()).isEqualTo("CORPORATE_FARE");
         assertThat(corporate.isRefundable()).isTrue();
+        assertThat(corporate.getRefundType()).isEqualTo(com.voyra.crm.enums.FlightRefundType.REFUNDABLE);
+        assertThat(corporate.getCabinBaggage()).isEqualTo("7 Kg");
+        assertThat(corporate.getSeatsLeft()).isEqualTo(4);
+        assertThat(corporate.getMealIncluded()).isTrue();
+        assertThat(offers.get(1).getMealIncluded()).isFalse();
         assertThat(offers.get(2).isRefundable()).isFalse();
+        assertThat(offers.get(2).getRefundType()).isEqualTo(com.voyra.crm.enums.FlightRefundType.NON_REFUNDABLE);
     }
 
     @Test

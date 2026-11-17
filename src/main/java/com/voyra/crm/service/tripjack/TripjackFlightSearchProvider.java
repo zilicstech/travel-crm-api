@@ -9,6 +9,7 @@ import com.voyra.crm.dto.FlightOfferResponse;
 import com.voyra.crm.dto.FlightSearchQuery;
 import com.voyra.crm.models.ResolvedCredential;
 import com.voyra.crm.enums.FlightDirection;
+import com.voyra.crm.enums.FlightRefundType;
 import com.voyra.crm.enums.SupplierProvider;
 import com.voyra.crm.exception.SupplierException;
 import com.voyra.crm.service.FlightSearchProvider;
@@ -243,8 +244,12 @@ public class TripjackFlightSearchProvider implements FlightSearchProvider {
                                     baseFare(fare, "ADULT"), baseFare(fare, "CHILD"), baseFare(fare, "INFANT")))
                             .passengers(FlightSearchProvider.passengers(query))
                             .currency("INR")
-                            .refundable(refundable(adultFare.path("rT")))
+                            .refundable(refundType(adultFare.path("rT")) != FlightRefundType.NON_REFUNDABLE)
+                            .refundType(refundType(adultFare.path("rT")))
                             .baggage(adultFare.path("bI").path("iB").asText(""))
+                            .cabinBaggage(adultFare.path("bI").path("cB").asText(null))
+                            .seatsLeft(adultFare.path("sR").isNumber() ? adultFare.path("sR").asInt() : null)
+                            .mealIncluded(adultFare.path("mI").isBoolean() ? adultFare.path("mI").asBoolean() : null)
                             .fareType(fare.path("fareIdentifier").asText("Standard"))
                             .specialReturnId(fare.path("sri").isMissingNode() || fare.path("sri").asText().isBlank() ? null : fare.path("sri").asText())
                             .pairsWith(pairsWith)
@@ -297,9 +302,13 @@ public class TripjackFlightSearchProvider implements FlightSearchProvider {
         return bf.isMissingNode() || bf.asText().isBlank() ? null : new BigDecimal(bf.asText());
     }
 
-    /** Live search sends rT as a number (0 non-refundable, 1 refundable, 2 partly refundable); older fixtures spell it out. */
-    private static boolean refundable(JsonNode rT) {
-        return rT.isNumber() ? rT.asInt() != 0 : "REFUNDABLE".equalsIgnoreCase(rT.asText(""));
+    /** Live search sends rT as a number (0 non-refundable, 1 refundable, 2 partly refundable); older fixtures spell it out. Anything else is non-refundable. */
+    private static FlightRefundType refundType(JsonNode rT) {
+        String v = rT.asText("");
+        if ("1".equals(v) || "REFUNDABLE".equalsIgnoreCase(v)) {
+            return FlightRefundType.REFUNDABLE;
+        }
+        return "2".equals(v) ? FlightRefundType.PARTIAL : FlightRefundType.NON_REFUNDABLE;
     }
 
     private static BigDecimal paxFare(JsonNode fare, String paxType) {
