@@ -102,6 +102,39 @@ class TripjackFlightSearchProviderTest {
         assertThat(flexi.getFareType()).isEqualTo("Flexi");
     }
 
+    /** A real production answer (DEL-BOM, 2026-11-17); only the third fare's rT was changed to 0 to cover non-refundable. */
+    @Test
+    void search_readsALiveTripjackAnswer() throws Exception {
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo("https://apitest.tripjack.com/fms/v1/air-search-all"))
+                .andRespond(withSuccess(fixture("tripjack/flight-search-live-2026-11-17.json"), MediaType.APPLICATION_JSON));
+        FlightSearchQuery query = query();
+        query.setAdults(1);
+        query.setDepartDate(LocalDate.of(2026, 12, 10));
+
+        List<FlightOfferResponse> offers = new TripjackFlightSearchProvider(builder).search(query, credential());
+
+        assertThat(offers).hasSize(3);
+        FlightOfferResponse corporate = offers.get(0);
+        assertThat(corporate.getOfferId()).isEqualTo("4-1900132715_0DELBOMSG671~3213237624257");
+        assertThat(corporate.getAirlineCode()).isEqualTo("SG");
+        assertThat(corporate.getFlightNumber()).isEqualTo("671");
+        assertThat(corporate.getOrigin()).isEqualTo("DEL");
+        assertThat(corporate.getDestination()).isEqualTo("BOM");
+        assertThat(corporate.getDepartDate()).isEqualTo(LocalDate.of(2026, 12, 10));
+        assertThat(corporate.getDepartTime().toString()).isEqualTo("05:40");
+        assertThat(corporate.getArriveTime().toString()).isEqualTo("07:55");
+        assertThat(corporate.getDuration()).isEqualTo("135");
+        assertThat(corporate.getStops()).isZero();
+        assertThat(corporate.getPrice()).isEqualByComparingTo("6538.80");
+        assertThat(corporate.getBaseFare()).isEqualByComparingTo("4802.00");
+        assertThat(corporate.getBaggage()).isEqualTo("15 Kg");
+        assertThat(corporate.getFareType()).isEqualTo("CORPORATE_FARE");
+        assertThat(corporate.isRefundable()).isTrue();
+        assertThat(offers.get(2).isRefundable()).isFalse();
+    }
+
     @Test
     void search_totalCoversEveryPassengerAtTheirOwnFare() throws Exception {
         RestClient.Builder builder = RestClient.builder();

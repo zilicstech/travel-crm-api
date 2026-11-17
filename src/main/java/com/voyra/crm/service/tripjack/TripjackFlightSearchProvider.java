@@ -243,7 +243,7 @@ public class TripjackFlightSearchProvider implements FlightSearchProvider {
                                     baseFare(fare, "ADULT"), baseFare(fare, "CHILD"), baseFare(fare, "INFANT")))
                             .passengers(FlightSearchProvider.passengers(query))
                             .currency("INR")
-                            .refundable("REFUNDABLE".equalsIgnoreCase(adultFare.path("rT").asText("")))
+                            .refundable(refundable(adultFare.path("rT")))
                             .baggage(adultFare.path("bI").path("iB").asText(""))
                             .fareType(fare.path("fareIdentifier").asText("Standard"))
                             .specialReturnId(fare.path("sri").isMissingNode() || fare.path("sri").asText().isBlank() ? null : fare.path("sri").asText())
@@ -295,6 +295,11 @@ public class TripjackFlightSearchProvider implements FlightSearchProvider {
     private static BigDecimal baseFare(JsonNode fare, String paxType) {
         JsonNode bf = fare.path("fd").path(paxType).path("fC").path("BF");
         return bf.isMissingNode() || bf.asText().isBlank() ? null : new BigDecimal(bf.asText());
+    }
+
+    /** Live search sends rT as a number (0 non-refundable, 1 refundable, 2 partly refundable); older fixtures spell it out. */
+    private static boolean refundable(JsonNode rT) {
+        return rT.isNumber() ? rT.asInt() != 0 : "REFUNDABLE".equalsIgnoreCase(rT.asText(""));
     }
 
     private static BigDecimal paxFare(JsonNode fare, String paxType) {
