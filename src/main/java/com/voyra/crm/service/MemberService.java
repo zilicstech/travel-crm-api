@@ -102,6 +102,7 @@ public class MemberService {
     @Transactional
     public MemberResponse updateMember(String clientId, String memberId, MemberUpdateRequest request) {
         Member member = findMember(clientId, memberId);
+        requireNotWalkInPrimary(clientId, member);
         Map<String, String> before = AuditSnapshot.of(member, AUDITED);
 
         // The edit form echoes the current relation back; only a real change is refused.
@@ -152,6 +153,7 @@ public class MemberService {
     @Transactional
     public MemberResponse updateStatus(String clientId, String memberId, boolean active) {
         Member member = findMember(clientId, memberId);
+        requireNotWalkInPrimary(clientId, member);
         if (!active && member.getType() == MemberType.CLIENT) {
             throw new IllegalStateException(
                     "The primary member cannot be deactivated - deactivate the client instead");
@@ -229,6 +231,13 @@ public class MemberService {
         clientService.findAccessibleClient(clientId);
         return memberRepository.findByMemberIdAndClientId(memberId, clientId)
                 .orElseThrow(() -> new IllegalArgumentException("Member not found: " + memberId));
+    }
+
+    /** The Walk-in client's own primary member is fixed (409); its other travellers are ordinary members. */
+    private void requireNotWalkInPrimary(String clientId, Member member) {
+        if (member.getType() == MemberType.CLIENT && ClientService.isSystem(clientService.findAccessibleClient(clientId))) {
+            throw ClientService.systemClientLocked();
+        }
     }
 
     private String currentUserId() {

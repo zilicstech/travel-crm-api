@@ -61,6 +61,9 @@ public class ClientResponse {
     @Schema(description = "Recipient is outside India")
     private Boolean isOverseas;
 
+    @Schema(description = "True for the Walk-in client, which Voyra manages: it can't be edited or deactivated")
+    private Boolean isSystem;
+
     @Schema(description = "Credit limit in INR; null = no limit", example = "1000000.00")
     private java.math.BigDecimal creditLimit;
 

@@ -167,6 +167,27 @@ public class PlatformBookingMirrorService {
         tenantService.requireLinks(clientId, leadId, serviceId);
     }
 
+    /** The client a review is stamped with: see {@link PlatformBookingMirrorTenantService#effectiveClientId}. */
+    public String effectiveClientId(String tenantId, String clientId, String leadId) {
+        return tenantService.effectiveClientId(clientId, leadId, crmCore(tenantId));
+    }
+
+    /**
+     * A Walk-in booking's passengers get the member ids of the Walk-in travellers they were saved as, before they are
+     * stored, so the CRM mirror names them. As the system in the agency's schema; a failure leaves the passengers as
+     * sent and never fails the booking. The log carries no passenger data.
+     */
+    public void linkWalkInTravellers(PlatformBooking b, List<PaxInput> passengers) {
+        try {
+            List<String> ids = SystemActor.call(b.getTenantId(), () -> tenantService.walkInMemberIds(b.getClientId(), passengers));
+            for (int i = 0; ids != null && i < ids.size(); i++) {
+                passengers.get(i).setMemberId(ids.get(i));
+            }
+        } catch (RuntimeException e) {
+            log.warn("Walk-in travellers of platform booking {} were not saved: {}", b.getId(), e.getClass().getSimpleName());
+        }
+    }
+
     /**
      * Records the outcome under the row lock; a concurrent sync that already finished the mirror is never marked FAILED.
      * DONE only when the row is still at the status this sync acted on: a cancel that landed meanwhile leaves the mirror

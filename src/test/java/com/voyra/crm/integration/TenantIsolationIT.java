@@ -148,6 +148,20 @@ class TenantIsolationIT extends AbstractIntegrationTest {
         });
     }
 
+    /** Tenant V2: every new agency starts with its Walk-in client and that client's primary member. */
+    @Test
+    void aNewTenantHasExactlyOneWalkInClientWithItsPrimaryMember() {
+        String tenant = provisionTenant("Walk-in Agency", "owner@walk-in-test.com");
+
+        Client walkIn = inTenant(tenant, () -> clientRepository.findByIsSystemTrue()).orElseThrow(); // two would throw
+        assertThat(walkIn.getIdentifier()).isEqualTo("WALK-IN");
+        assertThat(walkIn.getName()).isEqualTo("Walk-in Client");
+        assertThat(walkIn.getIsActive()).isTrue();
+        assertThat(walkIn.getCreditLimit()).isNull();
+        assertThat(inTenant(tenant, () -> memberRepository.findByClientIdAndTypeAndIsActiveTrue(walkIn.getId(), MemberType.CLIENT)))
+                .hasValueSatisfying(m -> assertThat(m.getName()).isEqualTo("Walk-in Client"));
+    }
+
     @Test
     void guessingAValidLeadIdFromAnotherTenantReturnsNothing() {
         String tenantA = provisionTenant("Isolation Agency A", "owner-a@isolation-test.com");

@@ -181,6 +181,8 @@ class PlatformBookingServiceTest {
             savedEvents.add(i.getArgument(0));
             return i.getArgument(0);
         });
+        // the client as sent; the Walk-in default has its own tests
+        lenient().when(mirrorService.effectiveClientId(any(), any(), any())).thenAnswer(i -> i.getArgument(1));
         lenient().when(walletRepository.findByTenantId(T)).thenAnswer(i -> Optional.of(wallet));
         lenient().when(tenantRepository.findById(T)).thenAnswer(i -> Optional.of(tenant));
         lenient().when(pricingService.requireInForce(T, PricingProduct.FLIGHT)).thenReturn(rules());
@@ -2181,5 +2183,37 @@ class PlatformBookingServiceTest {
         PlatformBooking b = rows.get(service.review(r).getBookingId());
 
         assertThat(b.getBookedBy()).isEqualTo("AG1");
+    }
+
+    /** Walk-in: the review is stamped with the client the tenant resolves (the one sent, the lead's, or Walk-in), and the links are checked on it. */
+    @Test
+    void aReviewWithoutAClientIsStampedWithTheWalkInClient() {
+        FlightReviewRequest r = reviewRequest();
+        r.setClientId(null);
+        when(mirrorService.effectiveClientId(T, null, null)).thenReturn("W1");
+
+        PlatformBooking b = rows.get(service.review(r).getBookingId());
+
+        assertThat(b.getClientId()).isEqualTo("W1");
+        verify(mirrorService).requireLinks("W1", null, null);
+    }
+
+    /** The travellers are linked after the payload hash is taken and before the passengers are stored. */
+    @Test
+    void confirmLinksWalkInTravellersBeforeThePassengersAreStored() {
+        String id = service.review(reviewRequest()).getBookingId();
+        PlatformBookingConfirmRequest request = confirmRequest("key-00000001", "4500.00");
+        String sentHash = paxCodec.hash(List.of(request.getPassengers(), request.getContactEmail(), request.getContactPhone()));
+        org.mockito.Mockito.doAnswer(i -> {
+            i.<List<PaxInput>>getArgument(1).forEach(p -> p.setMemberId("M-WALK"));
+            return null;
+        }).when(mirrorService).linkWalkInTravellers(any(), any());
+
+        service.confirm(id, request);
+
+        PlatformBooking b = rows.get(id);
+        assertThat(b.getConfirmPayloadHash()).isEqualTo(sentHash);
+        assertThat(paxCodec.decrypt(b.getPaxEnc(), PlatformBookingMirrorService.StoredPax.class).passengers())
+                .extracting(PaxInput::getMemberId).containsOnly("M-WALK");
     }
 }

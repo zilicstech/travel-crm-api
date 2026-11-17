@@ -93,6 +93,8 @@ public class PlatformBookingMirrorTenantService {
     private final com.voyra.crm.service.LeadService leadAccess;
     private final com.voyra.crm.service.ServiceInstanceService serviceAccess;
     private final com.voyra.crm.repository.AgentRepository agentRepository;
+    private final com.voyra.crm.repository.MemberRepository memberRepository;
+    private final com.voyra.crm.service.MemberService memberService;
 
     /**
      * Phase 1: the CRM booking exists from the moment the booking is sent. Under a lock on the platform booking id (so a
@@ -350,6 +352,61 @@ public class PlatformBookingMirrorTenantService {
             }
             serviceAccess.assertEditAccess(service);
         }
+    }
+
+    /**
+     * The client a review is stamped with: a lead booking keeps its client (the lead's own when none is sent); otherwise
+     * the client sent, or the agency's Walk-in client when none is sent or the agency has no CRM (a server rule, so an
+     * old or tampered caller cannot book for another client there).
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
+    public String effectiveClientId(String clientId, String leadId, boolean crmCore) {
+        if (blankToNull(leadId) != null) {
+            return blankToNull(clientId) != null ? clientId : leadAccess.findAccessibleLead(leadId).getClientId();
+        }
+        if (crmCore && blankToNull(clientId) != null) {
+            return clientId;
+        }
+        return clientRepository.findByIsSystemTrue().map(com.voyra.crm.entity.Client::getId)
+                .orElseThrow(() -> new IllegalStateException("This agency has no Walk-in client"));
+    }
+
+    /**
+     * Walk-in bookings save their passengers as the Walk-in client's travellers: one member id per passenger, in order.
+     * A passenger picked from a member keeps it; another reuses the active traveller with the same name (ignoring case
+     * and extra spaces) and date of birth, else becomes a new one. Null when the client is not the Walk-in client.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public List<String> walkInMemberIds(String clientId, List<PaxInput> passengers) {
+        if (clientRepository.findById(clientId).filter(c -> Boolean.TRUE.equals(c.getIsSystem())).isEmpty()) {
+            return null;
+        }
+        // name and date of birth -> member; a new traveller joins it, so the same person twice in one booking is one member
+        Map<String, String> known = new java.util.HashMap<>();
+        memberRepository.findByClientIdAndIsActiveTrue(clientId).stream()
+                .filter(m -> m.getType() != com.voyra.crm.enums.MemberType.CLIENT)
+                .forEach(m -> known.putIfAbsent(travellerKey(m.getName(), m.getDob()), m.getMemberId()));
+        return passengers.stream().map(p -> blankToNull(p.getMemberId()) != null ? p.getMemberId()
+                : known.computeIfAbsent(travellerKey(memberName(p), p.getDob()), k -> addTraveller(clientId, p))).toList();
+    }
+
+    private String addTraveller(String clientId, PaxInput p) {
+        com.voyra.crm.dto.MemberCreateRequest member = new com.voyra.crm.dto.MemberCreateRequest();
+        member.setName(memberName(p)); // a member has no title
+        member.setRelation(com.voyra.crm.enums.MemberRelation.OTHER);
+        member.setDob(p.getDob());
+        member.setPassportNumber(p.getPassportNo());
+        member.setPassportExpiry(p.getPassportExpiry());
+        member.setNationality(p.getNationality());
+        return memberService.addMember(clientId, member).getMemberId();
+    }
+
+    private static String memberName(PaxInput p) {
+        return (p.getFirstName() + " " + p.getLastName()).trim().replaceAll("\\s+", " ");
+    }
+
+    private static String travellerKey(String name, LocalDate dob) {
+        return name.trim().replaceAll("\\s+", " ").toLowerCase(java.util.Locale.ROOT) + "|" + dob;
     }
 
     /**

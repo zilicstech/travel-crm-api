@@ -17,6 +17,7 @@ import com.voyra.crm.enums.AuditEntityType;
 import com.voyra.crm.enums.ClientType;
 import com.voyra.crm.enums.MemberRelation;
 import com.voyra.crm.enums.MemberType;
+import com.voyra.crm.exception.BookingConflictException;
 import com.voyra.crm.repository.BookingRepository;
 import com.voyra.crm.repository.ClientInvoiceRepository;
 import com.voyra.crm.repository.ClientRepository;
@@ -32,11 +33,14 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -128,14 +132,17 @@ public class ClientService {
     public List<ClientResponse> listClients(ClientType typeFilter) {
         List<Client> clients = clientRepository.findAll().stream()
                 .filter(c -> typeFilter == null || c.getType() == typeFilter)
+                .sorted(Comparator.comparing(c -> !isSystem(c))) // the Walk-in client first
                 .toList();
         Map<String, ClientCreditResponse> credit = clientCreditService.creditFor(clients);
         return clients.stream().map(c -> toResponse(c, credit.get(c.getId()))).toList();
     }
 
-    /** Every combination resolves to an indexed derived query - never a full table read filtered in Java. */
+    /** Every combination resolves to an indexed derived query - never a full table read filtered in Java. The Walk-in client leads page one. */
     @Transactional(readOnly = true)
-    public PagedResponse<ClientResponse> listClients(ClientType typeFilter, Pageable pageable) {
+    public PagedResponse<ClientResponse> listClients(ClientType typeFilter, Pageable requested) {
+        Pageable pageable = PageRequest.of(requested.getPageNumber(), requested.getPageSize(),
+                Sort.by(Sort.Direction.DESC, "isSystem").and(requested.getSort()));
         Page<Client> page = typeFilter == null
                 ? clientRepository.findAll(pageable)
                 : clientRepository.findByType(typeFilter, pageable);
@@ -155,6 +162,7 @@ public class ClientService {
     @Transactional(readOnly = true)
     public ClientLookupResponse lookupByIdentifier(String identifier) {
         return clientRepository.findByIdentifierAndIsActiveTrue(identifier)
+                .filter(c -> !isSystem(c))
                 .map(c -> ClientLookupResponse.builder()
                         .found(true)
                         .id(c.getId())
@@ -193,6 +201,7 @@ public class ClientService {
                 }
             }
         }
+        clientRepository.findByIsSystemTrue().ifPresent(walkIn -> byId.remove(walkIn.getId())); // never a duplicate of anyone
         return List.copyOf(byId.values());
     }
 
@@ -204,6 +213,9 @@ public class ClientService {
     @Transactional
     public ClientDetailResponse updateClient(String id, ClientUpdateRequest request) {
         Client client = findAccessibleClient(id);
+        if (isSystem(client)) {
+            throw systemClientLocked();
+        }
         Map<String, String> before = AuditSnapshot.of(client, AUDITED);
 
         if (request.getIdentifier() != null && !request.getIdentifier().equals(client.getIdentifier())) {
@@ -299,6 +311,9 @@ public class ClientService {
     @Transactional
     public ClientDetailResponse updateStatus(String id, boolean active) {
         Client client = findAccessibleClient(id);
+        if (isSystem(client)) {
+            throw systemClientLocked();
+        }
         if (!active && leadRepository.countByClientIdAndStatusNotIn(id, LeadService.TERMINAL_STATUSES) > 0) {
             throw new IllegalStateException("This client still has open leads - close or reassign them first");
         }
@@ -322,6 +337,16 @@ public class ClientService {
     public Client findAccessibleClient(String id) {
         return clientRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Client not found: " + id));
+    }
+
+    static boolean isSystem(Client client) {
+        return Boolean.TRUE.equals(client.getIsSystem());
+    }
+
+    /** The Walk-in client and its primary member are fixed; its other travellers stay editable (MemberService). */
+    static BookingConflictException systemClientLocked() {
+        return new BookingConflictException("SYSTEM_CLIENT",
+                "The Walk-in client is managed by Voyra and can't be changed", Map.of());
     }
 
     private static boolean isOwner() {
@@ -349,6 +374,7 @@ public class ClientService {
                 .possibleDuplicateOf(client.getPossibleDuplicateOf())
                 .gstin(client.getGstin()).stateCode(client.getStateCode())
                 .billingAddress(client.getBillingAddress()).isOverseas(client.getIsOverseas())
+                .isSystem(client.getIsSystem())
                 .creditLimit(client.getCreditLimit())
                 .creditUsed(credit == null ? null : credit.getUsed())
                 .creditAvailable(credit == null ? null : credit.getAvailable())
@@ -368,6 +394,7 @@ public class ClientService {
                 .possibleDuplicateOf(client.getPossibleDuplicateOf())
                 .gstin(client.getGstin()).stateCode(client.getStateCode())
                 .billingAddress(client.getBillingAddress()).isOverseas(client.getIsOverseas())
+                .isSystem(client.getIsSystem())
                 .creditLimit(client.getCreditLimit())
                 .creditUsed(credit == null ? null : credit.getUsed())
                 .creditAvailable(credit == null ? null : credit.getAvailable())

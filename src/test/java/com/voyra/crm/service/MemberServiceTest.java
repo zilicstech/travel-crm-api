@@ -67,6 +67,9 @@ class MemberServiceTest {
     private Member member(MemberType type, MemberRelation relation) {
         Member m = Member.builder().memberId("M1").clientId("K1").name("Ravi").type(type).relation(relation).build();
         when(memberRepository.findByMemberIdAndClientId("M1", "K1")).thenReturn(Optional.of(m));
+        if (type == MemberType.CLIENT) {
+            when(clientService.findAccessibleClient("K1")).thenReturn(com.voyra.crm.entity.Client.builder().id("K1").build());
+        }
         return m;
     }
 
@@ -260,5 +263,24 @@ class MemberServiceTest {
         verify(memberDocumentRepository).delete(doc);
         assertThatThrownBy(() -> service.deleteDocument("K1", "M1", "D9")).hasMessage("Document not found: D9");
         assertThatThrownBy(() -> service.downloadDocument("K1", "M1", "D9")).hasMessage("Document not found: D9");
+    }
+
+    @Test
+    void theWalkInClientsPrimaryMemberIsFixedButItsTravellersAreNot() {
+        com.voyra.crm.entity.Client walkIn = com.voyra.crm.entity.Client.builder().id("K1").isSystem(true).build();
+        member(MemberType.CLIENT, MemberRelation.SELF);
+        when(clientService.findAccessibleClient("K1")).thenReturn(walkIn);
+        Member traveller = Member.builder().memberId("M2").clientId("K1").name("Pax One").type(MemberType.MEMBER).relation(MemberRelation.OTHER).build();
+        when(memberRepository.findByMemberIdAndClientId("M2", "K1")).thenReturn(Optional.of(traveller));
+        when(memberDocumentRepository.findByMemberId("M2")).thenReturn(List.of());
+        MemberUpdateRequest rename = new MemberUpdateRequest();
+        rename.setName("Pax Two");
+
+        assertThatThrownBy(() -> service.updateMember("K1", "M1", rename))
+                .isInstanceOfSatisfying(com.voyra.crm.exception.BookingConflictException.class, e -> assertThat(e.getCode()).isEqualTo("SYSTEM_CLIENT"));
+        assertThatThrownBy(() -> service.updateStatus("K1", "M1", false))
+                .isInstanceOfSatisfying(com.voyra.crm.exception.BookingConflictException.class, e -> assertThat(e.getCode()).isEqualTo("SYSTEM_CLIENT"));
+        assertThat(service.updateMember("K1", "M2", rename).getName()).isEqualTo("Pax Two");
+        verify(memberRepository).save(traveller);
     }
 }

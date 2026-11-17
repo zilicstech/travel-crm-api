@@ -233,6 +233,7 @@ public class PlatformBookingService {
         if (request.getReturnOfferId() != null && !request.getReturnOfferId().isBlank()) {
             request.setReturnOfferId(sameSupplier(onward, scoped(request.getReturnOfferId()), "Both legs must be on one supplier"));
         }
+        request.setClientId(mirrorService.effectiveClientId(principal.tenantId(), request.getClientId(), request.getLeadId()));
         ResolvedCredential supplier = admit(principal, PricingProduct.FLIGHT, onward.supplierId(), request.getClientId(),
                 request.getServiceId(), request.getLeadId());
         log.info("Flight review start: tenant={}, supplier={}, offerId={}, returnOfferId={}, pax={}/{}/{}, environment={}, searchedFare={}",
@@ -263,6 +264,7 @@ public class PlatformBookingService {
         SupplierIds.Scoped hotel = scoped(request.getHotelId());
         request.setHotelId(hotel.id());
         request.setOptionId(sameSupplier(hotel, scoped(request.getOptionId()), "The hotel and the room must be on one supplier"));
+        request.setClientId(mirrorService.effectiveClientId(principal.tenantId(), request.getClientId(), request.getLeadId()));
         ResolvedCredential supplier = admit(principal, PricingProduct.HOTEL, hotel.supplierId(), request.getClientId(),
                 request.getServiceId(), request.getLeadId());
         FareReview fare = registry.hotelBooking(supplier.provider()).review(request.getOptionId(), request.getHotelId(), request.getCheckIn(),
@@ -855,6 +857,7 @@ public class PlatformBookingService {
             throw reviewExpired(b.getProduct());
         }
         walletRepository.findByTenantId(tenantId).ifPresent(w -> requireMatchingWallet(b.getEnvironment(), w));
+        mirrorService.linkWalkInTravellers(b, request.getPassengers()); // after the payload hash: a retry sends them unlinked again
         // everything that can fail runs before the hold, so a refusal never leaves a committed hold behind
         String paxEnc = paxCodec.encrypt(Map.of("passengers", request.getPassengers(),
                 "contactEmail", request.getContactEmail(), "contactPhone", request.getContactPhone()));

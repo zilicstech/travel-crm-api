@@ -605,4 +605,59 @@ class PlatformBookingMirrorServiceTest {
 
         verify(tenantService).requireLinks("C1", "L1", "S1");
     }
+
+    @Test
+    void theEffectiveClientIsResolvedWithTheAgencysCrmFlag() {
+        when(tenantService.effectiveClientId("C1", "L1", true)).thenReturn("C1");
+        assertThat(service.effectiveClientId("T1", "C1", "L1")).isEqualTo("C1");
+
+        crmCore(false);
+        when(tenantService.effectiveClientId("C1", null, false)).thenReturn("W1");
+        assertThat(service.effectiveClientId("T1", "C1", null)).isEqualTo("W1");
+    }
+
+    /** As the system in the agency's schema; the previous tenant is restored. */
+    @Test
+    void walkInPassengersGetTheirTravellerIds() {
+        PlatformBooking b = ticketed("W1");
+        List<PaxInput> passengers = List.of(PaxInput.builder().firstName("Pax").lastName("One").build(),
+                PaxInput.builder().firstName("Pax").lastName("Two").build());
+        when(tenantService.walkInMemberIds("W1", passengers)).thenAnswer(i -> {
+            assertThat(com.voyra.crm.context.TenantContext.getTenantId()).isEqualTo("T1");
+            assertThat(SystemActor.isActive()).isTrue();
+            return List.of("M1", "M2");
+        });
+
+        service.linkWalkInTravellers(b, passengers);
+
+        assertThat(passengers).extracting(PaxInput::getMemberId).containsExactly("M1", "M2");
+        assertThat(SystemActor.isActive()).isFalse();
+    }
+
+    @Test
+    void passengersOfAnotherClientAreLeftAsSent() {
+        PlatformBooking b = ticketed("C1");
+        List<PaxInput> passengers = List.of(PaxInput.builder().firstName("Pax").lastName("One").build());
+        when(tenantService.walkInMemberIds("C1", passengers)).thenReturn(null);
+
+        service.linkWalkInTravellers(b, passengers);
+
+        assertThat(passengers.get(0).getMemberId()).isNull();
+    }
+
+    /** A failure never fails the booking, and the log names no passenger. */
+    @Test
+    void aFailedTravellerSaveLeavesThePassengersAsSentAndLogsNoPassengerData() {
+        PlatformBooking b = ticketed("W1");
+        List<PaxInput> passengers = List.of(PaxInput.builder().firstName("Secretfirst").lastName("Secretlast").passportNo("P999").build());
+        when(tenantService.walkInMemberIds("W1", passengers)).thenThrow(new IllegalStateException("could not save Secretfirst Secretlast P999"));
+
+        try (com.voyra.crm.support.LogCapture logs = new com.voyra.crm.support.LogCapture(PlatformBookingMirrorService.class)) {
+            service.linkWalkInTravellers(b, passengers);
+
+            assertThat(logs.lines()).anySatisfy(l -> assertThat(l).contains("Walk-in travellers of platform booking PB1 were not saved: IllegalStateException"));
+            assertThat(logs.lines()).noneMatch(l -> l.contains("Secret") || l.contains("P999"));
+        }
+        assertThat(passengers.get(0).getMemberId()).isNull();
+    }
 }

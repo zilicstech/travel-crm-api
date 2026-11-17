@@ -92,19 +92,19 @@ class PlatformBookingControllerTest {
     }
 
     @Test
-    void flightReviewWithoutAClientIs400() throws Exception {
+    void flightReviewWithoutAClientReachesTheService() throws Exception {
         mockMvc.perform(post("/api/platform-bookings/flights/review").with(as(UserType.AGENT))
                         .contentType(MediaType.APPLICATION_JSON).content("{\"offerId\":\"o1\",\"adults\":1}"))
-                .andExpect(status().isBadRequest()).andExpect(content().string(org.hamcrest.Matchers.containsString("Client is required")));
-        verifyNoInteractions(service);
+                .andExpect(status().isOk());
+        verify(service).review(org.mockito.ArgumentMatchers.argThat((com.voyra.crm.dto.FlightReviewRequest r) -> r.getClientId() == null));
     }
 
     @Test
-    void hotelReviewWithoutAClientIs400() throws Exception {
+    void hotelReviewWithoutAClientReachesTheService() throws Exception {
         mockMvc.perform(post("/api/platform-bookings/hotels/review").with(as(UserType.AGENT))
                         .contentType(MediaType.APPLICATION_JSON).content(HOTEL_REVIEW.replace(",\"clientId\":\"C1\"", "")))
-                .andExpect(status().isBadRequest()).andExpect(content().string(org.hamcrest.Matchers.containsString("Client is required")));
-        verifyNoInteractions(service);
+                .andExpect(status().isOk());
+        verify(service).reviewHotel(org.mockito.ArgumentMatchers.argThat((com.voyra.crm.dto.HotelReviewRequest r) -> r.getClientId() == null));
     }
 
     @Test

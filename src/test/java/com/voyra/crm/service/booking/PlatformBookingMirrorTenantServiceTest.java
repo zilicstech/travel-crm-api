@@ -95,6 +95,8 @@ class PlatformBookingMirrorTenantServiceTest {
     @Mock private com.voyra.crm.service.LeadService leadAccess;
     @Mock private com.voyra.crm.service.ServiceInstanceService serviceAccess;
     @Mock private com.voyra.crm.repository.AgentRepository agentRepository;
+    @Mock private com.voyra.crm.repository.MemberRepository memberRepository;
+    @Mock private com.voyra.crm.service.MemberService memberService;
 
     @InjectMocks private PlatformBookingMirrorTenantService service;
 
@@ -926,5 +928,84 @@ class PlatformBookingMirrorTenantServiceTest {
 
         verify(clientRepository, never()).existsById(any());
         verify(serviceAccess).assertEditAccess(s1);
+    }
+
+    // ---------------------------------------------------------------- the Walk-in client
+
+    @Test
+    void aLeadBookingKeepsItsClientAndABlankOneBecomesTheLeads() {
+        when(leadAccess.findAccessibleLead("L1")).thenReturn(com.voyra.crm.entity.Lead.builder().id("L1").clientId("C-LEAD").build());
+
+        assertThat(service.effectiveClientId("C1", "L1", false)).isEqualTo("C1");
+        assertThat(service.effectiveClientId(" ", "L1", true)).isEqualTo("C-LEAD");
+        verify(clientRepository, never()).findByIsSystemTrue();
+    }
+
+    @Test
+    void withoutALeadTheClientIsTheOneSentOnlyWithTheCrmElseWalkIn() {
+        when(clientRepository.findByIsSystemTrue()).thenReturn(Optional.of(com.voyra.crm.entity.Client.builder().id("W1").isSystem(true).build()));
+
+        assertThat(service.effectiveClientId("C1", null, true)).isEqualTo("C1");
+        assertThat(service.effectiveClientId("C1", " ", false)).isEqualTo("W1"); // no CRM: always Walk-in
+        assertThat(service.effectiveClientId(null, null, true)).isEqualTo("W1");
+        assertThat(service.effectiveClientId(" ", null, false)).isEqualTo("W1");
+    }
+
+    @Test
+    void anAgencyWithoutAWalkInClientIsRefusedClearly() {
+        when(clientRepository.findByIsSystemTrue()).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.effectiveClientId(null, null, true))
+                .isInstanceOf(IllegalStateException.class).hasMessage("This agency has no Walk-in client");
+    }
+
+    @Test
+    void passengersOfAnotherClientAreNotSavedAsTravellers() {
+        when(clientRepository.findById("C1")).thenReturn(Optional.of(com.voyra.crm.entity.Client.builder().id("C1").build()));
+        when(clientRepository.findById("C9")).thenReturn(Optional.empty());
+
+        assertThat(service.walkInMemberIds("C1", pax())).isNull();
+        assertThat(service.walkInMemberIds("C9", pax())).isNull();
+        org.mockito.Mockito.verifyNoInteractions(memberRepository, memberService);
+    }
+
+    /** A picked member is kept; a known traveller is reused by name (case and spaces ignored) and date of birth; the rest are created once. */
+    @Test
+    void walkInPassengersBecomeTravellersReusingAKnownOne() {
+        LocalDate dob = LocalDate.of(2020, 1, 5);
+        when(clientRepository.findById("W1")).thenReturn(Optional.of(com.voyra.crm.entity.Client.builder().id("W1").isSystem(true).build()));
+        when(memberRepository.findByClientIdAndIsActiveTrue("W1")).thenReturn(List.of(
+                member("M-PRIMARY", "Walk-in Client", null, com.voyra.crm.enums.MemberType.CLIENT),
+                member("M-ANYA", "  anya   SHARMA ", dob, com.voyra.crm.enums.MemberType.MEMBER),
+                member("M-ANYA-2", "Anya Sharma", dob, com.voyra.crm.enums.MemberType.MEMBER), // a duplicate: the first wins
+                member("M-OLDER", "Anya Sharma", LocalDate.of(1990, 1, 1), com.voyra.crm.enums.MemberType.MEMBER)));
+        when(memberService.addMember(eq("W1"), any())).thenReturn(
+                com.voyra.crm.dto.MemberResponse.builder().memberId("M-NEW").build(),
+                com.voyra.crm.dto.MemberResponse.builder().memberId("M-NEW-2").build());
+        List<PaxInput> passengers = List.of(
+                PaxInput.builder().type("ADULT").firstName("Rahul").lastName("Sharma").memberId("M1").build(),
+                PaxInput.builder().type("CHILD").firstName("Anya").lastName("Sharma").dob(dob).memberId(" ").build(),
+                PaxInput.builder().type("ADULT").title("Ms").firstName(" Walk-in").lastName("Client").passportNo("P1")
+                        .passportExpiry(LocalDate.of(2031, 1, 31)).nationality("IN").build(),
+                PaxInput.builder().type("ADULT").firstName("walk-in").lastName("CLIENT ").build(), // the same person again
+                PaxInput.builder().type("ADULT").firstName("Walk-in").lastName("Client").dob(LocalDate.of(1980, 2, 2)).build());
+
+        assertThat(service.walkInMemberIds("W1", passengers)).containsExactly("M1", "M-ANYA", "M-NEW", "M-NEW", "M-NEW-2");
+
+        org.mockito.ArgumentCaptor<com.voyra.crm.dto.MemberCreateRequest> created = org.mockito.ArgumentCaptor.forClass(com.voyra.crm.dto.MemberCreateRequest.class);
+        verify(memberService, times(2)).addMember(eq("W1"), created.capture());
+        com.voyra.crm.dto.MemberCreateRequest first = created.getAllValues().get(0);
+        assertThat(first.getName()).isEqualTo("Walk-in Client"); // never matched to the primary member
+        assertThat(first.getRelation()).isEqualTo(com.voyra.crm.enums.MemberRelation.OTHER);
+        assertThat(first.getDob()).isNull();
+        assertThat(first.getPassportNumber()).isEqualTo("P1");
+        assertThat(first.getPassportExpiry()).isEqualTo(LocalDate.of(2031, 1, 31));
+        assertThat(first.getNationality()).isEqualTo("IN");
+        assertThat(created.getAllValues().get(1).getDob()).isEqualTo(LocalDate.of(1980, 2, 2));
+        assertThat(passengers.get(1).getMemberId()).isEqualTo(" "); // the caller applies the ids once this commits
+    }
+
+    private static com.voyra.crm.entity.Member member(String id, String name, LocalDate dob, com.voyra.crm.enums.MemberType type) {
+        return com.voyra.crm.entity.Member.builder().memberId(id).clientId("W1").name(name).dob(dob).type(type).build();
     }
 }

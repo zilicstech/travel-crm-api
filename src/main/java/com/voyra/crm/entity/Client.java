@@ -94,6 +94,11 @@ public class Client {
     @Column(name = "credit_limit", precision = 14, scale = 2)
     private BigDecimal creditLimit;
 
+    /** The Walk-in client (tenant V2): set only by migration; ClientService refuses to edit or deactivate it. */
+    @Column(name = "is_system", nullable = false, updatable = false)
+    @Builder.Default
+    private Boolean isSystem = false;
+
     @PrePersist
     protected void onCreate() {
         if (createdAt == null) {

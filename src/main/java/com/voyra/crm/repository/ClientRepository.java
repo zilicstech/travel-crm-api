@@ -24,6 +24,9 @@ public interface ClientRepository extends JpaRepository<Client, String> {
 
     long countByIsActiveTrue();
 
+    /** The agency's Walk-in client (tenant V2 creates exactly one). */
+    Optional<Client> findByIsSystemTrue();
+
     /** OR across two columns is unreadable as a derived name (blueprint §8.1). */
     @Query("""
             SELECT c FROM Client c

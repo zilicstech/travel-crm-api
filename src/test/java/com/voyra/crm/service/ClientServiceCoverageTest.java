@@ -183,15 +183,16 @@ class ClientServiceCoverageTest {
 
     @Test
     void pagedListUsesTheTypedQueryOnlyWhenFiltered() {
-        PageRequest p = PageRequest.of(0, 10);
+        PageRequest asked = PageRequest.of(0, 10);
+        PageRequest p = PageRequest.of(0, 10, org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "isSystem")); // Walk-in first
         Client c = client("C1", ClientType.B2C, "9100000101", "Pax Person");
         when(clientRepository.findAll(p)).thenReturn(new PageImpl<>(List.of(c), p, 1));
         when(clientRepository.findByType(ClientType.B2B, p)).thenReturn(new PageImpl<>(List.of(), p, 0));
         when(clientCreditService.creditFor(List.of(c))).thenReturn(Map.of("C1", credit("0", "0")));
 
-        PagedResponse<ClientResponse> all = service.listClients(null, p);
+        PagedResponse<ClientResponse> all = service.listClients(null, asked);
         assertThat(all.getContent()).extracting(ClientResponse::getId).containsExactly("C1");
-        assertThat(service.listClients(ClientType.B2B, p).getContent()).isEmpty();
+        assertThat(service.listClients(ClientType.B2B, asked).getContent()).isEmpty();
     }
 
     @Test
@@ -417,5 +418,50 @@ class ClientServiceCoverageTest {
         assertThatThrownBy(() -> service.updateStatus("C1", true))
                 .isInstanceOf(IllegalStateException.class).hasMessage("Another active client already uses identifier acme");
         verifyNoInteractions(auditService);
+    }
+
+    // ---------------------------------------------------------------- the Walk-in client
+
+    private static Client walkIn() {
+        return Client.builder().id("W1").type(ClientType.B2C).identifier("WALK-IN").name("Walk-in Client").isActive(true).isSystem(true).build();
+    }
+
+    @Test
+    void theWalkInClientCannotBeEditedOrDeactivated() {
+        when(clientRepository.findById("W1")).thenReturn(Optional.of(walkIn()));
+
+        assertThatThrownBy(() -> service.updateClient("W1", new ClientUpdateRequest()))
+                .isInstanceOfSatisfying(com.voyra.crm.exception.BookingConflictException.class, e -> {
+                    assertThat(e.getCode()).isEqualTo("SYSTEM_CLIENT");
+                    assertThat(e).hasMessage("The Walk-in client is managed by Voyra and can't be changed");
+                });
+        assertThatThrownBy(() -> service.updateStatus("W1", false))
+                .isInstanceOfSatisfying(com.voyra.crm.exception.BookingConflictException.class, e -> assertThat(e.getCode()).isEqualTo("SYSTEM_CLIENT"));
+        verify(clientRepository, never()).save(any());
+        verifyNoInteractions(auditService);
+    }
+
+    @Test
+    void theWalkInClientLeadsTheFullListAndIsFlagged() {
+        Client c = client("C1", ClientType.B2C, "9100000101", "Pax Person");
+        when(clientRepository.findAll()).thenReturn(List.of(c, walkIn()));
+        when(clientCreditService.creditFor(any())).thenReturn(Map.of());
+
+        List<ClientResponse> all = service.listClients((ClientType) null);
+
+        assertThat(all).extracting(ClientResponse::getId).containsExactly("W1", "C1");
+        assertThat(all).extracting(ClientResponse::getIsSystem).containsExactly(true, false);
+    }
+
+    @Test
+    void theWalkInClientIsNeverALookupHitOrADuplicate() {
+        Client walkIn = walkIn();
+        when(clientRepository.findByIdentifierAndIsActiveTrue("WALK-IN")).thenReturn(Optional.of(walkIn));
+        when(clientRepository.findByIsSystemTrue()).thenReturn(Optional.of(walkIn));
+        ClientDuplicateCheckRequest check = new ClientDuplicateCheckRequest();
+        check.setIdentifier("WALK-IN");
+
+        assertThat(service.lookupByIdentifier("WALK-IN").isFound()).isFalse();
+        assertThat(service.checkDuplicates(check)).isEmpty();
     }
 }
