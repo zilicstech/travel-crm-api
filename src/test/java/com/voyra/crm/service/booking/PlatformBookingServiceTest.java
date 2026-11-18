@@ -2339,4 +2339,286 @@ class PlatformBookingServiceTest {
         assertThat(paxCodec.decrypt(b.getPaxEnc(), PlatformBookingMirrorService.StoredPax.class).passengers())
                 .extracting(PaxInput::getMemberId).containsOnly("M-WALK");
     }
+
+    @Test
+    void seatMap_enforcesStateExpiryAndCachesCatalogForConfirm() {
+        String id = reviewed();
+        lenient().when(bookingRepository.findByIdAndTenantId(id, T)).thenAnswer(i -> Optional.ofNullable(rows.get(id)));
+
+        // Active transaction is refused
+        TransactionSynchronizationManager.setActualTransactionActive(true);
+        try {
+            assertThatThrownBy(() -> service.seatMap(id)).isInstanceOf(IllegalStateException.class);
+        } finally {
+            TransactionSynchronizationManager.setActualTransactionActive(false);
+        }
+
+        // seatApplicable=false (and null reviewExpiresAt) returns empty without hitting supplier
+        rows.get(id).setReviewExpiresAt(null);
+        var notApplicable = service.seatMap(id);
+        assertThat(notApplicable.getSegments()).isEmpty();
+        verify(provider, never()).seatMap(any(), any(), any(), any(Boolean.class), any());
+
+        // Expired review is refused
+        rows.get(id).setReviewExpiresAt(Instant.now().minusSeconds(5));
+        assertThatThrownBy(() -> service.seatMap(id))
+                .isInstanceOfSatisfying(BookingConflictException.class, e -> assertThat(e.getCode()).isEqualTo("REVIEW_EXPIRED"));
+
+        // Non-REVIEWING status or HOTEL product is refused
+        rows.get(id).setReviewExpiresAt(Instant.now().plusSeconds(600));
+        rows.get(id).setStatus(PlatformBookingStatus.TICKETED);
+        assertThatThrownBy(() -> service.seatMap(id))
+                .isInstanceOfSatisfying(BookingConflictException.class, e -> assertThat(e.getCode()).isEqualTo("REVIEW_EXPIRED"));
+        rows.get(id).setStatus(PlatformBookingStatus.REVIEWING);
+        rows.get(id).setProduct(PricingProduct.HOTEL);
+        assertThatThrownBy(() -> service.seatMap(id))
+                .isInstanceOfSatisfying(BookingConflictException.class, e -> assertThat(e.getCode()).isEqualTo("REVIEW_EXPIRED"));
+        rows.get(id).setProduct(PricingProduct.FLIGHT);
+
+        // Applicable seat map loads from supplier and caches seatCatalog + downgraded seatMandatory
+        rows.get(id).getPricingSnapshot().put("seatApplicable", true);
+        rows.get(id).getPricingSnapshot().put("seatMandatory", true);
+        var supplierMap = com.voyra.crm.dto.FlightSeatMapResponse.builder()
+                .bookingId(id)
+                .seatMandatory(false)
+                .segments(List.of(com.voyra.crm.dto.SegmentSeatMapResponse.builder()
+                        .segmentKey("SEG-1")
+                        .seats(List.of(com.voyra.crm.dto.SeatOptionResponse.builder()
+                                .code("1A").seatNo("1A").amount(new BigDecimal("600.00")).booked(false).build()))
+                        .build()))
+                .build();
+        when(provider.seatMap(eq(id), eq("rv-1"), any(), eq(true), any())).thenReturn(supplierMap);
+
+        var loaded = service.seatMap(id);
+        assertThat(loaded.isSeatMandatory()).isFalse();
+        assertThat(rows.get(id).getPricingSnapshot()).containsEntry("seatMandatory", false).containsKey("seatCatalog");
+
+        // Concurrent status move while supplier seatMap is running leaves the row untouched
+        when(provider.seatMap(eq(id), eq("rv-1"), any(), eq(false), any())).thenAnswer(i -> {
+            rows.get(id).setStatus(PlatformBookingStatus.HELD);
+            return supplierMap;
+        });
+        assertThat(service.seatMap(id).getBookingId()).isEqualTo(id);
+    }
+
+    @Test
+    void flightComplianceFlagsAndTitlesAreValidatedBeforeAnyHold() {
+        var fc = new com.voyra.crm.models.booking.FlightCompliance(true, false, true, true, true, true, true, true, true);
+        when(provider.review(any(FlightReviewRequest.class), any())).thenReturn(new FareReview(
+                "rv-comp", new BigDecimal("5000.00"), new BigDecimal("4250.00"), "INR", "Rules",
+                Instant.now().plusSeconds(1800), null, null, null, false,
+                com.voyra.crm.models.booking.HotelCompliance.NONE, fc));
+        FlightReviewRequest req = reviewRequest();
+        req.setDepartDate("2026-12-10");
+        PlatformBookingReviewResponse rev = service.review(req);
+        assertThat(rev.isDocumentIdRequired()).isTrue();
+        assertThat(rev.isPanRequired()).isTrue();
+        assertThat(rev.isPassportRequired()).isTrue();
+        assertThat(rev.isPassportExpiryRequired()).isTrue();
+        assertThat(rev.isAdultDobRequired()).isTrue();
+        assertThat(rev.isSeatApplicable()).isTrue();
+        String id = rev.getBookingId();
+
+        // Missing or blank title
+        PlatformBookingConfirmRequest nullTitle = confirmRequest("k-t1", "4500.00");
+        nullTitle.getPassengers().get(0).setTitle(null);
+        assertThatThrownBy(() -> service.confirm(id, nullTitle))
+                .isInstanceOfSatisfying(BookingRequestException.class, e -> assertThat(e.getCode()).isEqualTo("PAX_TITLE_REQUIRED"));
+        PlatformBookingConfirmRequest blankTitle = confirmRequest("k-t2", "4500.00");
+        blankTitle.getPassengers().get(1).setTitle(" ");
+        assertThatThrownBy(() -> service.confirm(id, blankTitle))
+                .isInstanceOfSatisfying(BookingRequestException.class, e -> assertThat(e.getCode()).isEqualTo("PAX_TITLE_REQUIRED"));
+
+        // Adult DOB required
+        PlatformBookingConfirmRequest noAdultDob = withDocumentIds("D1", "D2", "D3");
+        assertThatThrownBy(() -> service.confirm(id, noAdultDob))
+                .isInstanceOfSatisfying(BookingRequestException.class, e -> assertThat(e.getCode()).isEqualTo("PAX_DOB_REQUIRED"));
+
+        // PAN required on adults (null and blank)
+        PlatformBookingConfirmRequest noPan = withDocumentIds("D1", "D2", "D3");
+        noPan.getPassengers().get(0).setDob(LocalDate.of(1990, 1, 1));
+        noPan.getPassengers().get(1).setDob(LocalDate.of(1992, 2, 2));
+        assertThatThrownBy(() -> service.confirm(id, noPan))
+                .isInstanceOfSatisfying(BookingRequestException.class, e -> assertThat(e.getCode()).isEqualTo("PAN_REQUIRED"));
+        noPan.getPassengers().get(0).setPan("ABCDE1234F");
+        noPan.getPassengers().get(1).setPan(" ");
+        assertThatThrownBy(() -> service.confirm(id, noPan))
+                .isInstanceOfSatisfying(BookingRequestException.class, e -> assertThat(e.getCode()).isEqualTo("PAN_REQUIRED"));
+
+        // Passport & passport expiry required (null/blank passport, null expiry, expired before travel date)
+        noPan.getPassengers().get(1).setPan("PQRSX6789K");
+        assertThatThrownBy(() -> service.confirm(id, noPan))
+                .isInstanceOfSatisfying(BookingRequestException.class, e -> assertThat(e.getCode()).isEqualTo("PASSPORT_REQUIRED"));
+        noPan.getPassengers().get(0).setPassportNo(" ");
+        noPan.getPassengers().get(1).setPassportNo("P2");
+        noPan.getPassengers().get(2).setPassportNo("P3");
+        assertThatThrownBy(() -> service.confirm(id, noPan))
+                .isInstanceOfSatisfying(BookingRequestException.class, e -> assertThat(e.getCode()).isEqualTo("PASSPORT_REQUIRED"));
+        noPan.getPassengers().get(0).setPassportNo("P1");
+        assertThatThrownBy(() -> service.confirm(id, noPan))
+                .isInstanceOfSatisfying(BookingRequestException.class, e -> assertThat(e.getCode()).isEqualTo("PASSPORT_REQUIRED"));
+        noPan.getPassengers().forEach(p -> p.setPassportExpiry(LocalDate.of(2026, 12, 9)));
+        assertThatThrownBy(() -> service.confirm(id, noPan))
+                .isInstanceOfSatisfying(BookingRequestException.class, e -> assertThat(e.getCode()).isEqualTo("PASSPORT_REQUIRED"));
+
+        // Valid compliance data with travelDate present, plus null travelDate branch on a second review
+        noPan.getPassengers().forEach(p -> p.setPassportExpiry(LocalDate.of(2030, 1, 1)));
+        noPan.getPassengers().get(2).setPan(" "); // blank PAN on child maps to null cleanly
+        assertThat(service.confirm(id, noPan).getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
+        ArgumentCaptor<BookRequest> sent = ArgumentCaptor.forClass(BookRequest.class);
+        verify(provider).book(sent.capture(), any());
+        assertThat(sent.getValue().flightCompliance()).isEqualTo(fc);
+        assertThat(sent.getValue().passengers().get(0).pan()).isEqualTo("ABCDE1234F");
+        assertThat(sent.getValue().passengers().get(2).pan()).isNull();
+
+        String idNoDate = service.review(reviewRequest()).getBookingId();
+        rows.get(idNoDate).getPricingSnapshot().put("seatCatalog", Map.of("SEG-1", Map.of("4A", Map.of("seatNo", "4A", "amount", "0.00", "booked", false))));
+        PlatformBookingConfirmRequest optSeat = withDocumentIds("D1", "D2", "D3");
+        optSeat.setIdempotencyKey("k-opt-seat");
+        optSeat.getPassengers().forEach(p -> {
+            p.setDob(LocalDate.of(p.getType().equals("CHILD") ? 2019 : 1990, 5, 1));
+            p.setPan("ABCDE1234F");
+            p.setPassportNo("P123");
+            p.setPassportExpiry(LocalDate.of(2020, 1, 1)); // allowed when travelDate is null
+        });
+        optSeat.getPassengers().get(0).setSeats(List.of(new com.voyra.crm.dto.PaxSeatSelection("SEG-1", "4A", null)));
+        assertThat(service.confirm(idNoDate, optSeat).getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
+    }
+
+    @Test
+    void seatValidationAndPaidSeatPassThroughPricing() {
+        var fc = new com.voyra.crm.models.booking.FlightCompliance(true, true, false, false, false, false, false, false, false);
+        when(provider.review(any(FlightReviewRequest.class), any())).thenReturn(new FareReview(
+                "rv-seat", new BigDecimal("5000.00"), new BigDecimal("4250.00"), "INR", "Rules",
+                Instant.now().plusSeconds(1800), null, null, null, false,
+                com.voyra.crm.models.booking.HotelCompliance.NONE, fc));
+        FlightReviewRequest req = reviewRequest();
+        req.setInfants(1);
+        String id = service.review(req).getBookingId();
+        lenient().when(bookingRepository.findByIdAndTenantId(id, T)).thenAnswer(i -> Optional.ofNullable(rows.get(id)));
+
+        PaxInput infant = PaxInput.builder().type("INFANT").title("Master").firstName("Diya").lastName("Sharma")
+                .dob(LocalDate.now().minusMonths(6)).build();
+        PlatformBookingConfirmRequest baseReq = confirmRequest("k-s1", "4500.00");
+        List<PaxInput> fourPax = new ArrayList<>(baseReq.getPassengers());
+        fourPax.add(infant);
+
+        // Infant assigned a seat -> refused before catalog check
+        infant.setSeats(List.of(new com.voyra.crm.dto.PaxSeatSelection("SEG-1", "4A", "4A")));
+        baseReq.setPassengers(fourPax);
+        assertThatThrownBy(() -> service.confirm(id, baseReq))
+                .isInstanceOfSatisfying(BookingRequestException.class, e -> assertThat(e.getCode()).isEqualTo("INVALID_SEAT_SELECTION"));
+        infant.setSeats(null);
+
+        // Mandatory seats without loading seat map -> SEAT_MAP_NOT_LOADED
+        assertThatThrownBy(() -> service.confirm(id, baseReq))
+                .isInstanceOfSatisfying(BookingRequestException.class, e -> assertThat(e.getCode()).isEqualTo("SEAT_MAP_NOT_LOADED"));
+
+        // Load seat map with SEG-1 (paid + free + booked) and SEG-FULL (all booked -> not required) plus weird non-map entry
+        when(provider.seatMap(eq(id), eq("rv-seat"), any(), eq(true), any())).thenReturn(
+                com.voyra.crm.dto.FlightSeatMapResponse.builder()
+                        .bookingId(id)
+                        .seatMandatory(true)
+                        .segments(List.of(
+                                com.voyra.crm.dto.SegmentSeatMapResponse.builder().segmentKey("SEG-1").seats(List.of(
+                                        com.voyra.crm.dto.SeatOptionResponse.builder().code("1A").seatNo("1A").amount(new BigDecimal("600.00")).booked(false).build(),
+                                        com.voyra.crm.dto.SeatOptionResponse.builder().code("2A").seatNo("2A").amount(new BigDecimal("250.00")).booked(false).build(),
+                                        com.voyra.crm.dto.SeatOptionResponse.builder().code("4A").seatNo("4A").amount(BigDecimal.ZERO).booked(false).build(),
+                                        com.voyra.crm.dto.SeatOptionResponse.builder().code("1B").seatNo("1B").amount(BigDecimal.ZERO).booked(true).build())).build(),
+                                com.voyra.crm.dto.SegmentSeatMapResponse.builder().segmentKey("SEG-FULL").seats(List.of(
+                                        com.voyra.crm.dto.SeatOptionResponse.builder().code("9A").seatNo("9A").amount(BigDecimal.ZERO).booked(true).build())).build()))
+                        .build());
+        service.seatMap(id);
+        rows.get(id).getPricingSnapshot().put("seatCatalog", new java.util.LinkedHashMap<>() {{
+            putAll((Map<?, ?>) rows.get(id).getPricingSnapshot().get("seatCatalog"));
+            put("ODD", "not-a-map");
+            put("ODD-MAP", Map.of("X", "not-a-seat-map"));
+        }});
+
+        // Missing mandatory seats on SEG-1
+        assertThatThrownBy(() -> service.confirm(id, baseReq))
+                .isInstanceOfSatisfying(BookingRequestException.class, e -> assertThat(e.getCode()).isEqualTo("SEAT_SELECTION_REQUIRED"));
+
+        // Null segmentKey / null code / duplicate segment on one passenger
+        for (List<com.voyra.crm.dto.PaxSeatSelection> bad : List.of(
+                List.of(new com.voyra.crm.dto.PaxSeatSelection(null, "1A", null)),
+                List.of(new com.voyra.crm.dto.PaxSeatSelection("SEG-1", null, null)),
+                List.of(new com.voyra.crm.dto.PaxSeatSelection("SEG-1", "1A", null), new com.voyra.crm.dto.PaxSeatSelection("SEG-1", "2A", null)))) {
+            fourPax.get(0).setSeats(bad);
+            assertThatThrownBy(() -> service.confirm(id, baseReq))
+                    .isInstanceOfSatisfying(BookingRequestException.class, e -> assertThat(e.getCode()).isEqualTo("INVALID_SEAT_SELECTION"));
+        }
+
+        // Unknown segment, non-map seat node, unknown seat code, or booked seat -> SEAT_UNAVAILABLE
+        for (com.voyra.crm.dto.PaxSeatSelection unavail : List.of(
+                new com.voyra.crm.dto.PaxSeatSelection("NOPE", "1A", null),
+                new com.voyra.crm.dto.PaxSeatSelection("ODD-MAP", "X", null),
+                new com.voyra.crm.dto.PaxSeatSelection("SEG-1", "NOPE", null),
+                new com.voyra.crm.dto.PaxSeatSelection("SEG-1", "1B", null))) {
+            fourPax.get(0).setSeats(List.of(unavail));
+            assertThatThrownBy(() -> service.confirm(id, baseReq))
+                    .isInstanceOfSatisfying(BookingRequestException.class, e -> assertThat(e.getCode()).isEqualTo("SEAT_UNAVAILABLE"));
+        }
+
+        // Duplicate seat across two travellers
+        fourPax.get(0).setSeats(List.of(new com.voyra.crm.dto.PaxSeatSelection("SEG-1", "1A", null)));
+        fourPax.get(1).setSeats(List.of(new com.voyra.crm.dto.PaxSeatSelection("SEG-1", "1A", null)));
+        assertThatThrownBy(() -> service.confirm(id, baseReq))
+                .isInstanceOfSatisfying(BookingRequestException.class, e -> assertThat(e.getCode()).isEqualTo("DUPLICATE_SEAT_SELECTION"));
+
+        // Valid seats: 1A (600) + 2A (250) + 4A (0) = 850.00 seatTotal; infant has empty list
+        fourPax.get(1).setSeats(List.of(new com.voyra.crm.dto.PaxSeatSelection("SEG-1", "2A", null)));
+        fourPax.get(2).setSeats(List.of(new com.voyra.crm.dto.PaxSeatSelection("SEG-1", "4A", null)));
+        fourPax.get(3).setSeats(List.of());
+
+        // Accepted fare without seatTotal -> 409 PRICE_CHANGED with 4500 + 850 = 5350.00
+        assertThatThrownBy(() -> service.confirm(id, baseReq))
+                .isInstanceOfSatisfying(BookingConflictException.class, e -> {
+                    assertThat(e.getCode()).isEqualTo("PRICE_CHANGED");
+                    assertThat(e.getDetails()).containsEntry("displayedFare", new BigDecimal("5350.00"));
+                });
+
+        // Reprice when pricing rule changed -> returns 4600 + 850 = 5450.00 and preserves seatCatalog
+        baseReq.setAcceptedDisplayedFare(new BigDecimal("5350.00"));
+        when(quoter.quote(eq(T), eq(PricingProduct.FLIGHT), eq(new BigDecimal("5000.00")), eq(new BigDecimal("4250.00"))))
+                .thenReturn(quote("P2", "4600.00", "100.00", "0.00"));
+        assertThatThrownBy(() -> service.confirm(id, baseReq))
+                .isInstanceOfSatisfying(BookingConflictException.class, e -> {
+                    assertThat(e.getCode()).isEqualTo("PRICE_CHANGED");
+                    assertThat(e.getDetails()).containsEntry("displayedFare", new BigDecimal("5450.00"));
+                });
+
+        // Confirm with updated accepted fare 5450.00 -> holds 5450, sends 5850 to supplier, keeps commission 100
+        baseReq.setAcceptedDisplayedFare(new BigDecimal("5450.00"));
+        PlatformBooking ticketed = service.confirm(id, baseReq);
+        assertThat(ticketed.getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
+        assertThat(ticketed.getDisplayed()).isEqualByComparingTo("5450.00");
+        assertThat(ticketed.getGross()).isEqualByComparingTo("5850.00");
+        assertThat(ticketed.getAgencyCommission()).isEqualByComparingTo("100.00");
+        assertThat(ticketed.getPricingSnapshot()).containsEntry("seatTotal", new BigDecimal("850.00"));
+        verify(walletService).hold(eq(T), eq(new BigDecimal("5450.00")), anyString(), anyString(), eq(id));
+        verify(walletService).debitHeld(eq("H1"), eq(new BigDecimal("5450.00")), anyString(), anyString(), eq(id));
+        ArgumentCaptor<BookRequest> booked = ArgumentCaptor.forClass(BookRequest.class);
+        verify(provider).book(booked.capture(), any());
+        assertThat(booked.getValue().totalFare()).isEqualByComparingTo("5850.00");
+        assertThat(booked.getValue().passengers().get(0).seats())
+                .containsExactly(new com.voyra.crm.models.booking.SeatSelection("SEG-1", "1A", "1A"));
+    }
+
+    @Test
+    void awaitOutcomePollsAgainAfterFirstPendingCheckAndLegacyRowWithoutAirGrossStillConfirms() {
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "confirmWaitSeconds", 10L);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "confirmInitialPollDelayMs", 10L);
+        String id = reviewed();
+        rows.get(id).setPricingSnapshot(null); // exercises null pricingSnapshot fallback in airGrossOf / stamp
+        rows.get(id).setPricingSnapshot(new HashMap<>(Map.of("pricingId", "P1")));
+        when(provider.book(any(), any())).thenReturn(new BookResult("SB-2", SupplierBookingStatus.PENDING, null, List.of(), null, null));
+        when(provider.bookingDetails(eq("SB-2"), any()))
+                .thenReturn(new BookResult("SB-2", SupplierBookingStatus.PENDING, null, List.of(), null, null))
+                .thenReturn(new BookResult("SB-2", SupplierBookingStatus.TICKETED, "PNR2", List.of("T1"), null, null));
+
+        PlatformBooking out = service.confirm(id, confirmRequest("k-poll2", "4500.00"));
+        assertThat(out.getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
+        verify(provider, times(2)).bookingDetails(eq("SB-2"), any());
+    }
 }

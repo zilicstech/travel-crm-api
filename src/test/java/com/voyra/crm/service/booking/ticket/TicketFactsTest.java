@@ -132,7 +132,8 @@ class TicketFactsTest {
 
     @Test
     void blankNullAndNestedValuesReadAsMissing() throws Exception {
-        Segment s = TicketFacts.from(json("{\"sI\":[{\"fD\":{\"fN\":\" \",\"aI\":{\"code\":null,\"name\":{}}},\"da\":{\"code\":\"DEL\"},\"aa\":{\"code\":\"BOM\"}}]}"), null).segments().get(0);
+        Segment s = TicketFacts.from(json("{\"sI\":[{\"id\":\"1490\",\"fD\":{\"fN\":\" \",\"aI\":{\"code\":null,\"name\":{}}},\"da\":{\"code\":\"DEL\"},\"aa\":{\"code\":\"BOM\"}}]}"), null).segments().get(0);
+        assertThat(s.id()).isEqualTo("1490");
         assertThat(s.flightNumber()).isNull();
         assertThat(s.airlineCode()).isNull();
         assertThat(s.airlineName()).isNull();

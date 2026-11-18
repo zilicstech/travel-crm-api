@@ -25,22 +25,39 @@ public final class TicketFare {
     }
 
     public static List<FareLine> lines(BigDecimal gross, BigDecimal base, BigDecimal markup, Map<String, BigDecimal> namedTaxes) {
+        return lines(gross, base, BigDecimal.ZERO, markup, namedTaxes);
+    }
+
+    public static List<FareLine> lines(BigDecimal gross, BigDecimal base, BigDecimal seatTotal, BigDecimal markup,
+                                       Map<String, BigDecimal> namedTaxes) {
         if (gross == null || base == null || base.compareTo(gross) > 0) {
             throw new BookingConflictException("TICKET_NOT_AVAILABLE", "This booking has no fare breakdown, so a ticket cannot be made", Map.of());
         }
-        BigDecimal baseFare = base.setScale(2, java.math.RoundingMode.HALF_UP);
-        BigDecimal taxes = total(gross, markup).subtract(baseFare);
+        BigDecimal baseFare = money(base);
+        BigDecimal seats = seatTotal == null || seatTotal.signum() <= 0 ? BigDecimal.ZERO : money(seatTotal);
+        BigDecimal extras = total(gross, markup).subtract(baseFare);
         List<FareLine> lines = new ArrayList<>();
         lines.add(new FareLine("Base fare", baseFare));
-        BigDecimal named = namedTaxes.values().stream().map(TicketFare::money).reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal other = taxes.subtract(named);
-        if (markup != null && markup.signum() > 0 || namedTaxes.isEmpty() || other.signum() < 0) {
-            lines.add(new FareLine("Taxes, fees and charges", taxes));
+        boolean hasMarkup = markup != null && markup.signum() > 0;
+        if (hasMarkup || seats.compareTo(extras) > 0) {
+            lines.add(new FareLine("Taxes, fees and charges", extras));
             return lines;
         }
-        namedTaxes.forEach((code, amount) -> lines.add(new FareLine(code, money(amount))));
-        if (other.signum() != 0) {
-            lines.add(new FareLine("Other charges", other));
+        BigDecimal airTaxes = extras.subtract(seats);
+        BigDecimal named = namedTaxes.values().stream().map(TicketFare::money).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal other = airTaxes.subtract(named);
+        if (namedTaxes.isEmpty() || other.signum() < 0) {
+            if (airTaxes.signum() > 0 || seats.signum() == 0) {
+                lines.add(new FareLine("Taxes, fees and charges", airTaxes));
+            }
+        } else {
+            namedTaxes.forEach((code, amount) -> lines.add(new FareLine(code, money(amount))));
+            if (other.signum() != 0) {
+                lines.add(new FareLine("Other charges", other));
+            }
+        }
+        if (seats.signum() > 0) {
+            lines.add(new FareLine("Seat charges", seats));
         }
         return lines;
     }

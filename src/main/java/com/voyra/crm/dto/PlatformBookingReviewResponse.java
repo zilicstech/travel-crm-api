@@ -49,9 +49,21 @@ public class PlatformBookingReviewResponse {
     @Schema(description = "Flights: the fare category the review was made for", example = "REGULAR")
     private FareCategory fareCategory;
 
-    @Schema(description = "Hotels: true when the room needs the lead guest's PAN at confirm", example = "false")
+    @Schema(description = "True when the supplier requires PAN at confirm (hotels: lead guest; flights: adult travellers)", example = "false")
     private boolean panRequired;
 
-    @Schema(description = "Hotels: true when the room needs every guest's passport number at confirm", example = "false")
+    @Schema(description = "True when the supplier requires every traveller's passport number at confirm", example = "false")
     private boolean passportRequired;
+
+    @Schema(description = "Flights: true when the supplier requires every traveller's passport expiry date at confirm", example = "false")
+    private boolean passportExpiryRequired;
+
+    @Schema(description = "Flights: true when the supplier requires every adult's date of birth at confirm", example = "false")
+    private boolean adultDobRequired;
+
+    @Schema(description = "Flights: true when an interactive seat map applies to this booking", example = "true")
+    private boolean seatApplicable;
+
+    @Schema(description = "Flights: true when seat selection is mandatory before confirming", example = "false")
+    private boolean seatMandatory;
 }

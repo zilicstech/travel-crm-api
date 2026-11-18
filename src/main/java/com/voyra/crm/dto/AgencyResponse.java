@@ -39,6 +39,12 @@ public class AgencyResponse {
     @Schema(description = "Number of Agents in this agency", example = "3")
     private Long agentsCount;
 
+    @Schema(description = "Number of active Clients in this agency - detail endpoint only", example = "42")
+    private Long clientsCount;
+
+    @Schema(description = "Total number of Bookings in this agency - detail endpoint only", example = "18")
+    private Long bookingsCount;
+
     @Schema(description = "Only populated on the single-agency detail endpoint (cross-tenant aggregate read)", example = "52000.00")
     private BigDecimal totalRevenue;
 

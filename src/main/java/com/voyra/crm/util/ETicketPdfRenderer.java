@@ -82,7 +82,11 @@ public final class ETicketPdfRenderer {
     }
 
     /** What the ticket prints of one passenger in one direction; no identity documents (owner ruling 2026-11-01). */
-    public record PaxRow(String name, String type, String sector, String pnr, String ticketNumber) {
+    public record PaxRow(String name, String type, String sector, String pnr, String ticketNumber, String seat) {
+
+        public PaxRow(String name, String type, String sector, String pnr, String ticketNumber) {
+            this(name, type, sector, pnr, ticketNumber, null);
+        }
     }
 
     private record Col(String head, float width, Font font, boolean perPerson, Function<PaxRow, String> value) {
@@ -395,6 +399,7 @@ public final class ETicketPdfRenderer {
         cols.add(new Col("Type", 1.2f, body, true, p -> dash(words(p.type()))));
         boolean oneSector = directions.size() == 1 && rows.stream().allMatch(p -> Objects.equals(p.sector(), directions.get(0).key()));
         if (!oneSector) cols.add(new Col("Sector", 1.4f, body, false, p -> dash(p.sector())));
+        if (rows.stream().anyMatch(p -> !blank(p.seat()))) cols.add(new Col("Seat", 1.2f, body, false, p -> dash(p.seat())));
         cols.add(new Col("PNR", 1.6f, body, false, p -> dash(p.pnr())));
         cols.add(new Col("Ticket number", 2.2f, body, false, p -> dash(p.ticketNumber())));
 

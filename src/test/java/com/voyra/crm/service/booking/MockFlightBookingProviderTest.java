@@ -273,4 +273,32 @@ class MockFlightBookingProviderTest {
         assertThat(provider.review(request, BookingSuppliers.S1).itinerary().path("totalPriceList").path(0).path("fareIdentifier").asText())
                 .isEqualTo("STUDENT");
     }
+
+    @Test
+    void seatMap_buildsDeterministicGridForReviewedItineraryAndFallback() {
+        config.getMock().setSeatMandatory(true);
+        com.voyra.crm.dto.FlightReviewRequest req = new com.voyra.crm.dto.FlightReviewRequest();
+        req.setOfferId("mock-indigo-06:15-PUBLISHED-ECONOMY");
+        req.setReturnOfferId("mock-indigo-06:15-PUBLISHED-ECONOMY-R");
+        req.setAdults(1);
+        req.setOrigin("BHO");
+        req.setDestination("DEL");
+        FareReview review = provider.review(req, BookingSuppliers.S1);
+        assertThat(review.flightCompliance().seatApplicable()).isTrue();
+        assertThat(review.flightCompliance().seatMandatory()).isTrue();
+
+        var itMap = new com.fasterxml.jackson.databind.ObjectMapper().convertValue(review.itinerary(), java.util.Map.class);
+        @SuppressWarnings("unchecked")
+        var map = provider.seatMap("B1", review.reviewId(), itMap, true, BookingSuppliers.S1);
+        assertThat(map.getBookingId()).isEqualTo("B1");
+        assertThat(map.isSeatMandatory()).isTrue();
+        assertThat(map.getSegments()).hasSize(2);
+        assertThat(map.getSegments().get(0).getSegmentKey()).isEqualTo("BHO-DEL");
+        assertThat(map.getSegments().get(0).getSeats()).hasSize(36);
+        assertThat(map.getSegments().get(0).getSeats()).anyMatch(s -> s.isLegRoom() && s.getAmount().compareTo(new BigDecimal("600.00")) == 0);
+        assertThat(map.getSegments().get(0).getSeats()).anyMatch(s -> !s.isBooked() && s.getAmount().signum() == 0);
+
+        var fallback = provider.seatMap("B2", "rv", null, false, BookingSuppliers.S1);
+        assertThat(fallback.getSegments()).singleElement().satisfies(s -> assertThat(s.getSegmentKey()).isEqualTo("DEL-BOM"));
+    }
 }

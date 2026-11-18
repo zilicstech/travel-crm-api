@@ -1,10 +1,12 @@
 package com.voyra.crm.service.booking;
 
 import com.voyra.crm.dto.FlightReviewRequest;
+import com.voyra.crm.dto.FlightSeatMapResponse;
 import com.voyra.crm.models.ResolvedCredential;
 import com.voyra.crm.models.booking.*;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * Supplier abstraction for booking flights, one bean per {@link com.voyra.crm.enums.SupplierProvider}. {@link #book}
@@ -26,6 +28,10 @@ public interface FlightBookingProvider extends BookingSupplier {
 
     /** The fare rules of a search offer, before any review, as the supplier sent them; null when it published none or did not answer. */
     String searchFareRules(String priceId, ResolvedCredential supplier);
+
+    /** Aircraft cabin seat map per segment for a reviewed flight; empty segments when seat selection is not applicable. */
+    FlightSeatMapResponse seatMap(String bookingId, String reviewId, Map<String, Object> itinerary,
+                                  boolean seatMandatory, ResolvedCredential supplier);
 
     static List<String> offerIds(FlightReviewRequest r) {
         return r.getReturnOfferId() == null || r.getReturnOfferId().isBlank()

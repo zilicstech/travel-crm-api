@@ -1,6 +1,7 @@
 package com.voyra.crm.controller;
 
 import com.voyra.crm.dto.FlightReviewRequest;
+import com.voyra.crm.dto.FlightSeatMapResponse;
 import com.voyra.crm.dto.HotelReviewRequest;
 import com.voyra.crm.dto.PagedResponse;
 import com.voyra.crm.dto.PlatformBookingCancelRequest;
@@ -54,6 +55,13 @@ public class PlatformBookingController {
     @Operation(summary = "Re-price a flight offer", description = "Creates a REVIEWING booking with the displayed fare to confirm.")
     public ResponseEntity<PlatformBookingReviewResponse> review(@Valid @RequestBody FlightReviewRequest request) {
         return ResponseEntity.ok(service.review(request));
+    }
+
+    @GetMapping("/{id}/seat-map")
+    @PreAuthorize("hasAnyRole('AGENCY_OWNER','AGENT')")
+    @Operation(summary = "Aircraft cabin seat map for a reviewed flight", description = "Loads available complimentary and paid seats per segment and caches prices for confirmation.")
+    public ResponseEntity<FlightSeatMapResponse> seatMap(@PathVariable String id) {
+        return ResponseEntity.ok(service.seatMap(id));
     }
 
     @PostMapping("/hotels/review")

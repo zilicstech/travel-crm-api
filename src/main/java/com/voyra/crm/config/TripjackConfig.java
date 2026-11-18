@@ -21,8 +21,24 @@ public class TripjackConfig {
     /** Live 2026-10-30: a PROD review took over 15 s, so the read timeout is a setting (default 60 s). */
     @Bean
     public RestClient.Builder tripjackRestClientBuilder(@Value("${app.tripjack.read-timeout-seconds:60}") int readTimeoutSeconds) {
+        return builder(5_000, readTimeoutSeconds);
+    }
+
+    /** Optional display calls (fare rules) must never stall a review for 60 s when Tripjack hangs (live 2026-11-18). */
+    @Bean
+    public RestClient.Builder tripjackFastRestClientBuilder(@Value("${app.tripjack.fast-read-timeout-seconds:6}") int readTimeoutSeconds) {
+        return builder(4_000, readTimeoutSeconds);
+    }
+
+    /** Aircraft seat map (/fms/v1/seat) is interactive on the review step, bounded tighter than book/review. */
+    @Bean
+    public RestClient.Builder tripjackSeatRestClientBuilder(@Value("${app.tripjack.seat-read-timeout-seconds:12}") int readTimeoutSeconds) {
+        return builder(4_000, readTimeoutSeconds);
+    }
+
+    private static RestClient.Builder builder(int connectTimeoutMs, int readTimeoutSeconds) {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout(5_000);
+        factory.setConnectTimeout(connectTimeoutMs);
         factory.setReadTimeout(readTimeoutSeconds * 1000);
         return RestClient.builder().requestFactory(factory);
     }

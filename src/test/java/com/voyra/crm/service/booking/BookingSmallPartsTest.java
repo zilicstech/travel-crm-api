@@ -104,6 +104,15 @@ class BookingSmallPartsTest {
                 .product(PricingProduct.HOTEL).supplierMessage("Room SOLD OUT").build())).isEqualTo("Room no longer available");
         assertThat(AgencySupplierMessage.of(PlatformBooking.builder().status(PlatformBookingStatus.FAILED)
                 .product(PricingProduct.FLIGHT).supplierMessage("fare has changed").build())).isEqualTo("Fare no longer available");
+        assertThat(AgencySupplierMessage.of(PlatformBooking.builder().status(PlatformBookingStatus.FAILED)
+                .product(PricingProduct.FLIGHT).supplierMessage("Supplier refused (HTTP 400) 8038: Invalid").build()))
+                .isEqualTo(AgencySupplierMessage.SEAT_MANDATORY_FAILED);
+        assertThat(AgencySupplierMessage.of(PlatformBooking.builder().status(PlatformBookingStatus.FAILED)
+                .product(PricingProduct.FLIGHT).supplierMessage("Seat Selection is Mandatory").build()))
+                .isEqualTo(AgencySupplierMessage.SEAT_MANDATORY_FAILED);
+        assertThat(AgencySupplierMessage.of(PlatformBooking.builder().status(PlatformBookingStatus.FAILED)
+                .product(PricingProduct.HOTEL).supplierMessage("8038").build()))
+                .isEqualTo(AgencySupplierMessage.FAILED);
         assertThat(AgencySupplierMessage.of(PlatformBooking.builder().status(PlatformBookingStatus.TICKETED).build())).isNull();
     }
 

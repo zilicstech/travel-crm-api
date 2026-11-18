@@ -3,47 +3,65 @@ package com.voyra.crm.service.booking;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.voyra.crm.dto.FlightSeatMapResponse;
+import com.voyra.crm.dto.SeatOptionResponse;
+import com.voyra.crm.dto.SegmentSeatMapResponse;
 import com.voyra.crm.enums.SupplierProvider;
+import com.voyra.crm.exception.BookingConflictException;
 import com.voyra.crm.exception.FareUnavailableException;
 import com.voyra.crm.exception.SupplierException;
 import com.voyra.crm.exception.SupplierTimeoutException;
 import com.voyra.crm.models.ResolvedCredential;
+import com.voyra.crm.models.VoyraLegal;
 import com.voyra.crm.models.booking.*;
-import lombok.RequiredArgsConstructor;
+import com.voyra.crm.service.PlatformSettingService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.net.SocketTimeoutException;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
  * Tripjack flight booking, on the base URL and key of the supplier row each call is given.
  *
- * <p><b>Unverified until the slice 0 spike.</b> Endpoints and field names come from the
- * B2B design spec section 7.3 (review, air/book, booking-details, farerule, amendment), not
- * from a real booking response. Every field is read defensively - a missing field becomes a
- * null or an empty list, never an NPE - and the field mapping is expected to be corrected
- * once real fixtures exist. The SEARCH flow of farerule ({@link #searchFareRules}) is likewise unverified live. Transport conventions are copied from {@code TripjackFlightSearchProvider}:
- * raw-string reads (Tripjack's content type is unreliable) and an {@code apikey} header that is never logged.
+ * <p>Uses dedicated short-timeout builders for optional/interactive review calls ({@code /fms/v2/farerule} and
+ * {@code /fms/v1/seat}) so a hanging fare-rule call never blocks a review for 60 seconds, while keeping the full
+ * transactional timeout on {@code /fms/v1/review}, {@code /oms/v1/air/book} and {@code /oms/v1/booking-details}.
  */
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class TripjackFlightBookingProvider implements FlightBookingProvider {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
-    @Qualifier("tripjackRestClientBuilder")
+    record ItinerarySeg(String key, String airlineCode, String flightNumber, String origin, String destination) {
+    }
+
     private final RestClient.Builder restClientBuilder;
+    private final RestClient.Builder fastRestClientBuilder;
+    private final RestClient.Builder seatRestClientBuilder;
+    private final PlatformSettingService settings;
+
+    public TripjackFlightBookingProvider(@Qualifier("tripjackRestClientBuilder") RestClient.Builder restClientBuilder,
+                                         @Qualifier("tripjackFastRestClientBuilder") RestClient.Builder fastRestClientBuilder,
+                                         @Qualifier("tripjackSeatRestClientBuilder") RestClient.Builder seatRestClientBuilder,
+                                         PlatformSettingService settings) {
+        this.restClientBuilder = restClientBuilder;
+        this.fastRestClientBuilder = fastRestClientBuilder;
+        this.seatRestClientBuilder = seatRestClientBuilder;
+        this.settings = settings;
+    }
 
     @Override
     public SupplierProvider provider() {
@@ -83,13 +101,134 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
         if (reviewId == null || reviewId.isBlank() || total == null) {
             throw new SupplierException("Tripjack review response is missing the review id or total fare", null);
         }
+        JsonNode conditions = res.path("conditions");
         log.info("Tripjack review ok: priceIds={}, bookingId={}, total={}, base={}, conditions={}", offerIds, reviewId, total,
-                decimal(fare.path("BF")), res.path("conditions").isMissingNode() ? "-" : res.path("conditions").toString());
-        // Not from Tripjack's own document (other integrators' code): conditions.dc.ida = a document ID applies,
-        // conditions.dc.idm = it is mandatory (a STUDENT fare's review answered both true); booking then needs travellerInfo[].di
+                decimal(fare.path("BF")), conditions.isMissingNode() ? "-" : conditions.toString());
+        FlightCompliance fc = flightCompliance(conditions);
+        if (fc.gstMandatory()) {
+            VoyraLegal legal = settings.voyraLegal();
+            if (legal == null || legal.gstin() == null || legal.legalName() == null) {
+                throw new BookingConflictException("GST_NOT_CONFIGURED",
+                        "This fare requires GST details, which are not configured on Voyra yet - pick another fare or contact Voyra", Map.of());
+            }
+        }
+        long st = conditions.path("st").asLong(0);
+        Instant expiresAt = st > 0 ? Instant.now().plusSeconds(st) : null;
         return new FareReview(reviewId, total, decimal(fare.path("BF")), "INR",
-                fareRules(supplier, reviewId, "REVIEW"), null, res.path("tripInfos").isMissingNode() ? null : res.path("tripInfos"),
-                null, null, res.path("conditions").path("dc").path("idm").asBoolean(false));
+                fareRules(supplier, reviewId, "REVIEW"), expiresAt, res.path("tripInfos").isMissingNode() ? null : res.path("tripInfos"),
+                null, null, fc.documentIdRequired(), HotelCompliance.NONE, fc);
+    }
+
+    /**
+     * Parses Tripjack Air Review {@code conditions}: {@code isa} = seat map applicable, {@code ifsm || fsc.issi} = seat
+     * selection mandatory (live 2026-11-18: IndiGo bundled fares set {@code fsc.issi=true} and fail book with 8038 without seats).
+     */
+    static FlightCompliance flightCompliance(JsonNode c) {
+        return new FlightCompliance(
+                c.path("isa").asBoolean(false),
+                c.path("ifsm").asBoolean(false) || c.path("fsc").path("issi").asBoolean(false),
+                c.path("dc").path("idm").asBoolean(false),
+                c.path("ipa").asBoolean(false),
+                c.path("pcs").path("pm").asBoolean(false),
+                c.path("pcs").path("pped").asBoolean(false),
+                c.path("dob").path("adobr").asBoolean(false),
+                c.path("iecr").asBoolean(false),
+                c.path("gst").path("igm").asBoolean(false));
+    }
+
+    @Override
+    public FlightSeatMapResponse seatMap(String bookingId, String reviewId, Map<String, Object> itinerary,
+                                         boolean seatMandatory, ResolvedCredential supplier) {
+        JsonNode res;
+        try {
+            res = post(seatRestClientBuilder, supplier, "/fms/v1/seat", Map.of("bookingId", reviewId), "seat", true);
+        } catch (SupplierException e) {
+            if (SupplierRefusal.of(e, log) != null) {
+                return FlightSeatMapResponse.builder().bookingId(bookingId).seatMandatory(false).segments(List.of()).build();
+            }
+            throw e;
+        }
+        if (!succeeded(res)) {
+            log.warn("Tripjack seat map not applicable for {}: {}", reviewId, message(res, "no message"));
+            return FlightSeatMapResponse.builder().bookingId(bookingId).seatMandatory(false).segments(List.of()).build();
+        }
+        JsonNode tripSeat = res.path("tripSeatMap").path("tripSeat");
+        Map<String, ItinerarySeg> metaByKey = new LinkedHashMap<>();
+        segmentsOf(itinerary).forEach(s -> metaByKey.put(s.key(), s));
+        tripSeat.fieldNames().forEachRemaining(k -> metaByKey.putIfAbsent(k, new ItinerarySeg(k, null, null, null, null)));
+        List<SegmentSeatMapResponse> segments = new ArrayList<>();
+        for (ItinerarySeg seg : metaByKey.values()) {
+            JsonNode node = tripSeat.path(seg.key());
+            if (!node.isMissingNode() && !node.isNull()) {
+                segments.add(parseSegmentSeats(seg, node));
+            }
+        }
+        boolean anyAvailable = segments.stream().anyMatch(s -> s.getSeats().stream().anyMatch(o -> !o.isBooked()));
+        return FlightSeatMapResponse.builder()
+                .bookingId(bookingId)
+                .seatMandatory(seatMandatory && anyAvailable)
+                .segments(segments)
+                .build();
+    }
+
+    static List<ItinerarySeg> segmentsOf(Map<String, Object> itinerary) {
+        if (itinerary == null) {
+            return List.of();
+        }
+        List<ItinerarySeg> out = new ArrayList<>();
+        for (JsonNode sI : OBJECT_MAPPER.valueToTree(itinerary).findValues("sI")) {
+            for (JsonNode seg : sI) {
+                String origin = blankToNull(text(seg.path("da").path("code")));
+                String destination = blankToNull(text(seg.path("aa").path("code")));
+                String id = blankToNull(text(seg.path("id")));
+                String key = id != null ? id : seg.path("da").path("code").asText("").trim() + "-" + seg.path("aa").path("code").asText("").trim();
+                out.add(new ItinerarySeg(key, blankToNull(text(seg.path("fD").path("aI").path("code"))),
+                        blankToNull(text(seg.path("fD").path("fN"))), origin, destination));
+            }
+        }
+        return out;
+    }
+
+    private static SegmentSeatMapResponse parseSegmentSeats(ItinerarySeg seg, JsonNode node) {
+        int maxRow = node.path("sData").path("row").asInt(0);
+        int maxCol = node.path("sData").path("column").asInt(0);
+        List<SeatOptionResponse> seats = new ArrayList<>();
+        for (JsonNode s : node.path("sInfo")) {
+            String code = blankToNull(text(s.path("code")));
+            if (code == null) {
+                continue;
+            }
+            String seatNo = blankToNull(text(s.path("seatNo")));
+            int row = s.path("seatPosition").path("row").asInt(0);
+            int col = s.path("seatPosition").path("column").asInt(0);
+            maxRow = Math.max(maxRow, row);
+            maxCol = Math.max(maxCol, col);
+            BigDecimal rawAmount = decimal(s.path("amount"));
+            BigDecimal amount = (rawAmount == null || rawAmount.signum() < 0 ? BigDecimal.ZERO : rawAmount)
+                    .setScale(2, RoundingMode.HALF_UP);
+            seats.add(SeatOptionResponse.builder()
+                    .code(code)
+                    .seatNo(seatNo != null ? seatNo : code)
+                    .row(row)
+                    .column(col)
+                    .booked(s.path("isBooked").asBoolean(false))
+                    .amount(amount)
+                    .legRoom(s.path("isLegRoom").asBoolean(false))
+                    .aisle(s.path("isAisle").asBoolean(false))
+                    .exitRow(s.path("isExitRow").asBoolean(false))
+                    .build());
+        }
+        return SegmentSeatMapResponse.builder()
+                .segmentKey(seg.key())
+                .airlineCode(seg.airlineCode())
+                .flightNumber(seg.flightNumber())
+                .origin(seg.origin())
+                .destination(seg.destination())
+                .rows(maxRow)
+                .columns(maxCol)
+                .note(blankToNull(text(node.path("nt"))))
+                .seats(seats)
+                .build();
     }
 
     @Override
@@ -98,20 +237,37 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
         body.put("bookingId", r.reviewId());
         body.put("paymentInfos", List.of(Map.of("amount", r.totalFare())));
         body.put("travellerInfo", r.passengers().stream().map(TripjackFlightBookingProvider::traveller).toList());
+        List<String> emails = r.email() == null ? List.of() : List.of(r.email());
+        List<String> contacts = r.phone() == null ? List.of() : List.of(r.phone());
         Map<String, Object> delivery = new LinkedHashMap<>();
-        delivery.put("emails", r.email() == null ? List.of() : List.of(r.email()));
-        delivery.put("contacts", r.phone() == null ? List.of() : List.of(r.phone()));
+        delivery.put("emails", emails);
+        delivery.put("contacts", contacts);
         body.put("deliveryInfo", delivery);
+        if (r.flightCompliance().emergencyContactRequired()) {
+            Map<String, Object> contact = new LinkedHashMap<>();
+            contact.put("emails", emails);
+            contact.put("contacts", contacts);
+            String ecn = r.passengers().isEmpty() ? "Emergency Contact"
+                    : (r.passengers().get(0).firstName() + " " + r.passengers().get(0).lastName()).trim();
+            contact.put("ecn", ecn);
+            body.put("contactInfo", contact);
+        }
+        Map<String, Object> gst = gstInfo(r);
+        if (gst != null) {
+            body.put("gstInfo", gst);
+        }
 
         // shape only, never names, passport or ID numbers, email or phone (DPDP): enough to see what Tripjack is objecting to
         log.info("Tripjack book request: bookingId={}, amount={}, travellers={}, email={}, phoneDigits={}", r.reviewId(), r.totalFare(),
-                r.passengers().stream().map(p -> p.type() + "/" + p.title() + (p.dateOfBirth() != null ? "/dob" : "")
+                r.passengers().stream().map(p -> p.type() + "/" + normalizeTitle(p.type(), p.title())
+                        + (p.dateOfBirth() != null ? "/dob" : "")
                         + (p.passportNumber() != null ? "/passport" : "") + (p.nationality() != null ? "/" + p.nationality() : "")
-                        + (p.documentId() != null ? "/id" : "")).toList(),
+                        + (p.documentId() != null ? "/id" : "") + (p.pan() != null ? "/pan" : "")
+                        + (p.seats() != null && !p.seats().isEmpty() ? "/seats=" + p.seats().size() : "")).toList(),
                 r.email() != null && !r.email().isBlank(), r.phone() == null ? 0 : r.phone().replaceAll("\\D", "").length());
         JsonNode res;
         try {
-            res = post(supplier, "/oms/v1/air/book", body, "book", false);
+            res = post(restClientBuilder, supplier, "/oms/v1/air/book", body, "book", false);
         } catch (SupplierException e) {
             String refusal = SupplierRefusal.of(e, log);
             if (refusal == null) {
@@ -132,6 +288,29 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
         // Accepted is not ticketed: the ticket arrives asynchronously, so the caller polls bookingDetails.
         log.info("Tripjack book accepted: bookingId={}, status={}", r.reviewId(), res.path("status").toString());
         return new BookResult(r.reviewId(), SupplierBookingStatus.PENDING, null, List.of(), null, null);
+    }
+
+    private Map<String, Object> gstInfo(BookRequest r) {
+        if (!r.flightCompliance().gstMandatory()) {
+            return null;
+        }
+        VoyraLegal legal = settings.voyraLegal();
+        if (legal == null || legal.gstin() == null || legal.legalName() == null) {
+            log.warn("Tripjack flight {} asks for GST details but Voyra's GSTIN or legal name is not set; booking without them", r.reviewId());
+            return null;
+        }
+        Map<String, Object> gst = new LinkedHashMap<>();
+        gst.put("gstNumber", legal.gstin());
+        gst.put("registeredName", legal.legalName().length() > 35 ? legal.legalName().substring(0, 35) : legal.legalName());
+        putIfPresent(gst, "email", r.email());
+        String digits = r.phone() == null ? "" : r.phone().replaceAll("\\D", "");
+        if (!digits.isEmpty()) {
+            gst.put("mobile", digits);
+        }
+        if (legal.address() != null) {
+            gst.put("address", legal.address().length() > 70 ? legal.address().substring(0, 70) : legal.address());
+        }
+        return gst;
     }
 
     @Override
@@ -173,7 +352,6 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
                 }
             });
         }
-        // shortcut: the charged amount is not parsed (field unknown until the slice 0 spike), so no variance is detected here
         String pnr = pnrs.isEmpty() ? null : String.join(" / ", pnrs); // platform_booking.pnr is 40: room for several 6-character PNRs
         log.info("Tripjack booking-details: bookingId={}, orderStatus={}, mapped={}, pnr={}, tickets={}, amount={}", supplierBookingId,
                 orderStatus, status, pnr, tickets.size(), res.path("order").path("amount").asText("-"));
@@ -203,7 +381,6 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
         return new CancelResult(true, refundOf(res), message(res, null));
     }
 
-    /** Unverified live: the SEARCH flow of farerule is from Tripjack's documentation only, so any refusal or odd answer is "no rules". */
     @Override
     public String searchFareRules(String priceId, ResolvedCredential supplier) {
         return fareRules(supplier, priceId, "SEARCH");
@@ -211,7 +388,7 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
 
     private String fareRules(ResolvedCredential supplier, String id, String flowType) {
         try {
-            JsonNode res = post(supplier, "/fms/v2/farerule", Map.of("id", id, "flowType", flowType), "farerule");
+            JsonNode res = post(fastRestClientBuilder, supplier, "/fms/v2/farerule", Map.of("id", id, "flowType", flowType), "farerule", true);
             if (res == null) {
                 return null; // 200 with an empty body: the review goes on without fare rules
             }
@@ -227,9 +404,21 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
         return Map.of("bookingId", bookingId, "type", "CANCELLATION", "remarks", "Cancelled by agency");
     }
 
+    /** Tripjack Air API: Adult allows Mr/Mrs/Ms; Child and Infant allow Ms/Master. */
+    static String normalizeTitle(String type, String title) {
+        String clean = title == null ? "" : title.trim().replace(".", "").toUpperCase(Locale.ROOT);
+        if ("CHILD".equals(type) || "INFANT".equals(type)) {
+            return ("MS".equals(clean) || "MISS".equals(clean) || "MRS".equals(clean)) ? "Ms" : "Master";
+        }
+        if ("MRS".equals(clean)) {
+            return "Mrs";
+        }
+        return ("MS".equals(clean) || "MISS".equals(clean)) ? "Ms" : "Mr";
+    }
+
     private static Map<String, Object> traveller(PaxDetail p) {
         Map<String, Object> t = new LinkedHashMap<>();
-        t.put("ti", p.title());
+        t.put("ti", normalizeTitle(p.type(), p.title()));
         t.put("fN", p.firstName());
         t.put("lN", p.lastName());
         t.put("pt", p.type());
@@ -237,7 +426,13 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
         putIfPresent(t, "pNum", p.passportNumber());
         putIfPresent(t, "eD", p.passportExpiry());
         putIfPresent(t, "pNat", p.nationality());
-        putIfPresent(t, "di", p.documentId()); // the ID a special fare (student, senior citizen) asks for; unverified shape, see review
+        putIfPresent(t, "di", p.documentId());
+        putIfPresent(t, "pan", p.pan());
+        if (!"INFANT".equals(p.type()) && p.seats() != null && !p.seats().isEmpty()) {
+            t.put("ssrSeatInfos", p.seats().stream()
+                    .map(s -> Map.of("key", s.segmentKey(), "code", s.code()))
+                    .toList());
+        }
         return t;
     }
 
@@ -282,12 +477,12 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
     }
 
     private JsonNode post(ResolvedCredential supplier, String path, Object body, String what) {
-        return post(supplier, path, body, what, true);
+        return post(restClientBuilder, supplier, path, body, what, true);
     }
 
     /** {@code logBody=false} for calls whose error body may echo passenger data. */
-    private JsonNode post(ResolvedCredential supplier, String path, Object body, String what, boolean logBody) {
-        RestClient client = restClientBuilder.clone()
+    private JsonNode post(RestClient.Builder builder, ResolvedCredential supplier, String path, Object body, String what, boolean logBody) {
+        RestClient client = builder.clone()
                 .baseUrl(supplier.baseUrl())
                 .defaultHeader("apikey", supplier.apiKey())
                 .build();

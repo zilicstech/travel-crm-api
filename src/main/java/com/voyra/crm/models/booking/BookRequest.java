@@ -10,11 +10,17 @@ import java.util.List;
  * code (digits, null when not sent); flight providers ignore these four.
  */
 public record BookRequest(String reviewId, BigDecimal totalFare, List<PaxDetail> passengers, String email, String phone,
-                          List<List<PaxDetail>> rooms, String leadPan, HotelCompliance compliance, String dialCode) {
+                          List<List<PaxDetail>> rooms, String leadPan, HotelCompliance compliance, String dialCode,
+                          FlightCompliance flightCompliance) {
+
+    public BookRequest(String reviewId, BigDecimal totalFare, List<PaxDetail> passengers, String email, String phone,
+                       List<List<PaxDetail>> rooms, String leadPan, HotelCompliance compliance, String dialCode) {
+        this(reviewId, totalFare, passengers, email, phone, rooms, leadPan, compliance, dialCode, FlightCompliance.NONE);
+    }
 
     public BookRequest(String reviewId, BigDecimal totalFare, List<PaxDetail> passengers, String email, String phone,
                        List<List<PaxDetail>> rooms, String leadPan) {
-        this(reviewId, totalFare, passengers, email, phone, rooms, leadPan, HotelCompliance.NONE, null);
+        this(reviewId, totalFare, passengers, email, phone, rooms, leadPan, HotelCompliance.NONE, null, FlightCompliance.NONE);
     }
 
     public BookRequest(String reviewId, BigDecimal totalFare, List<PaxDetail> passengers, String email, String phone) {

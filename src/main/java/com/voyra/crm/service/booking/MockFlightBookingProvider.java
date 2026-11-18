@@ -3,6 +3,9 @@ package com.voyra.crm.service.booking;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.voyra.crm.dto.FlightReviewRequest;
+import com.voyra.crm.dto.FlightSeatMapResponse;
+import com.voyra.crm.dto.SeatOptionResponse;
+import com.voyra.crm.dto.SegmentSeatMapResponse;
 import com.voyra.crm.enums.FareCategory;
 import com.voyra.crm.enums.SupplierProvider;
 import com.voyra.crm.exception.FareUnavailableException;
@@ -19,6 +22,7 @@ import java.nio.charset.StandardCharsets;
 import com.voyra.crm.util.ExcludeFromJacocoGenerated;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.HexFormat;
 import java.math.RoundingMode;
 import java.time.Instant;
@@ -87,12 +91,13 @@ public class MockFlightBookingProvider implements FlightBookingProvider {
                 .put("fareIdentifier", category == FareCategory.REGULAR ? "PUBLISHED" : category.name()).putObject("fd").putObject("ADULT");
         fd.put("cc", "ECONOMY").put("rT", 1).putObject("bI").put("iB", "15 Kg").put("cB", "7 Kg");
         return new FareReview(base.reviewId(), base.totalFare(), base.baseFare(), base.currency(), base.fareRules(), base.expiresAt(), itinerary,
-                null, null, base.documentIdRequired());
+                null, null, base.documentIdRequired(), HotelCompliance.NONE, base.flightCompliance());
     }
 
     private static ObjectNode segment(String airline, String airlineCode, String flightNumber, String origin, String destination,
                                       String date, String departTime, String arriveTime, String defaultDepart, String defaultArrive) {
         ObjectNode seg = JSON.createObjectNode();
+        seg.put("id", origin + "-" + destination);
         ObjectNode fD = seg.putObject("fD");
         fD.put("fN", blank(flightNumber) ? "101" : flightNumber);
         fD.putObject("aI").put("code", blank(airlineCode) ? "MK" : airlineCode)
@@ -127,15 +132,64 @@ public class MockFlightBookingProvider implements FlightBookingProvider {
         String offerId = offerIds.get(0); // the review id names the onward offer only, so it stays under supplier_review_id's 120
         total = total.multiply(BigDecimal.ONE.add(mock.getRepricePct().movePointLeft(2))).setScale(2, RoundingMode.HALF_UP);
         BigDecimal base = total.multiply(BASE_SHARE).setScale(2, RoundingMode.HALF_UP);
+        boolean docRequired = offerIds.stream().anyMatch(MockFlightSearchProvider::needsDocumentId);
+        FlightCompliance fc = new FlightCompliance(true, mock.isSeatMandatory(), docRequired, false, false, false, false, false, false);
         // a fresh id per review, like Tripjack: platform_booking.supplier_review_id is UNIQUE
         return new FareReview("mock-rv-" + offerId + "-" + UUID.randomUUID().toString().replace("-", ""), total, base, "INR", FARE_RULES,
-                Instant.now().plus(15, ChronoUnit.MINUTES), null, null, null,
-                offerIds.stream().anyMatch(MockFlightSearchProvider::needsDocumentId)); // a Student or Senior Citizen fare, like Tripjack's conditions.dc.idm
+                Instant.now().plus(15, ChronoUnit.MINUTES), null, null, null, docRequired, HotelCompliance.NONE, fc);
     }
 
     @Override
     public String searchFareRules(String priceId, ResolvedCredential supplier) {
         return FARE_RULES;
+    }
+
+    @Override
+    public FlightSeatMapResponse seatMap(String bookingId, String reviewId, Map<String, Object> itinerary,
+                                         boolean seatMandatory, ResolvedCredential supplier) {
+        List<TripjackFlightBookingProvider.ItinerarySeg> segs = TripjackFlightBookingProvider.segmentsOf(itinerary);
+        if (segs.isEmpty()) {
+            segs = List.of(new TripjackFlightBookingProvider.ItinerarySeg("DEL-BOM", "MK", "101", "DEL", "BOM"));
+        }
+        String[] letters = {"A", "B", "C", "D", "E", "F"};
+        int[] cols = {1, 2, 3, 5, 6, 7}; // column 4 is the cabin aisle, matching Tripjack's narrowbody grid
+        List<SegmentSeatMapResponse> out = segs.stream().map(seg -> {
+            List<SeatOptionResponse> seats = new ArrayList<>();
+            for (int r = 1; r <= 6; r++) {
+                BigDecimal fee = r == 1 ? new BigDecimal("600.00") : r <= 3 ? new BigDecimal("250.00") : new BigDecimal("0.00");
+                for (int c = 0; c < letters.length; c++) {
+                    String seatNo = r + letters[c];
+                    boolean booked = (r == 1 && c == 1) || (r == 2 && c == 2) || (r == 4 && c == 4);
+                    seats.add(SeatOptionResponse.builder()
+                            .seatNo(seatNo)
+                            .code(seatNo)
+                            .row(r)
+                            .column(cols[c])
+                            .booked(booked)
+                            .amount(fee)
+                            .legRoom(r == 1)
+                            .aisle(c == 2 || c == 3)
+                            .exitRow(r == 3)
+                            .build());
+                }
+            }
+            return SegmentSeatMapResponse.builder()
+                    .segmentKey(seg.key())
+                    .airlineCode(seg.airlineCode())
+                    .flightNumber(seg.flightNumber())
+                    .origin(seg.origin())
+                    .destination(seg.destination())
+                    .rows(6)
+                    .columns(7)
+                    .note("Mock cabin: row 1 extra legroom, rows 2-3 standard paid, rows 4-6 complimentary")
+                    .seats(seats)
+                    .build();
+        }).toList();
+        return FlightSeatMapResponse.builder()
+                .bookingId(bookingId)
+                .seatMandatory(seatMandatory)
+                .segments(out)
+                .build();
     }
 
     @Override

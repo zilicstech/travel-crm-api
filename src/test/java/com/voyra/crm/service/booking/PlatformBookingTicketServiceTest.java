@@ -625,4 +625,48 @@ class PlatformBookingTicketServiceTest {
                     .doesNotContain("Rahul", "Sharma", "N1234567", "c@x.test", "9876543210"));
         }
     }
+
+    @Test
+    void seatsAndSeatChargesRenderPerDirectionAndHandleEdgeCases() {
+        owner();
+        PlatformBooking b = booking("T1");
+        b.setGross(new BigDecimal("5600.00"));
+        b.setPricingSnapshot(new LinkedHashMap<>(Map.of("seatTotal", "600.00")));
+        Map<String, Object> paxWithSeats = pax("Mr", "Rahul", "Sharma", "N1234567");
+        Map<String, Object> nullSeatNo = new HashMap<>();
+        nullSeatNo.put("segmentKey", "SEG-1");
+        nullSeatNo.put("seatNo", null);
+        paxWithSeats.put("seats", List.of(
+                nullSeatNo,
+                Map.of("segmentKey", "SEG-1", "seatNo", "12A"),
+                Map.of("segmentKey", "BOM-GOI", "seatNo", "18C"),
+                Map.of("segmentKey", "RET-1", "seatNo", " "),
+                Map.of("segmentKey", "UNMATCHED", "seatNo", "99Z")));
+        Map<String, Object> infantPax = pax("Master", "Diya", "Sharma", "N1234568");
+        infantPax.put("type", "INFANT");
+        infantPax.put("seats", List.of());
+        b.setPaxEnc(paxCodec.encrypt(Map.of("passengers", List.of(paxWithSeats, infantPax),
+                "contactEmail", "c@x.test", "contactPhone", "9876543210")));
+        b.setItinerary(Map.of("sI", List.of(
+                Map.of("id", "SEG-1", "fD", Map.of("aI", Map.of("code", "6E", "name", "IndiGo"), "fN", "201"),
+                        "da", Map.of("code", "DEL"), "aa", Map.of("code", "BOM"), "dt", "2026-12-01T06:00", "at", "2026-12-01T08:10"),
+                Map.of("fD", Map.of("aI", Map.of("code", "6E", "name", "IndiGo"), "fN", "202"),
+                        "da", Map.of("code", "BOM"), "aa", Map.of("code", "GOI"), "dt", "2026-12-01T09:30", "at", "2026-12-01T11:00"),
+                Map.of("id", "RET-1", "isRs", true, "fD", Map.of("aI", Map.of("code", "6E", "name", "IndiGo"), "fN", "203"),
+                        "da", Map.of(), "aa", Map.of(), "dt", "2026-12-05T16:00", "at", "2026-12-05T18:10"))));
+        stored(b);
+
+        service.create("B1", BigDecimal.ZERO);
+        PlatformBookingTicket created = saved.get(0);
+        assertThat(created.getFareLines()).anyMatch(l -> "Seat charges".equals(l.get("label")) && "600.00".equals(l.get("amount")));
+
+        openable(created);
+        ETicketPdfRenderer.ETicketData data = rendered(() -> service.pdf("B1", created.getId()));
+        assertThat(data.passengers()).extracting(ETicketPdfRenderer.PaxRow::seat)
+                .containsExactly("12A, 18C", null, null, null);
+
+        // Unparseable seatTotal in snapshot falls back to 0 cleanly
+        b.setPricingSnapshot(Map.of("seatTotal", "not-a-number"));
+        assertThat(service.create("B1", BigDecimal.ZERO).getTicketPrice()).isEqualByComparingTo("5600.00");
+    }
 }

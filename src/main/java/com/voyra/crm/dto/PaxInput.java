@@ -2,6 +2,7 @@ package com.voyra.crm.dto;
 
 import com.voyra.crm.util.ValidationPatterns;
 import io.swagger.v3.oas.annotations.media.Schema;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
@@ -13,6 +14,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalDate;
+import java.util.List;
 
 @Data
 @Builder
@@ -71,6 +73,11 @@ public class PaxInput {
     private Integer roomIndex;
 
     @Pattern(regexp = "[A-Z]{5}[0-9]{4}[A-Z]")
-    @Schema(description = "Hotel only: PAN of the lead guest, when the hotel requires it", example = "ABCDE1234F")
+    @Schema(description = "PAN of the traveller when required by the hotel or airline", example = "ABCDE1234F")
     private String pan;
+
+    @Valid
+    @Size(max = 8)
+    @Schema(description = "Flight only: selected seats across the booking's segments (adults and children only)")
+    private List<PaxSeatSelection> seats;
 }

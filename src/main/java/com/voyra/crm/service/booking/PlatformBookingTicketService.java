@@ -81,7 +81,11 @@ public class PlatformBookingTicketService {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    record PrintedPax(String type, String title, String firstName, String lastName) {
+    record PrintedSeat(String segmentKey, String seatNo) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record PrintedPax(String type, String title, String firstName, String lastName, List<PrintedSeat> seats) {
     }
 
     /**
@@ -148,12 +152,22 @@ public class PlatformBookingTicketService {
         if (b.getPaxPurgedAt() != null) {
             throw new BookingConflictException("PASSENGERS_PURGED", ETicketPdfRenderer.PURGED_TEXT, Map.of());
         }
-        List<FareLine> lines = TicketFare.lines(b.getGross(), b.getBase(), m,
+        BigDecimal seatTotal = seatTotalOf(b.getPricingSnapshot());
+        List<FareLine> lines = TicketFare.lines(b.getGross(), b.getBase(), seatTotal, m,
                 TicketFacts.from(b.getItinerary(), b.getPricingSnapshot()).namedTaxes());
         if (m.compareTo(b.getGross()) > 0) {
             throw new IllegalArgumentException("Markup can be at most the published fare");
         }
         return lines;
+    }
+
+    private static BigDecimal seatTotalOf(Map<String, Object> pricingSnapshot) {
+        Object raw = pricingSnapshot == null ? null : pricingSnapshot.get(PlatformBookingService.SEAT_TOTAL);
+        try {
+            return raw == null ? BigDecimal.ZERO : new BigDecimal(raw.toString());
+        } catch (NumberFormatException e) {
+            return BigDecimal.ZERO;
+        }
     }
 
     /** Newest first. */
@@ -198,10 +212,29 @@ public class PlatformBookingTicketService {
             for (Direction dir : facts.directions()) {
                 out.add(new ETicketPdfRenderer.PaxRow(PlatformBookingQueryService.fullName(p.title(), p.firstName(), p.lastName()),
                         p.type(), dir.key(),
-                        pnr(i, dir.key(), lines, b.getPnr()), TicketFacts.ticketNumber(i, dir.key(), lines, flat, pax.size())));
+                        pnr(i, dir.key(), lines, b.getPnr()),
+                        TicketFacts.ticketNumber(i, dir.key(), lines, flat, pax.size()),
+                        seatForDirection(p, dir)));
             }
         }
         return out;
+    }
+
+    private static String seatForDirection(PrintedPax p, Direction dir) {
+        if (p.seats() == null || p.seats().isEmpty()) {
+            return null;
+        }
+        List<String> matched = new ArrayList<>();
+        for (com.voyra.crm.service.booking.ticket.Segment seg : dir.segments()) {
+            String routeKey = (seg.fromCode() == null ? "" : seg.fromCode()) + "-" + (seg.toCode() == null ? "" : seg.toCode());
+            p.seats().stream()
+                    .filter(s -> s.seatNo() != null && !s.seatNo().isBlank()
+                            && (Objects.equals(s.segmentKey(), seg.id()) || Objects.equals(s.segmentKey(), routeKey)))
+                    .map(PrintedSeat::seatNo)
+                    .findFirst()
+                    .ifPresent(matched::add);
+        }
+        return matched.isEmpty() ? null : String.join(", ", matched);
     }
 
     private static String pnr(int pax, String sector, List<TicketLine> lines, String fallback) {

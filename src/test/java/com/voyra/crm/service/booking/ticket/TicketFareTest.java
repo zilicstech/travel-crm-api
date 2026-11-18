@@ -70,4 +70,36 @@ class TicketFareTest {
     void baseAboveGrossRefuses() {
         assertThatThrownBy(() -> TicketFare.lines(d("4000"), d("4000.01"), BigDecimal.ZERO, Map.of())).isInstanceOf(BookingConflictException.class);
     }
+
+    @Test
+    void seatChargesPrintWithoutMarkupAndFoldWhenMarkupIsAdded() {
+        // Named taxes + residual + seat charges
+        List<FareLine> withNamed = TicketFare.lines(d("5600"), d("4000"), d("600"), BigDecimal.ZERO, Map.of("YQ", d("300")));
+        assertThat(withNamed).extracting(FareLine::label).containsExactly("Base fare", "YQ", "Other charges", "Seat charges");
+        assertThat(sum(withNamed)).isEqualByComparingTo("5600");
+
+        // No named taxes + positive air taxes + seat charges
+        List<FareLine> unnamed = TicketFare.lines(d("5600"), d("4000"), d("600"), null, Map.of());
+        assertThat(unnamed).extracting(FareLine::label).containsExactly("Base fare", "Taxes, fees and charges", "Seat charges");
+        assertThat(unnamed).extracting(FareLine::amount).map(BigDecimal::toPlainString).containsExactly("4000.00", "1000.00", "600.00");
+
+        // Zero air taxes + seat charges -> omits 0.00 tax line
+        List<FareLine> onlySeats = TicketFare.lines(d("4600"), d("4000"), d("600"), null, Map.of());
+        assertThat(onlySeats).extracting(FareLine::label).containsExactly("Base fare", "Seat charges");
+
+        // Markup > 0 -> folds seat charges into Taxes, fees and charges so markup is never exposed
+        List<FareLine> markedUp = TicketFare.lines(d("5600"), d("4000"), d("600"), d("500"), Map.of("YQ", d("300")));
+        assertThat(markedUp).extracting(FareLine::label).containsExactly("Base fare", "Taxes, fees and charges");
+        assertThat(sum(markedUp)).isEqualByComparingTo("6100");
+
+        // Seat total exceeding extras or negative seatTotal falls back cleanly
+        List<FareLine> over = TicketFare.lines(d("5000"), d("4500"), d("800"), BigDecimal.ZERO, Map.of());
+        assertThat(over).extracting(FareLine::label).containsExactly("Base fare", "Taxes, fees and charges");
+        List<FareLine> nonPos = TicketFare.lines(d("5000"), d("4500"), d("-10"), BigDecimal.ZERO, Map.of());
+        assertThat(nonPos).extracting(FareLine::label).containsExactly("Base fare", "Taxes, fees and charges");
+        List<FareLine> nullSeats = TicketFare.lines(d("5000"), d("4500"), null, BigDecimal.ZERO, Map.of());
+        assertThat(nullSeats).extracting(FareLine::label).containsExactly("Base fare", "Taxes, fees and charges");
+        List<FareLine> zeroTaxesNoSeats = TicketFare.lines(d("4000"), d("4000"), BigDecimal.ZERO, BigDecimal.ZERO, Map.of());
+        assertThat(zeroTaxesNoSeats).extracting(FareLine::label).containsExactly("Base fare", "Taxes, fees and charges");
+    }
 }
