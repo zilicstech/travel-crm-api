@@ -15,7 +15,6 @@ import com.voyra.crm.enums.SupplierProvider;
 import com.voyra.crm.exception.SupplierException;
 import com.voyra.crm.service.FlightSearchProvider;
 import com.voyra.crm.util.AirportCodeResolver;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
@@ -52,7 +51,6 @@ import java.util.regex.Pattern;
  * others follow the same enum by symmetry).
  */
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class TripjackFlightSearchProvider implements FlightSearchProvider {
 
@@ -60,8 +58,11 @@ public class TripjackFlightSearchProvider implements FlightSearchProvider {
      *  a credential change applies to the next call. This class never calls
      *  {@code .requestFactory(...)} on it, so tests can bind {@code MockRestServiceServer} to
      *  a plain builder instead without their mock being silently overwritten. */
-    @Qualifier("tripjackRestClientBuilder")
     private final RestClient.Builder restClientBuilder;
+
+    public TripjackFlightSearchProvider(@Qualifier("tripjackRestClientBuilder") RestClient.Builder restClientBuilder) {
+        this.restClientBuilder = restClientBuilder;
+    }
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
