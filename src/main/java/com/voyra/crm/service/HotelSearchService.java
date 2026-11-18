@@ -17,6 +17,7 @@ import com.voyra.crm.enums.PricingProduct;
 import com.voyra.crm.service.booking.AgencyPriceQuoter;
 import com.voyra.crm.service.booking.PriceQuote;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -45,6 +46,7 @@ import java.util.function.BiFunction;
  * Offers and room options are priced for that agency once, when the result is kept, so the cache is tenant-keyed by
  * construction; a platform admin (no tenant) gets them undecorated.
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class HotelSearchService {
@@ -54,6 +56,9 @@ public class HotelSearchService {
     static final int MAX_KEPT = 200;
 
     private record Result(String tenantId, String hotelId, List<HotelOfferResponse> offers, List<String> failed, Instant at) { }
+
+    private static final Comparator<HotelOfferResponse> CHEAPEST_FIRST =
+            Comparator.comparing(HotelSearchService::amount, Comparator.nullsLast(Comparator.naturalOrder()));
 
     private final SupplierRegistry registry;
     private final SupplierFanOut fanOut;
@@ -79,16 +84,33 @@ public class HotelSearchService {
             searchId = UUID.randomUUID().toString();
             SupplierFanOut.Result<HotelOfferResponse> asked = ask(query);
             List<HotelOfferResponse> offers = priced(tenantId, asked.answers());
-            offers.sort(Comparator.comparing(HotelSearchService::amount, Comparator.nullsLast(Comparator.naturalOrder())));
-            result = new Result(tenantId, query.getHotelId(), offers, asked.failed(), now);
+            offers.sort(CHEAPEST_FIRST);
+            List<String> failed = asked.failed();
+            if (query.getHotelId() != null) {
+                // The picked hotel stays on top; the rest of its city follows, best effort (no similar hotels is not an error).
+                offers.forEach(o -> o.setSearchedHotel(true));
+                List<HotelOfferResponse> similar = List.of();
+                try {
+                    SupplierFanOut.Result<HotelOfferResponse> city = ask(copyWithHotel(query, null));
+                    similar = priced(tenantId, city.answers()).stream().filter(o -> !query.getHotelId().equals(o.getHotelId()))
+                            .sorted(CHEAPEST_FIRST).toList();
+                } catch (RuntimeException e) {
+                    log.warn("Similar hotels for a hotel search could not be listed: {}", e.getClass().getSimpleName());
+                }
+                offers = new ArrayList<>(offers);
+                offers.addAll(similar);
+            }
+            result = new Result(tenantId, query.getHotelId(), offers, failed, now);
             results.put(searchId, result);
         }
         // The kept list stays whole and cheapest first; filters and the star sort are applied per request.
         List<HotelOfferResponse> all = result.offers();
-        List<HotelOfferResponse> shown = all.stream().filter(o -> matches(o, query)).toList();
+        // The hotel picked by name is always shown, first; filters and the sort apply to the similar hotels after it.
+        List<HotelOfferResponse> shown = all.stream().filter(o -> o.isSearchedHotel() || matches(o, query)).toList();
         if (query.getSort() == HotelSortOrder.STARS) {
             // Stable, so hotels of equal stars stay cheapest first.
-            shown = shown.stream().sorted(Comparator.comparingInt(HotelOfferResponse::getStarRating).reversed()).toList();
+            shown = shown.stream().sorted(Comparator.comparing(HotelOfferResponse::isSearchedHotel).reversed()
+                    .thenComparing(Comparator.comparingInt(HotelOfferResponse::getStarRating).reversed())).toList();
         }
         List<BigDecimal> amounts = all.stream().map(HotelSearchService::amount).filter(Objects::nonNull).toList();
         int total = shown.size();

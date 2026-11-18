@@ -23,6 +23,9 @@ public class HotelOfferResponse {
     @Schema(description = "Supplier hotel id - opens the hotel's own page", example = "10000000012345")
     private String hotelId;
 
+    @Schema(description = "True on the hotel the agent picked by name; the other hotels of its city follow as similar ones")
+    private boolean searchedHotel;
+
     @Schema(description = "The hotel's main photo, when the supplier has one")
     private String imageUrl;
 

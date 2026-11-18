@@ -26,6 +26,7 @@ import java.util.Optional;
 import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
@@ -506,16 +507,28 @@ class HotelSearchServiceTest {
         assertThat(service.thumbnails(List.of("s1:h1"))).isEmpty();
     }
 
+    /** The picked hotel from its own supplier; a city search returns that hotel again plus others on both suppliers. */
+    private void hotelPickedByNameAnswers() {
+        when(registry.searchable(PricingProduct.HOTEL)).thenReturn(List.of(S1, S2));
+        when(provider.search(any(), any())).thenAnswer(i -> {
+            HotelSearchQuery q = i.getArgument(0);
+            ResolvedCredential s = i.getArgument(1);
+            if (q.getHotelId() != null) return new java.util.ArrayList<>(List.of(offerOf("h9", "160")));
+            return new java.util.ArrayList<>(s == S2 ? List.of(offerOf("h9", "160"), offerOf("h1", "100")) : List.of(offerOf("h5", "50")));
+        });
+    }
+
     @Test
     void aHotelPickedByNameAsksOnlyItsSupplierWithItsOwnIdAndKeepsItsOwnResult() {
-        when(registry.searchable(PricingProduct.HOTEL)).thenReturn(List.of(S1, S2));
-        when(provider.search(any(), any())).thenAnswer(i -> new java.util.ArrayList<>(List.of(offer(new BigDecimal("160")))));
+        hotelPickedByNameAnswers();
         HotelSearchQuery one = query(null, 0);
         one.setHotelId("s2:h9");
 
         HotelSearchPageResponse page = service.search(one);
 
-        assertThat(page.getOffers()).extracting(HotelOfferResponse::getSupplierId).containsExactly("s2");
+        // the picked hotel first and flagged, then the city's other hotels cheapest first (the picked one is not repeated)
+        assertThat(page.getOffers()).extracting(HotelOfferResponse::getHotelId, HotelOfferResponse::isSearchedHotel)
+                .containsExactly(tuple("s2:h9", true), tuple("s1:h5", false), tuple("s2:h1", false));
         verify(provider).search(argThat(q -> "h9".equals(q.getHotelId()) && "Goa".equals(q.getCity())), eq(S2));
         assertThat(one.getHotelId()).isEqualTo("s2:h9");
 
@@ -525,7 +538,37 @@ class HotelSearchServiceTest {
         HotelSearchQuery again = query(page.getSearchId(), 0);
         again.setHotelId("s2:h9");
         assertThat(service.search(again).getSearchId()).isEqualTo(page.getSearchId());
-        verify(provider, times(3)).search(any(), any()); // the hotel once, the city from both suppliers, the hotel again from its kept result
+        // the hotel once and the city twice for the pick, the city twice for the plain city search, none for the kept result
+        verify(provider, times(5)).search(any(), any());
+    }
+
+    @Test
+    void filtersAndTheStarSortApplyToTheSimilarHotelsNotThePickedOne() {
+        hotelPickedByNameAnswers();
+        HotelSearchQuery one = query(null, 0);
+        one.setHotelId("s2:h9");
+        one.setMaxPrice(new BigDecimal("60"));
+
+        assertThat(service.search(one).getOffers()).extracting(HotelOfferResponse::getHotelId).containsExactly("s2:h9", "s1:h5");
+
+        HotelSearchQuery byStars = query(null, 0);
+        byStars.setHotelId("s2:h9");
+        byStars.setSort(com.voyra.crm.enums.HotelSortOrder.STARS);
+        assertThat(service.search(byStars).getOffers().get(0).isSearchedHotel()).isTrue();
+    }
+
+    @Test
+    void similarHotelsThatCannotBeListedLeaveTheePickedHotelAlone() {
+        when(registry.searchable(PricingProduct.HOTEL)).thenReturn(List.of(S2));
+        when(provider.search(any(), any())).thenAnswer(i -> {
+            HotelSearchQuery q = i.getArgument(0);
+            if (q.getHotelId() == null) throw new IllegalStateException("down");
+            return new java.util.ArrayList<>(List.of(offerOf("h9", "160")));
+        });
+        HotelSearchQuery one = query(null, 0);
+        one.setHotelId("s2:h9");
+
+        assertThat(service.search(one).getOffers()).extracting(HotelOfferResponse::getHotelId).containsExactly("s2:h9");
     }
 
     @Test
