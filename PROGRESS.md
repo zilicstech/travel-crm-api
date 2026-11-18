@@ -462,7 +462,7 @@ back at TICKETED. Agencies no longer cancel at the supplier at all.
 **Data.** Public `V4__cancel_requests.sql`: `platform_cancel_request` (status OPEN / IN_PROGRESS / COMPLETING / COMPLETED /
 REJECTED / WITHDRAWN, reason and final reason, passengers and sectors jsonb, remarks, supplier refund, charges, Voyra fee,
 refund, recall, exceeds-share and offline flags, supplier reference, admin note; a partial unique index allows one active
-request per booking) and `platform_cancel_request_file`. `feat/hotel-name-search` adds public V3 (this one was renumbered V4 so local databases take both). Hotel V3 must merge first.
+request per booking) and `platform_cancel_request_file`. `feat/hotel-name-search` adds public V3 (this one was renumbered V4 so local databases take both). Both are now on this branch.
 
 **Locking and money.** Every transition locks the booking row, then the request. Complete stores the figures first
 (COMPLETING), posts through `PlatformBookingService.postCancelMoney` (shared with the old CANCELLING path, which keeps its
@@ -497,3 +497,54 @@ calls (Tripjack flight amendment, Tripjack hotel cancel-booking, mocks), `Cancel
 the mock `cancel-timeout` / `cancel-fail` switches. Rows already CANCELLING at deploy still settle through the poller and
 `resolve-cancel`. Tests: `PlatformCancelRequestServiceTest`, `CancelPartsTest`, `PlatformCancelRequestControllerTest`,
 mirror and cancellation service tests, `CancelRequestIT`.
+||||||| c7a5aa4
+
+## Hotel search by name (2026-11-18, client PDF #7, owner rulings)
+
+Tripjack's hotel listing takes hotel ids only, so a hotel cannot be searched by its name there. Voyra now keeps each
+hotel supplier's hotel list in public V3 `hotel_catalog` (supplier, hotel id, name, city, country, stars, property
+type; GIN trigram index on name; V3 also creates pg_trgm in `public`, which until now only the tenant migrator did)
+and `hotel_catalog_sync` (one row per supplier). Owner ruling: the list is loaded **only** when a platform admin
+calls `POST /api/platform/hotel-catalog/{supplierId}/refresh`, never on a schedule or at startup; the same call creates
+the catalogue or refreshes it. It answers 202 and runs on a single thread of its own (never Spring's scheduler
+thread); `GET /api/platform/hotel-catalog` shows each supplier's status, hotels held, last load and last error.
+
+- **Load** (`HotelSearchProvider.catalog`, batches handed over on the calling thread). Tripjack: for each country in
+  `app.hotel-catalog.countries` (default `INDIA`), `fetch-hotel-mapping {countryName, page, size 2000}` paged by its
+  `totalPages` (capped at 1000), then `fetch-hotel-content` for those ids (`content-batch` 50, `parallel-calls` 2,
+  `max-calls-per-second` 2) on a pool of its own and outside the search caches. A failed call is retried once after
+  30 s. A content call that still fails is counted and skipped. A lost mapping page, a repeated page, 5 throttled
+  answers in a row, or ids short of 90 % of `totalElements` stop the load as fatal. Kept per hotel: active ones with a
+  numeric id, a name and a city. The city is Tripjack's own for the hotel's region code when it matches the city
+  list (so "See all hotels" can search it), else the address city. Stars are rounded, and null outside 1-5. The mock
+  lists its four templates in Goa, India.
+- **Store** (`HotelCatalogService`).
+  - The claim is an `INSERT … ON CONFLICT DO NOTHING` plus a conditional `UPDATE` with the load's `run_id`; a running
+    load is taken over only once its heartbeat is 15 minutes old.
+  - Each batch is upserted in its own transaction, retried row by row when it fails, and bumps the heartbeat; a load
+    that lost its claim stops there.
+  - Hotels not seen by this load are deleted only when the load looks complete (nothing fatal, at most 10 % of
+    calls or rows lost, at least 90 % of the last load's count) and still holds the claim. Otherwise it ends
+    FAILED, keeping the old rows and the error (cut to 300 characters).
+- **Suggest.** `GET /api/hotels/suggest?q=` (owner and agent, never gated):
+  - 3-60 characters, up to 8 hotels, from suppliers with hotel search on;
+  - `%`, `_` and `\` are matched literally;
+  - names starting with the text come first, then `word_similarity`, then stars;
+  - `statement_timeout` 500 ms; a failure offers no hotels.
+- **One hotel.** `HotelSearchQuery.hotelId` (namespaced) asks only that hotel's supplier; an unknown namespace or a
+  supplier with search off is 400 `OFFER_UNAVAILABLE`. Tripjack lists just that id (a non-numeric one lists
+  nothing). A kept search answers a later page only for the same `hotelId`. Detail, review and book are unchanged.
+- **Frontend.**
+  - `EntityPicker` gained `onQueryChange` and unfiltered `extraOptions` / `extraHeading` / `onExtraPick`.
+  - `CityPicker` with `onHotel` lists "Hotels" for 3+ typed characters (250 ms pause, stale answers dropped) and
+    shows a picked `hotel` in the field.
+  - Home ("City or hotel"; recent searches keep the hotel) uses it, and so do Search Hotels (URL `hotel` /
+    `hotelName`; the banner "Showing … only · See all hotels in {city}"; "No rooms at … for these dates"; a hotel no
+    longer offered falls back to its city with a notice) and the lead's Search Hotels modal.
+
+Not verified live: the country form of the mapping call and its paging, the content field names (`regioncode`,
+`is_active`), and Tripjack's limits and its terms for keeping a copy. Before the first production refresh, run the
+console checks: the mapping for `INDIA` (`totalElements`, `totalPages`, whether size 2000 is honoured), content for
+50 ids, and pg_trgm in `public`. Tests: `HotelCatalogServiceTest`, `TripjackHotelCatalogTest`, the
+`HotelSearchServiceTest` hotel cases, and `HotelCatalogIT` (Testcontainers: V3 on a fresh database; claim, prune and
+takeover SQL; suggest over 100k rows); e2e `e2e/hotel-name-search.spec.ts`.

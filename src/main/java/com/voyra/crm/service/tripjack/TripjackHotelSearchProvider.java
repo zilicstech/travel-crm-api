@@ -10,6 +10,8 @@ import com.voyra.crm.models.ResolvedCredential;
 import com.voyra.crm.enums.SupplierEnvironment;
 import com.voyra.crm.enums.SupplierProvider;
 import com.voyra.crm.exception.SupplierException;
+import com.voyra.crm.models.CatalogHotel;
+import com.voyra.crm.models.CatalogSummary;
 import com.voyra.crm.service.HotelSearchProvider;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -35,6 +37,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
 
 /**
  * Real Tripjack hotel search (Hotel API v3), called with each Tripjack supplier row that has hotel search switched on.
@@ -127,8 +130,10 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
         long startedAt = System.currentTimeMillis();
 
         StaticData data = loaded(conn);
-        List<String> regions = regionIds(data, query.getCity(), query.getCountryCode());
-        List<String> hids = hotelIdsFor(client, host, regions);
+        // One hotel picked by name: just its id (Tripjack ids are numeric; anything else lists nothing).
+        List<String> hids = query.getHotelId() != null
+                ? (query.getHotelId().matches("\\d{1,19}") ? List.of(query.getHotelId()) : List.of())
+                : hotelIdsFor(client, host, regionIds(data, query.getCity(), query.getCountryCode()));
         if (hids.isEmpty()) {
             log.info("Tripjack hotel search ok: 0 hotels from 0 ids (regions={}) in {} ms", regions.size(), System.currentTimeMillis() - startedAt);
             return List.of();
@@ -690,6 +695,193 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
                 .forEach(h -> { String id = h.path("tjHotelId").asText(""); if (!id.isBlank()) ids.add(id); });
         hotelIds.put(key, new Cached<>(ids, clock.instant()));
         return ids;
+    }
+
+    // ── Catalogue for name search ───────────────────────────────────────────
+
+    /** Countries whose hotels the catalogue holds, as Tripjack names them. */
+    @Value("${app.hotel-catalog.countries:INDIA}")
+    List<String> catalogCountries = List.of("INDIA");
+    @Value("${app.hotel-catalog.content-batch:50}")
+    int catalogContentBatch = 50;
+    @Value("${app.hotel-catalog.parallel-calls:2}")
+    int catalogParallel = 2;
+    @Value("${app.hotel-catalog.max-calls-per-second:2}")
+    double catalogCallsPerSecond = 2;
+    /** Wait before the one retry of a failed catalogue call; tests set it to zero. */
+    Duration catalogRetryDelay = Duration.ofSeconds(30);
+    static final int CATALOG_PAGE_SIZE = 2000;
+    /** Stops a load whose paging never ends; tests lower both. */
+    int catalogMaxPages = 1000;
+    /** Throttled answers in a row (each after its retry) that stop a load. */
+    int catalogMaxThrottled = 5;
+    private final Object throttle = new Object();
+    private long nextCallAt;
+
+    /**
+     * Every active hotel of the configured countries: the mapping call pages the ids (by its own totalPages), the content
+     * call names them, a page at a time handed to {@code sink} on this thread. Calls go through their own small pool and
+     * a rate limit, never the search pool or its caches, so live searches neither queue behind it nor share its memory.
+     * A lost mapping page, a repeated page or Tripjack throttling us out stops the load as fatal: it cannot know what it missed.
+     */
+    @Override
+    public CatalogSummary catalog(ResolvedCredential supplier, Consumer<List<CatalogHotel>> sink) {
+        Conn conn = connect(supplier);
+        if (!staticData.containsKey(conn.host())) load(conn);
+        Map<String, String> cityOfRegion = new HashMap<>();
+        staticData.get(conn.host()).cities().forEach((name, regions) -> regions.forEach(r -> cityOfRegion.putIfAbsent(r.id(), name)));
+
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(Math.max(1, catalogParallel), r -> {
+            Thread t = new Thread(r, "tripjack-hotel-catalog");
+            t.setDaemon(true);
+            return t;
+        });
+        int[] counts = new int[4]; // expected, fetched, failed calls, total calls
+        int[] throttled = {0};
+        try {
+            for (String country : catalogCountries) {
+                String fatal = catalogCountry(conn, country.trim(), cityOfRegion, pool, sink, counts, throttled);
+                if (fatal != null) return new CatalogSummary(counts[0], counts[1], counts[2], counts[3], fatal);
+            }
+            return new CatalogSummary(counts[0], counts[1], counts[2], counts[3], null);
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    private String catalogCountry(Conn conn, String country, Map<String, String> cityOfRegion, java.util.concurrent.ExecutorService pool,
+                                  Consumer<List<CatalogHotel>> sink, int[] counts, int[] throttled) {
+        String firstOfLastPage = null;
+        int totalPages = 1;
+        int expected = 0;
+        int ids = 0;
+        for (int page = 0; page < totalPages; page++) {
+            if (page >= catalogMaxPages) return "More than " + catalogMaxPages + " mapping pages for " + country;
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("countryName", country);
+            body.put("page", page);
+            body.put("size", CATALOG_PAGE_SIZE);
+            JsonNode mapping;
+            try {
+                mapping = catalogCall(conn, "/hms/v3/content/fetch-hotel-mapping", body, throttled);
+            } catch (SupplierException e) {
+                return "Hotel id page " + page + " of " + country + " failed: " + e.getMessage();
+            }
+            if (page == 0) {
+                JsonNode pageable = mapping.path("pageable").isMissingNode() ? mapping : mapping.path("pageable");
+                totalPages = Math.max(1, pageable.path("totalPages").asInt(1));
+                expected = pageable.path("totalElements").asInt(mapping.path("hotels").size());
+                counts[0] += expected;
+            }
+            List<String> pageIds = new ArrayList<>(new java.util.LinkedHashSet<>(
+                    java.util.stream.StreamSupport.stream(mapping.path("hotels").spliterator(), false).map(TripjackHotelSearchProvider::hotelIdOf)
+                            .filter(id -> id.matches("\\d{1,19}")).toList()));
+            if (pageIds.isEmpty()) continue;
+            if (pageIds.get(0).equals(firstOfLastPage)) return "Tripjack returned the same hotel id page twice for " + country;
+            firstOfLastPage = pageIds.get(0);
+            ids += pageIds.size();
+
+            List<java.util.concurrent.CompletableFuture<JsonNode>> calls = new ArrayList<>();
+            for (int i = 0; i < pageIds.size(); i += catalogContentBatch) {
+                List<String> chunk = pageIds.subList(i, Math.min(i + catalogContentBatch, pageIds.size()));
+                calls.add(java.util.concurrent.CompletableFuture.supplyAsync(
+                        () -> catalogCall(conn, "/hms/v3/content/fetch-hotel-content", Map.of("hotelIds", chunk), throttled), pool));
+            }
+            Map<String, CatalogHotel> hotels = new LinkedHashMap<>();
+            for (var call : calls) {
+                counts[3]++;
+                try {
+                    call.join().path("hotels").forEach(h -> {
+                        CatalogHotel hotel = catalogHotel(h, cityOfRegion);
+                        if (hotel != null) hotels.put(hotel.hotelId(), hotel);
+                    });
+                } catch (java.util.concurrent.CompletionException e) {
+                    counts[2]++;
+                    log.warn("Tripjack hotel catalogue content call failed: {}", e.getCause().getMessage());
+                }
+                if (throttled[0] >= catalogMaxThrottled) return "Tripjack throttled the catalogue load " + throttled[0] + " times in a row";
+            }
+            if (!hotels.isEmpty()) {
+                sink.accept(List.copyOf(hotels.values()));
+                counts[1] += hotels.size();
+            }
+        }
+        // Paging that stops short (a page cap below our size, a missed page) would otherwise look like a complete load.
+        return ids * 10L < expected * 9L ? "Tripjack listed " + ids + " of " + expected + " hotel ids for " + country : null;
+    }
+
+    /** One catalogue row from a content answer; null for an inactive hotel or one without an id, name or city. */
+    static CatalogHotel catalogHotel(JsonNode h, Map<String, String> cityOfRegion) {
+        String id = hotelIdOf(h);
+        JsonNode active = h.path("is_active");
+        if (!id.matches("\\d{1,19}") || (!active.isMissingNode() && !active.isNull() && !active.asBoolean(true))) return null;
+        JsonNode a = h.path("locale").path("address");
+        // The region id names Tripjack's city ("Goa"), which a city search accepts; the address may name a locality ("Morjim").
+        String city = java.util.stream.Stream.of(part(a, "regioncode"), part(a, "citycode"), part(a, "city_code"))
+                .filter(java.util.Objects::nonNull).map(cityOfRegion::get).filter(java.util.Objects::nonNull).findFirst()
+                .map(TripjackHotelSearchProvider::cityName).orElse(part(a, "city"));
+        double stars = h.path("star_rating").asDouble(0);
+        CatalogHotel hotel = new CatalogHotel(id, h.path("name").asText(""), city, part(a, "countrycode"), part(a, "countryname"),
+                stars > 0 ? (int) Math.round(stars) : null, h.path("property_type").path("name").asText(""));
+        return hotel.name() == null || hotel.city() == null ? null : hotel;
+    }
+
+    /** An address part, given as text or as an object with a name. */
+    private static String part(JsonNode address, String key) {
+        JsonNode v = address.path(key);
+        String t = v.isObject() ? v.path("name").asText("") : v.asText("");
+        return t.isBlank() ? null : t.trim();
+    }
+
+    /** "NEW DELHI" as a person writes it: "New Delhi". */
+    static String cityName(String upper) {
+        StringBuilder out = new StringBuilder();
+        boolean start = true;
+        for (char c : upper.toLowerCase(Locale.ROOT).toCharArray()) {
+            out.append(start ? Character.toUpperCase(c) : c);
+            start = !Character.isLetter(c);
+        }
+        return out.toString();
+    }
+
+    /** A rate-limited call, retried once after {@code catalogRetryDelay}; a 429 that persists counts towards the throttle stop. */
+    private JsonNode catalogCall(Conn conn, String path, Object body, int[] throttled) {
+        for (int attempt = 0; ; attempt++) {
+            waitForSlot();
+            try {
+                JsonNode res = call(conn.client(), "POST", path, body);
+                synchronized (throttled) { throttled[0] = 0; }
+                return res;
+            } catch (SupplierException e) {
+                boolean tooMany = e.getCause() instanceof RestClientResponseException r && r.getStatusCode().value() == 429;
+                if (attempt > 0) {
+                    if (tooMany) synchronized (throttled) { throttled[0]++; }
+                    throw e;
+                }
+                sleep(catalogRetryDelay);
+            }
+        }
+    }
+
+    private void waitForSlot() {
+        long gap = (long) (1000 / Math.max(0.01, catalogCallsPerSecond));
+        long wait;
+        synchronized (throttle) {
+            long now = System.currentTimeMillis();
+            nextCallAt = Math.max(nextCallAt, now) + gap;
+            wait = nextCallAt - gap - now;
+        }
+        sleep(Duration.ofMillis(wait));
+    }
+
+    private static void sleep(Duration d) {
+        if (d.toMillis() <= 0) return;
+        try {
+            Thread.sleep(d.toMillis());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new SupplierException("Interrupted", e);
+        }
     }
 
     private static String nationalityId(StaticData data, String iso2) {

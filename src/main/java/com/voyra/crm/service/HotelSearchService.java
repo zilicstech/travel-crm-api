@@ -53,7 +53,7 @@ public class HotelSearchService {
     private static final Duration KEEP = Duration.ofMinutes(30);
     static final int MAX_KEPT = 200;
 
-    private record Result(String tenantId, List<HotelOfferResponse> offers, List<String> failed, Instant at) { }
+    private record Result(String tenantId, String hotelId, List<HotelOfferResponse> offers, List<String> failed, Instant at) { }
 
     private final SupplierRegistry registry;
     private final SupplierFanOut fanOut;
@@ -64,10 +64,12 @@ public class HotelSearchService {
 
     public HotelSearchPageResponse search(HotelSearchQuery query) {
         String tenantId = TenantContext.getTenantId();
+        if (query.getHotelId() != null && query.getHotelId().isBlank()) query.setHotelId(null);
         String searchId = query.getSearchId();
         Result result = searchId == null ? null : results.get(searchId);
         Instant now = clock.instant();
-        if (result == null || !Objects.equals(result.tenantId(), tenantId) || result.at().plus(KEEP).isBefore(now)) {
+        if (result == null || !Objects.equals(result.tenantId(), tenantId) || !Objects.equals(result.hotelId(), query.getHotelId())
+                || result.at().plus(KEEP).isBefore(now)) {
             results.values().removeIf(r -> r.at().plus(KEEP).isBefore(now));
             // Bounded: a burst of searches drops the oldest kept result rather than growing without limit.
             if (results.size() >= MAX_KEPT) {
@@ -78,7 +80,7 @@ public class HotelSearchService {
             SupplierFanOut.Result<HotelOfferResponse> asked = ask(query);
             List<HotelOfferResponse> offers = priced(tenantId, asked.answers());
             offers.sort(Comparator.comparing(HotelSearchService::amount, Comparator.nullsLast(Comparator.naturalOrder())));
-            result = new Result(tenantId, offers, asked.failed(), now);
+            result = new Result(tenantId, query.getHotelId(), offers, asked.failed(), now);
             results.put(searchId, result);
         }
         // The kept list stays whole and cheapest first; filters and the star sort are applied per request.
@@ -145,8 +147,17 @@ public class HotelSearchService {
         if (suppliers.isEmpty()) {
             throw new BookingConflictException("NO_SUPPLIER", "No supplier is enabled for hotel search", Map.of());
         }
+        // One hotel picked by name: only its own supplier is asked, with the supplier's own id.
+        HotelSearchQuery asked = query;
+        if (query.getHotelId() != null) {
+            SupplierIds.Scoped hotel = SupplierIds.parse(query.getHotelId()).orElseThrow(HotelSearchService::unavailable);
+            suppliers = suppliers.stream().filter(s -> s.id().equals(hotel.supplierId())).toList();
+            if (suppliers.isEmpty()) throw unavailable();
+            asked = copyWithHotel(query, hotel.id());
+        }
+        HotelSearchQuery forSupplier = asked;
         SupplierFanOut.Result<HotelOfferResponse> result = fanOut.run(suppliers, s -> {
-            List<HotelOfferResponse> offers = new ArrayList<>(registry.hotelSearch(s.provider()).search(query, s));
+            List<HotelOfferResponse> offers = new ArrayList<>(registry.hotelSearch(s.provider()).search(forSupplier, s));
             offers.forEach(o -> {
                 o.setSupplierId(s.id());
                 o.setSupplierName(s.name());
@@ -161,6 +172,14 @@ public class HotelSearchService {
             throw new SuppliersUnavailableException();
         }
         return new SupplierFanOut.Result<>(new ArrayList<>(result.answers()), result.failed());
+    }
+
+    /** The search as the hotel's supplier gets it: the same, with the supplier's own hotel id. */
+    private static HotelSearchQuery copyWithHotel(HotelSearchQuery query, String hotelId) {
+        HotelSearchQuery copy = new HotelSearchQuery();
+        org.springframework.beans.BeanUtils.copyProperties(query, copy);
+        copy.setHotelId(hotelId);
+        return copy;
     }
 
     /** One hotel's page, from the hotel's own supplier, with each room option priced for the caller's agency. */

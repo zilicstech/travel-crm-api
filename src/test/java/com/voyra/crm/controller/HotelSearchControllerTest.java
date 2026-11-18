@@ -37,6 +37,26 @@ class HotelSearchControllerTest {
 
     @MockBean
     private com.voyra.crm.service.HotelSearchService hotelSearchService;
+    @MockBean
+    private com.voyra.crm.service.HotelCatalogService hotelCatalogService;
+
+    @Test
+    void suggest_agentGetsHotelsByNameAndNoQueryAsksForNone() throws Exception {
+        when(hotelCatalogService.suggest("taj")).thenReturn(List.of(new com.voyra.crm.dto.HotelSuggestionResponse(
+                "s1:100", "Taj Exotica", "Goa", "IN", "India", 5, "Tripjack")));
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/hotels/suggest").param("q", "taj")
+                        .with(SecurityMockMvcRequestPostProcessors.user("agent1").roles("AGENT")))
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$[0].hotelId").value("s1:100"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$[0].city").value("Goa"));
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/hotels/suggest")
+                        .with(SecurityMockMvcRequestPostProcessors.user("owner1").roles("AGENCY_OWNER")))
+                .andExpect(status().isOk());
+        org.mockito.Mockito.verify(hotelCatalogService).suggest("");
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/hotels/suggest").param("q", "taj")
+                        .with(SecurityMockMvcRequestPostProcessors.user("admin").roles("SUPER_ADMIN")))
+                .andExpect(status().isForbidden());
+    }
 
     private HotelSearchQuery searchQuery() {
         HotelSearchQuery query = new HotelSearchQuery();
