@@ -86,7 +86,7 @@ public record TicketFacts(List<Segment> segments, Map<String, BigDecimal> namedT
         JsonNode da = s.path("da");
         JsonNode aa = s.path("aa");
         JsonNode fD = s.path("fD");
-        return new Segment(text(fD.path("aI").path("code")), text(fD.path("aI").path("name")), text(fD.path("fN")),
+        return new Segment(text(s.path("id")), text(fD.path("aI").path("code")), text(fD.path("aI").path("name")), text(fD.path("fN")),
                 text(da.path("code")), text(da.path("city")), text(da.path("terminal")), text(da.path("name")),
                 text(aa.path("code")), text(aa.path("city")), text(aa.path("terminal")), text(aa.path("name")),
                 text(s.path("dt")), text(s.path("at")), s.path("duration").isInt() ? s.path("duration").asInt() : null);

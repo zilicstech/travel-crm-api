@@ -17,6 +17,7 @@ final class AgencySupplierMessage {
     static final String NOT_CONFIRMED_PAIR = "The airline could not confirm this onward and return pair - pick another pair";
     static final String NOT_CONFIRMED_HOTEL = "The hotel could not confirm this rate";
     static final String FAILED = "Booking failed at the supplier";
+    static final String SEAT_MANDATORY_FAILED = "This fare requires seat selection - search again and select seats";
     static final String CONFIRMING = "We're confirming with the supplier";
     static final String CANCEL_REFUSED = "The supplier refused the cancellation";
     /** Raw-text hints that the fare or room itself is gone, not a booking error. */
@@ -33,14 +34,19 @@ final class AgencySupplierMessage {
         }
         return switch (b.getStatus()) {
             case BOOKING, UNKNOWN, CANCELLING -> CONFIRMING;
-            case FAILED -> gone(b.getSupplierMessage()) ? (b.getProduct() == PricingProduct.HOTEL ? "Room no longer available"
-                    : "Fare no longer available") : FAILED;
+            case FAILED -> failed(b);
             default -> null;
         };
     }
 
-    private static boolean gone(String raw) {
-        String text = raw == null ? "" : raw.toLowerCase(Locale.ROOT);
-        return GONE.stream().anyMatch(text::contains);
+    private static String failed(PlatformBooking b) {
+        String text = b.getSupplierMessage() == null ? "" : b.getSupplierMessage().toLowerCase(Locale.ROOT);
+        if (GONE.stream().anyMatch(text::contains)) {
+            return b.getProduct() == PricingProduct.HOTEL ? "Room no longer available" : "Fare no longer available";
+        }
+        if (b.getProduct() == PricingProduct.FLIGHT && (text.contains("8038") || text.contains("seat selection is mandatory"))) {
+            return SEAT_MANDATORY_FAILED;
+        }
+        return FAILED;
     }
 }

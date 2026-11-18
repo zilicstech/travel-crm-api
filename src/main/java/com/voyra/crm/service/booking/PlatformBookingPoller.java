@@ -61,10 +61,12 @@ public class PlatformBookingPoller {
     private final PlatformBookingEventRecorder events;
     private final NotificationService notificationService;
     private final TransactionTemplate tx;
+    private final Duration bookingGrace;
 
     public PlatformBookingPoller(PlatformBookingRepository bookingRepository, PlatformBookingEventRepository eventRepository,
                                  SupplierRegistry registry, PlatformBookingService bookingService, PlatformBookingEventRecorder events,
-                                 NotificationService notificationService, PlatformTransactionManager transactionManager) {
+                                 NotificationService notificationService, PlatformTransactionManager transactionManager,
+                                 @org.springframework.beans.factory.annotation.Value("${app.platform-booking.poll-grace-seconds:45}") long bookingGraceSeconds) {
         this.bookingRepository = bookingRepository;
         this.eventRepository = eventRepository;
         this.registry = registry;
@@ -73,6 +75,7 @@ public class PlatformBookingPoller {
         this.notificationService = notificationService;
         this.tx = new TransactionTemplate(transactionManager);
         this.tx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        this.bookingGrace = Duration.ofSeconds(Math.max(0, bookingGraceSeconds));
     }
 
     public void poll() {
@@ -84,6 +87,11 @@ public class PlatformBookingPoller {
                 EnumSet.of(PlatformBookingStatus.BOOKING, PlatformBookingStatus.UNKNOWN)));
         due.addAll(bookingRepository.findByStatusAndResolvedFailedAtAfter(PlatformBookingStatus.FAILED, now.minus(LATE_TICKET_WINDOW)));
         for (PlatformBooking b : due) {
+            // Leave an active confirm() call alone until its book + confirm-wait window has had a chance to finish.
+            if (b.getStatus() == PlatformBookingStatus.BOOKING && b.getLastPolledAt() == null
+                    && bookingStartedAt(b).isAfter(now.minus(bookingGrace))) {
+                continue;
+            }
             if (b.getStatus() != PlatformBookingStatus.BOOKING && b.getLastPolledAt() != null && b.getLastPolledAt().isAfter(slowDue)) {
                 continue;
             }

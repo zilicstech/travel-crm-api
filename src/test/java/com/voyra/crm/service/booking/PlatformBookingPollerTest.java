@@ -104,7 +104,7 @@ class PlatformBookingPollerTest {
                 walletService, walletRepository, tenantRepository, agentRepository, notificationService,
                 events, paxCodec, objectMapper, transactionManager, walletEntryRepository, platformAuditService, settings, mirrorService, entitlementService);
         poller = new PlatformBookingPoller(bookingRepository, eventRepository, registry(), service, events,
-                notificationService, transactionManager);
+                notificationService, transactionManager, 0);
 
         lenient().when(bookingRepository.save(any())).thenAnswer(i -> {
             PlatformBooking b = i.getArgument(0);
@@ -709,5 +709,35 @@ class PlatformBookingPollerTest {
 
         verify(bookingRepository).findByIdForUpdate("RV1");
         verify(walletService, never()).releaseHold(any(), any());
+    }
+
+    @Test
+    void aFreshBookingWithinTheGraceWindowIsSkippedUntilConfirmHasFinished() {
+        ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
+        PaxCodec paxCodec = new PaxCodec(objectMapper, KEY);
+        PlatformBookingEventRecorder events = new PlatformBookingEventRecorder(eventRepository, paxCodec);
+        PlatformBookingService service = new PlatformBookingService(bookingRepository, registry(), quoter, pricingService,
+                walletService, walletRepository, tenantRepository, agentRepository, notificationService,
+                events, paxCodec, objectMapper, transactionManager, walletEntryRepository, platformAuditService, settings, mirrorService, entitlementService);
+        PlatformBookingPoller graced = new PlatformBookingPoller(bookingRepository, eventRepository, registry(), service, events,
+                notificationService, transactionManager, 45);
+
+        bookingRow("FRESH", Instant.now().minusSeconds(5));
+        graced.poll();
+        verify(provider, never()).bookingDetails(anyString(), any());
+
+        PlatformBooking alreadyPolled = bookingRow("POLLED", Instant.now().minusSeconds(5));
+        alreadyPolled.setLastPolledAt(Instant.now().minusSeconds(2));
+        when(provider.bookingDetails(eq("rv-POLLED"), any()))
+                .thenReturn(new BookResult("SB-P", SupplierBookingStatus.PENDING, null, List.of(), null, null));
+        graced.poll();
+        verify(provider).bookingDetails(eq("rv-POLLED"), any());
+
+        rows.remove("POLLED");
+        bookingRow("MATURE", Instant.now().minusSeconds(60));
+        when(provider.bookingDetails(eq("rv-MATURE"), any()))
+                .thenReturn(new BookResult("SB-M", SupplierBookingStatus.PENDING, null, List.of(), null, null));
+        graced.poll();
+        verify(provider).bookingDetails(eq("rv-MATURE"), any());
     }
 }

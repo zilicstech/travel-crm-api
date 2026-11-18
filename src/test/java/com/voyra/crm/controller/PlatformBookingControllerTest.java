@@ -78,6 +78,14 @@ class PlatformBookingControllerTest {
                             .contentType(MediaType.APPLICATION_JSON).content("{\"offerId\":\"o1\",\"adults\":1,\"clientId\":\"C1\"}"))
                     .andExpect(status().isOk()).andExpect(jsonPath("$.bookingId").value("B1"));
         }
+        given(service.seatMap("B1")).willReturn(com.voyra.crm.dto.FlightSeatMapResponse.builder()
+                .bookingId("B1").seatMandatory(true).segments(List.of()).build());
+        for (UserType type : List.of(UserType.AGENCY_OWNER, UserType.AGENT)) {
+            mockMvc.perform(get("/api/platform-bookings/B1/seat-map").with(as(type)))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.bookingId").value("B1"))
+                    .andExpect(jsonPath("$.seatMandatory").value(true));
+        }
+        mockMvc.perform(get("/api/platform-bookings/B1/seat-map").with(as(UserType.ACCOUNTANT))).andExpect(status().isForbidden());
     }
 
     @Test

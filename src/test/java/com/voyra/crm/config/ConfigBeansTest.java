@@ -44,11 +44,20 @@ class ConfigBeansTest {
 
     @Test
     void tripjackClientUsesAFiveSecondConnectAndTheConfiguredReadTimeout() {
-        RestClient.Builder builder = new TripjackConfig().tripjackRestClientBuilder(30);
+        TripjackConfig cfg = new TripjackConfig();
+        RestClient.Builder builder = cfg.tripjackRestClientBuilder(30);
         Object factory = ReflectionTestUtils.getField(builder, "requestFactory");
         assertThat(factory).isInstanceOf(SimpleClientHttpRequestFactory.class);
         assertThat(ReflectionTestUtils.getField(factory, "connectTimeout")).isEqualTo(5_000);
         assertThat(ReflectionTestUtils.getField(factory, "readTimeout")).isEqualTo(30_000);
+
+        Object fastFactory = ReflectionTestUtils.getField(cfg.tripjackFastRestClientBuilder(6), "requestFactory");
+        assertThat(ReflectionTestUtils.getField(fastFactory, "connectTimeout")).isEqualTo(4_000);
+        assertThat(ReflectionTestUtils.getField(fastFactory, "readTimeout")).isEqualTo(6_000);
+
+        Object seatFactory = ReflectionTestUtils.getField(cfg.tripjackSeatRestClientBuilder(12), "requestFactory");
+        assertThat(ReflectionTestUtils.getField(seatFactory, "connectTimeout")).isEqualTo(4_000);
+        assertThat(ReflectionTestUtils.getField(seatFactory, "readTimeout")).isEqualTo(12_000);
     }
 
     @Test

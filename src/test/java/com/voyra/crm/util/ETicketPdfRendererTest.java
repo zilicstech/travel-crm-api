@@ -241,4 +241,14 @@ class ETicketPdfRendererTest {
                 round.passengers(), round.fare(), round.total())));
         assertThat(Files.size(dir.resolve("eticket-round-trip.pdf"))).isPositive();
     }
+
+    @Test
+    void printsSeatColumnOnlyWhenPassengersCarrySeats() {
+        List<PaxRow> seated = List.of(
+                new PaxRow("Mr A One", "ADULT", "DEL-BOM", "PNR1", "T-111", "12A"),
+                new PaxRow("Master B Two", "INFANT", "DEL-BOM", "PNR1", "T-112", null));
+        TicketFacts oneWay = new TicketFacts(List.of(SEG), Map.of(), List.of(OUT));
+        String flat = PdfText.flat(text(data(seated, null, false, false, oneWay)));
+        assertThat(flat).contains("PASSENGERTYPESEATPNRTICKETNUMBER", "12A");
+    }
 }

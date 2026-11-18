@@ -4,11 +4,15 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.voyra.crm.dto.FlightReviewRequest;
+import com.voyra.crm.dto.FlightSeatMapResponse;
 import com.voyra.crm.enums.FareCategory;
 import com.voyra.crm.dto.HotelReviewRequest;
 import com.voyra.crm.dto.PaxInput;
+import com.voyra.crm.dto.PaxSeatSelection;
 import com.voyra.crm.dto.PlatformBookingConfirmRequest;
 import com.voyra.crm.dto.PlatformBookingReviewResponse;
+import com.voyra.crm.dto.SeatOptionResponse;
+import com.voyra.crm.dto.SegmentSeatMapResponse;
 import com.voyra.crm.entity.Agent;
 import com.voyra.crm.entity.PlatformBooking;
 import com.voyra.crm.entity.Tenant;
@@ -38,8 +42,10 @@ import com.voyra.crm.models.booking.BookResult;
 import com.voyra.crm.models.booking.CancelQuote;
 import com.voyra.crm.models.booking.CancelResult;
 import com.voyra.crm.models.booking.FareReview;
+import com.voyra.crm.models.booking.FlightCompliance;
 import com.voyra.crm.models.booking.HotelCompliance;
 import com.voyra.crm.models.booking.PaxDetail;
+import com.voyra.crm.models.booking.SeatSelection;
 import com.voyra.crm.models.booking.SupplierBookingStatus;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.PlatformBookingRepository;
@@ -94,7 +100,15 @@ public class PlatformBookingService {
      * passport number, or Voyra's GST details at booking. */
     private static final String PAN_REQUIRED = "panRequired";
     private static final String PASSPORT_REQUIRED = "passportRequired";
+    private static final String PASSPORT_EXPIRY_REQUIRED = "passportExpiryRequired";
+    private static final String ADULT_DOB_REQUIRED = "adultDobRequired";
+    private static final String EMERGENCY_CONTACT_REQUIRED = "emergencyContactRequired";
     private static final String GST_REQUIRED = "gstRequired";
+    private static final String SEAT_APPLICABLE = "seatApplicable";
+    private static final String SEAT_MANDATORY = "seatMandatory";
+    private static final String SEAT_CATALOG = "seatCatalog";
+    static final String SEAT_TOTAL = "seatTotal";
+    private static final String AIR_GROSS = "airGross";
     /** Event marking that Voyra was alerted about a row its supplier no longer serves (once per row). */
     static final String SUPPLIER_MISMATCH = "SUPPLIER_MISMATCH";
     static final String NOT_SERVED_MESSAGE = "This booking can't be changed right now. Voyra has been notified.";
@@ -121,6 +135,10 @@ public class PlatformBookingService {
     /** How long confirm waits for the supplier to ticket an accepted booking before the poller takes over; 0 in unit tests. */
     @org.springframework.beans.factory.annotation.Value("${app.platform-booking.confirm-wait-seconds:30}")
     private long confirmWaitSeconds;
+
+    /** Tripjack Air API asks callers to wait 5 seconds before the first booking-details poll. */
+    @org.springframework.beans.factory.annotation.Value("${app.platform-booking.confirm-initial-poll-delay-ms:5000}")
+    private long confirmInitialPollDelayMs = 5000;
 
     public PlatformBookingService(PlatformBookingRepository bookingRepository, SupplierRegistry registry,
                                   AgencyPriceQuoter quoter,
@@ -365,6 +383,9 @@ public class PlatformBookingService {
                 .createdAt(Instant.now())
                 .build();
         stamp(booking, quote);
+        if (product == PricingProduct.FLIGHT) {
+            booking.getPricingSnapshot().put(AIR_GROSS, fare.totalFare());
+        }
         if (paxMix != null) {
             booking.getPricingSnapshot().put(PAX_MIX, paxMix); // what the supplier priced; confirm must match it
         }
@@ -374,18 +395,34 @@ public class PlatformBookingService {
         if (fareCategory != null) {
             booking.getPricingSnapshot().put(FARE_CATEGORY, fareCategory.name());
         }
-        if (fare.documentIdRequired()) {
+        FlightCompliance fc = fare.flightCompliance();
+        if (fare.documentIdRequired() || fc.documentIdRequired()) {
             booking.getPricingSnapshot().put(DOCUMENT_ID_REQUIRED, true); // confirm refuses a traveller without an ID number
         }
         HotelCompliance compliance = fare.compliance(); // NONE for flights and suppliers that ask for nothing
-        if (compliance.panRequired()) {
+        if (compliance.panRequired() || fc.panRequired()) {
             booking.getPricingSnapshot().put(PAN_REQUIRED, true);
         }
-        if (compliance.passportRequired()) {
+        if (compliance.passportRequired() || fc.passportRequired()) {
             booking.getPricingSnapshot().put(PASSPORT_REQUIRED, true);
         }
-        if (compliance.gstRequired()) {
+        if (fc.passportExpiryRequired()) {
+            booking.getPricingSnapshot().put(PASSPORT_EXPIRY_REQUIRED, true);
+        }
+        if (fc.adultDobRequired()) {
+            booking.getPricingSnapshot().put(ADULT_DOB_REQUIRED, true);
+        }
+        if (fc.emergencyContactRequired()) {
+            booking.getPricingSnapshot().put(EMERGENCY_CONTACT_REQUIRED, true);
+        }
+        if (compliance.gstRequired() || fc.gstMandatory()) {
             booking.getPricingSnapshot().put(GST_REQUIRED, true);
+        }
+        if (fc.seatApplicable()) {
+            booking.getPricingSnapshot().put(SEAT_APPLICABLE, true);
+        }
+        if (fc.seatMandatory()) {
+            booking.getPricingSnapshot().put(SEAT_MANDATORY, true);
         }
         tx.executeWithoutResult(s -> {
             bookingRepository.save(booking);
@@ -406,11 +443,68 @@ public class PlatformBookingService {
                 .reviewExpiresAt(booking.getReviewExpiresAt())
                 .walletAvailable(walletRepository.findByTenantId(tenantId)
                         .map(w -> w.getBalance().subtract(w.getHeld())).orElse(BigDecimal.ZERO))
-                .documentIdRequired(fare.documentIdRequired())
+                .documentIdRequired(fare.documentIdRequired() || fc.documentIdRequired())
                 .fareCategory(fareCategory)
-                .panRequired(compliance.panRequired())
-                .passportRequired(compliance.passportRequired())
+                .panRequired(compliance.panRequired() || fc.panRequired())
+                .passportRequired(compliance.passportRequired() || fc.passportRequired())
+                .passportExpiryRequired(fc.passportExpiryRequired())
+                .adultDobRequired(fc.adultDobRequired())
+                .seatApplicable(fc.seatApplicable())
+                .seatMandatory(fc.seatMandatory())
                 .build();
+    }
+
+    /**
+     * Loads the aircraft cabin seat map for a REVIEWING flight booking and records the verified seat prices and
+     * occupancy in {@code pricingSnapshot} so {@link #confirm} validates seat codes and charges server-side.
+     */
+    public FlightSeatMapResponse seatMap(String bookingId) {
+        Assert.state(!TransactionSynchronizationManager.isActualTransactionActive(),
+                "seatMap must not run inside a transaction - the supplier call would hold a connection");
+        CustomUserPrincipal principal = requireBooker(PricingProduct.FLIGHT);
+        PlatformBooking b = actedOn(principal, bookingRepository.findByIdAndTenantId(bookingId, principal.tenantId()));
+        if (b.getProduct() != PricingProduct.FLIGHT || b.getStatus() != PlatformBookingStatus.REVIEWING) {
+            throw new BookingConflictException("REVIEW_EXPIRED",
+                    "Seat selection is only available while reviewing a flight", Map.of());
+        }
+        if (b.getReviewExpiresAt() != null && Instant.now().isAfter(b.getReviewExpiresAt())) {
+            throw reviewExpired(b.getProduct());
+        }
+        requireServed(b);
+        if (!Boolean.TRUE.equals(b.getPricingSnapshot().get(SEAT_APPLICABLE))) {
+            return FlightSeatMapResponse.builder().bookingId(bookingId).seatMandatory(false).segments(List.of()).build();
+        }
+        ResolvedCredential supplier = registry.supplierFor(b).credential();
+        boolean mandatory = Boolean.TRUE.equals(b.getPricingSnapshot().get(SEAT_MANDATORY));
+        FlightSeatMapResponse response = registry.flightBooking(supplier.provider())
+                .seatMap(bookingId, b.getSupplierReviewId(), b.getItinerary(), mandatory, supplier);
+        Map<String, Map<String, Map<String, Object>>> catalog = toSeatCatalog(response);
+        tx.executeWithoutResult(s -> bookingRepository.findByIdForUpdate(bookingId)
+                .filter(row -> row.getStatus() == PlatformBookingStatus.REVIEWING)
+                .ifPresent(row -> {
+                    Map<String, Object> snap = new LinkedHashMap<>(row.getPricingSnapshot());
+                    snap.put(SEAT_CATALOG, catalog);
+                    snap.put(SEAT_MANDATORY, response.isSeatMandatory());
+                    row.setPricingSnapshot(snap);
+                    bookingRepository.save(row);
+                }));
+        return response;
+    }
+
+    private static Map<String, Map<String, Map<String, Object>>> toSeatCatalog(FlightSeatMapResponse response) {
+        Map<String, Map<String, Map<String, Object>>> out = new LinkedHashMap<>();
+        for (SegmentSeatMapResponse seg : response.getSegments()) {
+            Map<String, Map<String, Object>> byCode = new LinkedHashMap<>();
+            for (SeatOptionResponse seat : seg.getSeats()) {
+                Map<String, Object> meta = new LinkedHashMap<>();
+                meta.put("seatNo", seat.getSeatNo());
+                meta.put("amount", seat.getAmount().toPlainString());
+                meta.put("booked", seat.isBooked());
+                byCode.put(seat.getCode(), meta);
+            }
+            out.put(seg.getSegmentKey(), byCode);
+        }
+        return out;
     }
 
     /**
@@ -462,9 +556,12 @@ public class PlatformBookingService {
      */
     private PlatformBooking awaitOutcome(String bookingId, PlatformBooking booking) {
         long until = System.currentTimeMillis() + confirmWaitSeconds * 1000;
+        boolean first = true;
         while (booking.getStatus() == PlatformBookingStatus.BOOKING && System.currentTimeMillis() < until) {
+            long delay = first ? confirmInitialPollDelayMs : 3000;
+            first = false;
             try {
-                Thread.sleep(3000);
+                Thread.sleep(delay);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 break;
@@ -866,26 +963,34 @@ public class PlatformBookingService {
         if (bookingRepository.findByIdempotencyKey(request.getIdempotencyKey()).isPresent()) {
             throw new IllegalStateException("This confirmation key was already used for another booking");
         }
+        BigDecimal seatTotal = BigDecimal.ZERO;
         if (b.getProduct() == PricingProduct.HOTEL) {
             requireGuestsPerRoom(b, request.getPassengers());
             requireHotelDocuments(b, request.getPassengers());
         } else if (request.getPassengers().size() != b.getPaxCount()) {
             throw new IllegalArgumentException("Enter " + b.getPaxCount() + " travellers, as reviewed");
         } else {
+            requireFlightTitles(request.getPassengers());
             requireReviewedMix(b, request.getPassengers());
-            requirePaxTypesFit(request.getPassengers(), travelDateOf(b));
+            java.time.LocalDate travelDate = travelDateOf(b);
+            requirePaxTypesFit(request.getPassengers(), travelDate);
             requireDocumentIds(b, request.getPassengers());
+            requireFlightCompliance(b, request.getPassengers(), travelDate);
+            seatTotal = resolveFlightSeats(b, request.getPassengers());
         }
-        if (request.getAcceptedDisplayedFare().compareTo(b.getDisplayed()) != 0) {
-            throw priceChanged(b.getProduct(), b.getDisplayed());
+        BigDecimal expectedDisplayed = b.getDisplayed().add(seatTotal);
+        if (request.getAcceptedDisplayedFare().compareTo(expectedDisplayed) != 0) {
+            throw priceChanged(b.getProduct(), expectedDisplayed);
         }
-        PriceQuote quote = quoter.quote(tenantId, b.getProduct(), b.getGross(), b.getBase());
+        BigDecimal airGross = airGrossOf(b);
+        PriceQuote quote = quoter.quote(tenantId, b.getProduct(), airGross, b.getBase());
         if (!quote.pricingId().equals(String.valueOf(b.getPricingSnapshot().get("pricingId")))) {
+            b.setGross(airGross);
             stamp(b, quote);
             bookingRepository.save(b);
             events.record(bookingId, "REPRICED", Map.of("displayed", b.getDisplayed(), "pricingId", quote.pricingId()));
             // returned, not thrown, so the re-stamp commits
-            return new Held(b, priceChanged(b.getProduct(), b.getDisplayed(), quote.agencyEarns()), false);
+            return new Held(b, priceChanged(b.getProduct(), b.getDisplayed().add(seatTotal), quote.agencyEarns()), false);
         }
         if (b.getReviewExpiresAt() != null && Instant.now().isAfter(b.getReviewExpiresAt())) {
             throw reviewExpired(b.getProduct());
@@ -895,6 +1000,14 @@ public class PlatformBookingService {
         // everything that can fail runs before the hold, so a refusal never leaves a committed hold behind
         String paxEnc = paxCodec.encrypt(Map.of("passengers", request.getPassengers(),
                 "contactEmail", request.getContactEmail(), "contactPhone", request.getContactPhone()));
+        if (seatTotal.signum() > 0) {
+            BigDecimal finalGross = airGross.add(seatTotal);
+            b.setGross(finalGross);
+            b.setDisplayed(expectedDisplayed);
+            b.getPricingSnapshot().put(SEAT_TOTAL, seatTotal);
+            b.getPricingSnapshot().put("gross", finalGross);
+            b.getPricingSnapshot().put("displayed", expectedDisplayed);
+        }
 
         WalletEntry hold = walletService.hold(tenantId, b.getDisplayed(), "pb-hold:" + bookingId, REF_TYPE, bookingId);
         b.setHoldEntryId(hold.getId());
@@ -1032,12 +1145,19 @@ public class PlatformBookingService {
         snapshot.put("agencyCommission", q.agencyCommission());
         snapshot.put("tds", q.tds());
         snapshot.put("agencyEarns", q.agencyEarns());
-        for (String kept : List.of(PAX_MIX, TRAVEL_DATE, FARE_CATEGORY, DOCUMENT_ID_REQUIRED, PAN_REQUIRED, PASSPORT_REQUIRED, GST_REQUIRED)) {
+        for (String kept : List.of(PAX_MIX, TRAVEL_DATE, FARE_CATEGORY, DOCUMENT_ID_REQUIRED, PAN_REQUIRED, PASSPORT_REQUIRED,
+                PASSPORT_EXPIRY_REQUIRED, ADULT_DOB_REQUIRED, EMERGENCY_CONTACT_REQUIRED, GST_REQUIRED,
+                SEAT_APPLICABLE, SEAT_MANDATORY, SEAT_CATALOG, AIR_GROSS)) {
             if (previous.get(kept) != null) {
                 snapshot.put(kept, previous.get(kept));
             }
         }
         b.setPricingSnapshot(snapshot);
+    }
+
+    private static BigDecimal airGrossOf(PlatformBooking b) {
+        Object raw = b.getPricingSnapshot().get(AIR_GROSS);
+        return raw == null ? b.getGross() : new BigDecimal(raw.toString());
     }
 
     /** Simulated money (UAT, mock) never buys real tickets and real money never pays for test ones. */
@@ -1148,12 +1268,115 @@ public class PlatformBookingService {
     }
 
     private static PaxDetail toPax(PaxInput p) {
+        String pan = p.getPan() == null || p.getPan().isBlank() ? null : p.getPan().trim();
+        List<SeatSelection> seats = p.getSeats() == null ? List.of()
+                : p.getSeats().stream().map(s -> new SeatSelection(s.getSegmentKey(), s.getCode(), s.getSeatNo())).toList();
         return new PaxDetail(p.getType(), p.getTitle(), p.getFirstName(), p.getLastName(), p.getDob(),
-                p.getPassportNo(), p.getPassportExpiry(), p.getNationality(), blankId(p) ? null : p.getDocumentId().trim());
+                p.getPassportNo(), p.getPassportExpiry(), p.getNationality(), blankId(p) ? null : p.getDocumentId().trim(),
+                pan, seats);
     }
 
     private static boolean blankId(PaxInput p) {
         return p.getDocumentId() == null || p.getDocumentId().isBlank();
+    }
+
+    private static void requireFlightTitles(List<PaxInput> passengers) {
+        for (int i = 0; i < passengers.size(); i++) {
+            String title = passengers.get(i).getTitle();
+            if (title == null || title.isBlank()) {
+                throw new BookingRequestException("PAX_TITLE_REQUIRED", "Traveller " + (i + 1) + " needs a title");
+            }
+        }
+    }
+
+    private static void requireFlightCompliance(PlatformBooking b, List<PaxInput> passengers, java.time.LocalDate travelDate) {
+        Map<String, Object> snap = b.getPricingSnapshot();
+        if (Boolean.TRUE.equals(snap.get(ADULT_DOB_REQUIRED))) {
+            for (int i = 0; i < passengers.size(); i++) {
+                PaxInput p = passengers.get(i);
+                if ("ADULT".equals(p.getType()) && p.getDob() == null) {
+                    throw new BookingRequestException("PAX_DOB_REQUIRED", "Traveller " + (i + 1) + " needs a date of birth for this fare");
+                }
+            }
+        }
+        if (Boolean.TRUE.equals(snap.get(PAN_REQUIRED))) {
+            for (int i = 0; i < passengers.size(); i++) {
+                PaxInput p = passengers.get(i);
+                if ("ADULT".equals(p.getType()) && (p.getPan() == null || p.getPan().isBlank())) {
+                    throw new BookingRequestException("PAN_REQUIRED", "Traveller " + (i + 1) + " needs a PAN for this flight");
+                }
+            }
+        }
+        if (Boolean.TRUE.equals(snap.get(PASSPORT_REQUIRED))
+                && passengers.stream().anyMatch(p -> p.getPassportNo() == null || p.getPassportNo().isBlank())) {
+            throw new BookingRequestException("PASSPORT_REQUIRED", "Each traveller needs a passport number for this flight");
+        }
+        if (Boolean.TRUE.equals(snap.get(PASSPORT_EXPIRY_REQUIRED))
+                && passengers.stream().anyMatch(p -> p.getPassportExpiry() == null
+                || (travelDate != null && p.getPassportExpiry().isBefore(travelDate)))) {
+            throw new BookingRequestException("PASSPORT_REQUIRED", "Each traveller needs a valid passport expiry date for this flight");
+        }
+    }
+
+    private static BigDecimal resolveFlightSeats(PlatformBooking b, List<PaxInput> passengers) {
+        boolean mandatory = Boolean.TRUE.equals(b.getPricingSnapshot().get(SEAT_MANDATORY));
+        boolean anySelected = false;
+        for (PaxInput p : passengers) {
+            List<PaxSeatSelection> seats = p.getSeats();
+            if (seats != null && !seats.isEmpty()) {
+                if ("INFANT".equals(p.getType())) {
+                    throw new BookingRequestException("INVALID_SEAT_SELECTION",
+                            "Infants travel on an adult's lap and cannot be assigned a seat");
+                }
+                anySelected = true;
+            }
+        }
+        if (!mandatory && !anySelected) {
+            return BigDecimal.ZERO;
+        }
+        if (!(b.getPricingSnapshot().get(SEAT_CATALOG) instanceof Map<?, ?> catalog)) {
+            throw new BookingRequestException("SEAT_MAP_NOT_LOADED",
+                    "Load the seat map and select seats before confirming this fare");
+        }
+        java.util.Map<String, java.util.Set<String>> takenBySegment = new java.util.HashMap<>();
+        BigDecimal total = BigDecimal.ZERO;
+        for (int i = 0; i < passengers.size(); i++) {
+            PaxInput p = passengers.get(i);
+            List<PaxSeatSelection> seats = p.getSeats() == null ? List.of() : p.getSeats();
+            java.util.Set<String> paxSegments = new java.util.HashSet<>();
+            for (PaxSeatSelection sel : seats) {
+                String segKey = sel.getSegmentKey();
+                String code = sel.getCode();
+                if (segKey == null || code == null || !paxSegments.add(segKey)) {
+                    throw new BookingRequestException("INVALID_SEAT_SELECTION",
+                            "Invalid or duplicate segment seat for Traveller " + (i + 1));
+                }
+                Object segNode = catalog.get(segKey);
+                Object seatNode = segNode instanceof Map<?, ?> sm ? sm.get(code) : null;
+                if (!(seatNode instanceof Map<?, ?> meta) || Boolean.TRUE.equals(meta.get("booked"))) {
+                    throw new BookingRequestException("SEAT_UNAVAILABLE",
+                            "Selected seat " + code + " is not available - choose another seat");
+                }
+                if (!takenBySegment.computeIfAbsent(segKey, k -> new java.util.HashSet<>()).add(code)) {
+                    throw new BookingRequestException("DUPLICATE_SEAT_SELECTION",
+                            "Two travellers cannot share seat " + meta.get("seatNo") + " on the same flight segment");
+                }
+                sel.setSeatNo(String.valueOf(meta.get("seatNo")));
+                total = total.add(new BigDecimal(String.valueOf(meta.get("amount"))).setScale(2, java.math.RoundingMode.HALF_UP));
+            }
+            if (mandatory && !"INFANT".equals(p.getType())) {
+                for (Map.Entry<?, ?> entry : catalog.entrySet()) {
+                    String segKey = String.valueOf(entry.getKey());
+                    boolean hasOpen = entry.getValue() instanceof Map<?, ?> sm && sm.values().stream()
+                            .anyMatch(v -> v instanceof Map<?, ?> m && !Boolean.TRUE.equals(m.get("booked")));
+                    if (hasOpen && !paxSegments.contains(segKey)) {
+                        throw new BookingRequestException("SEAT_SELECTION_REQUIRED",
+                                "Select a seat for Traveller " + (i + 1) + " on every flight segment");
+                    }
+                }
+            }
+        }
+        return total.setScale(2, java.math.RoundingMode.HALF_UP);
     }
 
     /** A fare reviewed as needing a document ID (student, senior citizen) is booked only with every traveller's ID number. */
@@ -1252,12 +1475,22 @@ public class PlatformBookingService {
         Map<String, Object> snapshot = b.getPricingSnapshot();
         HotelCompliance compliance = new HotelCompliance(Boolean.TRUE.equals(snapshot.get(PAN_REQUIRED)),
                 Boolean.TRUE.equals(snapshot.get(PASSPORT_REQUIRED)), Boolean.TRUE.equals(snapshot.get(GST_REQUIRED)));
+        FlightCompliance flightCompliance = new FlightCompliance(
+                Boolean.TRUE.equals(snapshot.get(SEAT_APPLICABLE)),
+                Boolean.TRUE.equals(snapshot.get(SEAT_MANDATORY)),
+                Boolean.TRUE.equals(snapshot.get(DOCUMENT_ID_REQUIRED)),
+                Boolean.TRUE.equals(snapshot.get(PAN_REQUIRED)),
+                Boolean.TRUE.equals(snapshot.get(PASSPORT_REQUIRED)),
+                Boolean.TRUE.equals(snapshot.get(PASSPORT_EXPIRY_REQUIRED)),
+                Boolean.TRUE.equals(snapshot.get(ADULT_DOB_REQUIRED)),
+                Boolean.TRUE.equals(snapshot.get(EMERGENCY_CONTACT_REQUIRED)),
+                Boolean.TRUE.equals(snapshot.get(GST_REQUIRED)));
         return new BookRequest(b.getSupplierReviewId(), b.getGross(),
                 request.getPassengers().stream().map(PlatformBookingService::toPax).toList(),
                 request.getContactEmail(), request.getContactPhone(),
                 byRoom.values().stream().map(g -> g.stream().map(PlatformBookingService::toPax).toList()).toList(),
                 leadPan(request.getPassengers()),
-                compliance, request.getContactDialCode());
+                compliance, request.getContactDialCode(), flightCompliance);
     }
 
     /**

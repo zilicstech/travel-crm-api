@@ -13,13 +13,21 @@ import java.time.Instant;
 public record FareReview(String reviewId, BigDecimal totalFare, BigDecimal baseFare, String currency,
                          String fareRules, Instant expiresAt, JsonNode itinerary,
                          String cancellationPolicy, Instant freeCancellationUntil, boolean documentIdRequired,
-                         HotelCompliance compliance) {
+                         HotelCompliance compliance, FlightCompliance flightCompliance) {
+
+    public FareReview(String reviewId, BigDecimal totalFare, BigDecimal baseFare, String currency,
+                      String fareRules, Instant expiresAt, JsonNode itinerary,
+                      String cancellationPolicy, Instant freeCancellationUntil, boolean documentIdRequired,
+                      HotelCompliance compliance) {
+        this(reviewId, totalFare, baseFare, currency, fareRules, expiresAt, itinerary, cancellationPolicy, freeCancellationUntil,
+                documentIdRequired, compliance, FlightCompliance.NONE);
+    }
 
     public FareReview(String reviewId, BigDecimal totalFare, BigDecimal baseFare, String currency,
                       String fareRules, Instant expiresAt, JsonNode itinerary,
                       String cancellationPolicy, Instant freeCancellationUntil, boolean documentIdRequired) {
         this(reviewId, totalFare, baseFare, currency, fareRules, expiresAt, itinerary, cancellationPolicy, freeCancellationUntil,
-                documentIdRequired, HotelCompliance.NONE);
+                documentIdRequired, HotelCompliance.NONE, FlightCompliance.NONE);
     }
 
     public FareReview(String reviewId, BigDecimal totalFare, BigDecimal baseFare, String currency,

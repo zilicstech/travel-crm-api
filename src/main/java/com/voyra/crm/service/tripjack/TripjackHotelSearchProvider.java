@@ -130,6 +130,7 @@ public class TripjackHotelSearchProvider implements HotelSearchProvider {
         List<String> regions = regionIds(data, query.getCity(), query.getCountryCode());
         List<String> hids = hotelIdsFor(client, host, regions);
         if (hids.isEmpty()) {
+            log.info("Tripjack hotel search ok: 0 hotels from 0 ids (regions={}) in {} ms", regions.size(), System.currentTimeMillis() - startedAt);
             return List.of();
         }
         String nationality = nationalityId(data, "IN");

@@ -30,6 +30,8 @@ public class FlightBookingProviderConfig {
         private boolean cancelTimeout;
         /** cancel() is refused ("Mock: cancellation not allowed"). */
         private boolean cancelFail;
+        /** review() flags seatMandatory=true so tests and local dev can exercise mandatory seat selection. */
+        private boolean seatMandatory;
     }
 
     @Data
