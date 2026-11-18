@@ -56,11 +56,13 @@ public class FlightSearchService {
     private final SupplierRegistry registry;
     private final SupplierFanOut fanOut;
     private final AgencyPriceQuoter quoter;
+    private final FlightFareCalendarService calendar;
 
-    public FlightSearchService(SupplierRegistry registry, SupplierFanOut fanOut, AgencyPriceQuoter quoter) {
+    public FlightSearchService(SupplierRegistry registry, SupplierFanOut fanOut, AgencyPriceQuoter quoter, FlightFareCalendarService calendar) {
         this.registry = registry;
         this.fanOut = fanOut;
         this.quoter = quoter;
+        this.calendar = calendar;
     }
 
     /** Offers from every supplier with flight search on, priced for the caller's agency; a platform admin (no tenant) gets them undecorated. */
@@ -129,10 +131,12 @@ public class FlightSearchService {
         if (groups == null) {
             long startedAt = System.currentTimeMillis();
             SupplierFanOut.Result<FlightOfferResponse> result = ask(req.getQuery(), suppliers);
-            groups = FlightResultPaging.group(priced(tenantId, result.answers()));
+            List<FlightOfferResponse> offers = priced(tenantId, result.answers());
+            groups = FlightResultPaging.group(offers);
             failed = result.failed();
             if (failed.isEmpty()) {
                 cache.put(key, groups);
+                calendar.record(req.getQuery(), offers); // a partial answer may miss the cheapest fare
             }
             log.info("Flight search cache MISS: {} flights from {} suppliers in {} ms (refresh={}, failed={})",
                     groups.size(), suppliers.size(), System.currentTimeMillis() - startedAt, req.isRefresh(), failed);

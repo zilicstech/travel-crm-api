@@ -60,6 +60,8 @@ class FlightSearchServiceTest {
 
     private final com.voyra.crm.service.booking.AgencyPriceQuoter quoter = org.mockito.Mockito.mock(com.voyra.crm.service.booking.AgencyPriceQuoter.class);
 
+    private final FlightFareCalendarService calendar = mock(FlightFareCalendarService.class);
+
     private final SupplierFanOut fanOut = new SupplierFanOut();
 
     private static ResolvedCredential supplier(String id, String name) {
@@ -93,7 +95,7 @@ class FlightSearchServiceTest {
                 return answer.apply(query, supplier);
             }
         });
-        return new FlightSearchService(registry, fanOut, quoter);
+        return new FlightSearchService(registry, fanOut, quoter, calendar);
     }
 
     private final FlightSearchService service = serviceOf(provider);
@@ -473,6 +475,7 @@ class FlightSearchServiceTest {
         assertThat(first.getSuppliersFailed()).containsExactly("Tripjack");
         assertThat(first.getTotalFlights()).isEqualTo(1);
         assertThat(calls.get()).isEqualTo(4); // both suppliers asked again: the partial page was not cached
+        org.mockito.Mockito.verifyNoInteractions(calendar); // a partial answer may miss the cheapest fare
     }
 
     @Test
@@ -482,6 +485,8 @@ class FlightSearchServiceTest {
         assertThat(service.searchPage(request(1)).getSuppliersFailed()).isEmpty();
         assertThat(service.searchPage(request(2)).getSuppliersFailed()).isEmpty();
         assertThat(supplierCalls.get()).isEqualTo(1);
+        // the fare calendar learns from the supplier answer once, not from the cached page
+        org.mockito.Mockito.verify(calendar, org.mockito.Mockito.times(1)).record(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.argThat(l -> !l.isEmpty()));
     }
 
     @Test
@@ -525,7 +530,7 @@ class FlightSearchServiceTest {
         com.voyra.crm.service.booking.FlightBookingProvider booking = mock(com.voyra.crm.service.booking.FlightBookingProvider.class);
         when(registry.flightBooking(SupplierProvider.MOCK)).thenReturn(booking);
         when(booking.searchFareRules("off:1", s2)).thenReturn("Rules");
-        FlightSearchService fareRules = new FlightSearchService(registry, fanOut, quoter);
+        FlightSearchService fareRules = new FlightSearchService(registry, fanOut, quoter, calendar);
 
         assertThat(fareRules.fareRules("s2:off:1").getFareRules()).isEqualTo("Rules");
         assertThat(fareRules.fareRules("s2:silent").getFareRules()).isNull(); // the supplier published none

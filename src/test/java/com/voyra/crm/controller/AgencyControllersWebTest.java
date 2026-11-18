@@ -81,6 +81,7 @@ class AgencyControllersWebTest {
     @MockBean private VendorService vendorService;
     @MockBean private WalletQueryService walletQueryService;
     @MockBean private FlightSearchService flightSearchService;
+    @MockBean private com.voyra.crm.service.FlightFareCalendarService flightFareCalendarService;
     @MockBean private PublicProposalService publicProposalService;
     @MockBean private ReportService reportService;
     @MockBean private ExchangeRateService exchangeRateService;

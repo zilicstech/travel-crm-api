@@ -1,4 +1,4 @@
-package com.voyra.crm.controller;
+package com.voyra.crm.util;
 
 import com.voyra.crm.service.booking.PlatformCancelRequestService;
 import org.springframework.core.io.Resource;
@@ -11,12 +11,12 @@ import org.springframework.http.ResponseEntity;
 import java.nio.charset.StandardCharsets;
 
 /** How a cancellation proof file is served: inline, typed by its extension, never sniffed, never cached, sandboxed. */
-final class ProofFiles {
+public final class ProofFiles {
 
     private ProofFiles() {
     }
 
-    static ResponseEntity<Resource> inline(PlatformCancelRequestService.FileContent file) {
+    public static ResponseEntity<Resource> inline(PlatformCancelRequestService.FileContent file) {
         return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType(file.contentType()))
                 .cacheControl(CacheControl.noStore())

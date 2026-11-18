@@ -1,5 +1,6 @@
 package com.voyra.crm.controller;
 
+import com.voyra.crm.util.ProofFiles;
 import com.voyra.crm.dto.FlightReviewRequest;
 import com.voyra.crm.dto.FlightSeatMapResponse;
 import com.voyra.crm.dto.HotelReviewRequest;

@@ -24,8 +24,7 @@ public record AdminCancelRequestResponse(
         @Schema(description = "Prefills and caps for completing it; null once finished") Prefill prefill,
         @Schema(description = "The full booking; detail view only") PlatformAdminBookingResponse booking) {
 
-    @Schema(description = "Figures the complete form starts from")
-    public record Prefill(@Schema(description = "Chosen passengers' share of the fare, 0-1", example = "0.5") BigDecimal share,
+    public @Schema(description = "Figures the complete form starts from") record Prefill(@Schema(description = "Chosen passengers' share of the fare, 0-1", example = "0.5") BigDecimal share,
                           @Schema(description = "Refund above this needs exceedsShare", example = "2250.00") BigDecimal softCap,
                           @Schema(description = "Refund can never be above this: the fare less refunds already posted", example = "4500.00") BigDecimal hardCap,
                           @Schema(description = "Commission still to take back at most", example = "95.00") BigDecimal remainingRecall,

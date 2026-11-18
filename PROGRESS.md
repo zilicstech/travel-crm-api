@@ -547,3 +547,19 @@ console checks: the mapping for `INDIA` (`totalElements`, `totalPages`, whether 
 50 ids, and pg_trgm in `public`. Tests: `HotelCatalogServiceTest`, `TripjackHotelCatalogTest`, the
 `HotelSearchServiceTest` hotel cases, and `HotelCatalogIT` (Testcontainers: V3 on a fresh database; claim, prune and
 takeover SQL; suggest over 100k rows); e2e `e2e/hotel-name-search.spec.ts`.
+
+## Flight fare calendar (2026-11-18, owner rulings)
+
+Agents saw no fares while picking a date. Every flight search that can give a comparable per-adult fare (one way, adults
+only, REGULAR fare category, every supplier answered, a fresh supplier answer rather than the in-memory page cache) now
+stores the cheapest published fare of an offer with a base fare, divided by the adults, in public V5
+`flight_fare_calendar`, keyed by origin, destination, cabin and departure date. The upsert replaces the old row: a day
+shows the least fare its newest search found, not an all-time minimum (owner ruling), and however old it is. The table is
+shared by every agency and holds no tenant or personal data; `GET /api/flights/calendar` prices each day for the caller
+agency (`PricingMath.displayed`, which needs only the gross fare, so the cheapest stored fare is every agency's cheapest),
+for at most 62 days from India's today. A failed write is logged and never fails the search. Round-trip combined fares,
+children, infants and special fares are not recorded; the Return calendar shows the reverse route's one-way fares. Past
+rows are not deleted yet (filtered on read). Frontend: `FareCalendar` popover beside the Departure and Return inputs (two
+months on wide screens, one on phones, cheapest day in green). Tests: `FlightFareCalendarServiceTest`,
+`FlightFareCalendarIT`, `FlightSearchServiceTest`, `FlightSearchControllerTest`, `FareCalendar.test.tsx`. Design:
+`docs/superpowers/specs/2026-11-18-flight-fare-calendar-design.md`.

@@ -14,7 +14,13 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import com.voyra.crm.dto.FlightFareDayResponse;
+import com.voyra.crm.enums.FlightCabin;
+import com.voyra.crm.service.FlightFareCalendarService;
+import java.time.LocalDate;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -35,6 +41,18 @@ import java.util.List;
 public class FlightSearchController {
 
     private final FlightSearchService flightSearchService;
+    private final FlightFareCalendarService fareCalendarService;
+
+    @GetMapping("/calendar")
+    @Operation(summary = "Fare calendar of a route",
+            description = "For each day in [from, to] (at most 62 days, never before today) that an earlier one-way, adults-only "
+                    + "search of any agency priced, the cheapest fare per adult it found, after the caller agency's discount. "
+                    + "Indicative: the fare is confirmed by a search. Days never searched are absent.")
+    public ResponseEntity<List<FlightFareDayResponse>> calendar(@RequestParam String origin, @RequestParam String destination,
+                                                                @RequestParam(required = false) FlightCabin cabin,
+                                                                @RequestParam LocalDate from, @RequestParam LocalDate to) {
+        return ResponseEntity.ok(fareCalendarService.read(origin, destination, cabin, from, to));
+    }
 
     @PostMapping("/search")
     @Operation(summary = "Search flight offers", description = "Results are not persisted - "

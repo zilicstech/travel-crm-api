@@ -51,8 +51,7 @@ public class PlatformDashboardResponse {
     @Schema(description = "How many tasks there are in all (the list shows at most 20)", example = "23")
     private long pendingTaskTotal;
 
-    @Schema(description = "One item waiting for an admin")
-    public record PendingTask(
+    public @Schema(description = "One item waiting for an admin") record PendingTask(
             @Schema(description = "CANCEL_REQUEST, CANCELLING, UNKNOWN_BOOKING, KYC or TOPUP", example = "CANCEL_REQUEST") String kind,
             @Schema(description = "What it is", example = "Cancellation request - Sky Travels") String title,
             @Schema(description = "Detail line", example = "Passenger medically unfit · PNR ABC123") String subtitle,

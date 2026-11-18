@@ -29,14 +29,12 @@ public record CancelRequestResponse(
         @Schema(description = "When it was raised") Instant createdAt,
         @Schema(description = "When Voyra completed it") Instant completedAt) {
 
-    @Schema(description = "A passenger of the request")
-    public record Passenger(@Schema(description = "Position in the booking's passenger list", example = "0") int index,
+    public @Schema(description = "A passenger of the request") record Passenger(@Schema(description = "Position in the booking's passenger list", example = "0") int index,
                             @Schema(description = "Name as booked; null once passenger data is cleared", example = "Mr Rahul Sharma") String name,
                             @Schema(description = "ADULT, CHILD or INFANT", example = "ADULT") String type) {
     }
 
-    @Schema(description = "A proof file")
-    public record FileRef(@Schema(description = "File id") String id,
+    public @Schema(description = "A proof file") record FileRef(@Schema(description = "File id") String id,
                           @Schema(description = "File name; null once the file was cleared", example = "certificate.pdf") String name) {
     }
 }

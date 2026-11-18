@@ -34,6 +34,23 @@ class FlightSearchControllerTest {
     private MockMvc mockMvc;
     @MockBean
     private FlightSearchService flightSearchService;
+    @MockBean
+    private com.voyra.crm.service.FlightFareCalendarService fareCalendarService;
+
+    @Test
+    void theFareCalendarCarriesOnlyDaysAndFares() throws Exception {
+        java.time.LocalDate from = java.time.LocalDate.of(2027, 1, 1);
+        when(fareCalendarService.read("DEL", "BOM", com.voyra.crm.enums.FlightCabin.BUSINESS, from, from.plusDays(30)))
+                .thenReturn(List.of(new com.voyra.crm.dto.FlightFareDayResponse(from.plusDays(2), new BigDecimal("4484.00"))));
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/flights/calendar")
+                        .param("origin", "DEL").param("destination", "BOM").param("cabin", "BUSINESS")
+                        .param("from", "2027-01-01").param("to", "2027-01-31")
+                        .with(SecurityMockMvcRequestPostProcessors.user("a").roles("AGENT")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].date").value("2027-01-03"))
+                .andExpect(jsonPath("$[0].fare").value(4484.00))
+                .andExpect(jsonPath("$[0].searchedAt").doesNotExist());
+    }
 
     @Test
     void offersAndPagesCarryTheirSupplierOnTheWire() throws Exception {
