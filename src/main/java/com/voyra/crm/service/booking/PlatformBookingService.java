@@ -104,6 +104,7 @@ public class PlatformBookingService {
     private static final String GST_REQUIRED = "gstRequired";
     private static final String SEAT_APPLICABLE = "seatApplicable";
     private static final String SEAT_MANDATORY = "seatMandatory";
+    private static final String SEAT_FREE_ONLY_MANDATORY = "seatFreeOnlyMandatory";
     private static final String SEAT_CATALOG = "seatCatalog";
     static final String SEAT_TOTAL = "seatTotal";
     private static final String AIR_GROSS = "airGross";
@@ -422,6 +423,9 @@ public class PlatformBookingService {
         if (fc.seatMandatory()) {
             booking.getPricingSnapshot().put(SEAT_MANDATORY, true);
         }
+        if (fc.freeSeatOnlyMandatory()) {
+            booking.getPricingSnapshot().put(SEAT_FREE_ONLY_MANDATORY, true);
+        }
         tx.executeWithoutResult(s -> {
             bookingRepository.save(booking);
             events.record(booking.getId(), "REVIEWED", Map.of("displayed", booking.getDisplayed(), "pricingId", quote.pricingId()));
@@ -476,6 +480,13 @@ public class PlatformBookingService {
         boolean mandatory = Boolean.TRUE.equals(b.getPricingSnapshot().get(SEAT_MANDATORY));
         FlightSeatMapResponse response = registry.flightBooking(supplier.provider())
                 .seatMap(bookingId, b.getSupplierReviewId(), b.getItinerary(), mandatory, supplier);
+        if (response.isSeatMandatory() && Boolean.TRUE.equals(b.getPricingSnapshot().get(SEAT_FREE_ONLY_MANDATORY))) {
+            boolean anyFree = response.getSegments().stream()
+                    .anyMatch(seg -> seg.getSeats().stream().anyMatch(o -> !o.isBooked() && o.getAmount().signum() == 0));
+            if (!anyFree) {
+                response.setSeatMandatory(false);
+            }
+        }
         Map<String, Map<String, Map<String, Object>>> catalog = toSeatCatalog(response);
         tx.executeWithoutResult(s -> bookingRepository.findByIdForUpdate(bookingId)
                 .filter(row -> row.getStatus() == PlatformBookingStatus.REVIEWING)
@@ -999,7 +1010,7 @@ public class PlatformBookingService {
         snapshot.put("agencyEarns", q.agencyEarns());
         for (String kept : List.of(PAX_MIX, TRAVEL_DATE, FARE_CATEGORY, DOCUMENT_ID_REQUIRED, PAN_REQUIRED, PASSPORT_REQUIRED,
                 PASSPORT_EXPIRY_REQUIRED, ADULT_DOB_REQUIRED, EMERGENCY_CONTACT_REQUIRED, GST_REQUIRED,
-                SEAT_APPLICABLE, SEAT_MANDATORY, SEAT_CATALOG, AIR_GROSS)) {
+                SEAT_APPLICABLE, SEAT_MANDATORY, SEAT_FREE_ONLY_MANDATORY, SEAT_CATALOG, AIR_GROSS)) {
             if (previous.get(kept) != null) {
                 snapshot.put(kept, previous.get(kept));
             }

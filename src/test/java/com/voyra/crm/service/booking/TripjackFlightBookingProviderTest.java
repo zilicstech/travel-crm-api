@@ -189,14 +189,25 @@ class TripjackFlightBookingProviderTest {
     }
 
     @Test
-    void restClientBuilderQualifierReachesTheConstructors() {
-        for (Class<?> c : List.of(TripjackFlightBookingProvider.class, com.voyra.crm.service.tripjack.TripjackFlightSearchProvider.class)) {
+    void restClientBuilderQualifierReachesTheConstructors() throws Exception {
+        for (Class<?> c : List.of(TripjackFlightBookingProvider.class, TripjackHotelBookingProvider.class,
+                com.voyra.crm.service.tripjack.TripjackFlightSearchProvider.class,
+                com.voyra.crm.service.tripjack.TripjackHotelSearchProvider.class)) {
             var ctor = c.getDeclaredConstructors()[0];
-            var q = java.util.Arrays.stream(ctor.getParameters()).filter(p -> p.getType() == RestClient.Builder.class)
-                    .findFirst().orElseThrow().getAnnotation(org.springframework.beans.factory.annotation.Qualifier.class);
-            assertThat(q).as(c.getSimpleName()).isNotNull();
-            assertThat(q.value()).isEqualTo("tripjackRestClientBuilder");
+            for (var p : ctor.getParameters()) {
+                if (p.getType() == RestClient.Builder.class) {
+                    var q = p.getAnnotation(org.springframework.beans.factory.annotation.Qualifier.class);
+                    assertThat(q).as(c.getSimpleName() + "." + p.getName()).isNotNull();
+                    assertThat(q.value()).isNotBlank();
+                }
+            }
         }
+        assertThat(java.nio.file.Files.readString(java.nio.file.Path.of("Dockerfile"))).contains("lombok.config");
+        var issiOnly = new com.fasterxml.jackson.databind.ObjectMapper()
+                .readTree("{\"isa\":true,\"ifsm\":false,\"fsc\":{\"issi\":true}}");
+        FlightCompliance fc = TripjackFlightBookingProvider.flightCompliance(issiOnly);
+        assertThat(fc.seatMandatory()).isTrue();
+        assertThat(fc.freeSeatOnlyMandatory()).isTrue();
     }
 
     @Test

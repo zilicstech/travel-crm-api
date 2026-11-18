@@ -1,7 +1,7 @@
 FROM eclipse-temurin:17-jdk-alpine AS build
 WORKDIR /app
 COPY .mvn/ .mvn/
-COPY mvnw pom.xml ./
+COPY mvnw pom.xml lombok.config ./
 RUN ./mvnw -B dependency:go-offline
 COPY src ./src
 RUN ./mvnw -B package -DskipTests

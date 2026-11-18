@@ -121,12 +121,17 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
 
     /**
      * Parses Tripjack Air Review {@code conditions}: {@code isa} = seat map applicable, {@code ifsm || fsc.issi} = seat
-     * selection mandatory (live 2026-11-18: IndiGo bundled fares set {@code fsc.issi=true} and fail book with 8038 without seats).
+     * selection mandatory (live 2026-11-18: IndiGo bundled fares set {@code fsc.issi=true} with ₹0 seats and fail book
+     * with 8038 without seats, whereas unbundled Saver fares set {@code ifsm=false, fsc.issi=true} with only paid seats
+     * and ticket without seats).
      */
     static FlightCompliance flightCompliance(JsonNode c) {
+        boolean ifsm = c.path("ifsm").asBoolean(false);
+        boolean issi = c.path("fsc").path("issi").asBoolean(false);
         return new FlightCompliance(
                 c.path("isa").asBoolean(false),
-                c.path("ifsm").asBoolean(false) || c.path("fsc").path("issi").asBoolean(false),
+                ifsm || issi,
+                !ifsm && issi,
                 c.path("dc").path("idm").asBoolean(false),
                 c.path("ipa").asBoolean(false),
                 c.path("pcs").path("pm").asBoolean(false),

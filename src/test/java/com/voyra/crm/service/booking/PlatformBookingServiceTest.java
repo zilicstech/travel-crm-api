@@ -2626,4 +2626,41 @@ class PlatformBookingServiceTest {
         assertThat(out.getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
         verify(provider, times(2)).bookingDetails(eq("SB-2"), any());
     }
+
+    @Test
+    void freeSeatOnlyMandatoryRelaxesOnSaverFaresWithoutFreeSeatsButStaysMandatoryWhenFreeSeatsExist() {
+        var fc = new com.voyra.crm.models.booking.FlightCompliance(
+                true, true, true, false, false, false, false, false, false, false);
+        when(provider.review(any(FlightReviewRequest.class), any())).thenReturn(new FareReview(
+                "rv-issi", new BigDecimal("5000.00"), new BigDecimal("4250.00"), "INR", "Rules",
+                Instant.now().plusSeconds(1800), null, null, null, false,
+                com.voyra.crm.models.booking.HotelCompliance.NONE, fc));
+
+        String bundledId = service.review(reviewRequest()).getBookingId();
+        lenient().when(bookingRepository.findByIdAndTenantId(bundledId, T)).thenAnswer(i -> Optional.ofNullable(rows.get(bundledId)));
+        when(provider.seatMap(eq(bundledId), eq("rv-issi"), any(), eq(true), any())).thenReturn(
+                com.voyra.crm.dto.FlightSeatMapResponse.builder().bookingId(bundledId).seatMandatory(true).segments(List.of(
+                        com.voyra.crm.dto.SegmentSeatMapResponse.builder().segmentKey("SEG-1").seats(List.of(
+                                com.voyra.crm.dto.SeatOptionResponse.builder().code("4A").seatNo("4A").amount(BigDecimal.ZERO).booked(false).build()))
+                                .build())).build());
+        assertThat(service.seatMap(bundledId).isSeatMandatory()).isTrue();
+
+        String naId = service.review(reviewRequest()).getBookingId();
+        lenient().when(bookingRepository.findByIdAndTenantId(naId, T)).thenAnswer(i -> Optional.ofNullable(rows.get(naId)));
+        when(provider.seatMap(eq(naId), eq("rv-issi"), any(), eq(true), any())).thenReturn(
+                com.voyra.crm.dto.FlightSeatMapResponse.builder().bookingId(naId).seatMandatory(false).segments(List.of()).build());
+        assertThat(service.seatMap(naId).isSeatMandatory()).isFalse();
+
+        String saverId = service.review(reviewRequest()).getBookingId();
+        lenient().when(bookingRepository.findByIdAndTenantId(saverId, T)).thenAnswer(i -> Optional.ofNullable(rows.get(saverId)));
+        when(provider.seatMap(eq(saverId), eq("rv-issi"), any(), eq(true), any())).thenReturn(
+                com.voyra.crm.dto.FlightSeatMapResponse.builder().bookingId(saverId).seatMandatory(true).segments(List.of(
+                        com.voyra.crm.dto.SegmentSeatMapResponse.builder().segmentKey("SEG-1").seats(List.of(
+                                com.voyra.crm.dto.SeatOptionResponse.builder().code("1A").seatNo("1A").amount(new BigDecimal("350.00")).booked(false).build(),
+                                com.voyra.crm.dto.SeatOptionResponse.builder().code("20B").seatNo("20B").amount(BigDecimal.ZERO).booked(true).build()))
+                                .build())).build());
+        assertThat(service.seatMap(saverId).isSeatMandatory()).isFalse();
+        assertThat(rows.get(saverId).getPricingSnapshot()).containsEntry("seatMandatory", false);
+        assertThat(service.confirm(saverId, confirmRequest("k-saver", "4500.00")).getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
+    }
 }
