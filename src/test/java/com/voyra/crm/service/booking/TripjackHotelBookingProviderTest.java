@@ -322,11 +322,13 @@ class TripjackHotelBookingProviderTest {
         server.expect(requestTo(BOOKER + "/oms/v3/hotel/booking-details")).andRespond(withSuccess(
                 "{\"status\":{\"success\":false},\"error\":{\"message\":\" \"}}", MediaType.APPLICATION_JSON));
         server.expect(requestTo(BOOKER + "/oms/v3/hotel/booking-details")).andRespond(withSuccess("", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(BOOKER + "/oms/v3/hotel/booking-details")).andRespond(withSuccess("  ", MediaType.APPLICATION_JSON));
         server.expect(requestTo(BOOKER + "/oms/v3/hotel/booking-details")).andRespond(withSuccess(OK + "}", MediaType.APPLICATION_JSON));
         BookResult unsuccessful = provider.bookingDetails("TJ1", ROW);
         assertThat(unsuccessful.status()).isEqualTo(SupplierBookingStatus.PENDING);
         assertThat(unsuccessful.message()).isNull();
         assertThat(provider.bookingDetails("TJ1", ROW).message()).isNull();
+        assertThat(provider.bookingDetails("TJ1", ROW).status()).isEqualTo(SupplierBookingStatus.PENDING); // whitespace only
         BookResult nothing = provider.bookingDetails("TJ1", ROW);
         assertThat(nothing.pnr()).isNull();
         assertThat(nothing.message()).isNull();

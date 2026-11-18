@@ -483,6 +483,53 @@ class PlatformBookingPollerTest {
         return b;
     }
 
+    /** A ticketed Tripjack row with an open cancellation request raised {@code hoursAgo} hours ago. */
+    private com.voyra.crm.entity.PlatformCancelRequest openRequest(String requestId, String bookingId, long hoursAgo) {
+        return com.voyra.crm.entity.PlatformCancelRequest.builder().id(requestId).platformBookingId(bookingId)
+                .createdAt(Instant.now().minus(hoursAgo, ChronoUnit.HOURS)).build();
+    }
+
+    private PlatformBooking ticketedTripjack(String id, PlatformBookingStatus status) {
+        PlatformBooking b = bookingRow(id, Instant.now().minus(3, ChronoUnit.DAYS));
+        b.setStatus(status);
+        b.setCredentialId(BookingSuppliers.TJ_UAT.id());
+        b.setEnvironment(SupplierEnvironment.UAT);
+        return b;
+    }
+
+    /** A request completed by hand can be forgotten: one the supplier already shows cancelled raises one alert, asked at most every 10 minutes. */
+    @Test
+    void anOpenRequestTheSupplierAlreadyCancelledRaisesOneAlert() {
+        ticketedTripjack("K1", PlatformBookingStatus.TICKETED).setSupplierBookingId("SB-K1");
+        ticketedTripjack("K2", PlatformBookingStatus.TICKETED); // no supplier booking id: asked by review id
+        savedEvents.add(PlatformBookingEvent.builder().id("E-OLD").platformBookingId("K2").type(PlatformBookingPoller.SUPPLIER_CANCELLED)
+                .payload(Map.of("requestId", "AN-OLDER-ONE")).createdAt(Instant.now().minus(1, ChronoUnit.DAYS)).build());
+        ticketedTripjack("K3", PlatformBookingStatus.TICKETED).setSupplierBookingId("SB-K3");
+        ticketedTripjack("K4", PlatformBookingStatus.CANCELLED);
+        ticketedTripjack("K7", PlatformBookingStatus.TICKETED).setCredentialId("no-such-supplier");
+        when(cancelRequestRepository.findByStatusIn(com.voyra.crm.enums.CancelRequestStatus.ACTIVE)).thenReturn(List.of(
+                openRequest("R1", "K1", 3), openRequest("R2", "K2", 3), openRequest("R3", "K3", 3), openRequest("R4", "K4", 3),
+                openRequest("R5", "GONE", 3), openRequest("R6", "K1", 1), openRequest("R7", "K7", 3)));
+        lenient().when(bookingRepository.findById(anyString())).thenAnswer(i -> Optional.ofNullable(rows.get(i.<String>getArgument(0))));
+        when(tripjack.bookingDetails(eq("SB-K1"), any())).thenReturn(new BookResult("SB-K1", SupplierBookingStatus.CANCELLED, "P", List.of(), "CANCELLED", null));
+        when(tripjack.bookingDetails(eq("rv-K2"), any())).thenReturn(new BookResult("SB-K2", SupplierBookingStatus.TICKETED, "P", List.of(), "SUCCESS", null));
+        when(tripjack.bookingDetails(eq("SB-K3"), any())).thenThrow(new IllegalStateException("supplier down"));
+
+        poller.poll();
+
+        verify(notificationService, times(1)).platformAlert(eq("Cancellation request R1 is cancelled at the supplier but not completed"), anyString());
+        verify(tripjack, never()).bookingDetails(eq("SB-K7"), any());
+        assertThat(rows.get("K1").getLastPolledAt()).isNotNull();
+        assertThat(rows.get("K3").getLastPolledAt()).isNotNull(); // a failed ask still waits its turn
+
+        poller.poll(); // asked within the last 10 minutes: not asked again
+        rows.values().forEach(b -> b.setLastPolledAt(Instant.now().minus(11, ChronoUnit.MINUTES)));
+        poller.poll(); // due again, but R1 already raised its alert, so it is not asked
+        verify(tripjack, times(1)).bookingDetails(eq("SB-K1"), any());
+        verify(tripjack, times(2)).bookingDetails(eq("rv-K2"), any()); // an alert for an older request does not stop the check
+        verify(notificationService, times(1)).platformAlert(eq("Cancellation request R1 is cancelled at the supplier but not completed"), anyString());
+    }
+
     /** Readiness: an accepted Tripjack amendment posts the refund only once bookingDetails says the booking is cancelled. */
     @Test
     void anAcceptedTripjackCancelSettlesWhenTheSupplierShowsItCancelled() {

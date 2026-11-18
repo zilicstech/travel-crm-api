@@ -59,6 +59,10 @@ class LoggingNotificationServiceTest {
         service.bookingTicketed(booking);
         service.bookingFailed(booking);
         service.bookingCancelled(booking, true);
+        com.voyra.crm.entity.PlatformCancelRequest request = com.voyra.crm.entity.PlatformCancelRequest.builder().id("CR1").build();
+        service.cancelRequestRaised(booking, request, "Sky Tours");
+        service.cancelRequestCompleted(booking, request, BigDecimal.TEN);
+        service.cancelRequestRejected(booking, request);
 
         assertThat(appender.list).extracting(ILoggingEvent::getFormattedMessage).containsExactly(
                 "SMTP_HOST is not set - notifications are logged only, no email is sent",
@@ -73,7 +77,10 @@ class LoggingNotificationServiceTest {
                 "Application approved - application: APP1, tenantId: T1",
                 "Booking ticketed - booking: PB1, tenantId: T1",
                 "Booking failed - booking: PB1, tenantId: T1",
-                "Booking cancelled - booking: PB1, tenantId: T1");
+                "Booking cancelled - booking: PB1, tenantId: T1",
+                "Cancellation request raised - request: CR1, booking: PB1, tenantId: T1",
+                "Cancellation request completed - request: CR1, booking: PB1, tenantId: T1",
+                "Cancellation request declined - request: CR1, booking: PB1, tenantId: T1");
         assertThat(appender.list).noneMatch(e -> e.getFormattedMessage().contains("secret-token"));
     }
 }

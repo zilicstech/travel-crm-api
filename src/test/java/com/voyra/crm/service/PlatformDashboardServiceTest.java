@@ -97,4 +97,65 @@ class PlatformDashboardServiceTest {
 
         assertThat(service.dashboard().getWalletFloat()).isEqualByComparingTo("0");
     }
+
+    @Test
+    void pendingTasksPutCancellationRequestsFirstSoonestTravelFirstThenTheOtherQueuesOldestFirst() {
+        java.time.Instant t0 = java.time.Instant.parse("2026-11-01T00:00:00Z");
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Kolkata"));
+        java.util.function.BiFunction<String, String, com.voyra.crm.entity.PlatformCancelRequest> request = (id, booking) ->
+                com.voyra.crm.entity.PlatformCancelRequest.builder().id(id).platformBookingId(booking).tenantId(id.equals("R2") ? "T9" : "T1")
+                        .reason(com.voyra.crm.enums.CancelReason.NO_SHOW).createdAt(t0.plusSeconds(id.hashCode() % 100)).build();
+        when(cancelRequestRepository.findByStatusIn(com.voyra.crm.enums.CancelRequestStatus.ACTIVE)).thenReturn(List.of(
+                request.apply("R1", "B1"), request.apply("R2", "GONE"), request.apply("R3", "B3"), request.apply("R4", "B4")));
+        when(bookingRepository.findAllById(any())).thenReturn(List.of(
+                com.voyra.crm.entity.PlatformBooking.builder().id("B1").product(com.voyra.crm.enums.PricingProduct.FLIGHT).pnr("P1")
+                        .pricingSnapshot(new java.util.HashMap<>(java.util.Map.of("travelDate", today.plusDays(1).toString()))).build(),
+                com.voyra.crm.entity.PlatformBooking.builder().id("B3").product(com.voyra.crm.enums.PricingProduct.HOTEL).pnr("HC3")
+                        .itinerary(java.util.Map.of("stay", java.util.Map.of("checkIn", today.plusDays(20).toString()))).build(),
+                com.voyra.crm.entity.PlatformBooking.builder().id("B4").product(com.voyra.crm.enums.PricingProduct.FLIGHT).build()));
+        when(bookingRepository.findByStatusIn(Set.of(PlatformBookingStatus.CANCELLING, PlatformBookingStatus.UNKNOWN))).thenReturn(List.of(
+                com.voyra.crm.entity.PlatformBooking.builder().id("S1").tenantId("T1").status(PlatformBookingStatus.CANCELLING).pnr("PX").createdAt(t0.plusSeconds(30)).build(),
+                com.voyra.crm.entity.PlatformBooking.builder().id("S2").tenantId("T1").status(PlatformBookingStatus.UNKNOWN).createdAt(t0.plusSeconds(10)).build()));
+        when(tenantRepository.findAllById(any())).thenReturn(List.of(com.voyra.crm.entity.Tenant.builder().id("T1").agencyName("Sky Tours").build()));
+        when(applicationRepository.findByStatusIn(Set.of(ApplicationStatus.SUBMITTED, ApplicationStatus.UNDER_REVIEW))).thenReturn(List.of(
+                com.voyra.crm.entity.AgencyApplication.builder().id("A1").agencyName("New Air").status(ApplicationStatus.UNDER_REVIEW).createdAt(t0.plusSeconds(5)).build(),
+                com.voyra.crm.entity.AgencyApplication.builder().id("A2").agencyName("Fly Co").status(ApplicationStatus.SUBMITTED)
+                        .createdAt(t0).submittedAt(t0.plusSeconds(20)).build()));
+        when(topupRepository.findByStatusOrderByCreatedAtDesc(TopupStatus.PENDING)).thenReturn(List.of(
+                com.voyra.crm.entity.TopupRequest.builder().id("TU1").mode(TopupMode.BANK_TRANSFER).amount(new BigDecimal("5000")).build(),
+                com.voyra.crm.entity.TopupRequest.builder().id("TU2").mode(TopupMode.GATEWAY).amount(BigDecimal.ONE).createdAt(t0).build()));
+
+        PlatformDashboardResponse d = service.dashboard();
+
+        assertThat(d.getPendingTasks()).extracting(PlatformDashboardResponse.PendingTask::href).containsExactly(
+                "/platform/cancellations/R1", "/platform/cancellations/R3", "/platform/cancellations/R2", "/platform/cancellations/R4",
+                "/platform/applications/A1", "/platform/bookings/S2", "/platform/applications/A2", "/platform/bookings/S1", "/platform/topups");
+        PlatformDashboardResponse.PendingTask soon = d.getPendingTasks().get(0);
+        assertThat(soon.title()).isEqualTo("Cancellation request - Sky Tours");
+        assertThat(soon.subtitle()).isEqualTo("Passenger no-show · PNR P1");
+        assertThat(soon.urgent()).isTrue();
+        assertThat(d.getPendingTasks().get(1).subtitle()).isEqualTo("Passenger no-show · Confirmation HC3");
+        assertThat(d.getPendingTasks().get(1).urgent()).isFalse();
+        assertThat(d.getPendingTasks().get(2).title()).isEqualTo("Cancellation request - T9"); // an unknown agency shows its id
+        assertThat(d.getPendingTasks().get(2).dueAt()).isNull();
+        assertThat(d.getPendingTasks().get(3).subtitle()).isEqualTo("Passenger no-show");
+        assertThat(d.getPendingTasks()).filteredOn(t -> t.kind().equals("UNKNOWN_BOOKING")).singleElement()
+                .satisfies(t -> assertThat(t.subtitle()).isEqualTo("S2"));
+        assertThat(d.getPendingTasks()).filteredOn(t -> t.kind().equals("CANCELLING")).singleElement()
+                .satisfies(t -> assertThat(t.title()).isEqualTo("Cancellation awaiting the supplier - Sky Tours"));
+        assertThat(d.getPendingTasks()).filteredOn(t -> t.kind().equals("KYC")).extracting(PlatformDashboardResponse.PendingTask::subtitle)
+                .containsExactly("under review", "submitted");
+        assertThat(d.getPendingTaskTotal()).isEqualTo(9);
+    }
+
+    @Test
+    void theWorkListShowsAtMostTwentyTasks() {
+        java.util.List<com.voyra.crm.entity.TopupRequest> many = java.util.stream.IntStream.range(0, 23).mapToObj(i ->
+                com.voyra.crm.entity.TopupRequest.builder().id("TU" + i).mode(TopupMode.BANK_TRANSFER).amount(BigDecimal.TEN)
+                        .createdAt(java.time.Instant.EPOCH.plusSeconds(i)).build()).toList();
+        when(topupRepository.findByStatusOrderByCreatedAtDesc(TopupStatus.PENDING)).thenReturn(many);
+        PlatformDashboardResponse d = service.dashboard();
+        assertThat(d.getPendingTasks()).hasSize(20);
+        assertThat(d.getPendingTaskTotal()).isEqualTo(23);
+    }
 }

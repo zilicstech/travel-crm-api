@@ -79,11 +79,13 @@ class PlatformBookingTicketServiceTest {
     private final List<PlatformBookingTicket> saved = new ArrayList<>();
     private PlatformBookingTicketService service;
 
+    private final com.voyra.crm.repository.PlatformCancelRequestRepository cancelRequests = org.mockito.Mockito.mock(com.voyra.crm.repository.PlatformCancelRequestRepository.class);
+
     @BeforeEach
     void setUp() {
         service = new PlatformBookingTicketService(new PlatformBookingQueryService(bookings, events, tenants, agents, clients, paxCodec, objectMapper, tickets, null, org.mockito.Mockito.mock(com.voyra.crm.repository.PlatformCancelRequestRepository.class)),
                 bookings, tickets, tenants, authorResolver, logoLoader, paxCodec, objectMapper,
-                new com.voyra.crm.service.EntitlementService(subscriptions, transactionManager), mirrorService, transactionManager, crmBookings, org.mockito.Mockito.mock(com.voyra.crm.repository.PlatformCancelRequestRepository.class));
+                new com.voyra.crm.service.EntitlementService(subscriptions, transactionManager), mirrorService, transactionManager, crmBookings, cancelRequests);
         com.voyra.crm.cache.TenantCache.remove("T1");
     }
 
@@ -472,6 +474,15 @@ class PlatformBookingTicketServiceTest {
                         org.assertj.core.groups.Tuple.tuple("Mr Rahul Sharma", "BOM-DEL", "P2", "T02"),
                         org.assertj.core.groups.Tuple.tuple("Asha Rao", "DEL-BOM", "P-1", "T11"),
                         org.assertj.core.groups.Tuple.tuple("Asha Rao", "BOM-DEL", "P-1 / P2", "-"));
+
+        // Asha's return cancelled through a request: the ticket leaves that line out
+        org.mockito.Mockito.when(cancelRequests.findByPlatformBookingIdOrderByCreatedAtAsc("B1")).thenReturn(List.of(
+                com.voyra.crm.entity.PlatformCancelRequest.builder().status(com.voyra.crm.enums.CancelRequestStatus.COMPLETED)
+                        .passengers(List.of(1)).sectors(List.of(Map.of("key", "d1", "label", "BOM-DEL"))).build()));
+        ETicketPdfRenderer.ETicketData after = rendered(() -> service.pdf("B1", t.getId()));
+        assertThat(after.passengers()).extracting(ETicketPdfRenderer.PaxRow::name, ETicketPdfRenderer.PaxRow::sector)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("Mr Rahul Sharma", "DEL-BOM"), org.assertj.core.groups.Tuple.tuple("Mr Rahul Sharma", "BOM-DEL"),
+                        org.assertj.core.groups.Tuple.tuple("Asha Rao", "DEL-BOM"));
     }
 
     /** An admin-resolved round trip has no ticket_details: every row prints the booking's PNR, never a positional ticket number. */

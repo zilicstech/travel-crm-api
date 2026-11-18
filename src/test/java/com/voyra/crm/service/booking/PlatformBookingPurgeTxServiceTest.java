@@ -45,11 +45,12 @@ class PlatformBookingPurgeTxServiceTest {
     @Mock private com.voyra.crm.service.NotificationService notifications;
 
     private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
+    private final com.voyra.crm.repository.PlatformCancelRequestRepository cancelRequests = org.mockito.Mockito.mock(com.voyra.crm.repository.PlatformCancelRequestRepository.class);
 
     private PlatformBookingPurgeTxService service() {
         PaxCodec codec = new PaxCodec(objectMapper, "dGVzdC1vbmx5LWFlcy1rZXktMzItYnl0ZXMtbG9uZyE=");
         PlatformBookingQueryService query = new PlatformBookingQueryService(bookings, events, null, null, null, codec, objectMapper, null, null, org.mockito.Mockito.mock(com.voyra.crm.repository.PlatformCancelRequestRepository.class));
-        return new PlatformBookingPurgeTxService(bookings, events, query, recorder, notifications, org.mockito.Mockito.mock(com.voyra.crm.repository.PlatformCancelRequestRepository.class));
+        return new PlatformBookingPurgeTxService(bookings, events, query, recorder, notifications, cancelRequests);
     }
 
     private static Instant daysAgo(long d) {
@@ -97,6 +98,17 @@ class PlatformBookingPurgeTxServiceTest {
 
         assertThat(service().purge("b1", NOW, DAYS)).isNotEqualTo(PurgeOutcome.PURGED);
         assertThat(b.getPaxEnc()).isEqualTo("CIPHER");
+    }
+
+    @Test
+    void aBookingWithACancellationRequestUnderReviewKeepsItsPassengers() {
+        PlatformBooking b = booking(PlatformBookingStatus.TICKETED, daysAgo(400));
+        b.setItinerary(flightOn(LocalDate.of(2026, 12, 1).minusDays(DAYS + 2)));
+        given(bookings.findByIdForUpdate("b1")).willReturn(Optional.of(b));
+        org.mockito.Mockito.when(cancelRequests.existsByPlatformBookingIdAndStatusIn("b1", com.voyra.crm.enums.CancelRequestStatus.ACTIVE)).thenReturn(true);
+
+        assertThat(service().purge("b1", NOW, DAYS)).isEqualTo(PurgeOutcome.NOT_DUE);
+        assertThat(b.getPaxEnc()).isNotNull();
     }
 
     @Test

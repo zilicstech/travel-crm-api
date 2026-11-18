@@ -535,9 +535,10 @@ class PlatformCancelRequestServiceTest {
         assertThat(detail.prefill().recall()).isEqualByComparingTo("0.00"); // no commission on record
 
         service.complete(id, new CancelRequestCompleteRequest(CancelReason.HOTEL_ASKED_TO_CANCEL, null, null, new BigDecimal("6000.00"),
-                BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, null, null, false));
+                BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, "  ", null, false));
 
         assertThat(booking.getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
+        assertThat(rows.values().iterator().next().getSupplierReference()).isNull(); // a blank reference is none
         assertThat(booking.getCancelRefund()).isEqualByComparingTo("6000.00");
     }
 
@@ -551,6 +552,65 @@ class PlatformCancelRequestServiceTest {
         rows.get(id).setStatus(CancelRequestStatus.REJECTED);
         assertThat(service.adminGet(id).prefill()).isNull();
         assertThat(service.adminGet(id).urgent()).isFalse();
+    }
+
+    // ---- edges
+
+    @Test
+    void aCompletionLeftHalfWayStillFinishesAfterTheBookingWentCancelled() {
+        String id = raiseId(CancelReason.TRAVEL_PLAN_CANCELLED, List.of(0, 1), List.of());
+        keep(PlatformCancelRequest.builder().id("OLD").platformBookingId(ID).tenantId(T).status(CancelRequestStatus.WITHDRAWN)
+                .reason(CancelReason.NO_SHOW).passengers(List.of(0)).sectors(List.of()).createdAt(Instant.EPOCH).build());
+        loginAs("SA1", UserType.SUPER_ADMIN);
+        doThrow(new IllegalStateException("wallet down")).when(bookingService).postCancelMoney(any(), any(), any(), anyString());
+        CancelRequestCompleteRequest figures = complete(List.of(0, 1), List.of(), "1000.00", "10.00", true);
+        assertThatThrownBy(() -> service.complete(id, figures)).hasMessage("wallet down");
+        booking.setStatus(PlatformBookingStatus.CANCELLED); // e.g. the whole cancel landed before the crash
+
+        org.mockito.Mockito.doReturn(true).when(bookingService).postCancelMoney(any(), any(), any(), anyString());
+        assertThat(service.complete(id, figures).request().status()).isEqualTo(CancelRequestStatus.COMPLETED);
+    }
+
+    @Test
+    void anUnknownBookingOrARequestOfAnotherBookingIsNotFound() {
+        keep(PlatformCancelRequest.builder().id("STRAY").platformBookingId("NOPE").tenantId(T).status(CancelRequestStatus.OPEN)
+                .reason(CancelReason.NO_SHOW).passengers(List.of(0)).sectors(List.of()).createdAt(Instant.EPOCH).build());
+        when(bookings.findByIdForUpdate("NOPE")).thenReturn(Optional.empty());
+        loginAs("SA1", UserType.SUPER_ADMIN);
+        assertThatThrownBy(() -> service.start("STRAY")).isInstanceOf(com.voyra.crm.exception.NotFoundException.class).hasMessage("Booking not found");
+        loginAs("U1", UserType.AGENT);
+        assertThatThrownBy(() -> service.agencyFile(ID, "STRAY", "F1")).isInstanceOf(com.voyra.crm.exception.NotFoundException.class)
+                .hasMessage("Cancellation request not found");
+    }
+
+    @Test
+    void oddFilesAndRecordsAreHandled() {
+        // a null part is ignored; a part with no file name is not a PDF or an image
+        MultipartFile nameless = mock(MultipartFile.class);
+        when(nameless.getOriginalFilename()).thenReturn(null);
+        when(nameless.getSize()).thenReturn(10L);
+        assertThatThrownBy(() -> service.create(ID, new CancelRequestCreateRequest(CancelReason.TRAVEL_PLAN_CANCELLED, List.of(0), List.of(), null),
+                java.util.Arrays.asList(null, nameless))).extracting("code").isEqualTo("FILE_TYPE");
+
+        // blank remarks are none; a journey without a date; a proof file whose content was purged
+        booking.setItinerary(Map.of("sI", List.of(Map.of("da", Map.of("code", "DEL"), "aa", Map.of("code", "BOM")))));
+        CancelRequestResponse r = service.create(ID, new CancelRequestCreateRequest(CancelReason.TRAVEL_PLAN_CANCELLED, List.of(0), List.of("d0"), "   "),
+                java.util.Arrays.asList(null, file("ticket.pdf", PDF)));
+        assertThat(r.remarks()).isNull();
+        stored.values().forEach(f -> f.setFileKey(null));
+        CancelRequestResponse listed = service.list(ID).get(0);
+        assertThat(listed.sectors()).singleElement().satisfies(s -> assertThat(s.date()).isNull());
+        assertThat(listed.files()).singleElement().satisfies(f -> assertThat(f.name()).isNull());
+    }
+
+    @Test
+    void passengersThatCannotBeReadCountAsNone() {
+        booking = hotel().toBuilder().paxCount(null).paxEnc(paxCodec.encrypt(Map.of("other", 1))).itinerary(Map.of()).build();
+        String id = service.create(ID, new CancelRequestCreateRequest(CancelReason.HOTEL_OTHER, null, null, "Guest asked"), null).id();
+        loginAs("SA1", UserType.SUPER_ADMIN);
+        AdminCancelRequestResponse detail = service.adminGet(id);
+        assertThat(detail.urgent()).isFalse(); // no travel date on record
+        assertThat(detail.request().passengers()).isEmpty();
     }
 
     // ---- purge, travel date

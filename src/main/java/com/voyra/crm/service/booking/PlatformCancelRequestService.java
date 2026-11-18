@@ -308,7 +308,7 @@ public class PlatformCancelRequestService {
             }
             return r;
         }
-        Caps caps = caps(b, sel, r.getId());
+        Caps caps = caps(b, sel);
         if (refund.compareTo(caps.hardCap()) > 0) {
             throw new BookingRequestException("REFUND_TOO_HIGH", "The refund can be at most ₹" + caps.hardCap() + " (what the agency paid less refunds already given)");
         }
@@ -448,10 +448,10 @@ public class PlatformCancelRequestService {
         return new Selection(passengers.stream().sorted().toList(), chosen);
     }
 
-    /** Share of the fare, refund caps and commission left, counting only completed requests other than {@code self}. */
-    private Caps caps(PlatformBooking b, Selection sel, String self) {
+    /** Share of the fare, refund caps and commission left, counting completed requests (the one being completed is not one yet). */
+    private Caps caps(PlatformBooking b, Selection sel) {
         List<PlatformCancelRequest> done = requestRepository.findByPlatformBookingIdOrderByCreatedAtAsc(b.getId()).stream()
-                .filter(x -> x.getStatus() == CancelRequestStatus.COMPLETED && !x.getId().equals(self)).toList();
+                .filter(x -> x.getStatus() == CancelRequestStatus.COMPLETED).toList();
         BigDecimal refunded = done.stream().map(PlatformCancelRequest::getRefund).reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal recalled = done.stream().map(PlatformCancelRequest::getRecall).reduce(BigDecimal.ZERO, BigDecimal::add);
         List<String> types = paxTypes(b);
@@ -613,7 +613,7 @@ public class PlatformCancelRequestService {
                 && !LocalDate.parse(travelDate).isAfter(today.plusDays(1));
         AdminCancelRequestResponse.Prefill prefill = null;
         if (detail && CancelRequestStatus.ACTIVE.contains(r.getStatus()) && b.getStatus() == PlatformBookingStatus.TICKETED) {
-            Caps caps = caps(b, new Selection(r.getPassengers(), r.getSectors()), r.getId());
+            Caps caps = caps(b, new Selection(r.getPassengers(), r.getSectors()));
             prefill = new AdminCancelRequestResponse.Prefill(caps.share(), caps.softCap(), caps.hardCap(), caps.remainingRecall(),
                     caps.recall(), settings.voyraCancelFee());
         }

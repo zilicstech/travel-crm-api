@@ -113,6 +113,9 @@ class CancelPartsTest {
         // a type with no usable fare (CHILD 0) weighs 1, like any type on an itinerary without fares
         assertThat(CancelParts.share(flight(Map.of()), List.of(0), List.of(), List.of("ADULT", "ADULT"), 0)).isEqualByComparingTo("0.5");
         assertThat(CancelParts.share(b, List.of(0), List.of(), List.of("CHILD", "CHILD"), 2)).isEqualByComparingTo("0.5");
+        // a type whose fare is missing or not a number weighs 1 too
+        PlatformBooking noFare = flight(Map.of("totalPriceList", List.of(Map.of("fd", Map.of("ADULT", Map.of("fC", Map.of("TF", "n/a")), "CHILD", Map.of("fC", Map.of()))))));
+        assertThat(CancelParts.share(noFare, List.of(0), List.of(), List.of("ADULT", "CHILD"), 0)).isEqualByComparingTo("0.5");
         // nothing to weigh (no passengers on record) counts as the whole fare
         assertThat(CancelParts.share(flight(null), List.of(), List.of(), List.of(), 1)).isEqualByComparingTo(BigDecimal.ONE);
     }

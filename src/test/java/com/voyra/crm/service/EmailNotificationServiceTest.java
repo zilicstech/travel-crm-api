@@ -287,4 +287,25 @@ class EmailNotificationServiceTest {
 
         assertThatCode(() -> service.lowBalance("T1", BigDecimal.ONE)).doesNotThrowAnyException();
     }
+
+    @Test
+    void cancellationRequestsGoToThePlatformAdminsAndOutcomesToTheBooker() {
+        given(platformAdminRepository.findByIsActiveTrue()).willReturn(List.of(PlatformAdmin.builder().id("A1").email("root@voyra.test").build()));
+        com.voyra.crm.entity.PlatformCancelRequest r = com.voyra.crm.entity.PlatformCancelRequest.builder().id("CR1")
+                .reason(com.voyra.crm.enums.CancelReason.NO_SHOW).finalReason(com.voyra.crm.enums.CancelReason.VOID_SAME_DAY)
+                .passengers(List.of(0, 1)).refund(new BigDecimal("700")).adminNote("Voided").build();
+
+        service.cancelRequestRaised(booking("T1", PlatformBookingStatus.TICKETED), r, "Sky Tours");
+        assertThat(queued(NotificationKind.CANCEL_REQUEST_RAISED, "root@voyra.test").text())
+                .contains(BASE + "/platform/cancellations/CR1").contains("Passengers: 2.");
+
+        service.cancelRequestCompleted(booking("T1", PlatformBookingStatus.CANCELLED), r, new BigDecimal("700"));
+        assertThat(queued(NotificationKind.CANCEL_REQUEST_COMPLETED, "owner@sky.test").text())
+                .contains("Booking PB1 (PNR PNR123) has been cancelled.").contains("Reason: Void ticket (same day).");
+        service.cancelRequestCompleted(booking("T1", PlatformBookingStatus.TICKETED), r, new BigDecimal("700"));
+        assertThat(queued(NotificationKind.CANCEL_REQUEST_COMPLETED, "owner@sky.test").text()).contains("Part of booking PB1");
+
+        service.cancelRequestRejected(booking("T1", PlatformBookingStatus.TICKETED), r);
+        assertThat(queued(NotificationKind.CANCEL_REQUEST_REJECTED, "owner@sky.test").text()).contains("Note from Voyra: Voided");
+    }
 }

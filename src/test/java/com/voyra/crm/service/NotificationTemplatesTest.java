@@ -135,4 +135,37 @@ class NotificationTemplatesTest {
         assertThat(e.subject()).contains("Late ticket on booking PB1");
         assertThat(e.text()).contains("Booking PB1 ticketed after release");
     }
+
+    @Test
+    void cancellationRequestEmailsSayWhatHappenedNeverVoyrasFee() {
+        Email raised = NotificationTemplates.cancelRequestRaised("flight", "PB1", null, "Sky Tours", com.voyra.crm.enums.CancelReason.NO_SHOW, 2, URL + "/r");
+        assertThat(raised.subject()).isEqualTo("Cancellation request: flight booking PB1");
+        assertThat(raised.text()).contains("Sky Tours asked Voyra to cancel flight booking PB1.").contains("Reason: Passenger no-show. Passengers: 2.");
+        assertThat(NotificationTemplates.cancelRequestRaised("hotel", "PB2", "HC9", "Sky", com.voyra.crm.enums.CancelReason.HOTEL_OTHER, 1, URL).subject())
+                .isEqualTo("Cancellation request: hotel booking HC9");
+
+        Email part = NotificationTemplates.cancelRequestCompleted("flight", "PB1", "PNR1", com.voyra.crm.enums.CancelReason.TRAVEL_PLAN_CANCELLED,
+                new BigDecimal("1200"), false, new BigDecimal("1200"), false, "Airline kept the fuel charge", URL);
+        assertThat(part.text()).contains("Part of booking PB1 (PNR PNR1) has been cancelled.").contains("₹1,200.00 has been refunded to your Voyra wallet.")
+                .contains("Refunded on this booking so far: ₹1,200.00.").contains("Note from Voyra: Airline kept the fuel charge");
+        Email whole = NotificationTemplates.cancelRequestCompleted("hotel", "PB2", "HC9", com.voyra.crm.enums.CancelReason.HOTEL_MEDICAL,
+                new BigDecimal("900"), true, new BigDecimal("2100"), true, " ", URL);
+        assertThat(whole.text()).contains("Booking PB2 (confirmation HC9) has been cancelled.").contains("Voyra will refund ₹900.00 to your bank account.")
+                .doesNotContain("Note from Voyra");
+        assertThat(NotificationTemplates.cancelRequestCompleted("flight", "PB1", null, com.voyra.crm.enums.CancelReason.NO_SHOW,
+                BigDecimal.ZERO, false, BigDecimal.ZERO, true, null, URL).text()).contains("No refund applies to this cancellation.");
+
+        Email declined = NotificationTemplates.cancelRequestRejected("flight", "PB1", "PNR1", "Already flown", URL);
+        assertThat(declined.subject()).isEqualTo("Your cancellation request (PNR PNR1) was declined");
+        assertThat(declined.text()).contains("The booking stays as it is.").contains("Note from Voyra: Already flown");
+    }
+
+    @Test
+    void everyReasonHasALabelAProductAndAGroup() {
+        assertThat(com.voyra.crm.enums.CancelReason.MEDICALLY_UNFIT.label()).isEqualTo("Passenger medically unfit to travel");
+        assertThat(com.voyra.crm.enums.CancelReason.MEDICALLY_UNFIT.category()).isEqualTo(com.voyra.crm.enums.CancelReason.Category.OTHER);
+        assertThat(com.voyra.crm.enums.CancelReason.HOTEL_CHANGE_OF_PLANS.product()).isEqualTo(com.voyra.crm.enums.PricingProduct.HOTEL);
+        assertThat(com.voyra.crm.enums.CancelReason.MEDICALLY_UNFIT.needsRemarks()).isTrue();
+        assertThat(com.voyra.crm.enums.CancelReason.VOID_SAME_DAY.needsRemarks()).isFalse();
+    }
 }

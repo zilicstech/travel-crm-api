@@ -2016,6 +2016,19 @@ class PlatformBookingServiceTest {
     }
 
     @Test
+    void aBookAnswerWithoutTheSuppliersIdIsFollowedUpByTheReviewId() {
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "confirmWaitSeconds", 1L);
+        String id = reviewed();
+        when(provider.book(any(), any())).thenReturn(new BookResult(null, SupplierBookingStatus.PENDING, null, List.of(), null, null));
+        when(provider.bookingDetails(anyString(), any())).thenThrow(new SupplierException("not yet", null));
+
+        PlatformBooking b = service.confirm(id, confirmRequest("key-00000002", "4500.00"));
+
+        assertThat(b.getSupplierBookingId()).isNull();
+        verify(provider).bookingDetails(eq(b.getSupplierReviewId()), any()); // Tripjack books under the review id
+    }
+
+    @Test
     void aTicketForARowWithoutAHoldIsRefusedAndAnUnknownRowIsNotFound() {
         String id = reviewed();
         rows.get(id).setStatus(PlatformBookingStatus.BOOKING);

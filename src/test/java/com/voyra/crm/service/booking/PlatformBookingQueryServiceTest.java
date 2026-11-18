@@ -61,8 +61,10 @@ class PlatformBookingQueryServiceTest {
     private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
     private final PaxCodec paxCodec = new PaxCodec(objectMapper, KEY);
 
+    private final com.voyra.crm.repository.PlatformCancelRequestRepository cancelRequests = org.mockito.Mockito.mock(com.voyra.crm.repository.PlatformCancelRequestRepository.class);
+
     private PlatformBookingQueryService service() {
-        return new PlatformBookingQueryService(bookings, events, tenants, agents, clients, paxCodec, objectMapper, tickets, credentials, org.mockito.Mockito.mock(com.voyra.crm.repository.PlatformCancelRequestRepository.class));
+        return new PlatformBookingQueryService(bookings, events, tenants, agents, clients, paxCodec, objectMapper, tickets, credentials, cancelRequests);
     }
 
     @AfterEach
@@ -427,6 +429,10 @@ class PlatformBookingQueryServiceTest {
         given(bookings.findNewestInStatuses(eq("T1"), eq(null), eq(java.util.EnumSet.of(PlatformBookingStatus.BOOKING,
                 PlatformBookingStatus.UNKNOWN, PlatformBookingStatus.CANCELLING)), any())).willReturn(List.of());
 
+        // a partial cancellation's refund and commission taken back are no longer sold or earned
+        org.mockito.Mockito.when(cancelRequests.partialCancellations(eq("T1"), eq(null), eq(Instant.parse("2026-09-30T18:30:00Z")),
+                eq(Instant.parse("2026-10-27T18:30:00Z")))).thenReturn(List.<Object[]>of(new Object[]{PricingProduct.FLIGHT, new BigDecimal("500.00"), new BigDecimal("10.00")}));
+
         com.voyra.crm.dto.PlatformBookingSummaryResponse r = service().summary(from, to);
 
         assertThat(r.getFrom()).isEqualTo(from);
@@ -434,8 +440,8 @@ class PlatformBookingQueryServiceTest {
         assertThat(r.getBookings()).isEqualTo(7);
         assertThat(r.getTicketed()).isEqualTo(4);
         assertThat(r.getCancelled()).isEqualTo(1);
-        assertThat(r.getSales()).isEqualTo(new BigDecimal("22500.00"));
-        assertThat(r.getEarned()).isEqualTo(new BigDecimal("285.00"));
+        assertThat(r.getSales()).isEqualTo(new BigDecimal("22000.00"));
+        assertThat(r.getEarned()).isEqualTo(new BigDecimal("275.00"));
         assertThat(r.getByProduct()).extracting(com.voyra.crm.dto.PlatformBookingSummaryResponse.ProductSummary::product)
                 .containsExactly(PricingProduct.FLIGHT, PricingProduct.HOTEL);
         assertThat(r.getByProduct().get(0).bookings()).isEqualTo(4);

@@ -239,6 +239,15 @@ class TripjackFlightBookingProviderTest {
         assertThat(provider.bookingDetails("TJS1", ROW).status()).isEqualTo(SupplierBookingStatus.CANCELLED);
     }
 
+    @Test
+    void bookingDetails_anUnsuccessfulAnswerWithoutAMessageIsPendingWithNoMessage() {
+        server.expect(requestTo(BASE + "/oms/v1/booking-details")).andRespond(withSuccess(
+                "{\"status\":{\"success\":false},\"errors\":[{\"message\":\" \"}]}", MediaType.APPLICATION_JSON));
+        BookResult r = provider.bookingDetails("TJS1", ROW);
+        assertThat(r.status()).isEqualTo(SupplierBookingStatus.PENDING);
+        assertThat(r.message()).isNull();
+    }
+
     private static String fixture(String path) throws java.io.IOException {
         try (var in = TripjackFlightBookingProviderTest.class.getClassLoader().getResourceAsStream(path)) {
             return new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);

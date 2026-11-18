@@ -89,6 +89,35 @@ class PlatformBookingControllerTest {
     }
 
     @Test
+    void ownerAndAgentAskVoyraToCancelListWithdrawAndOpenProofs() throws Exception {
+        com.voyra.crm.dto.CancelRequestResponse r = new com.voyra.crm.dto.CancelRequestResponse("R1", com.voyra.crm.enums.CancelRequestStatus.OPEN,
+                com.voyra.crm.enums.CancelReason.NO_SHOW, null, false, List.of(), List.of(), null, List.of(), null, null, null, false, null, "Asha", null, null);
+        given(cancelRequests.create(eq("B1"), any(), any())).willReturn(r);
+        given(cancelRequests.list("B1")).willReturn(List.of(r));
+        given(cancelRequests.withdraw("B1", "R1")).willReturn(r);
+        given(cancelRequests.agencyFile("B1", "R1", "F1")).willReturn(new com.voyra.crm.service.booking.PlatformCancelRequestService.FileContent(
+                new org.springframework.core.io.ByteArrayResource("pdf".getBytes()), "proof.pdf", "application/pdf"));
+        org.springframework.mock.web.MockMultipartFile json = new org.springframework.mock.web.MockMultipartFile("request", "", "application/json",
+                "{\"reason\":\"NO_SHOW\",\"passengers\":[0],\"sectors\":[]}".getBytes());
+        org.springframework.mock.web.MockMultipartFile file = new org.springframework.mock.web.MockMultipartFile("files", "proof.pdf", "application/pdf", "%PDF".getBytes());
+
+        for (UserType type : List.of(UserType.AGENCY_OWNER, UserType.AGENT)) {
+            mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart("/api/platform-bookings/B1/cancel-requests")
+                            .file(json).file(file).with(as(type)))
+                    .andExpect(status().isCreated()).andExpect(jsonPath("$.id").value("R1"));
+            mockMvc.perform(post("/api/platform-bookings/B1/cancel-requests/R1/withdraw").with(as(type))).andExpect(status().isOk());
+        }
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart("/api/platform-bookings/B1/cancel-requests")
+                .file(json).with(as(UserType.ACCOUNTANT))).andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/platform-bookings/B1/cancel-requests").with(as(UserType.ACCOUNTANT)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$[0].id").value("R1"));
+        mockMvc.perform(get("/api/platform-bookings/B1/cancel-requests/R1/files/F1").with(as(UserType.AGENT)))
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("X-Content-Type-Options", "nosniff"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Content-Security-Policy", "sandbox"));
+    }
+
+    @Test
     void agencyBookingJsonNamesTheSupplierAndHidesItsId() throws Exception {
         given(queryService.list(any(), any())).willReturn(PagedResponse.<PlatformBookingResponse>builder().content(List.of(
                 PlatformBookingResponse.builder().id("B1").supplierName("Mock supplier").build())).build());
