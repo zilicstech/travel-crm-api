@@ -309,6 +309,6 @@ class HotelCatalogServiceTest {
         real.refresh("s1");
 
         assertThat(loaded.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
-        assertThat(thread[0]).isEqualTo("hotel-catalog");
+        assertThat(thread[0]).startsWith("hotel-catalog-");
     }
 }

@@ -61,9 +61,10 @@ public class HotelCatalogService {
     private final JdbcTemplate jdbc;
     private final TransactionTemplate tx;
     private final PlatformAuditService audit;
-    /** Loads run here, one at a time, never on a request or scheduler thread; tests run them inline. */
-    Executor runner = Executors.newSingleThreadExecutor(r -> {
-        Thread t = new Thread(r, "hotel-catalog");
+    /** Loads run here, never on a request or scheduler thread; one per supplier at a time (the claim), up to 4 suppliers at once. Tests run them inline. */
+    private static final java.util.concurrent.atomic.AtomicInteger THREADS = new java.util.concurrent.atomic.AtomicInteger();
+    Executor runner = Executors.newFixedThreadPool(4, r -> {
+        Thread t = new Thread(r, "hotel-catalog-" + THREADS.incrementAndGet());
         t.setDaemon(true);
         return t;
     });
