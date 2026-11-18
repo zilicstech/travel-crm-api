@@ -559,7 +559,7 @@ shared by every agency and holds no tenant or personal data; `GET /api/flights/c
 agency (`PricingMath.displayed`, which needs only the gross fare, so the cheapest stored fare is every agency's cheapest),
 for at most 62 days from India's today. A failed write is logged and never fails the search. Round-trip combined fares,
 children, infants and special fares are not recorded; the Return calendar shows the reverse route's one-way fares. Past
-rows are not deleted yet (filtered on read). Frontend: `FareCalendar` popover beside the Departure and Return inputs (two
-months on wide screens, one on phones, cheapest day in green). Tests: `FlightFareCalendarServiceTest`,
-`FlightFareCalendarIT`, `FlightSearchServiceTest`, `FlightSearchControllerTest`, `FareCalendar.test.tsx`. Design:
+rows are not deleted yet (filtered on read). Frontend: the search forms' one `DatePicker` (two months on wide screens, one
+on phones, cheapest day in green) shows them on Departure and Return; the hotel searches use the same picker. Tests: `FlightFareCalendarServiceTest`,
+`FlightFareCalendarIT`, `FlightSearchServiceTest`, `FlightSearchControllerTest`, `DatePicker.test.tsx`. Design:
 `docs/superpowers/specs/2026-11-18-flight-fare-calendar-design.md`.
