@@ -176,14 +176,23 @@ public class HotelCatalogService {
         return new Object[]{supplierId, h.hotelId(), h.name(), h.city(), h.countryCode(), h.countryName(), h.starRating(), h.propertyType(), ts(start)};
     }
 
-    /** Every supplier that has had a load: its state and how many hotels it holds right now. */
+    /**
+     * Every supplier that has had a load: its state and how many hotels it holds right now. A load whose heartbeat
+     * stopped (a restart or deploy cut it off) reads FAILED, since the next refresh may take it over.
+     */
     public List<HotelCatalogStatusResponse> status() {
-        return jdbc.query("SELECT c.id, c.name, s.status, s.started_at, s.finished_at, s.last_done_at, s.last_error, "
+        return jdbc.query("SELECT c.id, c.name, s.started_at, s.finished_at, s.last_done_at, "
+                + "CASE WHEN s.status = 'RUNNING' AND s.heartbeat_at < ? THEN 'FAILED' ELSE s.status END AS state, "
+                + "CASE WHEN s.status = 'RUNNING' AND s.heartbeat_at < ? THEN '" + STOPPED + "' ELSE s.last_error END AS error, "
                 + "(SELECT count(*) FROM public.hotel_catalog h WHERE h.supplier_id = c.id) AS stored "
                 + "FROM public.hotel_catalog_sync s JOIN public.platform_supplier_credential c ON c.id = s.supplier_id ORDER BY c.name",
-                (rs, i) -> new HotelCatalogStatusResponse(rs.getString("id"), rs.getString("name"), rs.getString("status"), rs.getLong("stored"),
-                        instant(rs, "started_at"), instant(rs, "finished_at"), instant(rs, "last_done_at"), rs.getString("last_error")));
+                (rs, i) -> new HotelCatalogStatusResponse(rs.getString("id"), rs.getString("name"), rs.getString("state"), rs.getLong("stored"),
+                        instant(rs, "started_at"), instant(rs, "finished_at"), instant(rs, "last_done_at"), rs.getString("error")),
+                ts(clock.instant().minus(TAKEOVER_AFTER)), ts(clock.instant().minus(TAKEOVER_AFTER)));
     }
+
+    /** What a load cut off without finishing reports; its hotels were kept. */
+    public static final String STOPPED = "The load stopped without finishing (for example the server restarted); refresh to load again";
 
     /**
      * Up to 8 hotels whose name holds the typed text, from suppliers with hotel search on: names starting with it

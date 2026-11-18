@@ -111,8 +111,15 @@ class HotelCatalogIT extends AbstractIntegrationTest {
         jdbc.update("INSERT INTO public.hotel_catalog_sync (supplier_id, status, run_id, heartbeat_at) VALUES (?, 'RUNNING', ?, now())",
                 supplier.id(), UUID.randomUUID());
         assertThatThrownBy(() -> service.refresh(supplier.id())).isInstanceOf(BookingConflictException.class);
+        assertThat(service.status()).filteredOn(s -> s.supplierId().equals(supplier.id())).singleElement()
+                .satisfies(s -> assertThat(s.status()).isEqualTo("RUNNING"));
 
         jdbc.update("UPDATE public.hotel_catalog_sync SET heartbeat_at = now() - interval '20 minutes' WHERE supplier_id = ?", supplier.id());
+        // a load cut off by a restart no longer reads RUNNING
+        assertThat(service.status()).filteredOn(s -> s.supplierId().equals(supplier.id())).singleElement().satisfies(s -> {
+            assertThat(s.status()).isEqualTo("FAILED");
+            assertThat(s.lastError()).isEqualTo(HotelCatalogService.STOPPED);
+        });
         service.refresh(supplier.id());
         assertThat(status()).isEqualTo("DONE");
     }
