@@ -95,6 +95,8 @@ class AgencyServiceCoverageTest {
 
         assertThat(out).singleElement().satisfies(r -> {
             assertThat(r.getAgentsCount()).isEqualTo(4L);
+            assertThat(r.getClientsCount()).isNull();
+            assertThat(r.getBookingsCount()).isNull();
             assertThat(r.getTotalRevenue()).isNull();
             assertThat(r.getApplicationId()).isNull();
         });
@@ -112,6 +114,8 @@ class AgencyServiceCoverageTest {
     void theDetailReadsRevenueInTheAgencysSchemaAndRestoresTheCallersTenant() {
         tenant("T1");
         TenantContext.setTenantId("OUTER");
+        when(tenantScopedReadService.countClients()).thenReturn(12L);
+        when(tenantScopedReadService.countBookings()).thenReturn(7L);
         doAnswer(i -> {
             assertThat(TenantContext.getTenantId()).isEqualTo("T1");
             return new BigDecimal("125000.00");
@@ -119,6 +123,8 @@ class AgencyServiceCoverageTest {
 
         AgencyResponse r = service.getAgency("T1");
 
+        assertThat(r.getClientsCount()).isEqualTo(12L);
+        assertThat(r.getBookingsCount()).isEqualTo(7L);
         assertThat(r.getTotalRevenue()).isEqualByComparingTo("125000.00");
         assertThat(TenantContext.getTenantId()).isEqualTo("OUTER");
     }

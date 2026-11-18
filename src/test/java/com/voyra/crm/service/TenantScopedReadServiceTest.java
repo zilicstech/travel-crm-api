@@ -3,6 +3,7 @@ package com.voyra.crm.service;
 import com.voyra.crm.entity.Booking;
 import com.voyra.crm.enums.BookingStatus;
 import com.voyra.crm.repository.BookingRepository;
+import com.voyra.crm.repository.ClientRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -19,6 +20,7 @@ import static org.mockito.Mockito.when;
 class TenantScopedReadServiceTest {
 
     @Mock BookingRepository bookingRepository;
+    @Mock ClientRepository clientRepository;
     @InjectMocks TenantScopedReadService service;
 
     @Test
@@ -30,5 +32,14 @@ class TenantScopedReadServiceTest {
                 Booking.builder().bookingStatus(BookingStatus.PENDING).sellingPrice(new BigDecimal("200")).build()));
 
         assertThat(service.sumTotalBookingRevenue()).isEqualByComparingTo("1200.50");
+    }
+
+    @Test
+    void countsActiveClientsAndTotalBookingsInTheTenantSchema() {
+        when(clientRepository.countByIsActiveTrue()).thenReturn(14L);
+        when(bookingRepository.count()).thenReturn(9L);
+
+        assertThat(service.countClients()).isEqualTo(14L);
+        assertThat(service.countBookings()).isEqualTo(9L);
     }
 }

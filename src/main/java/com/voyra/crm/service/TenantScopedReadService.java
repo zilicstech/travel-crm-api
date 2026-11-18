@@ -1,6 +1,7 @@
 package com.voyra.crm.service;
 
 import com.voyra.crm.repository.BookingRepository;
+import com.voyra.crm.repository.ClientRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -20,6 +21,7 @@ import java.math.BigDecimal;
 public class TenantScopedReadService {
 
     private final BookingRepository bookingRepository;
+    private final ClientRepository clientRepository;
 
     @Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
     public BigDecimal sumTotalBookingRevenue() {
@@ -28,5 +30,15 @@ public class TenantScopedReadService {
                 .filter(b -> b.getBookingStatus() != com.voyra.crm.enums.BookingStatus.CANCELLED)
                 .map(b -> b.getSellingPrice() != null ? b.getSellingPrice() : BigDecimal.ZERO)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
+    public long countClients() {
+        return clientRepository.countByIsActiveTrue();
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
+    public long countBookings() {
+        return bookingRepository.count();
     }
 }

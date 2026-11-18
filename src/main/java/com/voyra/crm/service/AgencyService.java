@@ -238,11 +238,21 @@ public class AgencyService {
     AgencyResponse toResponse(Tenant tenant, boolean includeRevenue) {
         // Agents only: accountants share the table but are not agents.
         long agentsCount = agentRepository.countByTenantIdAndUserRole(tenant.getId(), com.voyra.crm.enums.UserType.AGENT);
+        Long clientsCount = null;
+        Long bookingsCount = null;
         BigDecimal totalRevenue = null;
         String applicationId = null;
         if (includeRevenue) {
             // Detail-only reads: the list path would turn these into one query per agency.
-            totalRevenue = readRevenueForTenant(tenant.getId());
+            String previous = TenantContext.getTenantId();
+            try {
+                TenantContext.setTenantId(tenant.getId());
+                clientsCount = tenantScopedReadService.countClients();
+                bookingsCount = tenantScopedReadService.countBookings();
+                totalRevenue = tenantScopedReadService.sumTotalBookingRevenue();
+            } finally {
+                restoreTenant(previous);
+            }
             applicationId = agencyApplicationRepository.findFirstByTenantId(tenant.getId())
                     .map(AgencyApplication::getId).orElse(null);
         }
@@ -254,6 +264,8 @@ public class AgencyService {
                 .isActive(tenant.getIsActive())
                 .status(tenant.getStatus())
                 .agentsCount(agentsCount)
+                .clientsCount(clientsCount)
+                .bookingsCount(bookingsCount)
                 .totalRevenue(totalRevenue)
                 .createdDate(tenant.getCreatedDate())
                 .baseCurrencyCode(tenant.getBaseCurrencyCode())
@@ -303,17 +315,6 @@ public class AgencyService {
             TenantContext.clear();
         } else {
             TenantContext.setTenantId(previous);
-        }
-    }
-
-    /** Cross-tenant read (blueprint §3.5): switch context, read in a fresh REQUIRES_NEW transaction, always restore. */
-    private BigDecimal readRevenueForTenant(String tenantId) {
-        String previous = TenantContext.getTenantId();
-        try {
-            TenantContext.setTenantId(tenantId);
-            return tenantScopedReadService.sumTotalBookingRevenue();
-        } finally {
-            restoreTenant(previous);
         }
     }
 
