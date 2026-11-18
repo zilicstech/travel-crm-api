@@ -3,6 +3,7 @@ package com.voyra.crm.service;
 import com.voyra.crm.config.SmtpConfigured;
 import com.voyra.crm.entity.AgencyApplication;
 import com.voyra.crm.entity.PlatformBooking;
+import com.voyra.crm.entity.PlatformCancelRequest;
 import com.voyra.crm.entity.SubscriptionInvoice;
 import com.voyra.crm.entity.TopupRequest;
 import lombok.extern.slf4j.Slf4j;
@@ -80,5 +81,20 @@ public class LoggingNotificationService implements NotificationService {
     @Override
     public void bookingCancelled(PlatformBooking booking, boolean refundOffline) {
         log.info("Booking cancelled - booking: {}, tenantId: {}", booking.getId(), booking.getTenantId());
+    }
+
+    @Override
+    public void cancelRequestRaised(PlatformBooking booking, PlatformCancelRequest request, String agencyName) {
+        log.info("Cancellation request raised - request: {}, booking: {}, tenantId: {}", request.getId(), booking.getId(), booking.getTenantId());
+    }
+
+    @Override
+    public void cancelRequestCompleted(PlatformBooking booking, PlatformCancelRequest request, java.math.BigDecimal totalRefund) {
+        log.info("Cancellation request completed - request: {}, booking: {}, tenantId: {}", request.getId(), booking.getId(), booking.getTenantId());
+    }
+
+    @Override
+    public void cancelRequestRejected(PlatformBooking booking, PlatformCancelRequest request) {
+        log.info("Cancellation request declined - request: {}, booking: {}, tenantId: {}", request.getId(), booking.getId(), booking.getTenantId());
     }
 }

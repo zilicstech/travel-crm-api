@@ -62,7 +62,7 @@ class PlatformBookingQueryServiceTest {
     private final PaxCodec paxCodec = new PaxCodec(objectMapper, KEY);
 
     private PlatformBookingQueryService service() {
-        return new PlatformBookingQueryService(bookings, events, tenants, agents, clients, paxCodec, objectMapper, tickets, credentials);
+        return new PlatformBookingQueryService(bookings, events, tenants, agents, clients, paxCodec, objectMapper, tickets, credentials, org.mockito.Mockito.mock(com.voyra.crm.repository.PlatformCancelRequestRepository.class));
     }
 
     @AfterEach
@@ -149,7 +149,7 @@ class PlatformBookingQueryServiceTest {
         given(credentials.findAllById(any())).willReturn(List.of(
                 com.voyra.crm.entity.PlatformSupplierCredential.builder().id("S1").name("Tripjack").build(),
                 com.voyra.crm.entity.PlatformSupplierCredential.builder().id("S2").name("Mock supplier").build()));
-        given(bookings.findByTenantId(eq("T1"), any(Pageable.class))).willReturn(new PageImpl<>(List.of(a, b, c)));
+        given(bookings.findByTenantIdAndStatusNotIn(eq("T1"), any(), any(Pageable.class))).willReturn(new PageImpl<>(List.of(a, b, c)));
 
         assertThat(service().list(0, 25).getContent()).extracting(PlatformBookingResponse::getSupplierName)
                 .containsExactly("Tripjack", "Tripjack", "Mock supplier");
@@ -259,20 +259,21 @@ class PlatformBookingQueryServiceTest {
     @Test
     void agentListIsScopedToTheirOwnBookings() {
         login("A1", UserType.AGENT, "T1");
-        given(bookings.findByTenantIdAndBookedBy(eq("T1"), eq("A1"), any(Pageable.class)))
+        given(bookings.findByTenantIdAndBookedByAndStatusNotIn(eq("T1"), eq("A1"), any(), any(Pageable.class)))
                 .willReturn(new PageImpl<>(List.of(booking("B1", "T1", "A1"))));
 
         PagedResponse<PlatformBookingResponse> page = service().list(0, 25);
 
         assertThat(page.getContent()).hasSize(1);
-        verify(bookings).findByTenantIdAndBookedBy(eq("T1"), eq("A1"), any(Pageable.class));
+        verify(bookings).findByTenantIdAndBookedByAndStatusNotIn(eq("T1"), eq("A1"),
+                eq(java.util.EnumSet.of(com.voyra.crm.enums.PlatformBookingStatus.REVIEWING, com.voyra.crm.enums.PlatformBookingStatus.ABORTED)), any(Pageable.class));
     }
 
     @Test
     void ownerAndAccountantListTheWholeTenant() {
         for (UserType type : List.of(UserType.AGENCY_OWNER, UserType.ACCOUNTANT)) {
             login("U1", type, "T1");
-            given(bookings.findByTenantId(eq("T1"), any(Pageable.class))).willReturn(new PageImpl<>(List.of(booking("B1", "T1", "A1"))));
+            given(bookings.findByTenantIdAndStatusNotIn(eq("T1"), any(), any(Pageable.class))).willReturn(new PageImpl<>(List.of(booking("B1", "T1", "A1"))));
 
             assertThat(service().list(0, 25).getContent()).hasSize(1);
         }
@@ -338,7 +339,7 @@ class PlatformBookingQueryServiceTest {
         PlatformBooking starter = booking("B1", "T1", null);
         starter.setClientId(null);
         starter.setTenantId("T1");
-        given(bookings.findByTenantId(eq("T1"), any(Pageable.class))).willReturn(new PageImpl<>(List.of(starter)));
+        given(bookings.findByTenantIdAndStatusNotIn(eq("T1"), any(), any(Pageable.class))).willReturn(new PageImpl<>(List.of(starter)));
         given(bookings.findAll(any(org.springframework.data.jpa.domain.Specification.class), any(Pageable.class)))
                 .willReturn(new PageImpl<>(List.of(starter)));
 

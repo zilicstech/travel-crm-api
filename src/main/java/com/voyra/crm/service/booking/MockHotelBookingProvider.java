@@ -29,9 +29,9 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * The MOCK supplier's hotel booking provider (the supplier row is not read): fares come from {@link MockHotelSearchProvider} so a review prices a room exactly as
- * the detail page showed it, with the same switches as the flight mock. Free cancellation ends two days before
- * check-in; a cancel before then refunds the whole total, after it nothing. Ids carry what a refund needs (check-in
- * date, total) so a restart loses nothing.
+ * the detail page showed it, with the same switches as the flight mock. Its rate rules offer free cancellation until two
+ * days before check-in (Voyra cancels by hand on a cancellation request). Ids carry the check-in date and total, so a
+ * restart loses nothing.
  */
 @Service
 @RequiredArgsConstructor
@@ -109,23 +109,6 @@ public class MockHotelBookingProvider implements HotelBookingProvider {
         return confirmed(supplierBookingId);
     }
 
-    @Override
-    public CancelQuote cancelQuote(String supplierBookingId, ResolvedCredential supplier) {
-        BigDecimal refund = refund(supplierBookingId);
-        return new CancelQuote(refund, refund == null ? null : "Mock refund: " + (refund.signum() > 0 ? "full total, before the free-cancellation deadline" : "nothing, past the free-cancellation deadline"));
-    }
-
-    @Override
-    public CancelResult cancel(String supplierBookingId, ResolvedCredential supplier) {
-        if (config.getMock().isCancelTimeout()) {
-            throw new SupplierTimeoutException("Mock supplier timed out on cancel", null);
-        }
-        if (config.getMock().isCancelFail()) {
-            return new CancelResult(false, null, "Mock: cancellation not allowed");
-        }
-        return new CancelResult(true, refund(supplierBookingId), "Mock cancellation accepted");
-    }
-
     /** {@code mock-hbk-<12 hex>-<check-in yyyyMMdd or none>-<total>}: short, stable per review, refund-ready. */
     static String bookingId(String reviewId, BigDecimal total) {
         byte[] digest = sha256().digest(reviewId.getBytes(StandardCharsets.UTF_8));
@@ -140,21 +123,6 @@ public class MockHotelBookingProvider implements HotelBookingProvider {
             return MessageDigest.getInstance("SHA-256");
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 unavailable", e);
-        }
-    }
-
-    /** Whole total before the deadline, 0 after; null for an id that carries no total or date (e.g. a review id after a timeout). */
-    private static BigDecimal refund(String id) {
-        if (!id.startsWith(BOOKING_PREFIX)) {
-            return null;
-        }
-        String[] parts = id.split("-");
-        try {
-            LocalDate checkIn = LocalDate.parse(parts[3], DAY);
-            BigDecimal total = new BigDecimal(parts[4]);
-            return Instant.now().isBefore(checkIn.minusDays(2).atStartOfDay(ZoneOffset.UTC).toInstant()) ? total : BigDecimal.ZERO.setScale(2);
-        } catch (RuntimeException e) {
-            return null;
         }
     }
 

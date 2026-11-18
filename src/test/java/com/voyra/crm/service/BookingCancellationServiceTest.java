@@ -979,4 +979,94 @@ class BookingCancellationServiceTest {
         verify(supplierPaymentService, never()).creditWallet(any(), any(), any(), anyString());
         assertThat(b.getSupplierRefundReceived()).isEqualByComparingTo("4000");
     }
+
+    // ---- cancellation requests: a partial cancellation of a Voyra mirror, and credit notes issued before the cancel
+
+    private SupplierInvoice voyraBill(String status) {
+        SupplierInvoice paid = SupplierInvoice.builder().id("S1").vendorId("V-VOYRA").status(SupplierInvoiceStatus.valueOf(status))
+                .grandTotal(d("8000")).amountPaid(d("8000")).creditNoteTotal(d("1000"))
+                .cgstAmount(BigDecimal.ZERO).sgstAmount(BigDecimal.ZERO).igstAmount(BigDecimal.ZERO).build();
+        when(supplierInvoiceRepository.findByBookingIdAndStatusNot("B1", SupplierInvoiceStatus.CANCELLED)).thenReturn(List.of(paid));
+        return paid;
+    }
+
+    @Test
+    void aVoyraPartialCancellationIsCreditedOnTheMirrorsBillAndReceivedIntoTheVoyraWallet() {
+        booking(BookingStatus.CONFIRMED);
+        voyraBill("PAID");
+        when(supplierCreditNoteService.record(any())).thenReturn(com.voyra.crm.dto.SupplierCreditNoteResponse.builder().id("SCN9").build());
+        java.time.LocalDate on = java.time.LocalDate.of(2026, 11, 18);
+
+        com.voyra.crm.security.SystemActor.call("T1", () -> {
+            service.recordVoyraPartialRefund("B1", "R1", d("1500"), on);
+            return null;
+        });
+
+        ArgumentCaptor<SupplierCreditNoteRequest> credit = ArgumentCaptor.forClass(SupplierCreditNoteRequest.class);
+        verify(supplierCreditNoteService).record(credit.capture());
+        assertThat(credit.getValue().getSupplierNoteNumber()).isEqualTo("VCR-R1");
+        assertThat(credit.getValue().getTaxableValue()).isEqualByComparingTo("1500");
+        assertThat(credit.getValue().getNoteDate()).isEqualTo(on);
+        ArgumentCaptor<SupplierCreditNoteRefundRequest> refund = ArgumentCaptor.forClass(SupplierCreditNoteRefundRequest.class);
+        verify(supplierCreditNoteService).receiveRefund(eq("SCN9"), refund.capture(), eq(false));
+        assertThat(refund.getValue().getPaymentMode()).isEqualTo(PaymentMode.VOYRA_WALLET);
+        assertThat(refund.getValue().getAmount()).isEqualByComparingTo("1500");
+    }
+
+    @Test
+    void aPartialRefundAboveWhatTheBillStillHoldsIsCappedAndARepeatPostsNothing() {
+        booking(BookingStatus.CONFIRMED);
+        voyraBill("APPROVED");
+        when(supplierCreditNoteService.record(any())).thenReturn(com.voyra.crm.dto.SupplierCreditNoteResponse.builder().id("SCN9").build());
+        com.voyra.crm.security.SystemActor.call("T1", () -> {
+            service.recordVoyraPartialRefund("B1", "R1", d("9000"), java.time.LocalDate.now());
+            return null;
+        });
+        ArgumentCaptor<SupplierCreditNoteRefundRequest> refund = ArgumentCaptor.forClass(SupplierCreditNoteRefundRequest.class);
+        verify(supplierCreditNoteService).receiveRefund(eq("SCN9"), refund.capture(), eq(false));
+        assertThat(refund.getValue().getAmount()).isEqualByComparingTo("7000"); // 8000 less 1000 already credited
+
+        when(supplierCreditNoteRepository.existsByVendorIdAndSupplierNoteNumberAndStatusNot("V-VOYRA", "VCR-R1", SupplierCreditNoteStatus.CANCELLED))
+                .thenReturn(true);
+        com.voyra.crm.security.SystemActor.call("T1", () -> {
+            service.recordVoyraPartialRefund("B1", "R1", d("9000"), java.time.LocalDate.now());
+            return null;
+        });
+        verify(supplierCreditNoteService).record(any());
+    }
+
+    @Test
+    void aPartialRefundIsSkippedOnACancelledMirrorOrForNothingAndNeedsABillAndTheSystem() {
+        Booking b = booking(BookingStatus.CANCELLED);
+        assertThatThrownBy(() -> service.recordVoyraPartialRefund("B1", "R1", d("10"), java.time.LocalDate.now()))
+                .isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
+        com.voyra.crm.security.SystemActor.call("T1", () -> {
+            service.recordVoyraPartialRefund("B1", "R1", d("10"), java.time.LocalDate.now());
+            b.setBookingStatus(BookingStatus.CONFIRMED);
+            service.recordVoyraPartialRefund("B1", "R1", BigDecimal.ZERO, java.time.LocalDate.now());
+            return null;
+        });
+        verify(supplierCreditNoteService, never()).record(any());
+        SupplierInvoice draft = SupplierInvoice.builder().id("S0").status(SupplierInvoiceStatus.DRAFT).build();
+        when(supplierInvoiceRepository.findByBookingIdAndStatusNot("B1", SupplierInvoiceStatus.CANCELLED)).thenReturn(List.of(draft));
+        assertThatThrownBy(() -> com.voyra.crm.security.SystemActor.call("T1", () -> {
+            service.recordVoyraPartialRefund("B1", "R1", d("10"), java.time.LocalDate.now());
+            return null;
+        })).isInstanceOf(IllegalStateException.class);
+        when(bookingRepository.findById("B1")).thenReturn(java.util.Optional.empty());
+        assertThatThrownBy(() -> com.voyra.crm.security.SystemActor.call("T1", () -> {
+            service.recordVoyraPartialRefund("B1", "R1", d("10"), java.time.LocalDate.now());
+            return null;
+        })).isInstanceOf(com.voyra.crm.exception.NotFoundException.class);
+    }
+
+    @Test
+    void onlyThePartialCancellationsCreditNotesCountAsAlreadyReceived() {
+        when(supplierCreditNoteRepository.findByBookingIdAndStatus("B1", SupplierCreditNoteStatus.RECORDED)).thenReturn(List.of(
+                SupplierCreditNote.builder().supplierNoteNumber("VCR-R1").refundedAmount(d("1500")).build(),
+                SupplierCreditNote.builder().supplierNoteNumber("VCR-R2").refundedAmount(null).build(),
+                SupplierCreditNote.builder().supplierNoteNumber("SUP-77").refundedAmount(d("999")).build(),
+                SupplierCreditNote.builder().supplierNoteNumber(null).refundedAmount(d("5")).build()));
+        assertThat(service.voyraPartialRefunds("B1")).isEqualByComparingTo("1500");
+    }
 }

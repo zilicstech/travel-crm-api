@@ -53,6 +53,7 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -294,10 +295,24 @@ public class PlatformBookingMirrorTenantService {
         request.setSupplierCharge(FxMath.toBase(INR, pb.getDisplayed(), rate, base).base().subtract(refund).max(BigDecimal.ZERO));
         request.setAgencyFee(BigDecimal.ZERO);
         LocalDate cancelledOn = FinancialYear.dateOf(pb.getCancelledAt());
+        // partial cancellations already put their refunds back on the mirror's bill; only the rest comes in now
+        BigDecimal received = cancellationService.voyraPartialRefunds(bookingId);
         cancellationService.cancel(bookingId, request, LocalDateTime.ofInstant(pb.getCancelledAt(), ZoneId.systemDefault()), cancelledOn);
-        if (refund.signum() > 0) {
-            cancellationService.recordVoyraWalletRefund(bookingId, refund, cancelledOn);
+        BigDecimal rest = refund.subtract(received);
+        if (rest.signum() > 0) {
+            cancellationService.recordVoyraWalletRefund(bookingId, rest, cancelledOn);
         }
+    }
+
+    /**
+     * A partial cancellation Voyra completed (a cancellation request on a booking that stays ticketed): its refund, in the
+     * agency's base at the voucher's rate, credited on the mirror's bill and received into the Voyra wallet account,
+     * dated when Voyra completed it. Idempotent per request.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void partialCancel(String bookingId, String requestId, BigDecimal refundInr, Instant completedAt) {
+        BigDecimal refund = FxMath.toBase(INR, refundInr, voucherRate(bookingId), baseCurrency.code()).base();
+        cancellationService.recordVoyraPartialRefund(bookingId, requestId, refund, FinancialYear.dateOf(completedAt));
     }
 
     /** The rate the mirror's voucher was bought at (1 when none is stored). */

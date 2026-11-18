@@ -4,6 +4,7 @@ import com.voyra.crm.config.SmtpConfigured;
 import com.voyra.crm.entity.AgencyApplication;
 import com.voyra.crm.entity.PlatformAdmin;
 import com.voyra.crm.entity.PlatformBooking;
+import com.voyra.crm.entity.PlatformCancelRequest;
 import com.voyra.crm.entity.SubscriptionInvoice;
 import com.voyra.crm.entity.Tenant;
 import com.voyra.crm.entity.TopupRequest;
@@ -129,6 +130,27 @@ public class EmailNotificationService implements NotificationService {
     public void bookingCancelled(PlatformBooking b, boolean refundOffline) {
         toBooker(NotificationKind.BOOKING_CANCELLED, b,
                 link -> NotificationTemplates.bookingCancelled(product(b), b.getId(), b.getPnr(), b.getCancelRefund(), refundOffline, link));
+    }
+
+    @Override
+    public void cancelRequestRaised(PlatformBooking b, PlatformCancelRequest r, String agencyName) {
+        send(NotificationKind.CANCEL_REQUEST_RAISED, () -> new NotificationOutboxService.Outgoing(
+                platformAdminRepository.findByIsActiveTrue().stream().map(PlatformAdmin::getEmail).toList(),
+                NotificationTemplates.cancelRequestRaised(product(b), b.getId(), b.getPnr(), agencyName, r.getReason(),
+                        r.getPassengers().size(), url("/platform/cancellations/" + r.getId()))));
+    }
+
+    @Override
+    public void cancelRequestCompleted(PlatformBooking b, PlatformCancelRequest r, java.math.BigDecimal totalRefund) {
+        toBooker(NotificationKind.CANCEL_REQUEST_COMPLETED, b, link -> NotificationTemplates.cancelRequestCompleted(product(b), b.getId(),
+                b.getPnr(), r.getFinalReason(), r.getRefund(), r.isOffline(), totalRefund, b.getStatus() == com.voyra.crm.enums.PlatformBookingStatus.CANCELLED,
+                r.getAdminNote(), link));
+    }
+
+    @Override
+    public void cancelRequestRejected(PlatformBooking b, PlatformCancelRequest r) {
+        toBooker(NotificationKind.CANCEL_REQUEST_REJECTED, b,
+                link -> NotificationTemplates.cancelRequestRejected(product(b), b.getId(), b.getPnr(), r.getAdminNote(), link));
     }
 
     // ---- recipients

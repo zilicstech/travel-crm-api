@@ -76,12 +76,6 @@ class MockBookingProvidersCoverageTest {
     }
 
     @Test
-    void aFlightIdWithoutAFareRefundsNothing() {
-        assertThat(flights.cancelQuote("review-id-after-timeout", BookingSuppliers.S1).refund()).isEqualByComparingTo("0.00");
-        assertThat(flights.cancelQuote("mock-bk-abc-notanumber", BookingSuppliers.S1).refund()).isEqualByComparingTo("0.00");
-    }
-
-    @Test
     void anUnknownHotelOptionIsPricedFromItsIdPerNightAndRoom() {
         LocalDate in = LocalDate.now().plusDays(30);
 
@@ -102,9 +96,6 @@ class MockBookingProvidersCoverageTest {
         assertThat(id).contains("-none-50.00");
         assertThat(hotels.bookingDetails(id, BookingSuppliers.S1).status()).isEqualTo(SupplierBookingStatus.PENDING);
         assertThat(hotels.bookingDetails(id, BookingSuppliers.S1).status()).isEqualTo(SupplierBookingStatus.TICKETED);
-        // "none" is no date, so nothing can be worked out to refund.
-        assertThat(hotels.cancelQuote(id, BookingSuppliers.S1).refund()).isNull();
-        assertThat(hotels.cancelQuote(id, BookingSuppliers.S1).message()).isNull();
     }
 
     @Test

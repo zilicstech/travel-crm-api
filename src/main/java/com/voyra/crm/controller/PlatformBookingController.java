@@ -4,7 +4,8 @@ import com.voyra.crm.dto.FlightReviewRequest;
 import com.voyra.crm.dto.FlightSeatMapResponse;
 import com.voyra.crm.dto.HotelReviewRequest;
 import com.voyra.crm.dto.PagedResponse;
-import com.voyra.crm.dto.PlatformBookingCancelRequest;
+import com.voyra.crm.dto.CancelRequestCreateRequest;
+import com.voyra.crm.dto.CancelRequestResponse;
 import com.voyra.crm.dto.PlatformBookingConfirmRequest;
 import com.voyra.crm.dto.PlatformBookingResponse;
 import com.voyra.crm.dto.PlatformBookingSummaryResponse;
@@ -12,7 +13,7 @@ import com.voyra.crm.dto.PlatformMarkupRequest;
 import com.voyra.crm.dto.PlatformBookingReviewResponse;
 import com.voyra.crm.dto.TicketCreateRequest;
 import com.voyra.crm.dto.TicketDownloadResponse;
-import com.voyra.crm.service.booking.CancelPreview;
+import com.voyra.crm.service.booking.PlatformCancelRequestService;
 import com.voyra.crm.service.booking.PlatformBookingQueryService;
 import com.voyra.crm.service.booking.PlatformBookingService;
 import com.voyra.crm.service.booking.PlatformBookingTicketService;
@@ -23,7 +24,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ContentDisposition;
+import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -34,7 +37,9 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -49,6 +54,7 @@ public class PlatformBookingController {
     private final PlatformBookingService service;
     private final PlatformBookingQueryService queryService;
     private final PlatformBookingTicketService ticketService;
+    private final PlatformCancelRequestService cancelRequests;
 
     @PostMapping("/flights/review")
     @PreAuthorize("hasAnyRole('AGENCY_OWNER','AGENT')")
@@ -85,17 +91,33 @@ public class PlatformBookingController {
         return ResponseEntity.ok(queryService.view(service.abort(id)));
     }
 
-    @GetMapping("/{id}/cancel-quote")
-    @Operation(summary = "What a cancellation would refund", description = "refundToBeConfirmed is true when the airline has not said.")
-    public ResponseEntity<CancelPreview> cancelQuote(@PathVariable String id) {
-        return ResponseEntity.ok(service.cancelQuote(id));
+    @PostMapping(value = "/{id}/cancel-requests", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PreAuthorize("hasAnyRole('AGENCY_OWNER','AGENT')")
+    @Operation(summary = "Ask Voyra to cancel (part of) a ticketed booking",
+            description = "Part 'request': reason, passengers and sectors (flight), remarks; parts 'files': up to 5 proof files, 10 MB in all. "
+                    + "Voyra cancels at the supplier and completes the request; one active request per booking (409 CANCEL_REQUEST_OPEN).")
+    public ResponseEntity<CancelRequestResponse> requestCancel(@PathVariable String id, @Valid @RequestPart("request") CancelRequestCreateRequest request,
+                                                               @RequestPart(value = "files", required = false) List<MultipartFile> files) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(cancelRequests.create(id, request, files));
     }
 
-    @PostMapping("/{id}/cancel")
+    @GetMapping("/{id}/cancel-requests")
+    @Operation(summary = "Cancellation requests of a booking, oldest first", description = "With Voyra's outcome once completed or declined.")
+    public ResponseEntity<List<CancelRequestResponse>> cancelRequests(@PathVariable String id) {
+        return ResponseEntity.ok(cancelRequests.list(id));
+    }
+
+    @PostMapping("/{id}/cancel-requests/{requestId}/withdraw")
     @PreAuthorize("hasAnyRole('AGENCY_OWNER','AGENT')")
-    @Operation(summary = "Cancel a ticketed booking", description = "The same idempotencyKey cancels once.")
-    public ResponseEntity<PlatformBookingResponse> cancel(@PathVariable String id, @Valid @RequestBody PlatformBookingCancelRequest request) {
-        return ResponseEntity.ok(queryService.view(service.cancel(id, request.getIdempotencyKey())));
+    @Operation(summary = "Withdraw a request Voyra has not picked up yet", description = "409 CANCEL_REQUEST_LOCKED once Voyra is working on it.")
+    public ResponseEntity<CancelRequestResponse> withdrawCancelRequest(@PathVariable String id, @PathVariable String requestId) {
+        return ResponseEntity.ok(cancelRequests.withdraw(id, requestId));
+    }
+
+    @GetMapping("/{id}/cancel-requests/{requestId}/files/{fileId}")
+    @Operation(summary = "A proof file attached to a request")
+    public ResponseEntity<Resource> cancelRequestFile(@PathVariable String id, @PathVariable String requestId, @PathVariable String fileId) {
+        return ProofFiles.inline(cancelRequests.agencyFile(id, requestId, fileId));
     }
 
     @GetMapping

@@ -72,9 +72,9 @@ public interface PlatformBookingRepository extends JpaRepository<PlatformBooking
 
     List<PlatformBooking> findByTenantIdOrderByCreatedAtDesc(String tenantId, Pageable pageable);
 
-    Page<PlatformBooking> findByTenantId(String tenantId, Pageable pageable);
+    Page<PlatformBooking> findByTenantIdAndStatusNotIn(String tenantId, Collection<PlatformBookingStatus> hidden, Pageable pageable);
 
-    Page<PlatformBooking> findByTenantIdAndBookedBy(String tenantId, String bookedBy, Pageable pageable);
+    Page<PlatformBooking> findByTenantIdAndBookedByAndStatusNotIn(String tenantId, String bookedBy, Collection<PlatformBookingStatus> hidden, Pageable pageable);
 
     List<PlatformBooking> findAllByOrderByCreatedAtDesc(Pageable pageable);
 

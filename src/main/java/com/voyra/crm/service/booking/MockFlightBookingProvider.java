@@ -41,7 +41,6 @@ import java.util.concurrent.ConcurrentHashMap;
 @RequiredArgsConstructor
 public class MockFlightBookingProvider implements FlightBookingProvider {
 
-    private static final BigDecimal REFUND_SHARE = new BigDecimal("0.80");
     private static final BigDecimal BASE_SHARE = new BigDecimal("0.85");
 
     private static final String FARE_RULES = "Mock fare rules: refundable, 80% back.";
@@ -222,22 +221,6 @@ public class MockFlightBookingProvider implements FlightBookingProvider {
         return ticketed(supplierBookingId);
     }
 
-    @Override
-    public CancelQuote cancelQuote(String supplierBookingId, ResolvedCredential supplier) {
-        return new CancelQuote(refund(supplierBookingId), "Mock refund: 80% of the fare");
-    }
-
-    @Override
-    public CancelResult cancel(String supplierBookingId, ResolvedCredential supplier) {
-        if (config.getMock().isCancelTimeout()) {
-            throw new SupplierTimeoutException("Mock supplier timed out on cancel", null);
-        }
-        if (config.getMock().isCancelFail()) {
-            return new CancelResult(false, null, "Mock: cancellation not allowed");
-        }
-        return new CancelResult(true, refund(supplierBookingId), "Mock cancellation accepted");
-    }
-
     /** Short and stable per review, ending in the fare so a refund survives a restart: {@code mock-bk-<12 hex>-<fare>}. */
     static String bookingId(String reviewId, BigDecimal fare) {
         byte[] digest = sha256().digest(reviewId.getBytes(StandardCharsets.UTF_8));
@@ -252,11 +235,6 @@ public class MockFlightBookingProvider implements FlightBookingProvider {
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 unavailable", e);
         }
-    }
-
-    private BigDecimal refund(String id) {
-        BigDecimal fare = fare(id);
-        return (fare != null ? fare : BigDecimal.ZERO).multiply(REFUND_SHARE).setScale(2, RoundingMode.HALF_UP);
     }
 
     /** The booked fare, carried in a mock-bk id so it survives a restart; null for any other id (e.g. a review id after a timeout). */

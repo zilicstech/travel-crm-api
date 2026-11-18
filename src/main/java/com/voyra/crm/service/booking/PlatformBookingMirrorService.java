@@ -6,6 +6,8 @@ import com.voyra.crm.dto.ItinerarySegment;
 import com.voyra.crm.dto.PaxInput;
 import com.voyra.crm.entity.PlatformBooking;
 import com.voyra.crm.enums.MirrorStatus;
+import com.voyra.crm.entity.PlatformCancelRequest;
+import com.voyra.crm.enums.CancelRequestStatus;
 import com.voyra.crm.enums.PlatformBookingStatus;
 import com.voyra.crm.enums.PricingProduct;
 import com.voyra.crm.enums.Sku;
@@ -48,11 +50,13 @@ public class PlatformBookingMirrorService {
     private final NotificationService notificationService;
     private final EntitlementService entitlementService;
     private final TransactionTemplate tx;
+    private final com.voyra.crm.repository.PlatformCancelRequestRepository cancelRequestRepository;
 
     public PlatformBookingMirrorService(PlatformBookingRepository repository, PlatformBookingMirrorTenantService tenantService,
                                         PlatformBookingQueryService queryService, PaxCodec paxCodec,
                                         PlatformBookingEventRecorder events, NotificationService notificationService,
-                                        EntitlementService entitlementService, PlatformTransactionManager transactionManager) {
+                                        EntitlementService entitlementService, PlatformTransactionManager transactionManager,
+                                        com.voyra.crm.repository.PlatformCancelRequestRepository cancelRequestRepository) {
         this.repository = repository;
         this.tenantService = tenantService;
         this.queryService = queryService;
@@ -61,6 +65,7 @@ public class PlatformBookingMirrorService {
         this.notificationService = notificationService;
         this.entitlementService = entitlementService;
         this.tx = new TransactionTemplate(transactionManager);
+        this.cancelRequestRepository = cancelRequestRepository;
     }
 
     /** The passengers as stored at confirm; contact details are not mirrored. */
@@ -98,6 +103,9 @@ public class PlatformBookingMirrorService {
             // the FAILED move's own time: its event commits with the move; an admin resolve records none, only resolved_failed_at
             Instant failedAt = acted == PlatformBookingStatus.FAILED ? events.lastAt(platformBookingId, "FAILED")
                     .or(() -> java.util.Optional.ofNullable(b.getResolvedFailedAt())).orElseGet(Instant::now) : null;
+            List<PlatformCancelRequest> partials = cancelRequestRepository.findByPlatformBookingIdOrderByCreatedAtAsc(platformBookingId).stream()
+                    .filter(r -> r.getStatus() == CancelRequestStatus.COMPLETED && r.getRefund() != null && r.getRefund().signum() > 0)
+                    .sorted(java.util.Comparator.comparing(PlatformCancelRequest::getCompletedAt)).toList();
             String bookingId = SystemActor.call(b.getTenantId(), () -> {
                 String id = tenantService.ensure(b, legs, stay, pax);
                 if (b.getTicketedAt() != null) {
@@ -105,6 +113,14 @@ public class PlatformBookingMirrorService {
                 }
                 if (acted == PlatformBookingStatus.FAILED) {
                     tenantService.fail(id, failedAt);
+                }
+                // each completed cancellation request's refund, oldest first; on a cancelled booking the last one is the cancel's
+                for (int i = 0; i < partials.size(); i++) {
+                    if (acted == PlatformBookingStatus.CANCELLED && i == partials.size() - 1) {
+                        break;
+                    }
+                    PlatformCancelRequest r = partials.get(i);
+                    tenantService.partialCancel(id, r.getId(), r.getRefund(), r.getCompletedAt());
                 }
                 if (acted == PlatformBookingStatus.CANCELLED) {
                     tenantService.cancel(id, b);

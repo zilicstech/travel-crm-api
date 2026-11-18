@@ -19,7 +19,6 @@ final class AgencySupplierMessage {
     static final String FAILED = "Booking failed at the supplier";
     static final String SEAT_MANDATORY_FAILED = "This fare requires seat selection - search again and select seats";
     static final String CONFIRMING = "We're confirming with the supplier";
-    static final String CANCEL_REFUSED = "The supplier refused the cancellation";
     /** Raw-text hints that the fare or room itself is gone, not a booking error. */
     private static final List<String> GONE = List.of("sold out", "no longer available", "not available", "unavailable",
             "fare changed", "price changed", "fare has changed", "price has changed", "expired");

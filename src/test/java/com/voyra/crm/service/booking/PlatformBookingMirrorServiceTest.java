@@ -55,6 +55,7 @@ class PlatformBookingMirrorServiceTest {
     private static final String KEY = "dGVzdC1vbmx5LWFlcy1rZXktMzItYnl0ZXMtbG9uZyE=";
 
     @Mock private PlatformBookingRepository repository;
+    @Mock private com.voyra.crm.repository.PlatformCancelRequestRepository cancelRequestRepository;
     @Mock private PlatformBookingEventRepository eventRepository;
     @Mock private PlatformBookingMirrorTenantService tenantService;
     @Mock private PlatformBookingQueryService queryService;
@@ -70,7 +71,8 @@ class PlatformBookingMirrorServiceTest {
     @BeforeEach
     void setUp() {
         service = new PlatformBookingMirrorService(repository, tenantService, queryService, paxCodec,
-                new PlatformBookingEventRecorder(eventRepository, paxCodec), notificationService, entitlementService, transactionManager);
+                new PlatformBookingEventRecorder(eventRepository, paxCodec), notificationService, entitlementService, transactionManager,
+                cancelRequestRepository);
         crmCore(true);
         when(eventRepository.save(any())).thenAnswer(i -> {
             recorded.add(i.getArgument(0));
@@ -659,5 +661,42 @@ class PlatformBookingMirrorServiceTest {
             assertThat(logs.lines()).noneMatch(l -> l.contains("Secret") || l.contains("P999"));
         }
         assertThat(passengers.get(0).getMemberId()).isNull();
+    }
+
+    private static com.voyra.crm.entity.PlatformCancelRequest completed(String id, String refund, int minute) {
+        return com.voyra.crm.entity.PlatformCancelRequest.builder().id(id).status(com.voyra.crm.enums.CancelRequestStatus.COMPLETED)
+                .refund(refund == null ? null : new BigDecimal(refund)).completedAt(java.time.Instant.parse("2026-11-18T10:00:00Z").plusSeconds(60L * minute)).build();
+    }
+
+    @Test
+    void eachCompletedPartialCancellationIsMirroredOldestFirstAndANoRefundOneIsSkipped() {
+        PlatformBooking b = ticketed("C1");
+        when(tenantService.ensure(any(), anyList(), any(), anyList())).thenReturn("CRM-1");
+        when(cancelRequestRepository.findByPlatformBookingIdOrderByCreatedAtAsc(b.getId())).thenReturn(List.of(
+                completed("R2", "300.00", 2), completed("R1", "500.00", 1), completed("R0", "0.00", 0), completed("RN", null, 3),
+                com.voyra.crm.entity.PlatformCancelRequest.builder().id("RO").status(com.voyra.crm.enums.CancelRequestStatus.OPEN).build()));
+
+        service.sync(b.getId());
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(tenantService);
+        order.verify(tenantService).partialCancel(eq("CRM-1"), eq("R1"), eq(new BigDecimal("500.00")), any());
+        order.verify(tenantService).partialCancel(eq("CRM-1"), eq("R2"), eq(new BigDecimal("300.00")), any());
+        verify(tenantService, never()).partialCancel(anyString(), eq("R0"), any(), any());
+        verify(tenantService, never()).cancel(anyString(), any());
+    }
+
+    @Test
+    void onACancelledBookingTheLastRequestIsTheCancelsOwn() {
+        PlatformBooking b = ticketed("C1");
+        b.setStatus(PlatformBookingStatus.CANCELLED);
+        when(tenantService.ensure(any(), anyList(), any(), anyList())).thenReturn("CRM-1");
+        when(cancelRequestRepository.findByPlatformBookingIdOrderByCreatedAtAsc(b.getId())).thenReturn(List.of(
+                completed("R1", "500.00", 1), completed("R2", "300.00", 2)));
+
+        service.sync(b.getId());
+
+        verify(tenantService).partialCancel(eq("CRM-1"), eq("R1"), eq(new BigDecimal("500.00")), any());
+        verify(tenantService, never()).partialCancel(anyString(), eq("R2"), any(), any());
+        verify(tenantService).cancel(eq("CRM-1"), any());
     }
 }

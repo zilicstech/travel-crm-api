@@ -20,10 +20,8 @@ import org.springframework.web.client.RestClient;
 
 import java.math.BigDecimal;
 import java.net.SocketTimeoutException;
-import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
-import java.time.ZoneOffset;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -34,7 +32,7 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
-/** Request and response shapes from Tripjack's Hotel API v3 documentation (review, book, booking-details, cancel-booking). */
+/** Request and response shapes from Tripjack's Hotel API v3 documentation (review, book, booking-details). */
 class TripjackHotelBookingProviderTest {
 
     private static final String SEARCH = "https://apitest-hms.example.test";
@@ -56,8 +54,6 @@ class TripjackHotelBookingProviderTest {
         settings = mock(PlatformSettingService.class);
         when(settings.voyraLegal()).thenReturn(new VoyraLegal("Voyra Global Private Limited Travel Services Division", "07ABCDE1234F1Z5", null, "07"));
         provider = new TripjackHotelBookingProvider(builder, settings, SEARCH, "https://hms-search.example.test", BOOKER, "https://hms-booker.example.test");
-        // 2026-11-25 12:00 in India
-        provider.clock = Clock.fixed(Instant.parse("2026-11-25T06:30:00Z"), ZoneOffset.UTC);
     }
 
     private FareReview review(String optionId) {
@@ -335,91 +331,6 @@ class TripjackHotelBookingProviderTest {
         assertThat(nothing.pnr()).isNull();
         assertThat(nothing.message()).isNull();
         assertThat(nothing.amount()).isNull();
-    }
-
-    // ---------------------------------------------------------------- cancel quote, refund slabs and cancel
-
-    /** order.amount 10000; free until 24 Nov, 4000 kept until check-in on 28 Nov, everything after. */
-    private static String details(String status, String cnp) {
-        return OK + ",\"order\":{\"amount\":10000,\"status\":\"" + status + "\"},\"itemInfos\":{\"HOTEL\":{\"hInfo\":{\"ops\":[{\"cnp\":" + cnp + "}]}}}}";
-    }
-
-    private static final String SLABS = "{\"ifra\":true,\"pd\":[{\"fdt\":\"2026-11-01T00:00\",\"tdt\":\"2026-11-24T23:59\",\"am\":0},"
-            + "{\"fdt\":\"2026-11-24T23:59\",\"tdt\":\"2026-11-28T00:00\",\"am\":4000}]}";
-
-    @Test
-    void cancelQuote_refundsTheAmountLessTheSlabInForceNow() {
-        server.expect(requestTo(BOOKER + "/oms/v3/hotel/booking-details")).andExpect(jsonPath("$.bookingId").value("TJ1"))
-                .andRespond(withSuccess(details("SUCCESS", SLABS), MediaType.APPLICATION_JSON));
-        CancelQuote q = provider.cancelQuote("TJ1", ROW);
-        server.verify();
-        assertThat(q.refund()).isEqualByComparingTo("6000.00");
-        assertThat(q.message()).isNull();
-    }
-
-    @Test
-    void refundNow_beforeTheSlabsAfterThemNonRefundableAndUnreadable() throws Exception {
-        com.fasterxml.jackson.databind.ObjectMapper m = new com.fasterxml.jackson.databind.ObjectMapper();
-        provider.clock = Clock.fixed(Instant.parse("2026-10-01T00:00:00Z"), ZoneOffset.UTC);
-        assertThat(provider.refundNow(m.readTree(details("SUCCESS", SLABS)))).isEqualByComparingTo("10000");
-        provider.clock = Clock.fixed(Instant.parse("2026-11-10T00:00:00Z"), ZoneOffset.UTC);
-        assertThat(provider.refundNow(m.readTree(details("SUCCESS", SLABS)))).isEqualByComparingTo("10000");
-        provider.clock = Clock.fixed(Instant.parse("2026-11-30T00:00:00Z"), ZoneOffset.UTC);
-        assertThat(provider.refundNow(m.readTree(details("SUCCESS", SLABS)))).isEqualByComparingTo("0");
-        assertThat(provider.refundNow(m.readTree(details("SUCCESS", "{\"inra\":true,\"pd\":[]}")))).isEqualByComparingTo("0");
-        assertThat(provider.refundNow(m.readTree(details("SUCCESS", "{\"pd\":[]}")))).isNull();
-        assertThat(provider.refundNow(m.readTree(details("SUCCESS", "{\"pd\":[{\"fdt\":\"soon\",\"tdt\":\"later\",\"am\":1}]}")))).isNull();
-        provider.clock = Clock.fixed(Instant.parse("2026-11-25T06:30:00Z"), ZoneOffset.UTC);
-        assertThat(provider.refundNow(m.readTree(details("SUCCESS",
-                "{\"pd\":[{\"fdt\":\"2026-11-01T00:00\",\"tdt\":\"2026-11-28T00:00\",\"am\":\"lots\"}]}")))).isNull();
-        assertThat(provider.refundNow(m.readTree(details("SUCCESS",
-                "{\"pd\":[{\"fdt\":\"2026-11-01T00:00\",\"tdt\":\"2026-11-28T00:00\",\"am\":12000}]}")))).isEqualByComparingTo("0");
-        assertThat(provider.refundNow(m.readTree(OK + ",\"order\":{\"status\":\"SUCCESS\"}}"))).isNull();
-    }
-
-    /** A refund is quoted only for a booking the supplier still shows as confirmed; anything else goes to Voyra support (null). */
-    @Test
-    void cancelQuote_onABookingNoLongerConfirmedOrAnEmptyAnswerIsUnknown() {
-        server.expect(requestTo(BOOKER + "/oms/v3/hotel/booking-details")).andRespond(withSuccess(details("CANCELLED", SLABS), MediaType.APPLICATION_JSON));
-        server.expect(requestTo(BOOKER + "/oms/v3/hotel/booking-details")).andRespond(withSuccess("  ", MediaType.APPLICATION_JSON));
-        CancelQuote cancelled = provider.cancelQuote("TJ1", ROW);
-        assertThat(cancelled.refund()).isNull();
-        assertThat(cancelled.message()).isEqualTo("The supplier shows this booking as CANCELLED");
-        CancelQuote empty = provider.cancelQuote("TJ1", ROW);
-        assertThat(empty.refund()).isNull();
-        assertThat(empty.message()).isEqualTo("The supplier shows this booking as unknown");
-        server.verify();
-    }
-
-    @Test
-    void cancel_postsTheIdInThePathWithNoBodyThenReadsTheRefund() {
-        server.expect(requestTo(BOOKER + "/oms/v3/hotel/cancel-booking/TJ1")).andExpect(method(HttpMethod.POST))
-                .andExpect(content().string(""))
-                .andRespond(withSuccess(OK + "}", MediaType.APPLICATION_JSON));
-        server.expect(requestTo(BOOKER + "/oms/v3/hotel/booking-details"))
-                .andRespond(withSuccess(details("CANCELLATION_PENDING", SLABS), MediaType.APPLICATION_JSON));
-        CancelResult r = provider.cancel("TJ1", ROW);
-        server.verify();
-        assertThat(r.accepted()).isTrue();
-        assertThat(r.refund()).isEqualByComparingTo("6000");
-    }
-
-    @Test
-    void cancel_refusedAmbiguousAndAnUnreadableRefund() {
-        server.expect(requestTo(BOOKER + "/oms/v3/hotel/cancel-booking/TJ1")).andRespond(withSuccess(
-                "{\"status\":{\"success\":false},\"error\":{\"code\":\"CANCELLATION_NOT_ALLOWED\",\"message\":\"Outside the cancellable window\"}}",
-                MediaType.APPLICATION_JSON));
-        server.expect(requestTo(BOOKER + "/oms/v3/hotel/cancel-booking/TJ1")).andRespond(withSuccess("", MediaType.APPLICATION_JSON));
-        server.expect(requestTo(BOOKER + "/oms/v3/hotel/cancel-booking/TJ1")).andRespond(withSuccess(OK + "}", MediaType.APPLICATION_JSON));
-        server.expect(requestTo(BOOKER + "/oms/v3/hotel/booking-details")).andRespond(withStatus(HttpStatus.INTERNAL_SERVER_ERROR));
-        CancelResult refused = provider.cancel("TJ1", ROW);
-        assertThat(refused.accepted()).isFalse();
-        assertThat(refused.message()).isEqualTo("Outside the cancellable window");
-        assertThatThrownBy(() -> provider.cancel("TJ1", ROW)).isInstanceOf(SupplierException.class);
-        CancelResult unknown = provider.cancel("TJ1", ROW);
-        assertThat(unknown.accepted()).isTrue();
-        assertThat(unknown.refund()).isNull();
-        server.verify();
     }
 
     // ---------------------------------------------------------------- hosts and transport

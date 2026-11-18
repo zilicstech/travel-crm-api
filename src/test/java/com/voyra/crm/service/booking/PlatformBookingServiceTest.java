@@ -78,7 +78,6 @@ import java.util.Optional;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
@@ -1351,10 +1350,7 @@ class PlatformBookingServiceTest {
 
         assertThatThrownBy(() -> service.confirm(id, confirmRequest("key-00000001", "4500.00"))).isInstanceOf(NotFoundException.class);
         assertThatThrownBy(() -> service.abort(id)).isInstanceOf(NotFoundException.class);
-        assertThatThrownBy(() -> service.cancelQuote(id)).isInstanceOf(NotFoundException.class);
-        assertThatThrownBy(() -> service.cancel(id, "cancel-key-1")).isInstanceOf(NotFoundException.class);
         verify(walletService, never()).hold(any(), any(), any(), any(), any());
-        verify(provider, never()).cancel(any(), any());
     }
 
     @Test
@@ -1364,9 +1360,6 @@ class PlatformBookingServiceTest {
         loginAs(UserType.AGENCY_OWNER, "OWNER1");
 
         assertThat(service.confirm(id, confirmRequest("key-00000001", "4500.00")).getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
-        when(provider.cancelQuote(any(), any())).thenReturn(new com.voyra.crm.models.booking.CancelQuote(new BigDecimal("4000.00"), null));
-        when(settings.voyraCancelFee()).thenReturn(BigDecimal.ZERO);
-        assertThatCode(() -> service.cancelQuote(id)).doesNotThrowAnyException();
         String other = reviewedByAgent("AG1");
         loginAs(UserType.AGENCY_OWNER, "OWNER1");
         assertThat(service.abort(other).getStatus()).isEqualTo(PlatformBookingStatus.ABORTED);
@@ -1650,7 +1643,6 @@ class PlatformBookingServiceTest {
 
         assertThatThrownBy(() -> service.confirm(id, hotelConfirmRequest("key-00000001", "4500.00"))).isInstanceOf(NotFoundException.class);
         assertThatThrownBy(() -> service.abort(id)).isInstanceOf(NotFoundException.class);
-        assertThatThrownBy(() -> service.cancelQuote(id)).isInstanceOf(NotFoundException.class);
         verify(walletService, never()).hold(any(), any(), any(), any(), any());
     }
 

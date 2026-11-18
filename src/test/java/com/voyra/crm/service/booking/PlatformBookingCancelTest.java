@@ -9,17 +9,11 @@ import com.voyra.crm.enums.PlatformAuditAction;
 import com.voyra.crm.enums.PlatformBookingStatus;
 import com.voyra.crm.enums.PricingProduct;
 import com.voyra.crm.enums.ReceivableReason;
-import com.voyra.crm.enums.SupplierEnvironment;
 import com.voyra.crm.enums.UserType;
 import com.voyra.crm.enums.WalletEntryType;
 import com.voyra.crm.enums.WalletStatus;
-import com.voyra.crm.exception.BookingConflictException;
 import com.voyra.crm.exception.NotFoundException;
-import com.voyra.crm.exception.SupplierException;
-import com.voyra.crm.exception.SupplierTimeoutException;
 import com.voyra.crm.models.booking.BookResult;
-import com.voyra.crm.models.booking.CancelQuote;
-import com.voyra.crm.models.booking.CancelResult;
 import com.voyra.crm.models.booking.SupplierBookingStatus;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.PlatformBookingEventRepository;
@@ -45,7 +39,6 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -65,12 +58,12 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * Whole-booking cancellation (spec 7.5). The ticketed row: gross 5000, displayed 4500, Voyra earned 127.50,
+ * Settling a whole-booking cancellation already CANCELLING before cancellation requests (spec 7.5): the poller's
+ * {@code settleConfirmedCancel} and the admin's {@code resolveCancel}. The ticketed row: gross 5000, displayed 4500, Voyra earned 127.50,
  * agency commission 100 with TDS 5 (95 credited net), voyra_net 127.50 - 500 - 100 = -472.50.
  */
 @ExtendWith(MockitoExtension.class)
@@ -115,14 +108,6 @@ class PlatformBookingCancelTest {
 
     private SupplierRegistry registry() {
         return BookingSuppliers.registry(suppliers, provider, tripjack, hotelProvider, flightConfig, hotelConfig);
-    }
-
-    /** The ticketed row, booked on the Tripjack UAT account. */
-    private PlatformBooking onTripjack() {
-        PlatformBooking b = rows.get(ID);
-        b.setCredentialId(BookingSuppliers.TJ_UAT.id());
-        b.setEnvironment(SupplierEnvironment.UAT);
-        return b;
     }
 
     @BeforeEach
@@ -174,19 +159,20 @@ class PlatformBookingCancelTest {
 
     private static PlatformBooking ticketedRow(PlatformBookingStatus status) {
         return PlatformBooking.builder().id(ID).tenantId(T).product(PricingProduct.FLIGHT).status(status)
-                .credentialId("s1").environment(SupplierEnvironment.MOCK).supplierReviewId("rv-1").supplierBookingId("SB-1").pnr("PNR123")
+                .credentialId("s1").environment(com.voyra.crm.enums.SupplierEnvironment.MOCK).supplierReviewId("rv-1").supplierBookingId("SB-1").pnr("PNR123")
                 .gross(new BigDecimal("5000.00")).base(new BigDecimal("4250.00")).displayed(new BigDecimal("4500.00"))
                 .agencyCommission(new BigDecimal("100.00")).tds(new BigDecimal("5.00"))
                 .holdEntryId("H1").debitEntryId("D1")
                 .pricingSnapshot(new LinkedHashMap<>(Map.of("pricingId", "P1"))).createdAt(Instant.now()).build();
     }
 
-    private void supplierRefunds(String refund) {
-        BigDecimal r = refund == null ? null : new BigDecimal(refund);
-        for (FlightBookingProvider p : List.of(provider, tripjack)) {
-            lenient().when(p.cancelQuote(eq("SB-1"), any())).thenReturn(new CancelQuote(r, "quoted"));
-            lenient().when(p.cancel(eq("SB-1"), any())).thenReturn(new CancelResult(true, r, "Cancelled"));
-        }
+    /** The row as an agency cancel from before this release left it: CANCELLING, with the supplier's acceptance on record. */
+    private PlatformBooking accepted(String refund) {
+        PlatformBooking b = rows.get(ID);
+        b.setStatus(PlatformBookingStatus.CANCELLING);
+        savedEvents.add(PlatformBookingEvent.builder().id("E-ACC").platformBookingId(ID).type("CANCEL_ACCEPTED")
+                .payload(Map.of("refund", refund, "message", "Cancelled")).createdAt(Instant.now()).build());
+        return b;
     }
 
     private List<String> eventTypes() {
@@ -199,13 +185,13 @@ class PlatformBookingCancelTest {
     }
 
     @Test
-    void cancelPostsRefundThenRecall() {
-        supplierRefunds("4000.00");
+    void aConfirmedCancelPostsRefundThenRecall() {
+        accepted("4000.00");
 
-        PlatformBooking b = service.cancel(ID, "ck-1");
+        service.settleConfirmedCancel(ID);
 
-        InOrder order = inOrder(provider, walletService);
-        order.verify(provider).cancel(eq("SB-1"), any());
+        PlatformBooking b = rows.get(ID);
+        InOrder order = inOrder(walletService);
         order.verify(walletService).credit(eq(T), eq(WalletEntryType.REFUND_CREDIT), eq(new BigDecimal("4000.00")),
                 eq("pb-refund:" + ID), eq(REF), eq(ID), contains("PNR123"));
         order.verify(walletService).debitOrReceivable(T, WalletEntryType.COMMISSION_RECALL, new BigDecimal("95.00"),
@@ -213,20 +199,21 @@ class PlatformBookingCancelTest {
         assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
         assertThat(b.getCancelRefund()).isEqualByComparingTo("4000.00");
         assertThat(b.getCancelledAt()).isNotNull();
+        assertThat(b.getSupplierMessage()).isEqualTo("Cancelled");
         verify(notificationService).bookingCancelled(b, false);
-        assertThat(eventTypes()).containsSubsequence("CANCEL_REQUESTED", "CANCELLED");
+        assertThat(eventTypes()).containsSubsequence("CANCEL_ACCEPTED", "CANCELLED");
     }
 
     /** A cancelled booking whose CRM mirror was written goes back to PENDING; the mirror cancel runs after the refund committed. */
     @Test
-    void cancelSchedulesTheMirrorCancelAfterTheRefund() {
-        supplierRefunds("4000.00");
+    void aConfirmedCancelSchedulesTheMirrorCancelAfterTheRefund() {
+        accepted("4000.00");
         rows.get(ID).setClientId("C1");
         rows.get(ID).setMirrorStatus(com.voyra.crm.enums.MirrorStatus.DONE);
 
-        PlatformBooking b = service.cancel(ID, "ck-1");
+        service.settleConfirmedCancel(ID);
 
-        assertThat(b.getMirrorStatus()).isEqualTo(com.voyra.crm.enums.MirrorStatus.PENDING);
+        assertThat(rows.get(ID).getMirrorStatus()).isEqualTo(com.voyra.crm.enums.MirrorStatus.PENDING);
         InOrder order = inOrder(walletService, mirrorService);
         order.verify(walletService).credit(eq(T), eq(WalletEntryType.REFUND_CREDIT), any(), anyString(), anyString(), anyString(), anyString());
         order.verify(mirrorService).sync(ID);
@@ -235,13 +222,13 @@ class PlatformBookingCancelTest {
     /** A mirror that had failed (or never ran) is queued again too, with a MIRROR_QUEUED event that resets the repair cap. */
     @Test
     void aCancelQueuesTheMirrorWhateverItsStatus() {
-        supplierRefunds("4000.00");
+        accepted("4000.00");
         rows.get(ID).setClientId("C1");
         rows.get(ID).setMirrorStatus(com.voyra.crm.enums.MirrorStatus.FAILED);
 
-        PlatformBooking b = service.cancel(ID, "ck-1");
+        service.settleConfirmedCancel(ID);
 
-        assertThat(b.getMirrorStatus()).isEqualTo(com.voyra.crm.enums.MirrorStatus.PENDING);
+        assertThat(rows.get(ID).getMirrorStatus()).isEqualTo(com.voyra.crm.enums.MirrorStatus.PENDING);
         assertThat(savedEvents).filteredOn(e -> e.getType().equals("MIRROR_QUEUED"))
                 .singleElement().satisfies(e -> assertThat(e.getPayload()).containsEntry("status", "CANCELLED"));
         verify(mirrorService).sync(ID);
@@ -250,38 +237,39 @@ class PlatformBookingCancelTest {
     @Test
     void refundIsNetOfTheVoyraFeeAndCappedAtDisplayed() {
         when(settings.voyraCancelFee()).thenReturn(new BigDecimal("250.00"));
-        supplierRefunds("6000.00");
+        accepted("6000.00");
 
-        PlatformBooking b = service.cancel(ID, "ck-1");
+        service.settleConfirmedCancel(ID);
 
         // 6000 - 250 = 5750, capped at the 4500 the agency paid
         verify(walletService).credit(eq(T), eq(WalletEntryType.REFUND_CREDIT), eq(new BigDecimal("4500.00")),
                 eq("pb-refund:" + ID), eq(REF), eq(ID), anyString());
-        assertThat(b.getCancelRefund()).isEqualByComparingTo("4500.00");
+        assertThat(rows.get(ID).getCancelRefund()).isEqualByComparingTo("4500.00");
+        verify(notificationService, never()).platformAlert(anyString(), anyString()); // no "Loss-making" alert
     }
 
     @Test
     void zeroRefundStillRecallsUnderTheCancelNetNegativeReason() {
         when(settings.voyraCancelFee()).thenReturn(new BigDecimal("250.00"));
-        supplierRefunds("100.00"); // below the fee: refund 0, net = -95
+        accepted("100.00"); // below the fee: refund 0, net = -95
 
-        PlatformBooking b = service.cancel(ID, "ck-1");
+        service.settleConfirmedCancel(ID);
 
         // no zero credit; the recall goes to debitOrReceivable, which opens the receivable when available falls short
         verify(walletService, never()).credit(anyString(), any(), any(), anyString(), anyString(), anyString(), anyString());
         verify(walletService).debitOrReceivable(T, WalletEntryType.COMMISSION_RECALL, new BigDecimal("95.00"),
                 "pb-recall:" + ID, REF, ID, ReceivableReason.CANCEL_NET_NEGATIVE);
-        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
-        assertThat(b.getCancelRefund()).isEqualByComparingTo("0");
+        assertThat(rows.get(ID).getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
+        assertThat(rows.get(ID).getCancelRefund()).isEqualByComparingTo("0");
     }
 
     @Test
     void noCommissionMeansNoRecall() {
         rows.get(ID).setAgencyCommission(BigDecimal.ZERO);
         rows.get(ID).setTds(BigDecimal.ZERO);
-        supplierRefunds("4000.00");
+        accepted("4000.00");
 
-        service.cancel(ID, "ck-1");
+        service.settleConfirmedCancel(ID);
 
         verify(walletService).credit(eq(T), eq(WalletEntryType.REFUND_CREDIT), eq(new BigDecimal("4000.00")),
                 anyString(), anyString(), anyString(), anyString());
@@ -289,113 +277,99 @@ class PlatformBookingCancelTest {
     }
 
     @Test
-    void supplierRefusalPostsNothing() {
-        when(provider.cancelQuote(eq("SB-1"), any())).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
-        when(provider.cancel(eq("SB-1"), any())).thenReturn(new CancelResult(false, null, "Ticket already flown"));
+    void aBookingWithoutTdsRecallsTheWholeCommission() {
+        rows.get(ID).setTds(null);
+        accepted("4000.00");
 
-        assertThatThrownBy(() -> service.cancel(ID, "ck-1"))
-                .isInstanceOfSatisfying(BookingConflictException.class, e -> {
-                    assertThat(e.getCode()).isEqualTo("CANCEL_REFUSED");
-                    // readiness: the agency gets the fixed sentence; the supplier's words stay on the event for Voyra
-                    assertThat(e.getMessage()).isEqualTo("The supplier refused the cancellation");
-                });
-        assertThat(savedEvents.stream().filter(ev -> ev.getType().equals("CANCEL_REFUSED")).findFirst().orElseThrow()
-                .getPayload()).containsEntry("message", "Ticket already flown");
+        service.settleConfirmedCancel(ID);
 
+        verify(walletService).debitOrReceivable(T, WalletEntryType.COMMISSION_RECALL, new BigDecimal("100.00"),
+                "pb-recall:" + ID, REF, ID, ReceivableReason.CANCEL_NET_NEGATIVE);
+    }
+
+    @Test
+    void aNegativeAcceptedRefundGoesToTheManualPath() {
+        accepted("-50.00");
+
+        service.settleConfirmedCancel(ID);
+
+        assertThat(rows.get(ID).getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
+        assertThat(rows.get(ID).getCancelRefund()).isNull();
         verifyNothingPosted();
+        verify(notificationService).platformAlert(contains(ID), contains("post refund manually"));
+    }
+
+    @Test
+    void aConfirmedCancelWithAnUnknownRefundCancelsAndAlertsForAManualPost() {
+        accepted("UNKNOWN");
+
+        service.settleConfirmedCancel(ID);
+
+        assertThat(rows.get(ID).getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
+        assertThat(rows.get(ID).getCancelRefund()).isNull();
+        verifyNothingPosted();
+        verify(notificationService).platformAlert(contains(ID), contains("post refund manually"));
+        assertThat(eventTypes()).contains("CANCELLED");
+    }
+
+    @Test
+    void aConfirmedCancelWithoutAnAcceptanceOrForASettledRowPostsNothing() {
+        service.settleConfirmedCancel(ID); // TICKETED: already settled elsewhere
         assertThat(rows.get(ID).getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
-        assertThat(rows.get(ID).getCancelledAt()).isNull();
-        assertThat(eventTypes()).contains("CANCEL_REFUSED");
 
-        assertThatThrownBy(() -> service.cancel(ID, "ck-2")).isInstanceOf(BookingConflictException.class);
-        verify(provider, times(2)).cancel(eq("SB-1"), any());
-    }
-
-    @Test
-    void supplierTimeoutKeepsTheBookingCancellingAndAlerts() {
-        when(provider.cancelQuote(eq("SB-1"), any())).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
-        when(provider.cancel(eq("SB-1"), any())).thenThrow(new SupplierTimeoutException("Tripjack cancel timed out", null));
-
-        // accepted-pending: answers normally with the CANCELLING booking, so the agency is not told to retry
-        assertThat(service.cancel(ID, "ck-1").getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
-
-        // the supplier may have cancelled: no posting, no second submission, an admin settles it
-        assertThat(rows.get(ID).getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
-        assertThat(eventTypes()).contains("CANCEL_NO_ANSWER");
-        verify(notificationService, times(1)).platformAlert(contains(ID), anyString());
+        rows.get(ID).setStatus(PlatformBookingStatus.CANCELLING);
+        service.settleConfirmedCancel(ID); // no CANCEL_ACCEPTED event: no refund on record
         verifyNothingPosted();
-        assertThat(service.cancel(ID, "ck-1").getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
-        verify(provider, times(1)).cancel(eq("SB-1"), any());
+        assertThat(rows.get(ID).getSupplierMessage()).isNull();
+
+        assertThatThrownBy(() -> service.settleConfirmedCancel("NOPE")).isInstanceOf(NotFoundException.class)
+                .hasMessage("Booking not found");
     }
 
     @Test
-    void anyRuntimeErrorFromTheSupplierCancelIsTreatedAsNoAnswer() {
-        when(provider.cancelQuote(eq("SB-1"), any())).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
-        when(provider.cancel(eq("SB-1"), any())).thenThrow(new IllegalArgumentException("unexpected body"));
-
-        assertThatThrownBy(() -> service.cancel(ID, "ck-1")).isInstanceOf(SupplierException.class);
-        assertThat(rows.get(ID).getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
-        verifyNothingPosted();
-    }
-
-    @Test
-    void aQuoteErrorRevertsToTicketedBecauseNothingWasSubmitted() {
-        when(provider.cancelQuote(eq("SB-1"), any())).thenThrow(new SupplierException("Tripjack cancel quote call failed", null));
-
-        assertThatThrownBy(() -> service.cancel(ID, "ck-1")).isInstanceOf(SupplierException.class);
-        assertThat(rows.get(ID).getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
-        verify(provider, never()).cancel(anyString(), any());
-    }
-
-    @Test
-    void aSecondCancelWhileCancellingNeverReachesTheSupplier() {
-        when(provider.cancelQuote(eq("SB-1"), any())).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
-        when(provider.cancel(eq("SB-1"), any())).thenAnswer(i -> {
-            // a double click / second tab arrives while the first request waits on the supplier
-            assertThat(service.cancel(ID, "ck-1").getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
-            assertThatThrownBy(() -> service.cancel(ID, "ck-2"))
-                    .isInstanceOfSatisfying(BookingConflictException.class, e -> assertThat(e.getCode()).isEqualTo("CANCEL_IN_PROGRESS"));
-            assertThatThrownBy(() -> service.cancelQuote(ID))
-                    .isInstanceOfSatisfying(BookingConflictException.class, e -> assertThat(e.getCode()).isEqualTo("CANCEL_IN_PROGRESS"));
-            return new CancelResult(true, new BigDecimal("4000.00"), "Cancelled");
-        });
-
-        assertThat(service.cancel(ID, "ck-1").getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
-        verify(provider, times(1)).cancel(eq("SB-1"), any());
-        verify(provider, times(1)).cancelQuote(eq("SB-1"), any());
-        verify(walletService, times(1)).credit(anyString(), any(), any(), anyString(), anyString(), anyString(), anyString());
-    }
-
-    @Test
-    void aFailedSettlementAfterAcceptanceStaysCancellingAndAlerts() {
-        supplierRefunds("4000.00");
-        when(walletService.credit(anyString(), any(), any(), anyString(), anyString(), anyString(), anyString()))
-                .thenThrow(new IllegalStateException("database unavailable"));
-
-        assertThatThrownBy(() -> service.cancel(ID, "ck-1")).isInstanceOf(IllegalStateException.class);
-
-        assertThat(rows.get(ID).getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
-        PlatformBookingEvent accepted = savedEvents.stream().filter(e -> e.getType().equals("CANCEL_ACCEPTED")).findFirst().orElseThrow();
-        assertThat(accepted.getPayload()).containsEntry("message", "Cancelled");
-        assertThat(new BigDecimal(String.valueOf(accepted.getPayload().get("refund")))).isEqualByComparingTo("4000.00");
-        verify(notificationService).platformAlert(contains(ID), contains("4000"));
-        // a retry must not submit the cancellation again
-        assertThat(service.cancel(ID, "ck-1").getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
-        verify(provider, times(1)).cancel(eq("SB-1"), any());
-    }
-
-    @Test
-    void aClosedWalletCancelsWithoutPostingAndAlertsAnOfflineRefund() {
+    void aConfirmedCancelOnAClosedWalletPostsNothingAndAlertsAnOfflineRefund() {
         wallet.setStatus(WalletStatus.CLOSED);
-        supplierRefunds("4000.00");
+        accepted("4000.00");
 
-        PlatformBooking b = service.cancel(ID, "ck-1");
+        service.settleConfirmedCancel(ID);
 
+        PlatformBooking b = rows.get(ID);
         assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
         verifyNothingPosted();
         verify(notificationService).platformAlert(contains(ID), contains("offline"));
         // the agency email must say the refund comes by bank, not to the wallet
         verify(notificationService).bookingCancelled(b, true);
+        assertThat(savedEvents).filteredOn(e -> e.getType().equals("CANCELLED"))
+                .singleElement().satisfies(e -> assertThat(e.getPayload()).containsEntry("offline", true));
+    }
+
+    /** A hotel's refund is posted as a hotel booking's, with the same keys and recall. */
+    @Test
+    void aConfirmedHotelCancelPostsAsAHotelBooking() {
+        rows.get(ID).setProduct(PricingProduct.HOTEL);
+        accepted("4000.00");
+
+        service.settleConfirmedCancel(ID);
+
+        verify(walletService).credit(eq(T), eq(WalletEntryType.REFUND_CREDIT), eq(new BigDecimal("4000.00")),
+                eq("pb-refund:" + ID), eq(REF), eq(ID), contains("hotel booking"));
+        verify(walletService).debitOrReceivable(T, WalletEntryType.COMMISSION_RECALL, new BigDecimal("95.00"),
+                "pb-recall:" + ID, REF, ID, ReceivableReason.CANCEL_NET_NEGATIVE);
+    }
+
+    /** Past the free-cancellation deadline the supplier accepted with 0: nothing is credited, and the recall still applies. */
+    @Test
+    void aHotelCancelledPastTheDeadlinePostsZeroAndStillRecalls() {
+        rows.get(ID).setProduct(PricingProduct.HOTEL);
+        accepted("0");
+
+        service.settleConfirmedCancel(ID);
+
+        assertThat(rows.get(ID).getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
+        assertThat(rows.get(ID).getCancelRefund()).isEqualByComparingTo("0");
+        verify(walletService, never()).credit(anyString(), eq(WalletEntryType.REFUND_CREDIT), any(), anyString(), anyString(), anyString(), anyString());
+        verify(walletService).debitOrReceivable(T, WalletEntryType.COMMISSION_RECALL, new BigDecimal("95.00"),
+                "pb-recall:" + ID, REF, ID, ReceivableReason.CANCEL_NET_NEGATIVE);
     }
 
     @Test
@@ -408,31 +382,32 @@ class PlatformBookingCancelTest {
         verify(walletService, never()).debitHeld(anyString(), any(), anyString(), anyString(), anyString());
     }
 
-    private void cancellingAfterATimeout() {
-        when(provider.cancelQuote(eq("SB-1"), any())).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
-        when(provider.cancel(eq("SB-1"), any())).thenThrow(new SupplierTimeoutException("Tripjack cancel timed out", null));
-        service.cancel(ID, "ck-1");
+    /** A row an agency cancel left CANCELLING with no supplier answer, as the platform admin sees it. */
+    private void cancellingWithoutAnAnswer() {
+        rows.get(ID).setStatus(PlatformBookingStatus.CANCELLING);
         loginAsPlatformAdmin();
     }
 
     @Test
     void adminResolvesACancellingBookingAsCancelled() {
-        cancellingAfterATimeout();
+        cancellingWithoutAnAnswer();
 
         PlatformBooking b = service.resolveCancel(ID, true, new BigDecimal("4000.00"), "Tripjack confirmed by email");
 
         assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
+        assertThat(b.getSupplierMessage()).isEqualTo("Resolved by Voyra");
         verify(walletService).credit(eq(T), eq(WalletEntryType.REFUND_CREDIT), eq(new BigDecimal("4000.00")),
                 eq("pb-refund:" + ID), eq(REF), eq(ID), anyString());
         verify(walletService).debitOrReceivable(T, WalletEntryType.COMMISSION_RECALL, new BigDecimal("95.00"),
                 "pb-recall:" + ID, REF, ID, ReceivableReason.CANCEL_NET_NEGATIVE);
         verify(platformAuditService).record(eq(PlatformAuditAction.BOOKING_CANCEL_RESOLVE), eq(REF), eq(ID), any());
+        verify(mirrorService).sync(ID);
         assertThat(eventTypes()).contains("RESOLVED");
     }
 
     @Test
     void resolveAuditRecordsTheTypedRefundAndTheCappedOneThatWasPosted() {
-        cancellingAfterATimeout();
+        cancellingWithoutAnAnswer();
 
         service.resolveCancel(ID, true, new BigDecimal("20000.00"), "Tripjack confirmed by email");
 
@@ -445,13 +420,30 @@ class PlatformBookingCancelTest {
 
     @Test
     void adminResolvesNotCancelledBackToTicketed() {
-        cancellingAfterATimeout();
+        cancellingWithoutAnAnswer();
 
         PlatformBooking b = service.resolveCancel(ID, false, null, "Tripjack says the booking is live");
 
         assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
         verifyNothingPosted();
-        verify(platformAuditService).record(eq(PlatformAuditAction.BOOKING_CANCEL_RESOLVE), eq(REF), eq(ID), any());
+        verify(mirrorService, never()).sync(anyString());
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<Map<String, Object>> detail = org.mockito.ArgumentCaptor.forClass(Map.class);
+        verify(platformAuditService).record(eq(PlatformAuditAction.BOOKING_CANCEL_RESOLVE), eq(REF), eq(ID), detail.capture());
+        assertThat(detail.getValue()).containsEntry("requestedRefund", "NONE").containsEntry("postedRefund", "NONE");
+    }
+
+    @Test
+    void adminResolvesACancelOnAClosedWalletOffline() {
+        wallet.setStatus(WalletStatus.CLOSED);
+        cancellingWithoutAnAnswer();
+
+        PlatformBooking b = service.resolveCancel(ID, true, new BigDecimal("4000.00"), "Tripjack confirmed by email");
+
+        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
+        verifyNothingPosted();
+        verify(notificationService).platformAlert(contains(ID), contains("offline"));
+        verify(notificationService).bookingCancelled(b, true);
     }
 
     @Test
@@ -468,371 +460,6 @@ class PlatformBookingCancelTest {
     }
 
     @Test
-    void onlyTicketedCanBeCancelled() {
-        for (PlatformBookingStatus s : List.of(PlatformBookingStatus.REVIEWING, PlatformBookingStatus.HELD, PlatformBookingStatus.BOOKING,
-                PlatformBookingStatus.UNKNOWN, PlatformBookingStatus.FAILED, PlatformBookingStatus.ABORTED)) {
-            rows.put(ID, ticketedRow(s));
-            assertThatThrownBy(() -> service.cancel(ID, "ck-1")).as(s.name()).isInstanceOf(IllegalStateException.class);
-            assertThatThrownBy(() -> service.cancelQuote(ID)).as(s.name()).isInstanceOf(IllegalStateException.class);
-        }
-        verify(provider, never()).cancelQuote(anyString(), any());
-        verify(provider, never()).cancel(anyString(), any());
-        verifyNothingPosted();
-    }
-
-    @Test
-    void cancelTwiceWithTheSameKeyPostsOnce() {
-        supplierRefunds("4000.00");
-
-        service.cancel(ID, "ck-1");
-        PlatformBooking again = service.cancel(ID, "ck-1");
-
-        assertThat(again.getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
-        verify(provider, times(1)).cancel(eq("SB-1"), any());
-        verify(walletService, times(1)).credit(anyString(), any(), any(), anyString(), anyString(), anyString(), anyString());
-        verify(walletService, times(1)).debitOrReceivable(anyString(), any(), any(), anyString(), anyString(), anyString(), any());
-    }
-
-    @Test
-    void cancelPostsRefundAndRecallAndTouchesNoVoyraFigure() {
-        when(settings.voyraCancelFee()).thenReturn(new BigDecimal("250.00"));
-        supplierRefunds("4000.00");
-
-        PlatformBooking b = service.cancel(ID, "ck-1");
-
-        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
-        verify(walletService).credit(eq(T), eq(WalletEntryType.REFUND_CREDIT), any(), anyString(), anyString(), anyString(), anyString());
-        verify(walletService).debitOrReceivable(eq(T), eq(WalletEntryType.COMMISSION_RECALL), any(), anyString(), anyString(), anyString(), any());
-        verify(notificationService, never()).platformAlert(anyString(), anyString()); // no "Loss-making" alert
-    }
-
-    @Test
-    void cancelQuoteShowsRefundRecallAndNet() {
-        when(settings.voyraCancelFee()).thenReturn(new BigDecimal("250.00"));
-        supplierRefunds("4000.00");
-
-        CancelPreview q = service.cancelQuote(ID);
-
-        assertThat(q.refund()).isEqualByComparingTo("3750.00");
-        assertThat(q.recall()).isEqualByComparingTo("95.00");
-        assertThat(q.net()).isEqualByComparingTo("3655.00");
-        assertThat(q.voyraFee()).isEqualByComparingTo("250.00");
-        assertThat(q.refundToBeConfirmed()).isFalse();
-        assertThat(q.cancellationPolicy()).isNull(); // flights carry no hotel policy
-        assertThat(q.freeCancellationUntil()).isNull();
-        verifyNothingPosted();
-    }
-
-    @Test
-    void unknownQuotedRefundIsFlaggedAndCancelRefusesBeforeTheSupplier() {
-        supplierRefunds(null);
-
-        CancelPreview q = service.cancelQuote(ID);
-        assertThat(q.refund()).isNull();
-        assertThat(q.net()).isNull();
-        assertThat(q.refundToBeConfirmed()).isTrue();
-
-        assertThatThrownBy(() -> service.cancel(ID, "ck-1"))
-                .isInstanceOfSatisfying(BookingConflictException.class, e -> assertThat(e.getCode()).isEqualTo("REFUND_UNKNOWN"));
-        verify(provider, never()).cancel(anyString(), any());
-        verifyNothingPosted();
-        assertThat(rows.get(ID).getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
-    }
-
-    @Test
-    void aNegativeQuotedRefundIsTreatedAsUnknown() {
-        supplierRefunds("-50.00");
-
-        CancelPreview q = service.cancelQuote(ID);
-        assertThat(q.refund()).isNull();
-        assertThat(q.refundToBeConfirmed()).isTrue();
-        assertThatThrownBy(() -> service.cancel(ID, "ck-1"))
-                .isInstanceOfSatisfying(BookingConflictException.class, e -> assertThat(e.getCode()).isEqualTo("REFUND_UNKNOWN"));
-        verify(provider, never()).cancel(anyString(), any());
-    }
-
-    @Test
-    void aNegativeAcceptedRefundGoesToTheManualPath() {
-        when(provider.cancelQuote(eq("SB-1"), any())).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
-        when(provider.cancel(eq("SB-1"), any())).thenReturn(new CancelResult(true, new BigDecimal("-50.00"), "Cancelled"));
-
-        PlatformBooking b = service.cancel(ID, "ck-1");
-
-        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
-        assertThat(b.getCancelRefund()).isNull();
-        verifyNothingPosted();
-        verify(notificationService).platformAlert(contains(ID), contains("post refund manually"));
-    }
-
-    @Test
-    void acceptedWithoutARefundCancelsAndAlertsForAManualPost() {
-        when(provider.cancelQuote(eq("SB-1"), any())).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
-        when(provider.cancel(eq("SB-1"), any())).thenReturn(new CancelResult(true, null, "Cancelled"));
-
-        PlatformBooking b = service.cancel(ID, "ck-1");
-
-        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
-        assertThat(b.getCancelRefund()).isNull();
-        verifyNothingPosted();
-        verify(notificationService).platformAlert(contains(ID), contains("post refund manually"));
-        assertThat(eventTypes()).contains("CANCELLED");
-    }
-
-    @Test
-    void usesTheReviewIdWhenTheSupplierBookingIdIsMissing() {
-        rows.get(ID).setSupplierBookingId(null);
-        when(provider.cancelQuote(eq("rv-1"), any())).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
-        when(provider.cancel(eq("rv-1"), any())).thenReturn(new CancelResult(true, new BigDecimal("4000.00"), "Cancelled"));
-
-        assertThat(service.cancel(ID, "ck-1").getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
-    }
-
-    @Test
-    void anotherAgencysBookingIsNotFound() {
-        loginAs("OWNER2", "T2");
-
-        assertThatThrownBy(() -> service.cancel(ID, "ck-1")).isInstanceOf(NotFoundException.class);
-        assertThatThrownBy(() -> service.cancelQuote(ID)).isInstanceOf(NotFoundException.class);
-        verify(provider, never()).cancel(anyString(), any());
-    }
-
-    @Test
-    void cancelRefusesToRunInsideATransaction() {
-        TransactionSynchronizationManager.setActualTransactionActive(true);
-        try {
-            assertThatThrownBy(() -> service.cancel(ID, "ck-1")).isInstanceOf(IllegalStateException.class);
-        } finally {
-            TransactionSynchronizationManager.setActualTransactionActive(false);
-        }
-        verify(provider, never()).cancel(anyString(), any());
-    }
-
-    /** cancel for a hotel reuses the flight path but quotes and cancels with the hotel supplier. */
-    @Test
-    void aHotelBookingIsCancelledThroughTheHotelSupplier() {
-        rows.get(ID).setProduct(PricingProduct.HOTEL);
-        when(hotelProvider.cancelQuote(eq("SB-1"), any())).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
-        when(hotelProvider.cancel(eq("SB-1"), any())).thenReturn(new CancelResult(true, new BigDecimal("4000.00"), "Cancelled"));
-
-        assertThat(service.cancelQuote(ID).refund()).isEqualByComparingTo("4000.00");
-        PlatformBooking b = service.cancel(ID, "ck-1");
-
-        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
-        verify(hotelProvider).cancel(eq("SB-1"), any());
-        verify(provider, never()).cancelQuote(any(), any());
-        verify(provider, never()).cancel(any(), any());
-        verify(walletService).credit(eq(T), eq(WalletEntryType.REFUND_CREDIT), eq(new BigDecimal("4000.00")),
-                eq("pb-refund:" + ID), eq(REF), eq(ID), contains("hotel booking"));
-        verify(walletService).debitOrReceivable(T, WalletEntryType.COMMISSION_RECALL, new BigDecimal("95.00"),
-                "pb-recall:" + ID, REF, ID, ReceivableReason.CANCEL_NET_NEGATIVE);
-    }
-
-    /** A HOTEL row as reviewed: the rate's policy and free-cancellation deadline are stored on the itinerary. */
-    private PlatformBooking hotelRow() {
-        PlatformBooking b = rows.get(ID);
-        b.setProduct(PricingProduct.HOTEL);
-        Map<String, Object> itinerary = new LinkedHashMap<>();
-        itinerary.put("hotel", Map.of("name", "Sea Breeze Resort", "city", "Goa"));
-        itinerary.put("cancellationPolicy", "Free cancellation until 2026-11-29");
-        itinerary.put("freeCancellationUntil", "2026-11-29T00:00:00Z");
-        b.setItinerary(itinerary);
-        return b;
-    }
-
-    @Test
-    void aHotelCancelQuoteShowsThePolicyAndTheFreeCancellationDeadline() {
-        hotelRow();
-        when(hotelProvider.cancelQuote(eq("SB-1"), any())).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"),
-                new CancelQuote(null, "unknown"));
-
-        CancelPreview q = service.cancelQuote(ID);
-        assertThat(q.cancellationPolicy()).isEqualTo("Free cancellation until 2026-11-29");
-        assertThat(q.freeCancellationUntil()).isEqualTo(Instant.parse("2026-11-29T00:00:00Z"));
-        assertThat(q.refund()).isEqualByComparingTo("4000.00");
-
-        CancelPreview unknown = service.cancelQuote(ID); // the slice 3 rule: no figure, Voyra support settles it
-        assertThat(unknown.refund()).isNull();
-        assertThat(unknown.refundToBeConfirmed()).isTrue();
-        assertThat(unknown.cancellationPolicy()).isEqualTo("Free cancellation until 2026-11-29");
-        verifyNothingPosted();
-    }
-
-    /** Review Focus 2: past the free-cancellation deadline the supplier's cancel RESULT (0) is what is posted, not the earlier quote (200), and the recall still applies. */
-    @Test
-    void aHotelCancelledPastTheDeadlinePostsTheQuotedZeroAndStillRecalls() {
-        hotelRow();
-        when(hotelProvider.cancelQuote(eq("SB-1"), any())).thenReturn(new CancelQuote(new BigDecimal("200.00"), "quoted before the deadline passed"));
-        when(hotelProvider.cancel(eq("SB-1"), any())).thenReturn(new CancelResult(true, BigDecimal.ZERO, "Cancelled"));
-
-        CancelPreview q = service.cancelQuote(ID);
-        assertThat(q.refund()).isEqualByComparingTo("200.00");
-        assertThat(q.refundToBeConfirmed()).isFalse();
-
-        PlatformBooking b = service.cancel(ID, "ck-1");
-
-        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
-        assertThat(b.getCancelRefund()).isEqualByComparingTo("0");
-        verify(walletService, never()).credit(anyString(), eq(WalletEntryType.REFUND_CREDIT), any(), anyString(), anyString(), anyString(), anyString());
-        verify(walletService).debitOrReceivable(T, WalletEntryType.COMMISSION_RECALL, new BigDecimal("95.00"),
-                "pb-recall:" + ID, REF, ID, ReceivableReason.CANCEL_NET_NEGATIVE);
-    }
-
-    /**
-     * Readiness: a Tripjack amendment is only accepted by submit-amendment; the refund is final later. The booking stays
-     * CANCELLING and nothing is posted until the poller sees bookingDetails say cancelled. The mock keeps settling at once.
-     */
-    @Test
-    void anAcceptedTripjackCancelStaysCancellingAndPostsNothing() {
-        onTripjack();
-        supplierRefunds("4000.00");
-
-        PlatformBooking b = service.cancel(ID, "ck-1");
-
-        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
-        assertThat(rows.get(ID).getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
-        verifyNothingPosted();
-        verify(notificationService, never()).bookingCancelled(any(), org.mockito.ArgumentMatchers.anyBoolean());
-        verify(mirrorService, never()).sync(anyString());
-        assertThat(eventTypes()).containsSubsequence("CANCEL_REQUESTED", "CANCEL_ACCEPTED").doesNotContain("CANCELLED");
-
-        // a retry with the same key never submits again
-        assertThat(service.cancel(ID, "ck-1").getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
-        verify(tripjack, times(1)).cancel(eq("SB-1"), any());
-    }
-
-    /** A row whose supplier row is now in another environment is never asked or settled; Voyra is alerted once. */
-    @Test
-    void aRowWhoseSupplierNoLongerMatchesIsNotServed() {
-        rows.get(ID).setEnvironment(SupplierEnvironment.PROD); // its row s1 is MOCK
-        supplierRefunds("4000.00");
-
-        assertThatThrownBy(() -> service.cancelQuote(ID)).isInstanceOfSatisfying(BookingConflictException.class, e -> {
-            assertThat(e.getCode()).isEqualTo("BOOKING_UNAVAILABLE");
-            assertThat(e.getMessage()).isEqualTo("This booking can't be changed right now. Voyra has been notified.");
-        });
-        assertThatThrownBy(() -> service.cancel(ID, "ck-1")).isInstanceOf(BookingConflictException.class)
-                .extracting("code").isEqualTo("BOOKING_UNAVAILABLE");
-
-        verify(provider, never()).cancelQuote(anyString(), any());
-        verify(provider, never()).cancel(anyString(), any());
-        verifyNothingPosted();
-        assertThat(rows.get(ID).getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
-        verify(notificationService, times(1)).platformAlert(contains(ID), anyString()); // once per row
-        assertThat(eventTypes()).containsExactly("SUPPLIER_MISMATCH");
-        assertThat(savedEvents.get(0).getPayload()).containsEntry("environment", "PROD").containsEntry("status", "TICKETED")
-                .containsEntry("credentialId", "s1");
-    }
-
-    /** A row stamped with no supplier (or a supplier row that is gone) is refused the same way. */
-    @Test
-    void aRowWithoutItsSupplierIsNotServed() {
-        rows.get(ID).setCredentialId(null);
-        supplierRefunds("4000.00");
-
-        assertThatThrownBy(() -> service.cancel(ID, "ck-1")).isInstanceOf(BookingConflictException.class)
-                .extracting("code").isEqualTo("BOOKING_UNAVAILABLE");
-        rows.get(ID).setCredentialId("gone");
-        assertThatThrownBy(() -> service.cancel(ID, "ck-1")).isInstanceOf(BookingConflictException.class)
-                .extracting("code").isEqualTo("BOOKING_UNAVAILABLE");
-        verify(provider, never()).cancel(anyString(), any());
-        verifyNothingPosted();
-    }
-
-    @Test
-    void anAsyncSupplierStaysCancellingUntilThePollerConfirms() {
-        onTripjack();
-        supplierRefunds("4000.00");
-
-        PlatformBooking b = service.cancel(ID, "ck-1");
-
-        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
-        assertThat(eventTypes()).contains("CANCEL_ACCEPTED").doesNotContain("CANCELLED");
-        verify(tripjack).cancel("SB-1", BookingSuppliers.TJ_UAT);
-        verify(provider, never()).cancel(anyString(), any());
-        verifyNothingPosted();
-    }
-
-    @Test
-    void aSyncSupplierSettlesAtOnce() {
-        supplierRefunds("4000.00");
-
-        PlatformBooking b = service.cancel(ID, "ck-1");
-
-        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
-        verify(provider).cancel("SB-1", BookingSuppliers.S1);
-        verify(walletService).credit(eq(T), eq(WalletEntryType.REFUND_CREDIT), eq(new BigDecimal("4000.00")),
-                eq("pb-refund:" + ID), eq(REF), eq(ID), anyString());
-        verify(walletService).debitOrReceivable(T, WalletEntryType.COMMISSION_RECALL, new BigDecimal("95.00"),
-                "pb-recall:" + ID, REF, ID, ReceivableReason.CANCEL_NET_NEGATIVE);
-    }
-
-    /** The booking switch gates review and confirm only: a ticket already issued is still quoted and cancelled. */
-    @Test
-    void cancelStillWorksAfterBookingIsSwitchedOff() {
-        lenient().when(suppliers.bookingEnabledIds(any())).thenReturn(java.util.Set.of());
-        supplierRefunds("4000.00");
-
-        assertThat(service.cancelQuote(ID).refund()).isEqualByComparingTo("4000.00");
-        assertThat(service.cancel(ID, "ck-1").getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
-        verify(suppliers, never()).bookingEnabledIds(any());
-    }
-
-    // ---------------------------------------------------------------- coverage: cancel refusals and settlement edges
-
-    @Test
-    void aQuoteInsideATransactionOrACancelWithoutAKeyIsRefused() {
-        TransactionSynchronizationManager.setActualTransactionActive(true);
-        try {
-            assertThatThrownBy(() -> service.cancelQuote(ID)).isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("cancelQuote must not run inside a transaction");
-        } finally {
-            TransactionSynchronizationManager.setActualTransactionActive(false);
-        }
-        assertThatThrownBy(() -> service.cancel(ID, null)).isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("An idempotency key is required to cancel a booking");
-        assertThatThrownBy(() -> service.cancel(ID, " ")).isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("An idempotency key is required to cancel a booking");
-        verifyNothingPosted();
-    }
-
-    @Test
-    void aRefusalWithoutTheSuppliersWordsRecordsTheFixedSentence() {
-        when(provider.cancelQuote(eq("SB-1"), any())).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
-        when(provider.cancel(eq("SB-1"), any())).thenReturn(new CancelResult(false, null, null));
-
-        assertThatThrownBy(() -> service.cancel(ID, "ck-1")).isInstanceOf(BookingConflictException.class);
-
-        assertThat(savedEvents.stream().filter(ev -> ev.getType().equals("CANCEL_REFUSED")).findFirst().orElseThrow().getPayload())
-                .containsEntry("message", AgencySupplierMessage.CANCEL_REFUSED);
-        assertThat(rows.get(ID).getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
-    }
-
-    @Test
-    void aRefusalForARowThatMovedOnLeavesItAlone() {
-        when(provider.cancelQuote(eq("SB-1"), any())).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
-        when(provider.cancel(eq("SB-1"), any())).thenAnswer(i -> {
-            rows.get(ID).setStatus(PlatformBookingStatus.CANCELLED); // an admin settled it meanwhile
-            return new CancelResult(false, null, "late");
-        });
-
-        assertThatThrownBy(() -> service.cancel(ID, "ck-1")).isInstanceOf(BookingConflictException.class);
-
-        assertThat(rows.get(ID).getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
-        assertThat(eventTypes()).doesNotContain("CANCEL_REFUSED");
-    }
-
-    @Test
-    void aBookingWithoutTdsRecallsTheWholeCommission() {
-        rows.get(ID).setTds(null);
-        supplierRefunds("4000.00");
-
-        service.cancel(ID, "ck-1");
-
-        verify(walletService).debitOrReceivable(T, WalletEntryType.COMMISSION_RECALL, new BigDecimal("100.00"),
-                "pb-recall:" + ID, REF, ID, ReceivableReason.CANCEL_NET_NEGATIVE);
-    }
-
-    @Test
     void resolveCancelNeedsANoteAndAKnownBooking() {
         loginAsPlatformAdmin();
 
@@ -842,68 +469,23 @@ class PlatformBookingCancelTest {
                 .hasMessage("Booking not found");
     }
 
+    /** A row whose supplier row is now in another environment is never asked; Voyra is alerted once (seat map is the agency path left). */
     @Test
-    void aConfirmedCancelWithAnUnreadableRefundOnRecordCancelsWithoutPostingARefund() {
-        rows.get(ID).setStatus(PlatformBookingStatus.CANCELLING);
-        savedEvents.add(PlatformBookingEvent.builder().id("E-ACC").platformBookingId(ID).type("CANCEL_ACCEPTED")
-                .payload(Map.of("refund", "UNKNOWN")).createdAt(Instant.now()).build());
+    void aRowWhoseSupplierNoLongerMatchesIsNotServed() {
+        PlatformBooking b = rows.get(ID);
+        b.setStatus(PlatformBookingStatus.REVIEWING);
+        b.setEnvironment(com.voyra.crm.enums.SupplierEnvironment.PROD); // its row s1 is MOCK
 
-        service.settleConfirmedCancel(ID);
-
-        assertThat(rows.get(ID).getStatus()).isEqualTo(PlatformBookingStatus.CANCELLED);
-        verify(walletService, never()).credit(anyString(), eq(WalletEntryType.REFUND_CREDIT), any(), anyString(), anyString(), anyString(), anyString());
-        verify(notificationService, org.mockito.Mockito.atLeastOnce()).platformAlert(anyString(), anyString());
-    }
-
-    @Test
-    void aConfirmedCancelWithoutAnAcceptanceOrForASettledRowPostsNothing() {
-        service.settleConfirmedCancel(ID); // TICKETED: already settled elsewhere
-        assertThat(rows.get(ID).getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
-
-        rows.get(ID).setStatus(PlatformBookingStatus.CANCELLING);
-        service.settleConfirmedCancel(ID); // no CANCEL_ACCEPTED event: no refund on record
-        verifyNothingPosted();
-
-        assertThatThrownBy(() -> service.settleConfirmedCancel("NOPE")).isInstanceOf(NotFoundException.class)
-                .hasMessage("Booking not found");
-    }
-
-    @Test
-    void aHotelQuoteWithAnUnreadableDeadlineShowsNone() {
-        hotelRow();
-        rows.get(ID).setItinerary(new LinkedHashMap<>(Map.of("cancellationPolicy", "Refundable", "freeCancellationUntil", "soon")));
-        when(hotelProvider.cancelQuote(eq("SB-1"), any())).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
-
-        CancelPreview q = service.cancelQuote(ID);
-
-        assertThat(q.cancellationPolicy()).isEqualTo("Refundable");
-        assertThat(q.freeCancellationUntil()).isNull();
-    }
-
-    @Test
-    void aTripjackCancelTheSupplierAcceptsStaysCancellingUntilConfirmed() {
-        onTripjack();
-        supplierRefunds("4000.00");
-
-        PlatformBooking b = service.cancel(ID, "ck-1");
-
-        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.CANCELLING);
-        verifyNothingPosted();
-        assertThat(eventTypes()).contains("CANCEL_ACCEPTED");
-    }
-
-    @Test
-    void anAcceptedCancelForARowAnAdminPutBackMeanwhileIsNotSettled() {
-        when(provider.cancelQuote(eq("SB-1"), any())).thenReturn(new CancelQuote(new BigDecimal("4000.00"), "quoted"));
-        when(provider.cancel(eq("SB-1"), any())).thenAnswer(i -> {
-            rows.get(ID).setStatus(PlatformBookingStatus.TICKETED); // resolved "not cancelled" while the call ran
-            return new CancelResult(true, new BigDecimal("4000.00"), "Cancelled");
+        assertThatThrownBy(() -> service.seatMap(ID)).isInstanceOfSatisfying(com.voyra.crm.exception.BookingConflictException.class, e -> {
+            assertThat(e.getCode()).isEqualTo("BOOKING_UNAVAILABLE");
+            assertThat(e.getMessage()).isEqualTo("This booking can't be changed right now. Voyra has been notified.");
         });
+        assertThatThrownBy(() -> service.seatMap(ID)).isInstanceOf(com.voyra.crm.exception.BookingConflictException.class);
 
-        PlatformBooking b = service.cancel(ID, "ck-1");
-
-        assertThat(b.getStatus()).isEqualTo(PlatformBookingStatus.TICKETED);
-        verifyNothingPosted();
-        verify(mirrorService, never()).sync(anyString());
+        verify(provider, never()).seatMap(any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean(), any());
+        verify(notificationService, org.mockito.Mockito.times(1)).platformAlert(contains(ID), anyString()); // once per row
+        assertThat(eventTypes()).containsExactly("SUPPLIER_MISMATCH");
+        assertThat(savedEvents.get(0).getPayload()).containsEntry("environment", "PROD").containsEntry("status", "REVIEWING")
+                .containsEntry("credentialId", "s1");
     }
 }

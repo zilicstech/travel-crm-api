@@ -183,28 +183,9 @@ class TripjackFlightBookingProviderTest {
     }
 
     @Test
-    void emptyOkBodyOnCancelIsUnknownNotRefused() {
-        server.expect(requestTo(BASE + "/oms/v1/air/amendment/submit-amendment")).andRespond(withSuccess("", MediaType.APPLICATION_JSON));
-        server.expect(requestTo(BASE + "/oms/v1/air/amendment/submit-amendment")).andRespond(withSuccess("{\"status\":{\"success\":\"no\"}}", MediaType.APPLICATION_JSON));
-        assertThatThrownBy(() -> provider.cancel("TJS1", ROW)).isInstanceOf(SupplierException.class);
-        assertThatThrownBy(() -> provider.cancel("TJS1", ROW)).isInstanceOf(SupplierException.class);
-    }
-
-    @Test
-    void cancel_successFalseIsRefusedWithMessage() {
-        server.expect(requestTo(BASE + "/oms/v1/air/amendment/submit-amendment")).andRespond(withSuccess(
-                "{\"status\":{\"success\":false},\"errors\":[{\"message\":\"Flown sector\"}]}", MediaType.APPLICATION_JSON));
-        CancelResult c = provider.cancel("TJS1", ROW);
-        assertThat(c.accepted()).isFalse();
-        assertThat(c.message()).isEqualTo("Flown sector");
-    }
-
-    @Test
-    void unknownOrderStatusIsPendingAndMissingRefundIsNull() {
+    void unknownOrderStatusIsPending() {
         server.expect(requestTo(BASE + "/oms/v1/booking-details")).andRespond(withSuccess(OK + ",\"order\":{\"status\":\"ABORTED\"}}", MediaType.APPLICATION_JSON));
-        server.expect(requestTo(BASE + "/oms/v1/air/amendment/amendment-charges")).andRespond(withSuccess(OK + "}", MediaType.APPLICATION_JSON));
         assertThat(provider.bookingDetails("TJS1", ROW).status()).isEqualTo(SupplierBookingStatus.PENDING);
-        assertThat(provider.cancelQuote("TJS1", ROW).refund()).isNull();
     }
 
     @Test
@@ -256,20 +237,6 @@ class TripjackFlightBookingProviderTest {
         assertThat(provider.bookingDetails("TJS1", ROW).status()).isEqualTo(SupplierBookingStatus.FAILED);
         // a cancelled booking is how an accepted amendment is confirmed - not a failed booking
         assertThat(provider.bookingDetails("TJS1", ROW).status()).isEqualTo(SupplierBookingStatus.CANCELLED);
-    }
-
-    @Test
-    void cancelQuoteAndCancel_useAmendmentEndpoints() {
-        server.expect(requestTo(BASE + "/oms/v1/air/amendment/amendment-charges"))
-                .andExpect(jsonPath("$.bookingId").value("TJS1")).andExpect(jsonPath("$.type").value("CANCELLATION"))
-                .andRespond(withSuccess(OK + ",\"totalRefundAmount\":7200}", MediaType.APPLICATION_JSON));
-        server.expect(requestTo(BASE + "/oms/v1/air/amendment/submit-amendment"))
-                .andRespond(withSuccess(OK + ",\"amendmentId\":\"A1\",\"totalRefundAmount\":7200}", MediaType.APPLICATION_JSON));
-        assertThat(provider.cancelQuote("TJS1", ROW).refund()).isEqualByComparingTo("7200");
-        CancelResult c = provider.cancel("TJS1", ROW);
-        assertThat(c.accepted()).isTrue();
-        assertThat(c.refund()).isEqualByComparingTo("7200");
-        server.verify();
     }
 
     private static String fixture(String path) throws java.io.IOException {
@@ -468,16 +435,6 @@ class TripjackFlightBookingProviderTest {
         assertThat(r.pnr()).isNull();
         assertThat(r.ticketNumbers()).isEmpty();
         assertThat(r.message()).isNull();
-    }
-
-    @Test
-    void anEmptyCancelQuoteHasNoRefundOrMessage() {
-        server.expect(requestTo(BASE + "/oms/v1/air/amendment/amendment-charges")).andRespond(withSuccess("", MediaType.APPLICATION_JSON));
-
-        CancelQuote q = provider.cancelQuote("TJS1", ROW);
-
-        assertThat(q.refund()).isNull();
-        assertThat(q.message()).isNull();
     }
 
     @Test

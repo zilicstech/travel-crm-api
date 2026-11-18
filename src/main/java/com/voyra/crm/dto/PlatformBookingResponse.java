@@ -82,4 +82,11 @@ public class PlatformBookingResponse {
 
     @Schema(description = "Plain-language history; filled on the detail view only")
     private List<BookingTimelineLine> timeline;
+
+    @Schema(description = "Flight journeys a cancellation request can name (d0 onward, d1 return); detail view only, empty for a hotel")
+    private List<CancelSectorResponse> sectors;
+
+    @Schema(description = "What completed cancellation requests took off: \"passenger:sector\" pairs, sector * meaning every sector; detail view only",
+            example = "[\"0:d1\"]")
+    private List<String> cancelledParts;
 }

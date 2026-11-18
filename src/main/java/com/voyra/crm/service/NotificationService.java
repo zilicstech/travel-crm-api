@@ -2,6 +2,7 @@ package com.voyra.crm.service;
 
 import com.voyra.crm.entity.AgencyApplication;
 import com.voyra.crm.entity.PlatformBooking;
+import com.voyra.crm.entity.PlatformCancelRequest;
 import com.voyra.crm.entity.SubscriptionInvoice;
 import com.voyra.crm.entity.TopupRequest;
 
@@ -49,4 +50,13 @@ public interface NotificationService {
 
     /** To whoever booked it. {@code refundOffline}: the wallet was closed, nothing was posted, Voyra refunds by bank. */
     void bookingCancelled(PlatformBooking booking, boolean refundOffline);
+
+    /** To every active platform admin: an agency asked Voyra to cancel (part of) a booking. */
+    void cancelRequestRaised(PlatformBooking booking, PlatformCancelRequest request, String agencyName);
+
+    /** To whoever booked it: Voyra cancelled what the request asked; {@code totalRefund} is every refund on the booking so far. */
+    void cancelRequestCompleted(PlatformBooking booking, PlatformCancelRequest request, BigDecimal totalRefund);
+
+    /** To whoever booked it: Voyra declined the request, with its note. */
+    void cancelRequestRejected(PlatformBooking booking, PlatformCancelRequest request);
 }

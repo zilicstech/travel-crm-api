@@ -53,6 +53,9 @@ public class PlatformBookingPoller {
     static final Duration REVIEW_STALE = Duration.ofHours(2);
     /** An accepted Tripjack cancel not confirmed by then alerts Voyra (once). */
     static final Duration CANCEL_CONFIRM_WAIT = Duration.ofHours(24);
+    /** A cancellation request still open this long is checked against the supplier, in case Voyra cancelled but never completed it. */
+    static final Duration REQUEST_CHECK_AFTER = Duration.ofHours(2);
+    static final String SUPPLIER_CANCELLED = "CANCEL_REQUEST_SUPPLIER_CANCELLED";
 
     private final PlatformBookingRepository bookingRepository;
     private final PlatformBookingEventRepository eventRepository;
@@ -62,10 +65,12 @@ public class PlatformBookingPoller {
     private final NotificationService notificationService;
     private final TransactionTemplate tx;
     private final Duration bookingGrace;
+    private final com.voyra.crm.repository.PlatformCancelRequestRepository cancelRequestRepository;
 
     public PlatformBookingPoller(PlatformBookingRepository bookingRepository, PlatformBookingEventRepository eventRepository,
                                  SupplierRegistry registry, PlatformBookingService bookingService, PlatformBookingEventRecorder events,
                                  NotificationService notificationService, PlatformTransactionManager transactionManager,
+                                 com.voyra.crm.repository.PlatformCancelRequestRepository cancelRequestRepository,
                                  @org.springframework.beans.factory.annotation.Value("${app.platform-booking.poll-grace-seconds:45}") long bookingGraceSeconds) {
         this.bookingRepository = bookingRepository;
         this.eventRepository = eventRepository;
@@ -76,6 +81,7 @@ public class PlatformBookingPoller {
         this.tx = new TransactionTemplate(transactionManager);
         this.tx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         this.bookingGrace = Duration.ofSeconds(Math.max(0, bookingGraceSeconds));
+        this.cancelRequestRepository = cancelRequestRepository;
     }
 
     public void poll() {
@@ -125,7 +131,40 @@ public class PlatformBookingPoller {
                 log.error("Polling the cancellation of platform booking {} failed: {}", b.getId(), e.getMessage(), e);
             }
         }
+        checkOpenRequests(now, slowDue);
         sweep(now);
+    }
+
+    /**
+     * Cancellation requests are completed by hand: one open for over two hours whose booking the supplier already shows
+     * cancelled was probably cancelled at the supplier and never completed in Voyra, so the agency is still unrefunded.
+     * Asked at most every 10 minutes per booking; one alert per request.
+     */
+    private void checkOpenRequests(Instant now, Instant slowDue) {
+        for (com.voyra.crm.entity.PlatformCancelRequest r : cancelRequestRepository.findByStatusIn(com.voyra.crm.enums.CancelRequestStatus.ACTIVE)) {
+            if (r.getCreatedAt().isAfter(now.minus(REQUEST_CHECK_AFTER))) {
+                continue;
+            }
+            PlatformBooking b = bookingRepository.findById(r.getPlatformBookingId()).orElse(null);
+            if (b == null || b.getStatus() != PlatformBookingStatus.TICKETED || !registry.serves(b)
+                    || (b.getLastPolledAt() != null && b.getLastPolledAt().isAfter(slowDue))
+                    || events.lastPayload(b.getId(), SUPPLIER_CANCELLED).map(p -> r.getId().equals(p.get("requestId"))).orElse(false)) {
+                continue;
+            }
+            try {
+                BookResult result = registry.supplierFor(b).bookingDetails(b.getSupplierBookingId() != null ? b.getSupplierBookingId() : b.getSupplierReviewId());
+                if (result.status() == SupplierBookingStatus.CANCELLED) {
+                    tx.executeWithoutResult(s -> events.record(b.getId(), SUPPLIER_CANCELLED, Map.of("requestId", r.getId())));
+                    notificationService.platformAlert("Cancellation request " + r.getId() + " is cancelled at the supplier but not completed",
+                            "The supplier shows booking " + b.getId() + " cancelled, but its cancellation request is still open in Voyra. "
+                                    + "Complete it so the agency is refunded.");
+                }
+            } catch (RuntimeException e) {
+                log.warn("Checking the open cancellation request {} at the supplier failed: {}", r.getId(), e.getClass().getSimpleName());
+            } finally {
+                tx.executeWithoutResult(s -> recordPoll(b.getId()));
+            }
+        }
     }
 
     private void alertNotServed(String bookingId) {

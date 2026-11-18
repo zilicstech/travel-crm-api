@@ -6,8 +6,6 @@ import com.voyra.crm.enums.SupplierProvider;
 import com.voyra.crm.models.ResolvedCredential;
 import com.voyra.crm.models.booking.BookRequest;
 import com.voyra.crm.models.booking.BookResult;
-import com.voyra.crm.models.booking.CancelQuote;
-import com.voyra.crm.models.booking.CancelResult;
 import com.voyra.crm.service.FlightSearchProvider;
 import com.voyra.crm.service.HotelSearchProvider;
 import com.voyra.crm.service.PlatformSupplierCredentialService;
@@ -63,14 +61,6 @@ public class SupplierRegistry {
 
         public BookResult bookingDetails(String supplierBookingId) {
             return provider.bookingDetails(supplierBookingId, credential);
-        }
-
-        public CancelQuote cancelQuote(String supplierBookingId) {
-            return provider.cancelQuote(supplierBookingId, credential);
-        }
-
-        public CancelResult cancel(String supplierBookingId) {
-            return provider.cancel(supplierBookingId, credential);
         }
 
         public boolean cancelIsAsync() {

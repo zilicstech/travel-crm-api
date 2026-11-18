@@ -363,25 +363,6 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
     }
 
     @Override
-    public CancelQuote cancelQuote(String supplierBookingId, ResolvedCredential supplier) {
-        JsonNode res = post(supplier, "/oms/v1/air/amendment/amendment-charges", amendmentBody(supplierBookingId), "cancel quote");
-        return new CancelQuote(refundOf(res), message(res, null));
-    }
-
-    @Override
-    public CancelResult cancel(String supplierBookingId, ResolvedCredential supplier) {
-        JsonNode res = post(supplier, "/oms/v1/air/amendment/submit-amendment", amendmentBody(supplierBookingId), "cancel");
-        if (explicitlyFailed(res)) {
-            return new CancelResult(false, null, message(res, null));
-        }
-        if (!succeeded(res)) {
-            // Empty or unexpected answer: the supplier may have cancelled, so this is unknown, not refused.
-            throw new SupplierException("Tripjack cancel returned an ambiguous response", null);
-        }
-        return new CancelResult(true, refundOf(res), message(res, null));
-    }
-
-    @Override
     public String searchFareRules(String priceId, ResolvedCredential supplier) {
         return fareRules(supplier, priceId, "SEARCH");
     }
@@ -398,10 +379,6 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
             log.warn("Tripjack fare rules unavailable: {}", e.getMessage());
             return null;
         }
-    }
-
-    private static Map<String, Object> amendmentBody(String bookingId) {
-        return Map.of("bookingId", bookingId, "type", "CANCELLATION", "remarks", "Cancelled by agency");
     }
 
     /** Tripjack Air API: Adult allows Mr/Mrs/Ms; Child and Infant allow Ms/Master. */
@@ -470,10 +447,6 @@ public class TripjackFlightBookingProvider implements FlightBookingProvider {
         } catch (NumberFormatException e) {
             return null;
         }
-    }
-
-    private static BigDecimal refundOf(JsonNode res) {
-        return res == null ? null : decimal(res.path("totalRefundAmount"));
     }
 
     private JsonNode post(ResolvedCredential supplier, String path, Object body, String what) {

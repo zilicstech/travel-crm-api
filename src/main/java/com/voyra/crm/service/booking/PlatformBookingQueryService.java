@@ -75,6 +75,10 @@ public class PlatformBookingQueryService {
             Map.entry("RESOLVED", "Updated by Voyra support"),
             Map.entry("ABORTED", "Booking dropped before it was sent"),
             Map.entry("CANCEL_REQUESTED", "Cancellation requested"),
+            Map.entry("CANCEL_REQUEST_STARTED", "Voyra is processing the cancellation request"),
+            Map.entry("CANCEL_REQUEST_COMPLETED", "Cancellation completed by Voyra"),
+            Map.entry("CANCEL_REQUEST_REJECTED", "Cancellation request declined by Voyra"),
+            Map.entry("CANCEL_REQUEST_WITHDRAWN", "Cancellation request withdrawn"),
             Map.entry("CANCEL_ACCEPTED", "Cancellation accepted by the airline"),
             Map.entry("CANCEL_NO_ANSWER", "Cancellation is pending with the airline"),
             Map.entry("CANCELLED", "Booking cancelled"));
@@ -98,17 +102,21 @@ public class PlatformBookingQueryService {
     private final ObjectMapper objectMapper;
     private final PlatformBookingTicketRepository ticketRepository;
     private final PlatformSupplierCredentialRepository credentialRepository;
+    private final com.voyra.crm.repository.PlatformCancelRequestRepository cancelRequestRepository;
 
     /** Event recorded by Set markup; its payload {@code markup} competes with the newest ticket download by time. */
     static final String MARKUP_SET = "MARKUP_SET";
+
+    /** A review nobody confirmed (open or dropped) is a draft, not a booking: it never shows in the agency's list. */
+    private static final java.util.Set<PlatformBookingStatus> NOT_LISTED = EnumSet.of(PlatformBookingStatus.REVIEWING, PlatformBookingStatus.ABORTED);
 
     /** Owner and accountant see the agency's bookings; an agent sees only the ones they made. */
     public PagedResponse<PlatformBookingResponse> list(Integer page, Integer size) {
         CustomUserPrincipal p = SecurityContextUtil.getCurrentUserOrThrow();
         Pageable pageable = newestFirst(page, size);
         Page<PlatformBooking> rows = p.isAgent()
-                ? bookingRepository.findByTenantIdAndBookedBy(p.tenantId(), p.userId(), pageable)
-                : bookingRepository.findByTenantId(p.tenantId(), pageable);
+                ? bookingRepository.findByTenantIdAndBookedByAndStatusNotIn(p.tenantId(), p.userId(), NOT_LISTED, pageable)
+                : bookingRepository.findByTenantIdAndStatusNotIn(p.tenantId(), NOT_LISTED, pageable);
         List<PlatformBookingResponse> views = agencyViews(rows.getContent(), false);
         return paged(rows, views);
     }
@@ -155,6 +163,13 @@ public class PlatformBookingQueryService {
                 m[0] = m[0].add(new BigDecimal(r[3].toString()));
                 m[1] = m[1].add(new BigDecimal(r[4].toString()));
             }
+        }
+        // a partial cancellation leaves the booking ticketed: what it refunded and took back is no longer sold or earned
+        for (Object[] r : cancelRequestRepository.partialCancellations(p.tenantId(), bookedBy, start.atStartOfDay(INDIA).toInstant(),
+                end.plusDays(1).atStartOfDay(INDIA).toInstant())) {
+            BigDecimal[] m = money.get((PricingProduct) r[0]);
+            m[0] = m[0].subtract(new BigDecimal(r[1].toString()));
+            m[1] = m[1].subtract(new BigDecimal(r[2].toString()));
         }
         List<PlatformBookingSummaryResponse.ProductSummary> byProduct = java.util.Arrays.stream(PricingProduct.values())
                 .map(product -> new PlatformBookingSummaryResponse.ProductSummary(product, counts.get(product)[0],
@@ -241,6 +256,8 @@ public class PlatformBookingQueryService {
                 .supplierMessage(AgencySupplierMessage.of(b)).mirrorStatus(b.getMirrorStatus()).tenantBookingId(b.getTenantBookingId())
                 .markup(markups.getOrDefault(b.getId(), BigDecimal.ZERO))
                 .timeline(detail ? timeline(b) : null)
+                .sectors(detail ? sectors(b) : null)
+                .cancelledParts(detail ? cancelledParts(b) : null)
                 .build()).toList();
     }
 
@@ -267,6 +284,15 @@ public class PlatformBookingQueryService {
         return out;
     }
 
+    private static List<com.voyra.crm.dto.CancelSectorResponse> sectors(PlatformBooking b) {
+        return CancelParts.sectors(b).stream().map(s -> new com.voyra.crm.dto.CancelSectorResponse(s.key(), s.label(), s.date())).toList();
+    }
+
+    /** "passenger:sector" pairs completed cancellation requests took off this booking ("*" = every sector). */
+    private List<String> cancelledParts(PlatformBooking b) {
+        return List.copyOf(CancelParts.cancelled(cancelRequestRepository.findByPlatformBookingIdOrderByCreatedAtAsc(b.getId())));
+    }
+
     private List<PlatformAdminBookingResponse> adminViews(List<PlatformBooking> rows, boolean detail) {
         Map<String, String> agencyNames = names(rows, PlatformBooking::getTenantId,
                 tenantRepository::findAllById, Tenant::getId, Tenant::getAgencyName);
@@ -281,6 +307,8 @@ public class PlatformBookingQueryService {
                 .mirrorStatus(b.getMirrorStatus()).tenantBookingId(b.getTenantBookingId())
                 .tenantId(b.getTenantId()).agencyName(agencyNames.get(b.getTenantId())).environment(b.getEnvironment())
                 .gross(b.getGross()).base(b.getBase()).discountPct(b.getDiscountPct()).agencyCommission(b.getAgencyCommission()).tds(b.getTds())
+                .sectors(detail ? sectors(b) : null)
+                .cancelledParts(detail ? cancelledParts(b) : null)
                 .events(detail ? eventRepository.findByPlatformBookingIdOrderByCreatedAtAsc(b.getId()).stream()
                         .map(e -> new PlatformBookingEventResponse(e.getType(), e.getPayload(), e.getCreatedAt())).toList() : null)
                 .build()).toList();

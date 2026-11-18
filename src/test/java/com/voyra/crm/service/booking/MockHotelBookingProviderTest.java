@@ -118,42 +118,19 @@ class MockHotelBookingProviderTest {
     }
 
     @Test
-    void theBookingIdIsShortAndCarriesTheTotalForTheRefund() {
+    void theBookingIdIsShortAndCarriesTheTotal() {
         FareReview r = review();
         String id = book(r).supplierBookingId();
         assertThat(id).startsWith("mock-hbk-").hasSizeLessThanOrEqualTo(60);
         assertThat(id).doesNotContain(r.reviewId());
-        // a fresh provider (restart) still quotes and refunds the full total before the deadline
+        // a fresh provider (restart) still confirms the full total
         MockHotelBookingProvider restarted = new MockHotelBookingProvider(new HotelBookingProviderConfig());
-        assertThat(restarted.cancelQuote(id, BookingSuppliers.S1).refund()).isEqualByComparingTo(r.totalFare());
-        assertThat(restarted.cancel(id, BookingSuppliers.S1).refund()).isEqualByComparingTo(r.totalFare());
-        assertThat(restarted.cancel(id, BookingSuppliers.S1).accepted()).isTrue();
+        assertThat(restarted.bookingDetails(id, BookingSuppliers.S1).amount()).isEqualByComparingTo(r.totalFare());
     }
 
     @Test
-    void afterTheFreeCancellationDeadlineTheRefundIsZero() {
+    void aStayInsideTwoDaysHasNoFreeCancellation() {
         FareReview late = provider.review("mock-mock-ibis-budget-std", "mock-ibis-budget", LocalDate.now().plusDays(1), LocalDate.now().plusDays(3), ONE_ROOM, BookingSuppliers.S1);
         assertThat(late.freeCancellationUntil()).isBefore(Instant.now());
-        assertThat(provider.cancelQuote(book(late).supplierBookingId(), BookingSuppliers.S1).refund()).isEqualByComparingTo("0");
-    }
-
-    @Test
-    void anIdThatCarriesNoFareHasAnUnknownRefund() {
-        assertThat(provider.cancelQuote("some-review-id", BookingSuppliers.S1).refund()).isNull();
-    }
-
-    @Test
-    void cancelSwitches_timeoutAndRefuse_offIsUnchanged() {
-        String id = "mock-hbk-abc-20990101-1000.00";
-        assertThat(provider.cancel(id, BookingSuppliers.S1).accepted()).isTrue();
-        config.getMock().setCancelTimeout(true);
-        assertThatThrownBy(() -> provider.cancel(id, BookingSuppliers.S1)).isInstanceOf(SupplierTimeoutException.class);
-        config.getMock().setCancelTimeout(false);
-        config.getMock().setCancelFail(true);
-        CancelResult refused = provider.cancel(id, BookingSuppliers.S1);
-        assertThat(refused.accepted()).isFalse();
-        assertThat(refused.message()).isEqualTo("Mock: cancellation not allowed");
-        config.getMock().setCancelFail(false);
-        assertThat(provider.cancel(id, BookingSuppliers.S1).accepted()).isTrue();
     }
 }

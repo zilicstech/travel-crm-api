@@ -32,4 +32,6 @@ public interface AgencyApplicationRepository extends JpaRepository<AgencyApplica
     List<AgencyApplication> findByStatusAndUpdatedAtBefore(ApplicationStatus status, Instant before);
 
     long countByStatusIn(Collection<ApplicationStatus> statuses);
+
+    List<AgencyApplication> findByStatusIn(Collection<ApplicationStatus> statuses);
 }

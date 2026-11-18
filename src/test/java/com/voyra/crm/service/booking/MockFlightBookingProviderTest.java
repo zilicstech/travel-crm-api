@@ -85,22 +85,14 @@ class MockFlightBookingProviderTest {
     }
 
     @Test
-    void refund_survivesARestart() {
+    void theFareSurvivesARestart() {
         FareReview review = provider.review(List.of("o"), 2, 0, 0, BookingSuppliers.S1);
         String id = book(review).supplierBookingId();
         var fresh = new MockFlightBookingProvider(new FlightBookingProviderConfig());
-        assertThat(fresh.cancelQuote(id, BookingSuppliers.S1).refund()).isEqualByComparingTo(review.totalFare().multiply(new BigDecimal("0.80")));
-    }
-
-    @Test
-    void cancel_refundsEightyPercentOfFare() {
-        FareReview review = provider.review(List.of("o"), 2, 0, 0, BookingSuppliers.S1);
-        String id = book(review).supplierBookingId();
-        BigDecimal expected = review.totalFare().multiply(new BigDecimal("0.80"));
-        assertThat(provider.cancelQuote(id, BookingSuppliers.S1).refund()).isEqualByComparingTo(expected);
-        CancelResult c = provider.cancel(id, BookingSuppliers.S1);
-        assertThat(c.accepted()).isTrue();
-        assertThat(c.refund()).isEqualByComparingTo(expected);
+        assertThat(fresh.bookingDetails(id, BookingSuppliers.S1).amount()).isEqualByComparingTo(review.totalFare());
+        // an id that carries no fare (a review id after a timeout, a garbled one) confirms without one
+        assertThat(fresh.bookingDetails("review-id-after-timeout", BookingSuppliers.S1).amount()).isNull();
+        assertThat(fresh.bookingDetails("mock-bk-abc-notanumber", BookingSuppliers.S1).amount()).isNull();
     }
 
     @Test
@@ -160,8 +152,8 @@ class MockFlightBookingProviderTest {
 
         assertThat(id).startsWith("mock-bk-").hasSizeLessThanOrEqualTo(40);
         assertThat(book(review).supplierBookingId()).isEqualTo(id); // same review, same id
-        assertThat(new MockFlightBookingProvider(new FlightBookingProviderConfig()).cancelQuote(id, BookingSuppliers.S1).refund())
-                .isEqualByComparingTo(review.totalFare().multiply(new BigDecimal("0.80")).setScale(2, java.math.RoundingMode.HALF_UP));
+        assertThat(new MockFlightBookingProvider(new FlightBookingProviderConfig()).bookingDetails(id, BookingSuppliers.S1).amount())
+                .isEqualByComparingTo(review.totalFare());
     }
 
     /** With no reprice the agency sees no "price changed": the review prices an offer exactly as the search showed it. */
@@ -200,21 +192,6 @@ class MockFlightBookingProviderTest {
         assertThat(seg.path("dt").asText()).isEqualTo(java.time.LocalDate.now().plusDays(30) + "T06:00");
         assertThat(seg.path("da").path("code").asText()).isEqualTo("DEL");
         assertThat(seg.path("aa").path("code").asText()).isEqualTo("BOM");
-    }
-
-    @Test
-    void cancelSwitches_timeoutAndRefuse_offIsUnchanged() {
-        String id = "mock-bk-abc-1000.00";
-        assertThat(provider.cancel(id, BookingSuppliers.S1).accepted()).isTrue();
-        config.getMock().setCancelTimeout(true);
-        assertThatThrownBy(() -> provider.cancel(id, BookingSuppliers.S1)).isInstanceOf(SupplierTimeoutException.class);
-        config.getMock().setCancelTimeout(false);
-        config.getMock().setCancelFail(true);
-        CancelResult refused = provider.cancel(id, BookingSuppliers.S1);
-        assertThat(refused.accepted()).isFalse();
-        assertThat(refused.message()).isEqualTo("Mock: cancellation not allowed");
-        config.getMock().setCancelFail(false);
-        assertThat(provider.cancel(id, BookingSuppliers.S1).accepted()).isTrue();
     }
 
     @Test

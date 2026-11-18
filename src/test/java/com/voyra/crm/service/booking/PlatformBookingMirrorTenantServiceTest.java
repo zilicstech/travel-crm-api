@@ -109,6 +109,7 @@ class PlatformBookingMirrorTenantServiceTest {
     @BeforeEach
     void setUp() {
         when(queryService.currentMarkup(anyString())).thenReturn(BigDecimal.ZERO);
+        when(cancellationService.voyraPartialRefunds(anyString())).thenReturn(BigDecimal.ZERO);
         when(agentRepository.findByIdAndTenantId("A1", "T1")).thenReturn(Optional.of(Agent.builder().id("A1").build()));
         when(vendorRepository.findByIsSystemTrueAndIsActiveTrue())
                 .thenReturn(Optional.of(Vendor.builder().id("V-VOYRA").name("Voyra Platform").isActive(true).isSystem(true).build()));
@@ -710,6 +711,36 @@ class PlatformBookingMirrorTenantServiceTest {
         assertThat(request.getValue().getSupplierCharge()).isEqualByComparingTo("1400.00"); // displayed - refund
         assertThat(request.getValue().getAgencyFee()).isEqualByComparingTo("0");
         verify(cancellationService).recordVoyraWalletRefund("B1", new BigDecimal("4000.00"), CANCELLED_ON);
+    }
+
+    /** Partial cancellations already put 1500 back on the mirror's bill: the cancel receives only the rest. */
+    @Test
+    void aCancelAfterPartialCancellationsReceivesOnlyWhatIsLeft() {
+        PlatformBooking pb = platformBooking();
+        pb.setCancelRefund(new BigDecimal("4000.00"));
+        when(cancellationService.voyraPartialRefunds("B1")).thenReturn(new BigDecimal("1500.00"));
+
+        service.cancel("B1", pb);
+
+        verify(cancellationService).recordVoyraWalletRefund("B1", new BigDecimal("2500.00"), CANCELLED_ON);
+
+        when(cancellationService.voyraPartialRefunds("B1")).thenReturn(new BigDecimal("4000.00"));
+        org.mockito.Mockito.clearInvocations(cancellationService);
+        service.cancel("B1", pb);
+        verify(cancellationService, never()).recordVoyraWalletRefund(anyString(), any(), any());
+    }
+
+    /** A partial cancellation's INR refund is credited in the agency's base at the voucher's rate, dated when Voyra completed it. */
+    @Test
+    void aPartialCancellationIsRecordedInTheAgencysBaseOnItsDay() {
+        org.mockito.Mockito.doReturn("USD").when(baseCurrency).code();
+        when(bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc("B1")).thenReturn(List.of(BookingDocument.builder()
+                .id("D1").bookingId("B1").docType(BookingDocumentType.E_TICKET).purchaseCurrency("INR")
+                .purchasePrice(new BigDecimal("5400.00")).purchaseRate(new BigDecimal("0.012")).build()));
+
+        service.partialCancel("B1", "R1", new BigDecimal("1000.00"), CANCELLED_AT);
+
+        verify(cancellationService).recordVoyraPartialRefund("B1", "R1", new BigDecimal("12.00"), CANCELLED_ON);
     }
 
     /** Two syncs at once (the request hook and a repair job on another instance): the second waits on the lock, sees CANCELLED. */

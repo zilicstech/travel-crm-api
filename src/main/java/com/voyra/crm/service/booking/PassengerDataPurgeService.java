@@ -33,6 +33,7 @@ public class PassengerDataPurgeService {
     private final PlatformBookingPurgeTxService purgeTx;
     private final NotificationOutboxRepository outboxRepository;
     private final PlatformAuditService auditService;
+    private final PlatformCancelRequestService cancelRequests;
 
     public void run() {
         Instant now = Instant.now();
@@ -54,13 +55,16 @@ public class PassengerDataPurgeService {
                 log.error("Passenger data purge failed for platform booking {}: {}", id, e.getClass().getSimpleName());
             }
         }
+        int requestsCleared = cancelRequests.purgePersonalData(now.minus(Duration.ofDays(retentionDays)));
         Instant outboxCutoff = now.minus(OUTBOX_BODY_RETENTION);
         int expired = outboxRepository.expireUnsent(outboxCutoff); // SMTP off: unsent rows give up their bodies too
         int bodies = outboxRepository.clearOldBodies(outboxCutoff);
         auditService.recordSystem(PlatformAuditAction.PASSENGER_DATA_PURGE, "PASSENGER_PURGE", LocalDate.now(ZoneOffset.UTC).toString(),
                 Map.of("retentionDays", retentionDays, "examined", candidates.size(), "bookingsPurged", purged,
-                        "skippedMirror", skippedMirror, "bookingsFailed", failed, "outboxBodiesCleared", bodies, "outboxExpired", expired));
+                        "skippedMirror", skippedMirror, "bookingsFailed", failed, "outboxBodiesCleared", bodies, "outboxExpired", expired,
+                        "cancelRequestsCleared", requestsCleared));
         log.info("Passenger data purge done: {} booking(s) purged of {} examined, {} waiting for their CRM mirror, {} failed, "
-                + "{} outbox body(ies) cleared, {} unsent outbox row(s) expired", purged, candidates.size(), skippedMirror, failed, bodies, expired);
+                + "{} outbox body(ies) cleared, {} unsent outbox row(s) expired, {} cancellation request(s) cleared", purged, candidates.size(),
+                skippedMirror, failed, bodies, expired, requestsCleared);
     }
 }

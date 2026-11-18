@@ -63,6 +63,7 @@ class TenantStatusInterceptorTest {
     @MockBean private PlatformBookingService platformBookingService;
     @MockBean private PlatformBookingQueryService platformBookingQueryService;
     @MockBean private com.voyra.crm.service.booking.PlatformBookingTicketService platformBookingTicketService;
+    @MockBean private com.voyra.crm.service.booking.PlatformCancelRequestService platformCancelRequestService;
 
     private String bearer;
 

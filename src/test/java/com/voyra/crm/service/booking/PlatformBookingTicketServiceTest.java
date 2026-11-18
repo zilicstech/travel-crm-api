@@ -81,9 +81,9 @@ class PlatformBookingTicketServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new PlatformBookingTicketService(new PlatformBookingQueryService(bookings, events, tenants, agents, clients, paxCodec, objectMapper, tickets, null),
+        service = new PlatformBookingTicketService(new PlatformBookingQueryService(bookings, events, tenants, agents, clients, paxCodec, objectMapper, tickets, null, org.mockito.Mockito.mock(com.voyra.crm.repository.PlatformCancelRequestRepository.class)),
                 bookings, tickets, tenants, authorResolver, logoLoader, paxCodec, objectMapper,
-                new com.voyra.crm.service.EntitlementService(subscriptions, transactionManager), mirrorService, transactionManager, crmBookings);
+                new com.voyra.crm.service.EntitlementService(subscriptions, transactionManager), mirrorService, transactionManager, crmBookings, org.mockito.Mockito.mock(com.voyra.crm.repository.PlatformCancelRequestRepository.class));
         com.voyra.crm.cache.TenantCache.remove("T1");
     }
 

@@ -81,6 +81,7 @@ class PlatformBookingPollerTest {
     @Mock private PlatformAuditService platformAuditService;
     @Mock private PlatformSettingService settings;
     @Mock private PlatformTransactionManager transactionManager;
+    @Mock private com.voyra.crm.repository.PlatformCancelRequestRepository cancelRequestRepository;
 
     private final FlightBookingProviderConfig config = new FlightBookingProviderConfig();
     private final Map<String, PlatformBooking> rows = new HashMap<>();
@@ -104,7 +105,7 @@ class PlatformBookingPollerTest {
                 walletService, walletRepository, tenantRepository, agentRepository, notificationService,
                 events, paxCodec, objectMapper, transactionManager, walletEntryRepository, platformAuditService, settings, mirrorService, entitlementService);
         poller = new PlatformBookingPoller(bookingRepository, eventRepository, registry(), service, events,
-                notificationService, transactionManager, 0);
+                notificationService, transactionManager, cancelRequestRepository, 0);
 
         lenient().when(bookingRepository.save(any())).thenAnswer(i -> {
             PlatformBooking b = i.getArgument(0);
@@ -720,7 +721,7 @@ class PlatformBookingPollerTest {
                 walletService, walletRepository, tenantRepository, agentRepository, notificationService,
                 events, paxCodec, objectMapper, transactionManager, walletEntryRepository, platformAuditService, settings, mirrorService, entitlementService);
         PlatformBookingPoller graced = new PlatformBookingPoller(bookingRepository, eventRepository, registry(), service, events,
-                notificationService, transactionManager, 45);
+                notificationService, transactionManager, cancelRequestRepository, 45);
 
         bookingRow("FRESH", Instant.now().minusSeconds(5));
         graced.poll();

@@ -210,6 +210,52 @@ public class BookingCancellationService {
         return bookingService.toResponsePublic(booking);
     }
 
+    /** Supplier credit notes of a Voyra mirror's partial cancellations carry this number, the cancellation request's id after it. */
+    public static final String VOYRA_PARTIAL_NOTE = "VCR-";
+
+    /**
+     * A partial cancellation Voyra completed on a mirror that stays confirmed (cancellation requests, 2026-11-18): a
+     * supplier credit note numbered {@code VCR-<request>} on the mirror's bill for the refund, received at once into
+     * "Voyra Wallet (advance to supplier)" - the agency's wallet already holds it. Idempotent by that number; a mirror
+     * already cancelled is left to its cancel, which credits whatever is left. Only the system actor records it.
+     */
+    @Transactional
+    public void recordVoyraPartialRefund(String bookingId, String requestId, BigDecimal amount, LocalDate on) {
+        if (!SystemActor.isActive()) {
+            throw new org.springframework.security.access.AccessDeniedException("Only Voyra records a Voyra partial cancellation");
+        }
+        lock(bookingId);
+        Booking booking = bookingRepository.findById(bookingId).orElseThrow(() -> new com.voyra.crm.exception.NotFoundException("Booking not found"));
+        if (booking.getBookingStatus() == BookingStatus.CANCELLED || amount.signum() <= 0) {
+            return;
+        }
+        SupplierInvoice bill = supplierInvoiceRepository.findByBookingIdAndStatusNot(bookingId, SupplierInvoiceStatus.CANCELLED).stream()
+                .filter(b -> !UNPOSTED.contains(b.getStatus())).findFirst()
+                .orElseThrow(() -> new IllegalStateException("The mirror of booking " + bookingId + " has no approved supplier bill to credit"));
+        String number = VOYRA_PARTIAL_NOTE + requestId;
+        if (supplierCreditNoteRepository.existsByVendorIdAndSupplierNoteNumberAndStatusNot(bill.getVendorId(), number, SupplierCreditNoteStatus.CANCELLED)) {
+            return;
+        }
+        BigDecimal credit = amount.min(bill.getGrandTotal().subtract(bill.getCreditNoteTotal()));
+        SupplierCreditNoteRequest note = supplierCreditNote(bill, credit, on);
+        note.setSupplierNoteNumber(number);
+        note.setReasonNote("Partly cancelled with Voyra");
+        String noteId = supplierCreditNoteService.record(note).getId();
+        SupplierCreditNoteRefundRequest refund = new SupplierCreditNoteRefundRequest();
+        refund.setAmount(credit);
+        refund.setPaymentMode(PaymentMode.VOYRA_WALLET);
+        refund.setInstrumentRef("Voyra wallet");
+        refund.setReceivedOn(on);
+        supplierCreditNoteService.receiveRefund(noteId, refund, false);
+    }
+
+    /** What partial cancellations already put back on a Voyra mirror (its {@code VCR-} credit notes' refunds). */
+    public BigDecimal voyraPartialRefunds(String bookingId) {
+        return supplierCreditNoteRepository.findByBookingIdAndStatus(bookingId, SupplierCreditNoteStatus.RECORDED).stream()
+                .filter(n -> n.getSupplierNoteNumber() != null && n.getSupplierNoteNumber().startsWith(VOYRA_PARTIAL_NOTE))
+                .map(n -> nz(n.getRefundedAmount())).reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
     @Transactional
     public BookingResponse payCustomer(String bookingId, RefundSettlementRequest request) {
         lock(bookingId);

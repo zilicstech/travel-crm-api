@@ -438,3 +438,62 @@ none): stars, address and photo fill what the listing lacks, and `HotelOfferResp
 (most hotels first) for the filter. The mock supplier's hotels have types and amenities. Search Hotels shows Property
 type and Amenities (the 12 most common, Show all) in the filter column, and each card shows its type and first four
 amenities. Amenity names are Tripjack's own, unseen until it runs on production.
+
+## Cancellation requests (2026-11-18, owner rulings)
+
+Why the old cancel showed a 504: "Cancel with Voyra" held one request open while the backend called Tripjack's
+`amendment-charges` and then `submit-amendment`, each with a 60 s read timeout, so the Next `/api` proxy (120 s) or
+DigitalOcean's edge gave up first and the browser got a 504 the backend never sent, with the row left CANCELLING or
+back at TICKETED. Agencies no longer cancel at the supplier at all.
+
+**Flow.**
+- The agency raises a **cancellation request**:
+  - flights: passengers (positions in the stored passenger list) and sectors (journeys `d0` onward, `d1` return); hotels:
+    the whole stay;
+  - a reason from `CancelReason` (Tripjack's groups: Normal, Full refund, Void, No show, Other; Other needs remarks);
+  - remarks and up to 5 proof files (pdf / jpg / png / webp, 10 MB in all, magic bytes checked).
+- The platform admin picks it up (agency can no longer withdraw), cancels on Tripjack's portal by hand, then completes
+  it in Voyra (may change the reason, the passengers and sectors, and the figures), or declines it with a note.
+- Completing posts the refund (`supplier refund - Voyra fee`, fee prefilled from `voyra_cancel_fee` on every request) and
+  takes back commission, keyed per request: `pb-refund:<booking>:<request>` / `pb-recall:<booking>:<request>`.
+- When every passenger is cancelled on every sector the booking becomes CANCELLED with `cancel_refund` the sum of the
+  requests' refunds; until then it stays TICKETED (no new booking status).
+
+**Data.** Public `V4__cancel_requests.sql`: `platform_cancel_request` (status OPEN / IN_PROGRESS / COMPLETING / COMPLETED /
+REJECTED / WITHDRAWN, reason and final reason, passengers and sectors jsonb, remarks, supplier refund, charges, Voyra fee,
+refund, recall, exceeds-share and offline flags, supplier reference, admin note; a partial unique index allows one active
+request per booking) and `platform_cancel_request_file`. `feat/hotel-name-search` adds public V3 (this one was renumbered V4 so local databases take both). Hotel V3 must merge first.
+
+**Locking and money.** Every transition locks the booking row, then the request. Complete stores the figures first
+(COMPLETING), posts through `PlatformBookingService.postCancelMoney` (shared with the old CANCELLING path, which keeps its
+per-booking keys), then marks COMPLETED; a retry with other figures is 409 `FIGURES_LOCKED`. Caps: refund at most
+`displayed` less refunds already posted (400 `REFUND_TOO_HIGH`), above the chosen passengers' fare share only with
+`exceedsShare` (409 `EXCEEDS_SHARE`), recall at most what is still unrecalled (400 `RECALL_TOO_HIGH`). A booking no longer
+TICKETED when a request is completed (cancelled another way) declines it with nothing posted. A closed wallet completes
+offline (alert, nothing posted, `refundOffline` shown to the agency).
+
+**Agency sees** status, reason and Voyra's final reason, passengers and sectors, its files, refund, charges, commission
+taken back and Voyra's note; never Voyra's fee, Tripjack's refund or reference (`CancelRequestResponse`). The booking detail
+adds `sectors` and `cancelledParts` (`"<passenger>:<sector>"`, `*` every sector); the e-ticket leaves cancelled parts out;
+the agency summary takes partial refunds and recalls off sales and earned (GMV, like whole cancels, is unchanged).
+
+**Platform.** `/api/platform/cancel-requests` (list, detail with prefills and caps, start, reject, complete, files; audited
+`CANCEL_REQUEST_START` / `_REJECT` / `_COMPLETE` / `_FILE_VIEW` with ids and figures only). Admins are emailed when a request
+is raised; the booker when it is completed or declined. The dashboard adds `cancelRequests` and `pendingTasks` (cancel
+requests soonest travel first and flagged urgent within 24 h, then CANCELLING, UNKNOWN, KYC and top-ups; at most 20) with
+`pendingTaskTotal`. The poller alerts once per request when Tripjack already shows a booking cancelled whose request is
+still open after 2 hours.
+
+**Mirror.** A completed partial request is mirrored as a supplier credit note numbered `VCR-<request>` on the CRM bill,
+received at once into the Voyra wallet account (`BookingCancellationService.recordVoyraPartialRefund`); the whole cancel
+then receives only what is left (`voyraPartialRefunds`). An invoice already credited for the booking gets no second client
+credit note (existing rule), so a client credited by hand after a partial is not refunded twice.
+
+**DPDP.** A booking with an active request is not purged; remarks, Voyra's note and proof files of finished requests are
+cleared `pax_retention_days` after they finish (keys nulled in the transaction, files deleted after).
+
+**Removed:** `GET /api/platform-bookings/{id}/cancel-quote`, `POST /{id}/cancel`, the supplier `cancelQuote` / `cancel`
+calls (Tripjack flight amendment, Tripjack hotel cancel-booking, mocks), `CancelPreview`, `CancelQuote`, `CancelResult` and
+the mock `cancel-timeout` / `cancel-fail` switches. Rows already CANCELLING at deploy still settle through the poller and
+`resolve-cancel`. Tests: `PlatformCancelRequestServiceTest`, `CancelPartsTest`, `PlatformCancelRequestControllerTest`,
+mirror and cancellation service tests, `CancelRequestIT`.

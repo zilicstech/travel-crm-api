@@ -43,6 +43,8 @@ class PlatformDashboardServiceTest {
     @Mock private PlatformBookingRepository bookingRepository;
     @Mock private SubscriptionRepository subscriptionRepository;
     @Mock private NotificationOutboxRepository outboxRepository;
+    @Mock private com.voyra.crm.repository.PlatformCancelRequestRepository cancelRequestRepository;
+    @Mock private com.voyra.crm.repository.TenantRepository tenantRepository;
     @InjectMocks private PlatformDashboardService service;
 
     private static Wallet wallet(String balance, boolean test) {

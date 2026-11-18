@@ -4,6 +4,7 @@ import com.voyra.crm.dto.ItinerarySegment;
 import com.voyra.crm.entity.PlatformBooking;
 import com.voyra.crm.entity.PlatformBookingEvent;
 import com.voyra.crm.enums.MirrorStatus;
+import com.voyra.crm.enums.CancelRequestStatus;
 import com.voyra.crm.enums.PlatformBookingStatus;
 import com.voyra.crm.enums.PricingProduct;
 import com.voyra.crm.repository.PlatformBookingEventRepository;
@@ -55,12 +56,14 @@ public class PlatformBookingPurgeTxService {
     private final PlatformBookingQueryService queryService;
     private final PlatformBookingEventRecorder recorder;
     private final NotificationService notificationService;
+    private final com.voyra.crm.repository.PlatformCancelRequestRepository cancelRequestRepository;
 
     @Transactional
     public PurgeOutcome purge(String bookingId, Instant now, int retentionDays) {
         PlatformBooking b = bookingRepository.findByIdForUpdate(bookingId).orElse(null);
-        if (b == null || b.getPaxPurgedAt() != null || !TERMINAL.contains(b.getStatus())) {
-            return PurgeOutcome.NOT_DUE;
+        if (b == null || b.getPaxPurgedAt() != null || !TERMINAL.contains(b.getStatus())
+                || cancelRequestRepository.existsByPlatformBookingIdAndStatusIn(bookingId, CancelRequestStatus.ACTIVE)) {
+            return PurgeOutcome.NOT_DUE; // a cancellation request under review still needs its passengers
         }
         List<PlatformBookingEvent> events = eventRepository.findByPlatformBookingIdOrderByCreatedAtAsc(bookingId);
         if (now.isBefore(dueAt(b, events, retentionDays))) {

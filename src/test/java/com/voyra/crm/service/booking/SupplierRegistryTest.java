@@ -173,13 +173,9 @@ class SupplierRegistryTest {
 
         bound.book(request);
         bound.bookingDetails("SB");
-        bound.cancelQuote("SB");
-        bound.cancel("SB");
 
         verify(provider).book(request, row);
         verify(provider).bookingDetails("SB", row);
-        verify(provider).cancelQuote("SB", row);
-        verify(provider).cancel("SB", row);
     }
 
     @Test

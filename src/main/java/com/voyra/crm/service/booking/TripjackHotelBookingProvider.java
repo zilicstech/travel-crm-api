@@ -65,8 +65,6 @@ public class TripjackHotelBookingProvider implements HotelBookingProvider {
     private final String prodBaseUrl;
     private final String uatBookerUrl;
     private final String prodBookerUrl;
-    /** Which penalty slab applies is read from this; tests swap in a fixed clock. */
-    Clock clock = Clock.systemUTC();
 
     public TripjackHotelBookingProvider(@Qualifier("tripjackRestClientBuilder") RestClient.Builder restClientBuilder,
                                         PlatformSettingService settings,
@@ -226,79 +224,8 @@ public class TripjackHotelBookingProvider implements HotelBookingProvider {
                 List.of(), orderStatus.isEmpty() ? null : orderStatus, decimal(res.path("order").path("amount")));
     }
 
-    @Override
-    public CancelQuote cancelQuote(String supplierBookingId, ResolvedCredential supplier) {
-        JsonNode res = details(supplierBookingId, supplier, "cancel quote");
-        String orderStatus = res == null ? "" : res.path("order").path("status").asText("").toUpperCase(Locale.ROOT);
-        if (!orderStatus.equals("SUCCESS")) {
-            // only a booking the supplier still shows as confirmed gets a figure; anything else is Voyra support's (refund unknown)
-            return new CancelQuote(null, "The supplier shows this booking as " + (orderStatus.isEmpty() ? "unknown" : orderStatus));
-        }
-        return new CancelQuote(refundNow(res), null);
-    }
-
-    /**
-     * {@code POST /oms/v3/hotel/cancel-booking/{bookingId}} with no body. Tripjack's answer carries no refund, so the
-     * booking's penalty slabs are read afterwards (best effort: a failed read leaves the refund unknown for Voyra).
-     */
-    @Override
-    public CancelResult cancel(String supplierBookingId, ResolvedCredential supplier) {
-        JsonNode res = post(bookerHost(supplier), supplier, "/oms/v3/hotel/cancel-booking/" + supplierBookingId, null, "cancel", true);
-        if (explicitlyFailed(res)) {
-            return new CancelResult(false, null, message(res, null));
-        }
-        if (!succeeded(res)) {
-            // Empty or unexpected answer: the supplier may have cancelled, so this is unknown, not refused.
-            throw new SupplierException("Tripjack hotel cancel returned an ambiguous response", null);
-        }
-        BigDecimal refund;
-        try {
-            refund = refundNow(details(supplierBookingId, supplier, "cancel refund"));
-        } catch (SupplierException e) {
-            refund = null;
-        }
-        return new CancelResult(true, refund, null);
-    }
-
     private JsonNode details(String supplierBookingId, ResolvedCredential supplier, String what) {
         return post(bookerHost(supplier), supplier, "/oms/v3/hotel/booking-details", Map.of("bookingId", supplierBookingId), what, true);
-    }
-
-    /**
-     * The refund if cancelled now: {@code order.amount} less the penalty of the slab ({@code cnp.pd[]}: {@code fdt},
-     * {@code tdt}, {@code am}) that holds this moment; before the first slab nothing is kept, after the last everything
-     * is. A non-refundable booking ({@code cnp.inra}) refunds 0. Null when the amount or the slabs are missing or unreadable.
-     */
-    BigDecimal refundNow(JsonNode res) {
-        BigDecimal amount = decimal(res.path("order").path("amount"));
-        JsonNode cnp = res.path("itemInfos").path("HOTEL").path("hInfo").path("ops").path(0).path("cnp");
-        if (amount == null) {
-            return null;
-        }
-        if (cnp.path("inra").asBoolean(false)) {
-            return BigDecimal.ZERO.setScale(2);
-        }
-        List<JsonNode> slabs = new ArrayList<>();
-        cnp.path("pd").forEach(slabs::add);
-        if (slabs.isEmpty()) {
-            return null;
-        }
-        LocalDateTime now = LocalDateTime.now(clock.withZone(HOTEL_ZONE));
-        BigDecimal penalty = amount; // past the last slab: the stay has started
-        try {
-            if (now.isBefore(LocalDateTime.parse(slabs.get(0).path("fdt").asText()))) {
-                penalty = BigDecimal.ZERO;
-            }
-            for (JsonNode slab : slabs) {
-                if (!now.isBefore(LocalDateTime.parse(slab.path("fdt").asText())) && now.isBefore(LocalDateTime.parse(slab.path("tdt").asText()))) {
-                    penalty = decimal(slab.path("am"));
-                    break;
-                }
-            }
-        } catch (java.time.format.DateTimeParseException e) {
-            return null;
-        }
-        return penalty == null ? null : amount.subtract(penalty).max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP);
     }
 
     /** The end of the last free slab (or the single deadline); null when the supplier gives none or it does not parse. */
@@ -391,8 +318,7 @@ public class TripjackHotelBookingProvider implements HotelBookingProvider {
         RestClient client = restClientBuilder.clone().baseUrl(host).defaultHeader("apikey", supplier.apiKey()).build();
         String raw;
         try {
-            RestClient.RequestBodySpec request = client.post().uri(path);
-            raw = (body == null ? request : request.body(body)).retrieve().body(String.class);
+            raw = client.post().uri(path).body(body).retrieve().body(String.class);
         } catch (RestClientResponseException e) {
             String text = logBody ? e.getResponseBodyAsString() : "";
             log.error("Tripjack hotel {} HTTP {}: {}", what, e.getStatusCode().value(), text.length() > 200 ? text.substring(0, 200) : text);

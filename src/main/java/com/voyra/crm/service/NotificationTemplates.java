@@ -141,6 +141,43 @@ public final class NotificationTemplates {
                 List.of("Booking " + bookingId + ref + " has been cancelled.", money), "Open the booking", url);
     }
 
+    public static Email cancelRequestRaised(String product, String bookingId, String pnr, String agencyName,
+                                            com.voyra.crm.enums.CancelReason reason, int passengers, String url) {
+        String ref = ref(product, pnr);
+        return email("Cancellation request: " + product + " booking " + (pnr == null ? bookingId : pnr), "New cancellation request",
+                List.of(agencyName + " asked Voyra to cancel " + product + " booking " + bookingId + ref + ".",
+                        "Reason: " + reason.label() + ". Passengers: " + passengers + ".",
+                        "Review it, cancel at the supplier, then record the outcome in Voyra."),
+                "Open the request", url);
+    }
+
+    public static Email cancelRequestCompleted(String product, String bookingId, String pnr, com.voyra.crm.enums.CancelReason reason,
+                                               BigDecimal refund, boolean refundOffline, BigDecimal totalRefund, boolean whole,
+                                               String note, String url) {
+        String ref = ref(product, pnr);
+        String money = refund.signum() <= 0 ? "No refund applies to this cancellation."
+                : refundOffline ? "Voyra will refund " + inr(refund) + " to your bank account."
+                : inr(refund) + " has been refunded to your Voyra wallet.";
+        List<String> lines = new java.util.ArrayList<>(List.of(
+                (whole ? "Booking " + bookingId + ref + " has been cancelled." : "Part of booking " + bookingId + ref + " has been cancelled."),
+                "Reason: " + reason.label() + ".", money, "Refunded on this booking so far: " + inr(totalRefund) + "."));
+        if (note != null && !note.isBlank()) {
+            lines.add("Note from Voyra: " + oneLine(note));
+        }
+        return email("Your cancellation request" + ref + " is completed", "Cancellation completed", lines, "Open the booking", url);
+    }
+
+    public static Email cancelRequestRejected(String product, String bookingId, String pnr, String note, String url) {
+        String ref = ref(product, pnr);
+        return email("Your cancellation request" + ref + " was declined", "Cancellation request declined",
+                List.of("Voyra declined the request to cancel " + product + " booking " + bookingId + ref + ". The booking stays as it is.",
+                        "Note from Voyra: " + oneLine(note)), "Open the booking", url);
+    }
+
+    private static String ref(String product, String pnr) {
+        return pnr == null ? "" : " (" + ("hotel".equals(product) ? "confirmation " : "PNR ") + pnr + ")";
+    }
+
     /** "Hello Asha," or, with no name on the application, just "Hello,". */
     private static String hello(String name) {
         return name == null || name.isBlank() ? "Hello," : "Hello " + name + ",";

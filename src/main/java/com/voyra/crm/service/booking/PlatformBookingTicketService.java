@@ -68,6 +68,7 @@ public class PlatformBookingTicketService {
     private final PlatformBookingMirrorService mirrorService;
     private final PlatformTransactionManager transactionManager;
     private final BookingRepository crmBookingRepository;
+    private final com.voyra.crm.repository.PlatformCancelRequestRepository cancelRequestRepository;
 
     public record TicketPdf(byte[] bytes, String filename) {
     }
@@ -198,7 +199,10 @@ public class PlatformBookingTicketService {
         return new TicketPdf(pdf, filename(b, t));
     }
 
-    /** One row per passenger per direction, in the booking's passenger order (the order ticket_details' paxIndex counts in). */
+    /**
+     * One row per passenger per direction, in the booking's passenger order (the order ticket_details' paxIndex counts in),
+     * leaving out what a completed cancellation request took off (owner ruling 2026-11-18).
+     */
     private List<ETicketPdfRenderer.PaxRow> passengers(PlatformBooking b, TicketFacts facts) {
         List<PrintedPax> pax = paxCodec.decrypt(b.getPaxEnc(), StoredPax.class).passengers();
         List<TicketLine> lines = b.getTicketDetails() == null ? List.of()
@@ -206,10 +210,15 @@ public class PlatformBookingTicketService {
         boolean oneDirection = facts.directions().size() == 1;
         // flat ticket numbers hold no sector, so they are trusted only for a one-direction trip; the booking's PNR always applies
         List<String> flat = oneDirection && b.getTicketNumbers() != null ? b.getTicketNumbers() : List.of();
+        java.util.Set<String> cancelled = CancelParts.cancelled(cancelRequestRepository.findByPlatformBookingIdOrderByCreatedAtAsc(b.getId()));
         List<ETicketPdfRenderer.PaxRow> out = new ArrayList<>();
         for (int i = 0; i < pax.size(); i++) {
             PrintedPax p = pax.get(i);
-            for (Direction dir : facts.directions()) {
+            for (int d = 0; d < facts.directions().size(); d++) {
+                Direction dir = facts.directions().get(d);
+                if (CancelParts.isCancelled(cancelled, i, "d" + d)) {
+                    continue;
+                }
                 out.add(new ETicketPdfRenderer.PaxRow(PlatformBookingQueryService.fullName(p.title(), p.firstName(), p.lastName()),
                         p.type(), dir.key(),
                         pnr(i, dir.key(), lines, b.getPnr()),

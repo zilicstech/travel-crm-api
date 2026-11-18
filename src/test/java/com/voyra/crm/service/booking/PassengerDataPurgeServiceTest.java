@@ -31,6 +31,7 @@ class PassengerDataPurgeServiceTest {
     @Mock private PlatformBookingPurgeTxService purgeTx;
     @Mock private NotificationOutboxRepository outbox;
     @Mock private PlatformAuditService audit;
+    @Mock private PlatformCancelRequestService cancelRequests;
     @InjectMocks private PassengerDataPurgeService service;
 
     @Test
