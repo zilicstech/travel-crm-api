@@ -497,7 +497,6 @@ calls (Tripjack flight amendment, Tripjack hotel cancel-booking, mocks), `Cancel
 the mock `cancel-timeout` / `cancel-fail` switches. Rows already CANCELLING at deploy still settle through the poller and
 `resolve-cancel`. Tests: `PlatformCancelRequestServiceTest`, `CancelPartsTest`, `PlatformCancelRequestControllerTest`,
 mirror and cancellation service tests, `CancelRequestIT`.
-||||||| c7a5aa4
 
 ## Hotel search by name (2026-11-18, client PDF #7, owner rulings)
 
