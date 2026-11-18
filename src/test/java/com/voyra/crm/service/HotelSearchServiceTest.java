@@ -505,4 +505,42 @@ class HotelSearchServiceTest {
         when(provider.thumbnails(any(), any())).thenThrow(new IllegalStateException("down"));
         assertThat(service.thumbnails(List.of("s1:h1"))).isEmpty();
     }
+
+    @Test
+    void aHotelPickedByNameAsksOnlyItsSupplierWithItsOwnIdAndKeepsItsOwnResult() {
+        when(registry.searchable(PricingProduct.HOTEL)).thenReturn(List.of(S1, S2));
+        when(provider.search(any(), any())).thenAnswer(i -> new java.util.ArrayList<>(List.of(offer(new BigDecimal("160")))));
+        HotelSearchQuery one = query(null, 0);
+        one.setHotelId("s2:h9");
+
+        HotelSearchPageResponse page = service.search(one);
+
+        assertThat(page.getOffers()).extracting(HotelOfferResponse::getSupplierId).containsExactly("s2");
+        verify(provider).search(argThat(q -> "h9".equals(q.getHotelId()) && "Goa".equals(q.getCity())), eq(S2));
+        assertThat(one.getHotelId()).isEqualTo("s2:h9");
+
+        // The kept one-hotel result never answers a city search with its searchId, nor the reverse.
+        HotelSearchQuery city = query(page.getSearchId(), 0);
+        assertThat(service.search(city).getSearchId()).isNotEqualTo(page.getSearchId());
+        HotelSearchQuery again = query(page.getSearchId(), 0);
+        again.setHotelId("s2:h9");
+        assertThat(service.search(again).getSearchId()).isEqualTo(page.getSearchId());
+        verify(provider, times(3)).search(any(), any()); // the hotel once, the city from both suppliers, the hotel again from its kept result
+    }
+
+    @Test
+    void aBlankHotelIdIsACitySearchAndAnUnknownOrSwitchedOffSupplierIsUnavailable() {
+        when(provider.search(any(), any())).thenAnswer(i -> new java.util.ArrayList<>(List.of(offer(new BigDecimal("160")))));
+        HotelSearchQuery blank = query(null, 0);
+        blank.setHotelId(" ");
+        service.search(blank);
+        assertThat(blank.getHotelId()).isNull();
+
+        for (String id : List.of("no-namespace", "s9:h1")) {
+            HotelSearchQuery q = query(null, 0);
+            q.setHotelId(id);
+            assertThatThrownBy(() -> service.search(q)).isInstanceOf(BookingRequestException.class)
+                    .extracting("code").isEqualTo("OFFER_UNAVAILABLE");
+        }
+    }
 }

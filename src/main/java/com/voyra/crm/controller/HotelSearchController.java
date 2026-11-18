@@ -8,10 +8,12 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -29,6 +31,14 @@ import java.util.List;
 public class HotelSearchController {
 
     private final com.voyra.crm.service.HotelSearchService hotelSearchService;
+    private final com.voyra.crm.service.HotelCatalogService hotelCatalogService;
+
+    @GetMapping("/suggest")
+    @Operation(summary = "Hotels whose name holds the typed text", description = "Up to 8, from the hotel catalogue of suppliers "
+            + "with hotel search on; fewer than 3 characters returns none. Search one with its hotelId (and its city).")
+    public ResponseEntity<List<com.voyra.crm.dto.HotelSuggestionResponse>> suggest(@RequestParam(defaultValue = "") String q) {
+        return ResponseEntity.ok(hotelCatalogService.suggest(q));
+    }
 
     @PostMapping("/search")
     @Operation(summary = "Search hotel offers, 20 at a time", description = "Cheapest first. For another page send the same "

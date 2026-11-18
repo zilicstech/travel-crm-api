@@ -8,6 +8,7 @@ import java.time.LocalDate;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
 
 /** Deterministic per query so a demo or a test can assert on it - mirrors what MockFlightSearchProvider never got. */
 class MockHotelSearchProviderTest {
@@ -100,5 +101,25 @@ class MockHotelSearchProviderTest {
         assertThat(MockHotelSearchProvider.optionTotal("mock-ibis-budget", "other-option", 1, 1)).isNull();
         assertThat(MockHotelSearchProvider.optionTotal("mock-ibis-budget", null, 1, 1)).isNull();
         assertThat(MockHotelSearchProvider.optionTotal("mock-gone", "mock-gone-std", 1, 1)).isNull();
+    }
+
+    @Test
+    void itsFourHotelsAreItsCatalogueAndOnePickedByNameIsSearchedAlone() {
+        List<com.voyra.crm.models.CatalogHotel> got = new java.util.ArrayList<>();
+        assertThat(provider.catalog(cred, got::addAll)).isEqualTo(new com.voyra.crm.models.CatalogSummary(4, 4, 0, 0, null));
+        assertThat(got).extracting(com.voyra.crm.models.CatalogHotel::name)
+                .containsExactly("Amari Beach Resort", "Ibis Budget", "Grand Palace Hotel", "Sunset Inn");
+        assertThat(got.get(0)).isEqualTo(new com.voyra.crm.models.CatalogHotel("mock-amari-beach-resort", "Amari Beach Resort", "Goa", "IN",
+                "India", 4, "Resort"));
+
+        HotelSearchQuery one = query(1);
+        one.setHotelId("mock-amari-beach-resort");
+        assertThat(provider.search(one, cred)).extracting(HotelOfferResponse::getHotelName).containsExactly("Amari Beach Resort");
+    }
+
+    @Test
+    void aSupplierWithoutACatalogueHandsOverNothing() {
+        HotelSearchProvider none = mock(HotelSearchProvider.class, org.mockito.Mockito.CALLS_REAL_METHODS);
+        assertThat(none.catalog(cred, b -> { throw new AssertionError("no batch"); })).isEqualTo(com.voyra.crm.models.CatalogSummary.EMPTY);
     }
 }

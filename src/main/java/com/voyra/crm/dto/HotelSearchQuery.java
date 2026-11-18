@@ -44,6 +44,10 @@ public class HotelSearchQuery {
     @Schema(description = "Opening a hotel from a search: the search's correlationId, which the supplier ties its rates to")
     private String correlationId;
 
+    @jakarta.validation.constraints.Size(max = 120, message = "Hotel id can be at most 120 characters")
+    @Schema(description = "Search one hotel picked by name (its hotelId from /api/hotels/suggest); the city then only labels it")
+    private String hotelId;
+
     @Schema(description = "A later page of an earlier search: its searchId. Blank runs a new search")
     private String searchId;
 

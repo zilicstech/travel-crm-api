@@ -54,6 +54,7 @@ public class MockHotelSearchProvider implements HotelSearchProvider {
         int rooms = Math.max(1, query.getRooms());
 
         return TEMPLATES.stream()
+                .filter(t -> query.getHotelId() == null || t.id().equals(query.getHotelId()))
                 .map(t -> HotelOfferResponse.builder()
                         .offerId("mock-" + t.hotelName().toLowerCase().replace(" ", "") + "-" + query.getCheckIn())
                         .hotelId(t.id())
@@ -77,6 +78,16 @@ public class MockHotelSearchProvider implements HotelSearchProvider {
                                 : "Non-refundable")
                         .build())
                 .toList();
+    }
+
+    /** Its four hotels, listed in Goa, India, so name search can be tried with no vendor account. */
+    @Override
+    public com.voyra.crm.models.CatalogSummary catalog(ResolvedCredential supplier,
+                                                       java.util.function.Consumer<List<com.voyra.crm.models.CatalogHotel>> sink) {
+        sink.accept(TEMPLATES.stream()
+                .map(t -> new com.voyra.crm.models.CatalogHotel(t.id(), t.hotelName(), "Goa", "IN", "India", t.starRating(), t.propertyType()))
+                .toList());
+        return new com.voyra.crm.models.CatalogSummary(TEMPLATES.size(), TEMPLATES.size(), 0, 0, null);
     }
 
     /** Like the real supplier, the list's photos come after the list itself - one per hotel, from the template's place. */
