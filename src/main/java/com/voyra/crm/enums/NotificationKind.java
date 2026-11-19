@@ -2,6 +2,7 @@ package com.voyra.crm.enums;
 
 /** One email template per kind (NotificationTemplates). */
 public enum NotificationKind {
+    /** Retired with the low-balance alert (2026-11-19); kept so old outbox rows still read. */
     LOW_BALANCE,
     PLATFORM_ALERT,
     SUBSCRIPTION_EXPIRING,

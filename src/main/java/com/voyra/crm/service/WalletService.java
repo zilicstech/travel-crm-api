@@ -70,7 +70,6 @@ public class WalletService {
         }
         requireOpen(wallet);
         WalletEntry entry = creditLocked(wallet, new WalletPosting(type, amount, idempotencyKey, refType, refId, narration, null));
-        checkLowBalance(wallet);
         return entry;
     }
 
@@ -99,7 +98,6 @@ public class WalletService {
             throw new InsufficientBalanceException(available);
         }
         WalletEntry entry = post(wallet, new WalletPosting(WalletEntryType.HOLD, amount, idempotencyKey, refType, refId, null, null));
-        checkLowBalance(wallet);
         return entry;
     }
 
@@ -115,7 +113,6 @@ public class WalletService {
             throw new IllegalStateException("This hold is already released");
         }
         WalletEntry entry = release(wallet, hold, idempotencyKey);
-        checkLowBalance(wallet);
         return entry;
     }
 
@@ -144,7 +141,6 @@ public class WalletService {
         }
         WalletEntry entry = debitCovered(wallet, WalletEntryType.BOOKING_DEBIT, amount, idempotencyKey, refType, refId,
                 ReceivableReason.LATE_TICKET, hold.getId(), null);
-        checkLowBalance(wallet);
         return entry;
     }
 
@@ -175,7 +171,6 @@ public class WalletService {
             return existing.get();
         }
         WalletEntry entry = debitCovered(wallet, type, amount, idempotencyKey, refType, refId, reason, relatedEntryId, narration);
-        checkLowBalance(wallet);
         return entry;
     }
 
@@ -206,7 +201,6 @@ public class WalletService {
             }
             entry = post(wallet, posting);
         }
-        checkLowBalance(wallet);
         return entry;
     }
 
@@ -228,7 +222,7 @@ public class WalletService {
             throw new IllegalStateException("Cannot close the wallet: a receivable is still due to Voyra");
         }
         if (topupRequestRepository.existsByWalletIdAndStatus(wallet.getId(), TopupStatus.PENDING)) {
-            throw new IllegalStateException("Cannot close the wallet: a top-up request is still pending");
+            throw new IllegalStateException("Cannot close the wallet: an add-money request is still pending");
         }
         if (wallet.getBalance().signum() > 0 && (utr == null || utr.isBlank())) {
             throw new IllegalArgumentException("The bank UTR of the closure refund is required");
@@ -325,22 +319,6 @@ public class WalletService {
                 .createdByName(user.map(CustomUserPrincipal::username).orElse("Voyra"))
                 .createdAt(Instant.now())
                 .build());
-    }
-
-    /** Notifies once when available drops below the threshold; re-arms when it climbs back to or above it. */
-    private void checkLowBalance(Wallet wallet) {
-        BigDecimal threshold = wallet.getLowBalanceThreshold();
-        if (threshold == null) {
-            return;
-        }
-        BigDecimal available = available(wallet);
-        if (available.compareTo(threshold) >= 0) {
-            wallet.setLowBalanceNotifiedAt(null);
-        } else if (wallet.getLowBalanceNotifiedAt() == null) {
-            wallet.setLowBalanceNotifiedAt(Instant.now());
-            notificationService.lowBalance(wallet.getTenantId(), available);
-        }
-        walletRepository.save(wallet);
     }
 
     @Transactional(readOnly = true)

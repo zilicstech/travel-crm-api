@@ -25,21 +25,39 @@ public class JwtService {
     @Value("${app.jwt.expiration-ms}")
     private long jwtExpirationMs;
 
+    @Value("${app.jwt.login-as-expiration-ms:3600000}")
+    private long loginAsExpirationMs;
+
     private SecretKey getSigningKey() {
         return Keys.hmacShaKeyFor(jwtSecret.getBytes(StandardCharsets.UTF_8));
     }
 
     public String generateToken(String username, UserType role, String userId, String tenantId) {
+        return build(username, role, userId, tenantId, jwtExpirationMs, null);
+    }
+
+    /**
+     * An agency owner's token minted for a platform admin who logs in to the agency: short-lived, and {@code actBy}
+     * names the admin so a token can be traced back. The filter treats it as the owner's.
+     */
+    public String generateLoginAsToken(String ownerEmail, String tenantId, String adminId) {
+        return build(ownerEmail, UserType.AGENCY_OWNER, tenantId, tenantId, loginAsExpirationMs, adminId);
+    }
+
+    private String build(String username, UserType role, String userId, String tenantId, long lifetimeMs, String actBy) {
         Date now = new Date();
         var builder = Jwts.builder()
                 .subject(username)
                 .claim("role", role != null ? role.name() : UserType.AGENT.name())
                 .claim("userId", userId)
                 .issuedAt(now)
-                .expiration(new Date(now.getTime() + jwtExpirationMs));
+                .expiration(new Date(now.getTime() + lifetimeMs));
 
         if (tenantId != null && !tenantId.isBlank()) {
             builder.claim("tenantId", tenantId);
+        }
+        if (actBy != null) {
+            builder.claim("actBy", actBy);
         }
         return builder.signWith(getSigningKey()).compact();
     }

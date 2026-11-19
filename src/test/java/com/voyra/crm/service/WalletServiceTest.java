@@ -40,11 +40,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.argThat;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -139,10 +136,6 @@ class WalletServiceTest {
                 .createdAt(createdAt).build();
         receivables.add(r);
         return r;
-    }
-
-    private static BigDecimal eqAmount(String v) {
-        return argThat(a -> a != null && a.compareTo(new BigDecimal(v)) == 0);
     }
 
     @Test
@@ -435,7 +428,7 @@ class WalletServiceTest {
         when(topupRequestRepository.existsByWalletIdAndStatus("W1", TopupStatus.PENDING)).thenReturn(true);
 
         assertThatThrownBy(() -> service.close(T, "UTR1"))
-                .isInstanceOf(IllegalStateException.class).hasMessageContaining("top-up");
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("add-money request");
         assertThat(wallet.getStatus()).isEqualTo(WalletStatus.OPEN);
         assertThat(entries).isEmpty();
     }
@@ -461,25 +454,6 @@ class WalletServiceTest {
 
         assertThat(refund.getAmount()).isEqualByComparingTo("0");
         assertThat(wallet.getStatus()).isEqualTo(WalletStatus.CLOSED);
-    }
-
-    @Test
-    void lowBalanceNotifiesOnceWhenCrossingTheThreshold() {
-        fund("1500");
-        wallet.setLowBalanceThreshold(d("1000"));
-
-        service.debitOrReceivable(T, WalletEntryType.TDS_DEDUCTED, d("600"), "x1", null, null, ReceivableReason.CHARGEBACK);
-        verify(notificationService, times(1)).lowBalance(eq(T), eqAmount("900"));
-        assertThat(wallet.getLowBalanceNotifiedAt()).isNotNull();
-
-        service.debitOrReceivable(T, WalletEntryType.TDS_DEDUCTED, d("100"), "x2", null, null, ReceivableReason.CHARGEBACK);
-        verify(notificationService, never()).lowBalance(eq(T), eqAmount("800"));
-
-        service.credit(T, WalletEntryType.TOPUP, d("500"), "x3", null, null, null);
-        assertThat(wallet.getLowBalanceNotifiedAt()).isNull();
-
-        service.debitOrReceivable(T, WalletEntryType.TDS_DEDUCTED, d("400"), "x4", null, null, ReceivableReason.CHARGEBACK);
-        verify(notificationService, times(2)).lowBalance(eq(T), eqAmount("900"));
     }
 
     @Test

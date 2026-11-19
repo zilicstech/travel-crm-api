@@ -282,7 +282,7 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiErrorResponse> handleBookingConflict(BookingConflictException ex, HttpServletRequest request) {
         String path = getPath(request);
         log.warn("Booking conflict {} - path: {}", ex.getCode(), path);
-        ApiErrorResponse response = ApiErrorResponse.of(ex.getMessage(), "Booking conflict", null,
+        ApiErrorResponse response = ApiErrorResponse.of(ex.getMessage(), "Conflict", null,
                 HttpStatus.CONFLICT.value(), path);
         response.setCode(ex.getCode());
         response.setDetails(ex.getDetails());

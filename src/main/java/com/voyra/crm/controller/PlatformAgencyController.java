@@ -6,10 +6,12 @@ import com.voyra.crm.dto.AgencyProfileResponse;
 import com.voyra.crm.dto.AgencyResponse;
 import com.voyra.crm.dto.AgencyUpdateRequest;
 import com.voyra.crm.dto.CredentialsResponse;
+import com.voyra.crm.dto.LoginResponse;
 import com.voyra.crm.dto.PasswordResetRequest;
 import com.voyra.crm.dto.TenantStatusUpdateRequest;
 import com.voyra.crm.service.AgencyProfileService;
 import com.voyra.crm.service.AgencyService;
+import com.voyra.crm.service.AuthService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -41,6 +43,7 @@ public class PlatformAgencyController {
 
     private final AgencyService agencyService;
     private final AgencyProfileService agencyProfileService;
+    private final AuthService authService;
 
     @PostMapping
     @Operation(summary = "Onboard a new Agency", description = "Creates the Agency, the Owner login, and provisions the tenant schema.")
@@ -71,6 +74,14 @@ public class PlatformAgencyController {
     @Operation(summary = "Retrieve the Owner's login credentials", description = "Every retrieval is logged.")
     public ResponseEntity<CredentialsResponse> getCredentials(@PathVariable String id) {
         return ResponseEntity.ok(agencyService.getCredentials(id));
+    }
+
+    @PostMapping("/{id}/login-as")
+    @Operation(summary = "Log in to the Agency as its Owner",
+            description = "Returns an Owner login (token valid for 1 hour) for the platform admin; 409 AGENCY_DEACTIVATED for a deactivated "
+                    + "Agency. Audited.")
+    public ResponseEntity<LoginResponse> loginAs(@PathVariable String id) {
+        return ResponseEntity.ok(authService.loginAsOwner(id));
     }
 
     @PatchMapping("/{id}")

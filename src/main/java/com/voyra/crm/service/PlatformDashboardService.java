@@ -117,7 +117,7 @@ public class PlatformDashboardService {
                 rest.add(new PlatformDashboardResponse.PendingTask("KYC", "Agency application - " + a.getAgencyName(), a.getStatus().name().replace('_', ' ').toLowerCase(java.util.Locale.ROOT),
                         a.getSubmittedAt() == null ? a.getCreatedAt() : a.getSubmittedAt(), null, false, "/platform/applications/" + a.getId())));
         topupRepository.findByStatusOrderByCreatedAtDesc(TopupStatus.PENDING).stream().filter(t -> t.getMode() == TopupMode.BANK_TRANSFER).forEach(t ->
-                rest.add(new PlatformDashboardResponse.PendingTask("TOPUP", "Bank top-up to approve", "₹" + t.getAmount(), t.getCreatedAt(), null, false, "/platform/topups")));
+                rest.add(new PlatformDashboardResponse.PendingTask("TOPUP", "Add money request to approve", "₹" + t.getAmount(), t.getCreatedAt(), null, false, "/platform/topups")));
         rest.sort(Comparator.comparing(PlatformDashboardResponse.PendingTask::createdAt, Comparator.nullsLast(Comparator.naturalOrder())));
         cancels.addAll(rest);
         return cancels;

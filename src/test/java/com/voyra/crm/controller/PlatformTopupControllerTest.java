@@ -60,7 +60,7 @@ class PlatformTopupControllerTest {
         mockMvc.perform(post("/api/platform/topups/R1/approve").with(as(UserType.SUPER_ADMIN))
                         .contentType(MediaType.APPLICATION_JSON).content("{\"approvedAmount\":99999999999}"))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.details.errors.approvedAmount").value("A top-up can be at most ₹10,00,00,000"));
+                .andExpect(jsonPath("$.details.errors.approvedAmount").value("You can add at most ₹10,00,00,000 at a time"));
         org.mockito.Mockito.verifyNoInteractions(service);
     }
 
@@ -75,10 +75,10 @@ class PlatformTopupControllerTest {
 
     @Test
     void secondApprovalIs409() throws Exception {
-        given(service.approve(eq("R1"), any(), any())).willThrow(new IllegalStateException("This top-up was already approved"));
+        given(service.approve(eq("R1"), any(), any())).willThrow(new IllegalStateException("This request was already approved"));
         mockMvc.perform(post("/api/platform/topups/R1/approve").with(as(UserType.SUPER_ADMIN))
                         .contentType(MediaType.APPLICATION_JSON).content("{\"approvedAmount\":10}"))
-                .andExpect(status().isConflict()).andExpect(jsonPath("$.message").value("This top-up was already approved"));
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.message").value("This request was already approved"));
     }
 
     @Test

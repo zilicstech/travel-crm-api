@@ -4,6 +4,6 @@ package com.voyra.crm.exception;
 public class ReceivableDueException extends RuntimeException {
 
     public ReceivableDueException() {
-        super("An amount is due to Voyra - top up the wallet to settle it before booking");
+        super("An amount is due to Voyra - add money to the wallet to settle it before booking");
     }
 }

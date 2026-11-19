@@ -3,13 +3,16 @@ package com.voyra.crm.controller;
 import com.voyra.crm.config.SecurityConfig;
 import com.voyra.crm.dto.AgencyProfileResponse;
 import com.voyra.crm.dto.AgencyResponse;
+import com.voyra.crm.dto.LoginResponse;
 import com.voyra.crm.enums.TenantStatus;
 import com.voyra.crm.security.JwtAuthenticationFilter;
 import com.voyra.crm.security.JwtService;
 import com.voyra.crm.security.RestAuthenticationEntryPoint;
+import com.voyra.crm.exception.BookingConflictException;
 import com.voyra.crm.exception.NotFoundException;
 import com.voyra.crm.service.AgencyProfileService;
 import com.voyra.crm.service.AgencyService;
+import com.voyra.crm.service.AuthService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -28,6 +31,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -42,6 +46,7 @@ class PlatformAgencyControllerTest {
     @Autowired private MockMvc mockMvc;
     @MockBean private AgencyService agencyService;
     @MockBean private AgencyProfileService agencyProfileService;
+    @MockBean private AuthService authService;
 
     private static final MockMultipartFile LOGO = new MockMultipartFile("file", "logo.png", "image/png", new byte[]{1});
 
@@ -103,5 +108,25 @@ class PlatformAgencyControllerTest {
         mockMvc.perform(multipart("/api/platform/agencies/NOPE/logo").file(LOGO).with(r -> { r.setMethod("PUT"); return r; })
                         .with(SecurityMockMvcRequestPostProcessors.user("root").roles("SUPER_ADMIN")))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void onlyASuperAdminLogsInToAnAgency() throws Exception {
+        when(authService.loginAsOwner("T1")).thenReturn(LoginResponse.builder().success(true).token("owner-token")
+                .role("AGENCY_OWNER").tenantId("T1").userId("T1").build());
+
+        mockMvc.perform(post("/api/platform/agencies/T1/login-as").with(SecurityMockMvcRequestPostProcessors.user("root").roles("SUPER_ADMIN")))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.token").value("owner-token"));
+        mockMvc.perform(post("/api/platform/agencies/T1/login-as").with(SecurityMockMvcRequestPostProcessors.user("owner").roles("AGENCY_OWNER")))
+                .andExpect(status().isForbidden());
+        verify(authService).loginAsOwner("T1");
+    }
+
+    @Test
+    void aDeactivatedAgencyIsAConflict() throws Exception {
+        when(authService.loginAsOwner("T1")).thenThrow(new BookingConflictException("AGENCY_DEACTIVATED", "A deactivated agency cannot be logged in to", java.util.Map.of()));
+
+        mockMvc.perform(post("/api/platform/agencies/T1/login-as").with(SecurityMockMvcRequestPostProcessors.user("root").roles("SUPER_ADMIN")))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("AGENCY_DEACTIVATED"));
     }
 }

@@ -59,6 +59,7 @@ class PlatformControllersWebTest {
     @MockBean private AgencyApplicationService agencyApplicationService;
     @MockBean private AgencyService agencyService;
     @MockBean private com.voyra.crm.service.AgencyProfileService agencyProfileService;
+    @MockBean private com.voyra.crm.service.AuthService authService;
     @MockBean private AgencyPricingService agencyPricingService;
     @MockBean private InquiryService inquiryService;
     @MockBean private PlatformSupplierCredentialService credentialService;

@@ -152,19 +152,6 @@ class WalletQueryServiceTest {
     }
 
     @Test
-    void thresholdIsSetUnderTheRowLockAndRearmsTheAlert() {
-        Wallet w = wallet();
-        w.setLowBalanceNotifiedAt(Instant.now());
-        given(walletRepository.findByTenantIdForUpdate("T1")).willReturn(Optional.of(w));
-        given(walletRepository.save(w)).willReturn(w);
-
-        service.setThreshold("T1", new BigDecimal("5000"));
-
-        assertThat(w.getLowBalanceThreshold()).isEqualByComparingTo("5000");
-        assertThat(w.getLowBalanceNotifiedAt()).isNull();
-    }
-
-    @Test
     void adjustKeysOnTheTenantAndRequestIdAndIsAudited() {
         WalletAdjustRequest req = new WalletAdjustRequest();
         req.setAmount(new BigDecimal("-25.00"));
@@ -247,7 +234,7 @@ class WalletQueryServiceTest {
     @Test
     void aWriteToAMissingWalletIsNotFound() {
         given(walletRepository.findByTenantIdForUpdate("T9")).willReturn(Optional.empty());
-        assertThatThrownBy(() -> service.setThreshold("T9", BigDecimal.TEN)).isInstanceOf(NotFoundException.class)
+        assertThatThrownBy(() -> service.setTest("T9", true)).isInstanceOf(NotFoundException.class)
                 .hasMessage("Wallet not found for this agency");
         org.mockito.Mockito.verify(walletRepository, org.mockito.Mockito.never()).save(any());
     }

@@ -30,9 +30,6 @@ public class WalletSummaryResponse {
     @Schema(description = "True for a test wallet", example = "false")
     private Boolean isTest;
 
-    @Schema(description = "Low-balance alert threshold; null when off", example = "10000.00", nullable = true)
-    private BigDecimal lowBalanceThreshold;
-
     @Schema(description = "Receivables the agency still owes Voyra")
     private List<ReceivableResponse> dueReceivables;
 

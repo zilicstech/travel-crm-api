@@ -23,7 +23,6 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 
@@ -56,7 +55,7 @@ public class WalletQueryService {
         return WalletSummaryResponse.builder()
                 .balance(w.getBalance()).held(w.getHeld()).available(w.getBalance().subtract(w.getHeld()))
                 .currency(w.getCurrency()).status(w.getStatus().name()).isTest(w.getIsTest())
-                .lowBalanceThreshold(w.getLowBalanceThreshold()).dueReceivables(due)
+                .dueReceivables(due)
                 .pendingTopups((int) topupRequestRepository.countByWalletIdAndStatus(w.getId(), TopupStatus.PENDING))
                 .build();
     }
@@ -81,15 +80,6 @@ public class WalletQueryService {
                         e.getAvailableAfter().toPlainString(), safe(e.getNarration()), safe(e.getCreatedByName())))
                 .toList();
         return CsvWriter.write(List.of("Date", "Type", "Amount", "Balance", "Held", "Available", "Narration", "By"), rows);
-    }
-
-    /** Row lock so the update cannot race a posting that rewrites the same wallet row. */
-    @Transactional
-    public void setThreshold(String tenantId, BigDecimal threshold) {
-        Wallet w = lock(tenantId);
-        w.setLowBalanceThreshold(threshold);
-        w.setLowBalanceNotifiedAt(null); // re-arm: the next posting decides afresh
-        walletRepository.save(w);
     }
 
     @Transactional

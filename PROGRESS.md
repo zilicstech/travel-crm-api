@@ -563,3 +563,34 @@ rows are not deleted yet (filtered on read). Frontend: the search forms' one `Da
 on phones, cheapest day in green) shows them on Departure and Return; the hotel searches use the same picker. Tests: `FlightFareCalendarServiceTest`,
 `FlightFareCalendarIT`, `FlightSearchServiceTest`, `FlightSearchControllerTest`, `DatePicker.test.tsx`. Design:
 `docs/superpowers/specs/2026-11-18-flight-fare-calendar-design.md`.
+
+## Product round 2026-11-19 (owner rulings)
+
+- **Add money: bank transfer or offline, no online.** Screens and emails say "Add money" instead of "Top up". One
+  endpoint takes both kinds: a bank transfer sends its UTR (unique ignoring case and spaces) and the payment proof
+  (required with a UTR; note optional), an offline payment sends no UTR and a note of 3-500 characters (checked after
+  trimming; a blank UTR is stored NULL, which the UNIQUE index allows many times). `TopupResponse.hasProof` tells the
+  admin screen whether to offer View proof, and the mode shows as Bank transfer or Offline by `bankRef`. Approval credits
+  with "Money added (bank transfer), UTR X" or "Money added (offline)"; an online credit reads "Money added (online),
+  payment ...". The online path (gateway order, simulate, webhook) stays in the API, unused by any screen, because the e2e
+  suite funds wallets through it.
+- **No low-balance alert.** `PUT /api/wallet/threshold`, `WalletThresholdRequest`, `WalletQueryService.setThreshold`,
+  `WalletService.checkLowBalance`, `NotificationService.lowBalance` and its template are gone, and
+  `WalletSummaryResponse.lowBalanceThreshold` with them. `NotificationKind.LOW_BALANCE` stays so old outbox rows still
+  read. The two `wallet` columns are unmapped and drop in public V7.
+- **Log in as agency.** `POST /api/platform/agencies/{id}/login-as` (SUPER_ADMIN) returns the owner's login with a token
+  that lives one hour (`app.jwt.login-as-expiration-ms`) and names the admin in `actBy`; 404 for an unknown agency, 409
+  `AGENCY_DEACTIVATED`; audited once as `TENANT_LOGIN_AS`. It is an ordinary owner token: the plan's gates and a
+  SUSPENDED agency's read-only rule apply, and what the admin changes is recorded as the owner. Owner tokens are not
+  revocable, so the short lifetime is the limit.
+- **Search prices at most 2 minutes old.** The flight search result cache lives 2 minutes (was 10). A Search click already
+  bypassed it; page, sort and filter changes now go back to the suppliers once the result is 2 minutes old. Only the fare
+  calendar shows older fares.
+- Frontend only: the flight and hotel Book buttons read "Book" with a book icon.
+- Frontend only (2026-11-20): one-way flight results carry a nearby-dates strip, seven days around the searched date with the
+  fare calendar's stored fare per adult (or "View"), paged a week at a time; picking a day searches it.
+- Not in this round: consolidating fare types under the cabin ("Economy ₹100"), left for later by the owner.
+
+Tests: `TopupServiceTest`, `TopupControllerTest`, `AuthServiceCoverageTest`, `PlatformAgencyControllerTest`,
+`JwtServiceLoginAsTest`, `FlightSearchServiceTest#aCachedResultLivesTwoMinutesSoSearchPricesAreNeverStale`; e2e
+`e2e/wallet.spec.ts`, `e2e/platform-login-as.spec.ts`.

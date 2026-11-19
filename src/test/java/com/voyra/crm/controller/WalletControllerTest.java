@@ -12,7 +12,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Import;
-import org.springframework.http.MediaType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.ActiveProfiles;
@@ -25,12 +24,10 @@ import java.util.List;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -86,15 +83,4 @@ class WalletControllerTest {
                 .andExpect(content().string("Date,Type,Amount,Balance,Held,Available,Narration,By\n"));
     }
 
-    @Test
-    void onlyTheOwnerSetsTheThreshold() throws Exception {
-        String body = "{\"lowBalanceThreshold\":5000}";
-        mockMvc.perform(put("/api/wallet/threshold").with(as(UserType.ACCOUNTANT)).contentType(MediaType.APPLICATION_JSON).content(body))
-                .andExpect(status().isForbidden());
-        mockMvc.perform(put("/api/wallet/threshold").with(as(UserType.AGENCY_OWNER)).contentType(MediaType.APPLICATION_JSON).content(body))
-                .andExpect(status().isOk());
-        verify(service).setThreshold("T1", new BigDecimal("5000"));
-        mockMvc.perform(put("/api/wallet/threshold").with(as(UserType.AGENCY_OWNER)).contentType(MediaType.APPLICATION_JSON).content("{\"lowBalanceThreshold\":-1}"))
-                .andExpect(status().isBadRequest());
-    }
 }

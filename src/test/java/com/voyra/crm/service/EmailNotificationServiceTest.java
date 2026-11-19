@@ -69,14 +69,6 @@ class EmailNotificationServiceTest {
     }
 
     @Test
-    void lowBalanceGoesToTheAgencyOwner() {
-        service.lowBalance("T1", new BigDecimal("900.00"));
-
-        NotificationTemplates.Email email = queued(NotificationKind.LOW_BALANCE, "owner@sky.test");
-        assertThat(email.text()).contains("Sky Tours").contains("₹900.00").contains(BASE + "/agency/wallet");
-    }
-
-    @Test
     void platformAlertsGoToEveryActivePlatformAdmin() {
         given(platformAdminRepository.findByIsActiveTrue()).willReturn(List.of(
                 PlatformAdmin.builder().id("A1").email("root@voyra.test").build(),
@@ -160,8 +152,8 @@ class EmailNotificationServiceTest {
 
     @Test
     void anUnknownAgencyQueuesNothingAndNeverThrows() {
-        assertThatCode(() -> service.lowBalance("NOPE", BigDecimal.ONE)).doesNotThrowAnyException();
-        assertThat(built(NotificationKind.LOW_BALANCE)).isNull();
+        assertThatCode(() -> service.topupApproved(TopupRequest.builder().id("R1").tenantId("NOPE").build())).doesNotThrowAnyException();
+        assertThat(built(NotificationKind.TOPUP_APPROVED)).isNull();
     }
 
     /**
@@ -184,8 +176,8 @@ class EmailNotificationServiceTest {
         java.util.concurrent.atomic.AtomicBoolean committed = new java.util.concurrent.atomic.AtomicBoolean();
 
         assertThatCode(() -> new TransactionTemplate(txManager).executeWithoutResult(s -> {
-            email.lowBalance("T1", BigDecimal.ONE);
             email.topupApproved(TopupRequest.builder().id("R1").tenantId("T1").build());
+            email.topupRejected(TopupRequest.builder().id("R1").tenantId("T1").build());
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void afterCommit() {
@@ -215,7 +207,6 @@ class EmailNotificationServiceTest {
         service.bookingTicketed(b);
         service.bookingFailed(b);
         service.bookingCancelled(b, false);
-        service.lowBalance("T1", new BigDecimal("900.00"));
         service.topupApproved(t);
         service.topupRejected(t);
         service.subscriptionExpiring("T1", "PERIOD", Instant.now(), 7);
@@ -223,7 +214,7 @@ class EmailNotificationServiceTest {
                 .total(new BigDecimal("2948.82")).dueAt(Instant.now()).build());
 
         for (NotificationKind kind : List.of(NotificationKind.BOOKING_TICKETED, NotificationKind.BOOKING_FAILED,
-                NotificationKind.BOOKING_CANCELLED, NotificationKind.LOW_BALANCE, NotificationKind.TOPUP_APPROVED,
+                NotificationKind.BOOKING_CANCELLED, NotificationKind.TOPUP_APPROVED,
                 NotificationKind.TOPUP_REJECTED, NotificationKind.SUBSCRIPTION_EXPIRING, NotificationKind.SUBSCRIPTION_INVOICE)) {
             NotificationTemplates.Email e = built(kind).email();
             String all = (e.subject() + "\n" + e.html() + "\n" + e.text()).toLowerCase(java.util.Locale.ROOT);
@@ -283,9 +274,9 @@ class EmailNotificationServiceTest {
 
     @Test
     void anOutboxThatCannotQueueNeverFailsTheCaller() {
-        org.mockito.Mockito.doThrow(new IllegalStateException("outbox down")).when(outbox).enqueue(eq(NotificationKind.LOW_BALANCE), any());
+        org.mockito.Mockito.doThrow(new IllegalStateException("outbox down")).when(outbox).enqueue(eq(NotificationKind.TOPUP_APPROVED), any());
 
-        assertThatCode(() -> service.lowBalance("T1", BigDecimal.ONE)).doesNotThrowAnyException();
+        assertThatCode(() -> service.topupApproved(TopupRequest.builder().id("R1").tenantId("T1").build())).doesNotThrowAnyException();
     }
 
     @Test

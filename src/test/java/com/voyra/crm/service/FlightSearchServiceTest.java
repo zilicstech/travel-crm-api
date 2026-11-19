@@ -1,5 +1,6 @@
 package com.voyra.crm.service;
 
+import com.github.benmanes.caffeine.cache.Cache;
 import com.voyra.crm.dto.FlightOfferResponse;
 import com.voyra.crm.dto.FlightSearchPageRequest;
 import com.voyra.crm.dto.FlightSearchPageResponse;
@@ -18,8 +19,10 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -160,6 +163,13 @@ class FlightSearchServiceTest {
         service.searchPage(again);
 
         assertThat(supplierCalls.get()).isEqualTo(2);
+    }
+
+    @Test
+    void aCachedResultLivesTwoMinutesSoSearchPricesAreNeverStale() {
+        Cache<?, ?> cache = (Cache<?, ?>) ReflectionTestUtils.getField(service, "cache");
+
+        assertThat(cache.policy().expireAfterWrite().orElseThrow().getExpiresAfter()).isEqualTo(Duration.ofMinutes(2));
     }
 
     @Test

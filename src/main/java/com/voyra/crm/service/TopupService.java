@@ -80,36 +80,48 @@ public class TopupService {
     @Transactional
     public TopupResponse createBank(String tenantId, String userId, String userName, BankTopupCreateRequest request) {
         Wallet wallet = openWallet(tenantId);
-        String normalized = normalize(request.getBankRef());
-        if (normalized.length() < 4) {
+        // Two kinds (owner ruling 2026-11-19): a bank transfer with its UTR and proof, or an offline payment with a note.
+        String bankRef = StringUtils.hasText(request.getBankRef()) ? request.getBankRef().trim() : null;
+        String note = StringUtils.hasText(request.getNote()) ? request.getNote().trim() : null;
+        if (bankRef == null && (note == null || note.length() < 3)) {
+            throw new FieldValidationException("note", "Say how and when you paid");
+        }
+        String normalized = bankRef == null ? null : normalize(bankRef);
+        if (normalized != null && normalized.length() < 4) {
             throw new FieldValidationException("bankRef", "Bank reference must be at least 4 letters or digits");
         }
-        if (topupRepository.existsByBankRefNormalized(normalized)) {
+        if (normalized != null && topupRepository.existsByBankRefNormalized(normalized)) {
             throw new FieldValidationException("bankRef", "This bank reference has already been used");
         }
-        MultipartFile proof = request.getProof();
-        String name = proof.getOriginalFilename() == null ? "" : proof.getOriginalFilename();
-        if (!PROOF_EXTENSIONS.contains(name.substring(name.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT))) {
-            throw new IllegalArgumentException(PROOF_TYPE_MESSAGE);
+        MultipartFile proof = request.getProof() == null || request.getProof().isEmpty() ? null : request.getProof();
+        if (bankRef != null && proof == null) {
+            throw new FieldValidationException("proof", "Attach the payment proof");
         }
-        try {
-            UploadValidator.assertAllowed(proof, MAX_PROOF_BYTES);
-        } catch (IllegalArgumentException e) {
-            throw proof.getSize() > MAX_PROOF_BYTES ? e : new IllegalArgumentException(PROOF_TYPE_MESSAGE);
+        String name = proof == null || proof.getOriginalFilename() == null ? "" : proof.getOriginalFilename();
+        if (proof != null) {
+            if (!PROOF_EXTENSIONS.contains(name.substring(name.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT))) {
+                throw new IllegalArgumentException(PROOF_TYPE_MESSAGE);
+            }
+            try {
+                UploadValidator.assertAllowed(proof, MAX_PROOF_BYTES);
+            } catch (IllegalArgumentException e) {
+                throw proof.getSize() > MAX_PROOF_BYTES ? e : new IllegalArgumentException(PROOF_TYPE_MESSAGE);
+            }
         }
         String id = UniqueIdResolver.resolve(topupRepository::existsById);
-        String key = fileStorageService.store("platform", "wallet-topups/" + tenantId, id, proof);
-        TopupRequest saved = topupRepository.save(TopupRequest.builder()
+        TopupRequest.TopupRequestBuilder row = TopupRequest.builder()
                 .id(id).walletId(wallet.getId()).tenantId(tenantId)
                 .mode(TopupMode.BANK_TRANSFER).amount(request.getAmount()).status(TopupStatus.PENDING)
-                .bankRef(request.getBankRef().trim()).bankRefNormalized(normalized)
-                .proofFileKey(key)
-                .proofFileName(name.length() <= 255 ? name : name.substring(name.length() - 255))
-                .proofContentType(MediaTypeFactory.getMediaType(name).orElse(MediaType.APPLICATION_OCTET_STREAM).toString())
-                .note(StringUtils.hasText(request.getNote()) ? request.getNote().trim() : null)
+                .bankRef(bankRef).bankRefNormalized(normalized)
+                .note(note)
                 .requestedBy(userId).requestedByName(userName)
-                .createdAt(Instant.now()).build());
-        return toResponse(saved, null);
+                .createdAt(Instant.now());
+        if (proof != null) {
+            row.proofFileKey(fileStorageService.store("platform", "wallet-topups/" + tenantId, id, proof))
+                    .proofFileName(name.length() <= 255 ? name : name.substring(name.length() - 255))
+                    .proofContentType(MediaTypeFactory.getMediaType(name).orElse(MediaType.APPLICATION_OCTET_STREAM).toString());
+        }
+        return toResponse(topupRepository.save(row.build()), null);
     }
 
     /** Creates the gateway order first, so a gateway failure leaves no PENDING row behind. */
@@ -118,7 +130,7 @@ public class TopupService {
         Wallet wallet = openWallet(tenantId);
         // Prod runs the stub until Razorpay keys exist; only test wallets (which can simulate payment) may use it.
         if ("stub".equals(paymentGateway.name()) && !Boolean.TRUE.equals(wallet.getIsTest())) {
-            throw new IllegalStateException("Online top-up is not available yet");
+            throw new IllegalStateException("Paying online is not available yet");
         }
         String id = UniqueIdResolver.resolve(topupRepository::existsById);
         GatewayOrderCreated created = paymentGateway.createOrder(request.getAmount(), id, Map.of("tenantId", tenantId, "topupId", id));
@@ -142,11 +154,11 @@ public class TopupService {
      */
     public TopupResponse simulate(String tenantId, String id) {
         if (!paymentGateway.simulateEnabled()) {
-            throw new NotFoundException("Top-up not found");
+            throw new NotFoundException("Add-money request not found");
         }
         TopupRequest t = topupRepository.findById(id)
                 .filter(r -> r.getTenantId().equals(tenantId) && r.getMode() == TopupMode.GATEWAY)
-                .orElseThrow(() -> new NotFoundException("Top-up not found"));
+                .orElseThrow(() -> new NotFoundException("Add-money request not found"));
         if (!walletRepository.findByTenantId(tenantId).map(w -> Boolean.TRUE.equals(w.getIsTest())).orElse(false)) {
             throw new IllegalStateException("Simulated payments only work on a test wallet");
         }
@@ -177,7 +189,8 @@ public class TopupService {
     public TopupResponse approve(String id, String reviewerId, TopupApproveRequest request) {
         TopupRequest t = lockPending(id);
         WalletEntry entry = walletService.credit(t.getTenantId(), WalletEntryType.TOPUP, request.getApprovedAmount(),
-                "topup:" + t.getId(), REF_TYPE, t.getId(), "Bank transfer top-up, UTR " + t.getBankRef());
+                "topup:" + t.getId(), REF_TYPE, t.getId(),
+                t.getBankRef() == null ? "Money added (offline)" : "Money added (bank transfer), UTR " + t.getBankRef());
         t.setStatus(TopupStatus.APPROVED);
         t.setApprovedAmount(entry.getAmount());  // what was credited: a replay of the key returns the original entry
         t.setCreditEntryId(entry.getId());
@@ -194,7 +207,7 @@ public class TopupService {
         TopupRequest t = lockPending(id);
         // approve's credit commits on its own; if approve then failed, the request is still PENDING with the money in
         if (entryRepository.findByIdempotencyKey("topup:" + t.getId()).isPresent()) {
-            throw new IllegalStateException("This top-up was already credited - approve it to record the decision");
+            throw new IllegalStateException("This request was already credited - approve it to record the decision");
         }
         t.setStatus(TopupStatus.REJECTED);
         decided(t, reviewerId, request.getNote());
@@ -206,9 +219,9 @@ public class TopupService {
 
     @Transactional
     public ProofContent openProof(String id) {
-        TopupRequest t = topupRepository.findById(id).orElseThrow(() -> new NotFoundException("Top-up not found"));
+        TopupRequest t = topupRepository.findById(id).orElseThrow(() -> new NotFoundException("Add-money request not found"));
         if (t.getProofFileKey() == null) {
-            throw new NotFoundException("This top-up has no proof file");
+            throw new NotFoundException("This request has no proof file");
         }
         Resource resource = fileStorageService.retrieve(t.getProofFileKey());
         platformAuditService.record(PlatformAuditAction.TOPUP_PROOF_VIEW, REF_TYPE, id, Map.of("tenantId", t.getTenantId()));
@@ -231,12 +244,12 @@ public class TopupService {
     }
 
     private TopupRequest lockPending(String id) {
-        TopupRequest t = topupRepository.findByIdForUpdate(id).orElseThrow(() -> new NotFoundException("Top-up not found"));
+        TopupRequest t = topupRepository.findByIdForUpdate(id).orElseThrow(() -> new NotFoundException("Add-money request not found"));
         if (t.getStatus() != TopupStatus.PENDING) {
-            throw new IllegalStateException("This top-up was already " + t.getStatus().name().toLowerCase(Locale.ROOT));
+            throw new IllegalStateException("This request was already " + t.getStatus().name().toLowerCase(Locale.ROOT));
         }
         if (t.getMode() != TopupMode.BANK_TRANSFER) {
-            throw new IllegalStateException("Only bank-transfer top-ups are decided by hand");
+            throw new IllegalStateException("Only offline requests are decided by hand");
         }
         return t;
     }
@@ -252,6 +265,7 @@ public class TopupService {
                 .approvedAmount(t.getApprovedAmount()).status(t.getStatus()).bankRef(t.getBankRef())
                 .gatewayOrderId(t.getGatewayOrderId()).note(t.getNote()).reviewNote(t.getReviewNote())
                 .requestedByName(t.getRequestedByName()).createdAt(t.getCreatedAt()).reviewedAt(t.getReviewedAt())
+                .hasProof(t.getProofFileKey() != null)
                 .tenantId(agencyName == null ? null : t.getTenantId()).agencyName(agencyName).build();
     }
 }

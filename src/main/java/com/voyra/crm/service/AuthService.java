@@ -7,8 +7,11 @@ import com.voyra.crm.cache.TenantCache;
 import com.voyra.crm.entity.Agent;
 import com.voyra.crm.entity.PlatformAdmin;
 import com.voyra.crm.entity.Tenant;
+import com.voyra.crm.enums.PlatformAuditAction;
 import com.voyra.crm.enums.TenantStatus;
 import com.voyra.crm.enums.UserType;
+import com.voyra.crm.exception.BookingConflictException;
+import com.voyra.crm.exception.NotFoundException;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.PlatformAdminRepository;
 import com.voyra.crm.repository.TenantRepository;
@@ -21,6 +24,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -47,6 +51,7 @@ public class AuthService {
     private final JwtService jwtService;
     private final BaseCurrency baseCurrency;
     private final EntitlementService entitlementService;
+    private final PlatformAuditService platformAuditService;
 
     /** The caller's agency entitlements, same shape as at login; refreshed by the frontend after plan changes. */
     public AgencyEntitlementsResponse currentEntitlements() {
@@ -129,7 +134,28 @@ public class AuthService {
         }
         Tenant t = tenant.get();
         log.info("Owner login succeeded: tenantId={}", t.getId());
-        return Optional.of(LoginResponse.builder()
+        return Optional.of(ownerResponse(t, jwtService.generateToken(t.getOwnerEmail(), UserType.AGENCY_OWNER, t.getId(), t.getId())));
+    }
+
+    /**
+     * A platform admin logs in to an agency as its owner (owner ruling 2026-11-19: full owner access). The token is the
+     * owner's, so the plan's gates and a SUSPENDED agency's read-only rule apply as they do to the owner; it lives an hour
+     * and carries the admin in {@code actBy}. Audited once per login.
+     */
+    @Transactional
+    public LoginResponse loginAsOwner(String tenantId) {
+        Tenant t = tenantRepository.findById(tenantId).orElseThrow(() -> new NotFoundException("Agency not found"));
+        if (t.getStatus() == TenantStatus.DEACTIVATED) {
+            throw new BookingConflictException("AGENCY_DEACTIVATED", "A deactivated agency cannot be logged in to", Map.of());
+        }
+        String adminId = SecurityContextUtil.getCurrentUserOrThrow().userId();
+        platformAuditService.record(PlatformAuditAction.TENANT_LOGIN_AS, "TENANT", t.getId(), Map.of("agencyName", t.getAgencyName()));
+        log.info("Platform admin logged in to an agency: tenantId={}, adminId={}", t.getId(), adminId);
+        return ownerResponse(t, jwtService.generateLoginAsToken(t.getOwnerEmail(), t.getId(), adminId));
+    }
+
+    private LoginResponse ownerResponse(Tenant t, String token) {
+        return LoginResponse.builder()
                 .success(true)
                 .message("Login successful")
                 .userId(t.getId())
@@ -138,8 +164,8 @@ public class AuthService {
                 .tenantId(t.getId())
                 .baseCurrencyCode(baseCurrency.of(t.getId()))
                 .entitlements(new AgencyEntitlementsResponse(entitlementService.resolve(t.getId()), t.getStatus()))
-                .token(jwtService.generateToken(t.getOwnerEmail(), UserType.AGENCY_OWNER, t.getId(), t.getId()))
-                .build());
+                .token(token)
+                .build();
     }
 
     private Optional<LoginResponse> tryAgent(LoginRequest request) {

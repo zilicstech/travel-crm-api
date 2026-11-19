@@ -7,9 +7,12 @@ import com.voyra.crm.dto.LoginResponse;
 import com.voyra.crm.entity.Agent;
 import com.voyra.crm.entity.PlatformAdmin;
 import com.voyra.crm.entity.Tenant;
+import com.voyra.crm.enums.PlatformAuditAction;
 import com.voyra.crm.enums.SubscriptionPlan;
 import com.voyra.crm.enums.TenantStatus;
 import com.voyra.crm.enums.UserType;
+import com.voyra.crm.exception.BookingConflictException;
+import com.voyra.crm.exception.NotFoundException;
 import com.voyra.crm.models.Entitlements;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.PlatformAdminRepository;
@@ -29,6 +32,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -51,6 +55,7 @@ class AuthServiceCoverageTest {
     @Mock private JwtService jwtService;
     @Mock private BaseCurrency baseCurrency;
     @Mock private EntitlementService entitlementService;
+    @Mock private PlatformAuditService platformAuditService;
     @InjectMocks private AuthService service;
 
     @AfterEach
@@ -189,5 +194,35 @@ class AuthServiceCoverageTest {
             assertThat(service.loginAgent(credentials("a@example.test")).isSuccess()).isFalse();
         }
         verifyNoInteractions(tenantRepository, jwtService);
+    }
+
+    @Test
+    void aPlatformAdminLogsInToAnAgencyAsItsOwnerAndIsAudited() {
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+                new CustomUserPrincipal("ADM1", "root@voyra.test", UserType.SUPER_ADMIN, null), null, List.of()));
+        when(tenantRepository.findById(TENANT)).thenReturn(Optional.of(Tenant.builder().id(TENANT).agencyName("Sky Tours")
+                .ownerName("Asha").ownerEmail("asha@sky.test").status(TenantStatus.SUSPENDED).build()));
+        when(jwtService.generateLoginAsToken("asha@sky.test", TENANT, "ADM1")).thenReturn("owner-token");
+        when(entitlementService.resolve(TENANT)).thenReturn(suite());
+
+        LoginResponse r = service.loginAsOwner(TENANT);
+
+        assertThat(r.getToken()).isEqualTo("owner-token");
+        assertThat(r.getRole()).isEqualTo("AGENCY_OWNER");
+        assertThat(r.getUserId()).isEqualTo(TENANT);
+        assertThat(r.getName()).isEqualTo("Asha");
+        assertThat(r.getEntitlements().getAgencyStatus()).isEqualTo(TenantStatus.SUSPENDED);
+        verify(platformAuditService).record(PlatformAuditAction.TENANT_LOGIN_AS, "TENANT", TENANT, Map.of("agencyName", "Sky Tours"));
+    }
+
+    @Test
+    void anUnknownOrDeactivatedAgencyCannotBeLoggedInTo() {
+        when(tenantRepository.findById("NOPE")).thenReturn(Optional.empty());
+        when(tenantRepository.findById(TENANT)).thenReturn(Optional.of(Tenant.builder().id(TENANT).status(TenantStatus.DEACTIVATED).build()));
+
+        assertThatThrownBy(() -> service.loginAsOwner("NOPE")).isInstanceOf(NotFoundException.class);
+        assertThatThrownBy(() -> service.loginAsOwner(TENANT)).isInstanceOf(BookingConflictException.class)
+                .extracting("code").isEqualTo("AGENCY_DEACTIVATED");
+        verifyNoInteractions(platformAuditService, jwtService);
     }
 }

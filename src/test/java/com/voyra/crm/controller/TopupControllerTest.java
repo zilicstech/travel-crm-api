@@ -59,17 +59,28 @@ class TopupControllerTest {
     @Test
     void ownerRequestsATopup() throws Exception {
         given(service.createBank(any(), any(), any(), any())).willReturn(TopupResponse.builder().id("R1").status(TopupStatus.PENDING).build());
-        mockMvc.perform(multipart("/api/wallet/topups/bank").file(proof()).param("amount", "50000").param("bankRef", "SBIN1234")
+        mockMvc.perform(multipart("/api/wallet/topups/bank").file(proof()).param("amount", "50000").param("bankRef", "SBIN1234").param("note", "NEFT on 19 Nov")
                         .with(as(UserType.AGENCY_OWNER)))
                 .andExpect(status().isCreated()).andExpect(jsonPath("$.id").value("R1"));
     }
 
     @Test
-    void shortBankRefIsAFieldError() throws Exception {
-        mockMvc.perform(multipart("/api/wallet/topups/bank").file(proof()).param("amount", "50000").param("bankRef", "ab")
+    void aBankRefWithSymbolsIsAFieldError() throws Exception {
+        mockMvc.perform(multipart("/api/wallet/topups/bank").file(proof()).param("amount", "50000").param("bankRef", "a-b").param("note", "NEFT on 19 Nov")
                         .with(as(UserType.AGENCY_OWNER)))
                 .andExpect(status().isBadRequest()).andExpect(jsonPath("$.details.errors.bankRef").exists());
         verifyNoInteractions(service);
+    }
+
+    @Test
+    void anOfflineRequestNeedsNoUtrOrProofAndANoteOfAtMost500() throws Exception {
+        given(service.createBank(any(), any(), any(), any())).willReturn(TopupResponse.builder().id("R2").status(TopupStatus.PENDING).build());
+        mockMvc.perform(multipart("/api/wallet/topups/bank").param("amount", "50000").param("note", "Cash at the office")
+                        .with(as(UserType.AGENCY_OWNER)))
+                .andExpect(status().isCreated()).andExpect(jsonPath("$.id").value("R2"));
+        mockMvc.perform(multipart("/api/wallet/topups/bank").param("amount", "50000").param("note", "x".repeat(501))
+                        .with(as(UserType.AGENCY_OWNER)))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.details.errors.note").value("Write at most 500 characters"));
     }
 
     /** R12: a JSON body on the multipart endpoint is 415 for every role (was 500), and never reaches the service. */
@@ -98,18 +109,18 @@ class TopupControllerTest {
         mockMvc.perform(multipart("/api/wallet/topups/bank").file(proof()).param("amount", "99999999999").param("bankRef", "SBIN1234")
                         .with(as(UserType.AGENCY_OWNER)))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.details.errors.amount").value("A top-up can be at most ₹10,00,00,000"));
+                .andExpect(jsonPath("$.details.errors.amount").value("You can add at most ₹10,00,00,000 at a time"));
         mockMvc.perform(post("/api/wallet/topups/gateway").contentType(MediaType.APPLICATION_JSON).content("{\"amount\":99999999999}")
                         .with(as(UserType.AGENCY_OWNER)))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.details.errors.amount").value("A top-up can be at most ₹10,00,00,000"));
+                .andExpect(jsonPath("$.details.errors.amount").value("You can add at most ₹10,00,00,000 at a time"));
         verifyNoInteractions(service);
     }
 
     @Test
     void accountantAndAgentCannotRequest() throws Exception {
         for (UserType t : new UserType[]{UserType.ACCOUNTANT, UserType.AGENT}) {
-            mockMvc.perform(multipart("/api/wallet/topups/bank").file(proof()).param("amount", "50000").param("bankRef", "SBIN1234")
+            mockMvc.perform(multipart("/api/wallet/topups/bank").file(proof()).param("amount", "50000").param("bankRef", "SBIN1234").param("note", "NEFT on 19 Nov")
                     .with(as(t))).andExpect(status().isForbidden());
         }
         verifyNoInteractions(service);

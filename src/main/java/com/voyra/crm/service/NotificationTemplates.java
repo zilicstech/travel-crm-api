@@ -27,14 +27,6 @@ public final class NotificationTemplates {
     private NotificationTemplates() {
     }
 
-    public static Email lowBalance(String agencyName, BigDecimal available, String walletUrl) {
-        return email("Your Voyra wallet is running low", "Wallet running low",
-                List.of("Hello " + agencyName + ",",
-                        "Your Voyra wallet has " + inr(available) + " available. Bookings need enough balance to hold the fare, "
-                                + "so top up soon to keep booking without interruption."),
-                "Top up the wallet", walletUrl);
-    }
-
     public static Email platformAlert(String subject, String body) {
         return email("[Voyra alert] " + oneLine(subject), oneLine(subject), List.of(body), null, null);
     }
@@ -62,19 +54,19 @@ public final class NotificationTemplates {
     }
 
     public static Email topupApproved(String agencyName, BigDecimal amount, String url) {
-        return email("Wallet top-up of " + inr(amount) + " credited", "Top-up credited",
+        return email(inr(amount) + " added to your Voyra wallet", "Money added",
                 List.of("Hello " + agencyName + ",", inr(amount) + " has been credited to your Voyra wallet."),
                 "Open the wallet", url);
     }
 
     public static Email topupRejected(String agencyName, BigDecimal amount, String reason, String url) {
         List<String> lines = new ArrayList<>(List.of("Hello " + agencyName + ",",
-                "Your wallet top-up request for " + inr(amount) + " was not approved, and nothing was credited."));
+                "Your request to add " + inr(amount) + " to your wallet was not approved, and nothing was credited."));
         if (reason != null && !reason.isBlank()) {
             lines.add("Reason: " + reason);
         }
-        lines.add("If you did transfer the money, raise a new request with the correct UTR and proof.");
-        return email("Wallet top-up of " + inr(amount) + " not approved", "Top-up not approved", lines, "Open the wallet", url);
+        lines.add("If you did pay Voyra, raise a new request with a note saying how and when you paid.");
+        return email("Request to add " + inr(amount) + " not approved", "Add money not approved", lines, "Open the wallet", url);
     }
 
     public static Email applicationMoreInfo(String ownerName, String agencyName, String note, String resumeUrl) {

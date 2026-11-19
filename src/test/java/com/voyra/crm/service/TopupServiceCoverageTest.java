@@ -67,6 +67,7 @@ class TopupServiceCoverageTest {
         BankTopupCreateRequest r = new BankTopupCreateRequest();
         r.setAmount(new BigDecimal("50000.00"));
         r.setBankRef(ref);
+        r.setNote("NEFT on 19 Nov");
         r.setProof(new MockMultipartFile("proof", fileName, "application/pdf", bytes));
         return r;
     }
@@ -152,9 +153,9 @@ class TopupServiceCoverageTest {
         when(topupRepository.findById("R1")).thenReturn(Optional.of(TopupRequest.builder().id("R1").tenantId("T2").mode(TopupMode.GATEWAY).build()));
         when(topupRepository.findById("R2")).thenReturn(Optional.of(TopupRequest.builder().id("R2").tenantId("T1").mode(TopupMode.BANK_TRANSFER).build()));
 
-        assertThatThrownBy(() -> service.simulate("T1", "R1")).isInstanceOf(NotFoundException.class).hasMessage("Top-up not found");
-        assertThatThrownBy(() -> service.simulate("T1", "R2")).isInstanceOf(NotFoundException.class).hasMessage("Top-up not found");
-        assertThatThrownBy(() -> service.simulate("T1", "R9")).isInstanceOf(NotFoundException.class).hasMessage("Top-up not found");
+        assertThatThrownBy(() -> service.simulate("T1", "R1")).isInstanceOf(NotFoundException.class).hasMessage("Add-money request not found");
+        assertThatThrownBy(() -> service.simulate("T1", "R2")).isInstanceOf(NotFoundException.class).hasMessage("Add-money request not found");
+        assertThatThrownBy(() -> service.simulate("T1", "R9")).isInstanceOf(NotFoundException.class).hasMessage("Add-money request not found");
         verifyNoInteractions(webhookService);
     }
 
@@ -162,15 +163,15 @@ class TopupServiceCoverageTest {
     void decisionsNeedAPendingBankTransfer() {
         TopupRejectRequest reject = new TopupRejectRequest();
         reject.setNote("no");
-        assertThatThrownBy(() -> service.reject("R9", "P1", reject)).isInstanceOf(NotFoundException.class).hasMessage("Top-up not found");
+        assertThatThrownBy(() -> service.reject("R9", "P1", reject)).isInstanceOf(NotFoundException.class).hasMessage("Add-money request not found");
         when(topupRepository.findByIdForUpdate("R1")).thenReturn(Optional.of(
                 TopupRequest.builder().id("R1").status(TopupStatus.APPROVED).mode(TopupMode.BANK_TRANSFER).build()));
         when(topupRepository.findByIdForUpdate("R2")).thenReturn(Optional.of(
                 TopupRequest.builder().id("R2").status(TopupStatus.PENDING).mode(TopupMode.GATEWAY).build()));
         assertThatThrownBy(() -> service.approve("R1", "P1", new TopupApproveRequest()))
-                .isInstanceOf(IllegalStateException.class).hasMessage("This top-up was already approved");
+                .isInstanceOf(IllegalStateException.class).hasMessage("This request was already approved");
         assertThatThrownBy(() -> service.reject("R2", "P1", reject))
-                .isInstanceOf(IllegalStateException.class).hasMessage("Only bank-transfer top-ups are decided by hand");
+                .isInstanceOf(IllegalStateException.class).hasMessage("Only offline requests are decided by hand");
         verifyNoInteractions(walletService, platformAuditService);
     }
 
@@ -196,7 +197,7 @@ class TopupServiceCoverageTest {
         when(topupRepository.findById("R2")).thenReturn(Optional.of(TopupRequest.builder().id("R2").tenantId("T1").build()));
 
         assertThat(service.openProof("R1").contentType()).isEqualTo("application/octet-stream");
-        assertThatThrownBy(() -> service.openProof("R2")).isInstanceOf(NotFoundException.class).hasMessage("This top-up has no proof file");
-        assertThatThrownBy(() -> service.openProof("R9")).isInstanceOf(NotFoundException.class).hasMessage("Top-up not found");
+        assertThatThrownBy(() -> service.openProof("R2")).isInstanceOf(NotFoundException.class).hasMessage("This request has no proof file");
+        assertThatThrownBy(() -> service.openProof("R9")).isInstanceOf(NotFoundException.class).hasMessage("Add-money request not found");
     }
 }

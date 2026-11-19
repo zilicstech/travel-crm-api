@@ -187,7 +187,7 @@ public class GatewayWebhookService {
             return WebhookOutcome.PROCESSED;
         }
         WalletEntry entry = walletService.credit(topup.getTenantId(), WalletEntryType.TOPUP, amount, "gw:" + paymentId,
-                REF_TYPE, topup.getId(), "Online top-up, payment " + paymentId);
+                REF_TYPE, topup.getId(), "Money added (online), payment " + paymentId);
         topup.setStatus(TopupStatus.APPROVED);
         topup.setApprovedAmount(amount);
         topup.setGatewayPaymentId(paymentId);

@@ -56,12 +56,6 @@ public class EmailNotificationService implements NotificationService {
     }
 
     @Override
-    public void lowBalance(String tenantId, BigDecimal available) {
-        toOwner(NotificationKind.LOW_BALANCE, tenantId,
-                t -> NotificationTemplates.lowBalance(t.getAgencyName(), available, url("/agency/wallet")));
-    }
-
-    @Override
     public void platformAlert(String subject, String body) {
         send(NotificationKind.PLATFORM_ALERT, () -> new NotificationOutboxService.Outgoing(
                 platformAdminRepository.findByIsActiveTrue().stream().map(PlatformAdmin::getEmail).toList(),

@@ -34,7 +34,9 @@ import java.util.stream.Collectors;
  * Paged, sorted, filtered flight search. The supplier answers a search in one call with every
  * flight; paging does not make that call faster, it stops the browser receiving and rendering
  * hundreds of fares at once. So the full result is cached briefly per agency and search, and a
- * page, sort or filter change is served from that cache with no second supplier call.
+ * page, sort or filter change is served from that cache with no second supplier call. The cache
+ * lives 2 minutes (owner ruling 2026-11-19: search prices are never stale; only the fare
+ * calendar shows older fares), and a Search click always bypasses it with {@code refresh}.
  *
  * <p>The cache key includes the tenant, because fares are priced for each agency,
  * so one agency must never be served another's prices. It is an in-memory cache per instance;
@@ -45,7 +47,7 @@ import java.util.stream.Collectors;
 @Service
 public class FlightSearchService {
 
-    private static final Duration TTL = Duration.ofMinutes(10);
+    private static final Duration TTL = Duration.ofMinutes(2);
     private static final long MAX_SEARCHES = 200;
 
     private final Cache<String, List<FlightGroupResponse>> cache = Caffeine.newBuilder()

@@ -47,12 +47,6 @@ public class Wallet {
     @Builder.Default
     private Boolean isTest = false;
 
-    @Column(name = "low_balance_threshold", precision = 19, scale = 2)
-    private BigDecimal lowBalanceThreshold;
-
-    @Column(name = "low_balance_notified_at")
-    private Instant lowBalanceNotifiedAt;
-
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 8)
     private WalletStatus status;

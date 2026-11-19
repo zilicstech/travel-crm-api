@@ -15,9 +15,6 @@ import java.time.Instant;
  */
 public interface NotificationService {
 
-    /** To the agency owner. */
-    void lowBalance(String tenantId, BigDecimal available);
-
     /** To every active platform admin. */
     void platformAlert(String subject, String body);
 

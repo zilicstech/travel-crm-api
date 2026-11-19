@@ -38,6 +38,9 @@ public class TopupResponse {
     @Schema(description = "Agency's note", example = "NEFT from HDFC", nullable = true)
     private String note;
 
+    @Schema(description = "True when a proof file was attached", example = "false")
+    private boolean hasProof;
+
     @Schema(description = "Platform desk's note on the decision", example = "Bank charges deducted", nullable = true)
     private String reviewNote;
 

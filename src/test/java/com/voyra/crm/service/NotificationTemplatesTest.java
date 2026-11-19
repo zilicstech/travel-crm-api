@@ -16,7 +16,6 @@ class NotificationTemplatesTest {
 
     private static List<Email> everyKind() {
         return List.of(
-                NotificationTemplates.lowBalance("Sky Tours", new BigDecimal("1234.5"), URL + "/agency/wallet"),
                 NotificationTemplates.platformAlert("Wallet receivable opened", "Agency T1 is short by 10"),
                 NotificationTemplates.subscriptionExpiring("Sky Tours", "TRIAL", WHEN, 7, URL + "/agency/subscription"),
                 NotificationTemplates.subscriptionInvoice("Sky Tours", "VOY-SUB-2026-0001", new BigDecimal("5898.82"), WHEN,
@@ -58,8 +57,8 @@ class NotificationTemplatesTest {
 
     @Test
     void moneyAndDatesAreFormattedForIndia() {
-        Email low = NotificationTemplates.lowBalance("Sky Tours", new BigDecimal("1234567.5"), URL);
-        assertThat(low.text()).contains("₹12,34,567.50");
+        Email credited = NotificationTemplates.topupApproved("Sky Tours", new BigDecimal("1234567.5"), URL);
+        assertThat(credited.text()).contains("₹12,34,567.50");
 
         Email exp = NotificationTemplates.subscriptionExpiring("Sky Tours", "TRIAL", WHEN, 1, URL);
         assertThat(exp.text()).contains("10 Nov 2026").contains("1 day");

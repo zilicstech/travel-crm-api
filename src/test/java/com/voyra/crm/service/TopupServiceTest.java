@@ -83,6 +83,7 @@ class TopupServiceTest {
         BankTopupCreateRequest r = new BankTopupCreateRequest();
         r.setAmount(new BigDecimal("50000.00"));
         r.setBankRef(ref);
+        r.setNote("NEFT on 19 Nov");
         r.setProof(new MockMultipartFile("proof", "slip.pdf", "application/pdf", bytes));
         return r;
     }
@@ -136,6 +137,70 @@ class TopupServiceTest {
         assertThat(r.getStatus()).isEqualTo(TopupStatus.PENDING);
         assertThat(r.getBankRef()).isEqualTo("sbin 1234");
         assertThat(r.getRequestedByName()).isEqualTo("Asha");
+        assertThat(r.getNote()).isEqualTo("NEFT on 19 Nov");
+        assertThat(r.isHasProof()).isTrue();
+    }
+
+    @Test
+    void anOfflineRequestNeedsOnlyAnAmountAndANote() {
+        given(walletRepository.findByTenantId("T1")).willReturn(Optional.of(wallet(WalletStatus.OPEN)));
+        given(topupRepository.save(any(TopupRequest.class))).willAnswer(i -> i.getArgument(0));
+        BankTopupCreateRequest bare = request("  ", new byte[0]);
+        bare.setNote("  Cash at the Pune office  ");
+
+        TopupResponse first = service.createBank("T1", "U1", "Asha", bare);
+        bare.setProof(null);
+        TopupResponse second = service.createBank("T1", "U1", "Asha", bare);
+
+        assertThat(first.getBankRef()).isNull();
+        assertThat(first.isHasProof()).isFalse();
+        assertThat(first.getNote()).isEqualTo("Cash at the Pune office");
+        assertThat(second.getStatus()).isEqualTo(TopupStatus.PENDING);
+        org.mockito.Mockito.verify(topupRepository, org.mockito.Mockito.never()).existsByBankRefNormalized(anyString());
+        org.mockito.Mockito.verifyNoInteractions(fileStorageService);
+    }
+
+    @Test
+    void anOfflinePaymentNeedsANoteOfThreeCharactersOnceTrimmed() {
+        given(walletRepository.findByTenantId("T1")).willReturn(Optional.of(wallet(WalletStatus.OPEN)));
+        BankTopupCreateRequest r = request(null, new byte[0]);
+        r.setNote("  ab  ");
+        assertThatThrownBy(() -> service.createBank("T1", "U1", "Asha", r)).isInstanceOf(FieldValidationException.class)
+                .hasMessage("Say how and when you paid");
+        r.setNote(null);
+        assertThatThrownBy(() -> service.createBank("T1", "U1", "Asha", r)).isInstanceOf(FieldValidationException.class)
+                .hasMessage("Say how and when you paid");
+        org.mockito.Mockito.verifyNoInteractions(topupRepository);
+    }
+
+    @Test
+    void aBankTransferNeedsItsProofButNoNote() {
+        given(walletRepository.findByTenantId("T1")).willReturn(Optional.of(wallet(WalletStatus.OPEN)));
+        given(fileStorageService.store(anyString(), anyString(), anyString(), any())).willReturn("k/slip.pdf");
+        given(topupRepository.save(any(TopupRequest.class))).willAnswer(i -> i.getArgument(0));
+        BankTopupCreateRequest noProof = request("UTR12345", new byte[0]);
+        assertThatThrownBy(() -> service.createBank("T1", "U1", "Asha", noProof)).isInstanceOf(FieldValidationException.class)
+                .hasMessage("Attach the payment proof");
+
+        BankTopupCreateRequest noNote = request("UTR67890", PDF);
+        noNote.setNote("   ");
+        TopupResponse r = service.createBank("T1", "U1", "Asha", noNote);
+        assertThat(r.getNote()).isNull();
+        assertThat(r.isHasProof()).isTrue();
+    }
+
+    @Test
+    void approvingARequestWithoutAUtrNamesItAnOfflinePayment() {
+        TopupRequest t = pending();
+        t.setBankRef(null);
+        given(topupRepository.findByIdForUpdate("R1")).willReturn(Optional.of(t));
+        given(walletService.credit(eq("T1"), eq(WalletEntryType.TOPUP), eq(new BigDecimal("50000.00")),
+                eq("topup:R1"), eq("TOPUP_REQUEST"), eq("R1"), eq("Money added (offline)")))
+                .willReturn(WalletEntry.builder().id("E1").amount(new BigDecimal("50000.00")).build());
+        TopupApproveRequest req = new TopupApproveRequest();
+        req.setApprovedAmount(new BigDecimal("50000.00"));
+
+        assertThat(service.approve("R1", "A1", req).getStatus()).isEqualTo(TopupStatus.APPROVED);
     }
 
     @Test
@@ -181,7 +246,7 @@ class TopupServiceTest {
         TopupApproveRequest req = new TopupApproveRequest();
         req.setApprovedAmount(BigDecimal.TEN);
         assertThatThrownBy(() -> service.approve("R1", "A1", req))
-                .isInstanceOf(IllegalStateException.class).hasMessage("This top-up was already approved");
+                .isInstanceOf(IllegalStateException.class).hasMessage("This request was already approved");
         verifyNoInteractions(walletService);
     }
 
@@ -197,7 +262,7 @@ class TopupServiceTest {
         verifyNoInteractions(walletService);
         verify(notificationService).topupRejected(t);
         t.setStatus(TopupStatus.REJECTED);
-        assertThatThrownBy(() -> service.reject("R1", "A1", req)).hasMessage("This top-up was already rejected");
+        assertThatThrownBy(() -> service.reject("R1", "A1", req)).hasMessage("This request was already rejected");
     }
 
     @Test
@@ -211,7 +276,7 @@ class TopupServiceTest {
 
         assertThatThrownBy(() -> service.reject("R1", "A1", req))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("This top-up was already credited - approve it to record the decision");
+                .hasMessage("This request was already credited - approve it to record the decision");
         assertThat(t.getStatus()).isEqualTo(TopupStatus.PENDING);
         verify(notificationService, never()).topupRejected(any());
     }
@@ -224,7 +289,7 @@ class TopupServiceTest {
         req.setAmount(new BigDecimal("500.00"));
 
         assertThatThrownBy(() -> service.createGateway("T1", "U1", "Owner", req))
-                .isInstanceOf(IllegalStateException.class).hasMessage("Online top-up is not available yet");
+                .isInstanceOf(IllegalStateException.class).hasMessage("Paying online is not available yet");
         verify(paymentGateway, never()).createOrder(any(), any(), any());
         verifyNoInteractions(topupRepository, gatewayOrderRepository);
     }

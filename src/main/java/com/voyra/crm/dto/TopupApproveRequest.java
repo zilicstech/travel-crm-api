@@ -16,7 +16,7 @@ public class TopupApproveRequest {
 
     @NotNull
     @DecimalMin(value = "0", inclusive = false)
-    @DecimalMax(value = "100000000", message = "A top-up can be at most ₹10,00,00,000")
+    @DecimalMax(value = "100000000", message = "You can add at most ₹10,00,00,000 at a time")
     @Digits(integer = 17, fraction = 2, message = "Amount can have at most 2 decimal places")
     @Schema(description = "Amount credited to the wallet; may differ from the requested amount", example = "49500.00")
     private BigDecimal approvedAmount;
