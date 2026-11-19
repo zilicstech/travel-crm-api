@@ -84,6 +84,7 @@ class MockFlightSearchProviderTest {
         query.setDepartDate(LocalDate.of(2026, 11, 26));
         var regular = new MockFlightSearchProvider().search(query, null);
         java.math.BigDecimal published = regular.get(0).getPrice(); // IndiGo 06:15 PUBLISHED
+        assertThat(regular).allMatch(o -> o.getCabin() == (query.getCabin() == null ? com.voyra.crm.enums.FlightCabin.ECONOMY : query.getCabin()));
 
         for (var category : java.util.List.of(com.voyra.crm.enums.FareCategory.STUDENT, com.voyra.crm.enums.FareCategory.SENIOR_CITIZEN)) {
             query.setFareCategory(category);

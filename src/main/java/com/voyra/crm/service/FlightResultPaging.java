@@ -1,5 +1,6 @@
 package com.voyra.crm.service;
 
+import com.voyra.crm.dto.FareCabinCount;
 import com.voyra.crm.dto.FlightGroupResponse;
 import com.voyra.crm.dto.FlightOfferResponse;
 import com.voyra.crm.dto.FlightSearchPageRequest;
@@ -7,6 +8,7 @@ import com.voyra.crm.dto.FlightSearchPageResponse;
 import com.voyra.crm.dto.SearchSupplierResponse;
 import com.voyra.crm.dto.FlightLegResponse;
 import com.voyra.crm.enums.BaggageFilter;
+import com.voyra.crm.enums.FlightCabin;
 import com.voyra.crm.enums.FlightDirection;
 import com.voyra.crm.enums.FlightSearchTripType;
 import com.voyra.crm.enums.FlightSortOrder;
@@ -17,6 +19,7 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -196,6 +199,9 @@ public final class FlightResultPaging {
                 .priceMax(prices.isEmpty() ? null : prices.get(prices.size() - 1))
                 .fareTypes(all.stream().flatMap(g -> g.getFares().stream()).map(FlightOfferResponse::getFareType)
                         .filter(t -> !isBlank(t)).distinct().sorted().toList())
+                .fareCabins(Arrays.stream(FlightCabin.values())
+                        .map(c -> new FareCabinCount(c, main.stream().filter(g -> g.getFares().stream().anyMatch(f -> f.getCabin() == c)).count()))
+                        .filter(c -> c.flights() > 0).toList())
                 .origins(main.stream().map(FlightGroupResponse::getOrigin).filter(c -> !isBlank(c)).distinct().sorted().toList())
                 .destinations(main.stream().map(FlightGroupResponse::getDestination).filter(c -> !isBlank(c)).distinct().sorted().toList())
                 .cheapestKey(cheapestKey)
@@ -234,6 +240,7 @@ public final class FlightResultPaging {
                     .filter(f -> in(req.getSuppliers(), f.getSupplierId()))
                     .filter(f -> inPrice(req, shown(f)))
                     .filter(f -> off(req.getFareTypes()) || req.getFareTypes().stream().anyMatch(t -> t.equalsIgnoreCase(f.getFareType())))
+                    .filter(f -> in(req.getFareCabins(), f.getCabin()))
                     .filter(f -> in(req.getRefundTypes(), f.getRefundType()))
                     .filter(f -> req.getBaggage() == null || hasCheckIn(f.getBaggage()) == (req.getBaggage() == BaggageFilter.CHECK_IN))
                     .toList();

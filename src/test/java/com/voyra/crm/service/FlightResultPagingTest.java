@@ -516,6 +516,33 @@ class FlightResultPagingTest {
     }
 
     @Test
+    void fareTypesAreGroupedByCabinWithTheFlightsOfEachAndFilterByIt() {
+        FlightOfferResponse ecoFlex = offer("IndiGo", "6E1", 6, "4000", 0, "2h", false, FlightDirection.ONWARD);
+        ecoFlex.setFareType("Eco Flex");
+        ecoFlex.setCabin(com.voyra.crm.enums.FlightCabin.ECONOMY);
+        FlightOfferResponse business = offer("IndiGo", "6E1", 6, "19000", 0, "2h", true, FlightDirection.ONWARD);
+        business.setOfferId("6E1-biz");
+        business.setFareType("Business Flex");
+        business.setCabin(com.voyra.crm.enums.FlightCabin.BUSINESS);
+        FlightOfferResponse saver = offer("Vistara", "UK9", 9, "4500", 0, "2h", false, FlightDirection.ONWARD);
+        saver.setFareType("Economy Saver");
+        saver.setCabin(com.voyra.crm.enums.FlightCabin.ECONOMY);
+        List<FlightGroupResponse> groups = FlightResultPaging.group(List.of(ecoFlex, business, saver));
+
+        FlightSearchPageResponse all = FlightResultPaging.page(groups, req(), NONE);
+        assertThat(all.getFareCabins()).containsExactly(
+                new com.voyra.crm.dto.FareCabinCount(com.voyra.crm.enums.FlightCabin.ECONOMY, 2),
+                new com.voyra.crm.dto.FareCabinCount(com.voyra.crm.enums.FlightCabin.BUSINESS, 1));
+
+        FlightSearchPageRequest r = req();
+        r.setFareCabins(List.of(com.voyra.crm.enums.FlightCabin.BUSINESS));
+        FlightSearchPageResponse biz = FlightResultPaging.page(groups, r, NONE);
+        assertThat(biz.getFlights()).hasSize(1).first().satisfies(g -> assertThat(g.getFares()).extracting(FlightOfferResponse::getFareType)
+                .containsExactly("Business Flex"));
+        assertThat(biz.getFareCabins()).hasSize(2); // facets come from the unfiltered result
+    }
+
+    @Test
     void onTheWayBackTheAirportFiltersAreReadTheOtherWayRound() {
         FlightOfferResponse out = offer("IndiGo", "6E1", 6, "4000", 0, "2h", false, FlightDirection.ONWARD);
         out.setOrigin("DEL");

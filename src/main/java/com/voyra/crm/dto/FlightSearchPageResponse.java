@@ -50,6 +50,9 @@ public class FlightSearchPageResponse {
     @Schema(description = "Every fare type in the unfiltered result, sorted")
     private List<String> fareTypes;
 
+    @Schema(description = "The cabins of the unfiltered result's fares, in cabin order, each with how many flights have one")
+    private List<FareCabinCount> fareCabins;
+
     @Schema(description = "Departure airports of the unfiltered result (onward flights), sorted")
     private List<String> origins;
 

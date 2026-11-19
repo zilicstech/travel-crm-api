@@ -15,6 +15,7 @@ import com.voyra.crm.enums.SupplierProvider;
 import com.voyra.crm.exception.SupplierException;
 import com.voyra.crm.service.FlightSearchProvider;
 import com.voyra.crm.util.AirportCodeResolver;
+import com.voyra.crm.util.FareCabins;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
@@ -260,6 +261,7 @@ public class TripjackFlightSearchProvider implements FlightSearchProvider {
                             .seatsLeft(adultFare.path("sR").isNumber() ? adultFare.path("sR").asInt() : null)
                             .mealIncluded(adultFare.path("mI").isBoolean() ? adultFare.path("mI").asBoolean() : null)
                             .fareType(fare.path("fareIdentifier").asText("Standard"))
+                            .cabin(FareCabins.of(adultFare.path("cc").asText(null), fare.path("fareIdentifier").asText(null), query.getCabin()))
                             .specialReturnId(fare.path("sri").isMissingNode() || fare.path("sri").asText().isBlank() ? null : fare.path("sri").asText())
                             .pairsWith(pairsWith)
                             .build());

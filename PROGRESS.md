@@ -589,7 +589,13 @@ on phones, cheapest day in green) shows them on Departure and Return; the hotel 
 - Frontend only: the flight and hotel Book buttons read "Book" with a book icon.
 - Frontend only (2026-11-20): one-way flight results carry a nearby-dates strip, seven days around the searched date with the
   fare calendar's stored fare per adult (or "View"), paged a week at a time; picking a day searches it.
-- Not in this round: consolidating fare types under the cabin ("Economy ₹100"), left for later by the owner.
+- **Fare types grouped by cabin (2026-11-20).** Airlines send dozens of fare names (Eco Flex, Ndc Economy Basic, Business
+  Semi Flex ...), which made the fare type filter unusable. Every offer now carries `cabin` (`util/FareCabins`: Tripjack's
+  `fd.ADULT.cc`, else words in the fare name, else the searched cabin; the mock uses the searched cabin), the page carries
+  `fareCabins` (each cabin with how many flights of the unfiltered result have a fare in it) and the request takes
+  `fareCabins`. The frontend filter lists "Economy (42)", "Business (18)" ...; the fare chips keep the airline's fare name
+  (owner rulings). `fareTypes` (facet and filter) stays for old clients. Tests: `FareCabinsTest`,
+  `FlightResultPagingTest#fareTypesAreGroupedByCabinWithTheFlightsOfEachAndFilterByIt`; e2e `e2e/flight-fare-cabins.spec.ts`.
 
 Tests: `TopupServiceTest`, `TopupControllerTest`, `AuthServiceCoverageTest`, `PlatformAgencyControllerTest`,
 `JwtServiceLoginAsTest`, `FlightSearchServiceTest#aCachedResultLivesTwoMinutesSoSearchPricesAreNeverStale`; e2e

@@ -1,6 +1,7 @@
 package com.voyra.crm.dto;
 
 import com.voyra.crm.enums.BaggageFilter;
+import com.voyra.crm.enums.FlightCabin;
 import com.voyra.crm.enums.FlightRefundType;
 import com.voyra.crm.enums.FlightSortOrder;
 import com.voyra.crm.enums.TimeBucket;
@@ -70,6 +71,9 @@ public class FlightSearchPageRequest {
 
     @Schema(description = "Only fares of these fare types, ignoring case", example = "[\"PUBLISHED\"]")
     private List<@NotBlank(message = "Fare type can't be blank") String> fareTypes;
+
+    @Schema(description = "Only fares in one of these cabins (the grouped fare type filter)", example = "[\"ECONOMY\"]")
+    private List<FlightCabin> fareCabins;
 
     @Schema(description = "Only fares with one of these refund types")
     private List<FlightRefundType> refundTypes;

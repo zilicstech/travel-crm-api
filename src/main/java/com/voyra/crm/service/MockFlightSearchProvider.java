@@ -133,6 +133,7 @@ public class MockFlightSearchProvider implements FlightSearchProvider {
                         .seatsLeft(tier.seatsLeft())
                         .mealIncluded(tier.meal())
                         .fareType(category == FareCategory.REGULAR ? tier.name() : category.name())
+                        .cabin(cabin)
                         .build());
             }
         }

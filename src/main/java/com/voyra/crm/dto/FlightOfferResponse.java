@@ -101,6 +101,9 @@ public class FlightOfferResponse {
     @Schema(example = "Saver")
     private String fareType;
 
+    @Schema(description = "Cabin of this fare: the supplier's, else read from the fare name, else the searched cabin", example = "ECONOMY")
+    private com.voyra.crm.enums.FlightCabin cabin;
+
     @JsonIgnore
     @Schema(hidden = true, description = "Commissionable base for the whole party; internal, never serialised - it would reveal Voyra's earnings")
     private BigDecimal baseFare;

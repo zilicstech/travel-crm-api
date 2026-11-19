@@ -96,6 +96,7 @@ class TripjackFlightSearchProviderTest {
         assertThat(saver.getPrice()).isEqualByComparingTo("8400.00");
         assertThat(saver.isRefundable()).isFalse();
         assertThat(saver.getFareType()).isEqualTo("Saver");
+        assertThat(saver.getCabin()).isEqualTo(com.voyra.crm.enums.FlightCabin.ECONOMY); // no cc sent: the searched cabin
 
         FlightOfferResponse flexi = offers.get(1);
         assertThat(flexi.getOfferId()).isEqualTo("off-flexi-1");
@@ -156,6 +157,7 @@ class TripjackFlightSearchProviderTest {
         assertThat(corporate.getBaseFare()).isEqualByComparingTo("4802.00");
         assertThat(corporate.getBaggage()).isEqualTo("15 Kg");
         assertThat(corporate.getFareType()).isEqualTo("CORPORATE_FARE");
+        assertThat(corporate.getCabin()).isEqualTo(com.voyra.crm.enums.FlightCabin.ECONOMY); // Tripjack's cc
         assertThat(corporate.isRefundable()).isTrue();
         assertThat(corporate.getRefundType()).isEqualTo(com.voyra.crm.enums.FlightRefundType.REFUNDABLE);
         assertThat(corporate.getCabinBaggage()).isEqualTo("7 Kg");
