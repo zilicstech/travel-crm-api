@@ -61,8 +61,9 @@ public class PlatformCancelRequest {
     @Column(name = "final_reason", length = 40)
     private CancelReason finalReason;
 
-    @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "passengers", columnDefinition = "jsonb", nullable = false)
+    /** integer[], as Lead.kidAges: one Java type must have one mapping (see public V6). */
+    @JdbcTypeCode(SqlTypes.ARRAY)
+    @Column(name = "passengers", columnDefinition = "integer[]", nullable = false)
     private List<Integer> passengers;
 
     @JdbcTypeCode(SqlTypes.JSON)
