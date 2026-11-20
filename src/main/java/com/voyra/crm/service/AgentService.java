@@ -207,6 +207,7 @@ public class AgentService {
         if (nameChanged) {
             leadRepository.updateCreatedByNameForAgent(agent.getId(), agent.getName());
             bookingRepository.updateAgentNameForAgent(agent.getId(), agent.getName());
+            bookingRepository.updateIssueDetailNames(agent.getId(), agent.getName());
             leadNoteRepository.updateAuthorNameForAgent(agent.getId(), agent.getName());
             visaRepository.updateAgentNameForAgent(agent.getId(), agent.getName());
         }

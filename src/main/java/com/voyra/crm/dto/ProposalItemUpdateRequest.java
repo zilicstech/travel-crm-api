@@ -58,4 +58,8 @@ public class ProposalItemUpdateRequest implements com.voyra.crm.models.ForeignPr
     @jakarta.validation.constraints.DecimalMin(value = "0.0", message = "Markup rate cannot be negative")
     @Schema(description = "What 1 unit of markupCurrency is worth in base; required when it isn't the base", example = "22.85")
     private java.math.BigDecimal markupRate;
+
+    @jakarta.validation.constraints.Size(max = 60, message = "Write at most 60 characters")
+    @Schema(description = "VISA_FEE lines only: the visa's duration and type; omit to keep it, blank clears it", example = "30 days")
+    private String visaDuration;
 }

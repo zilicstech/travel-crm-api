@@ -51,7 +51,8 @@ class BookingSpecificationsTest {
     void simpleEqualityFilters() {
         assertThat(build(BookingSpecifications.typeIs(BookingType.HOTEL))).isEqualTo("equal(root.type, HOTEL)");
         assertThat(build(BookingSpecifications.statusIs(BookingStatus.CONFIRMED))).isEqualTo("equal(root.bookingStatus, CONFIRMED)");
-        assertThat(build(BookingSpecifications.agentIs("A9"))).isEqualTo("equal(root.agentId, A9)");
+        assertThat(build(BookingSpecifications.agentIs("A9")))
+                .isEqualTo("or(equal(root.issuedById, A9), and(isNull(root.issuedById), equal(root.agentId, A9)))");
         assertThat(build(BookingSpecifications.vendorIs("V9"))).isEqualTo("equal(root.vendorId, V9)");
     }
 
@@ -119,7 +120,8 @@ class BookingSpecificationsTest {
                 + "equal(root.clientId, C1), equal(lower(root.flightCabin), business), equal(root.paymentStatus, PAID), "
                 + "and(isNotNull(root.accountantRemark), notEqual(trim(root.accountantRemark), )), "
                 + "exists(query.subquery(Long)), "
-                + "or(root.leadId.in(query.subquery(String)), and(isNull(root.leadId), equal(root.createdBy, U1))))");
+                + "or(equal(root.assignedById, U1), and(isNull(root.assignedById), "
+                + "or(root.leadId.in(query.subquery(String)), and(isNull(root.leadId), equal(root.createdBy, U1))))))");
         assertThat(rec.calls()).contains(
                 "query.subquery(Long).select(literal(1)).where(equal(BookingDocument.bookingId, root.id), equal(BookingDocument.purchaseCurrency, USD))",
                 "query.subquery(String).select(Lead.id).where(equal(Lead.createdBy, U1))");

@@ -159,4 +159,37 @@ class LeadServiceProposalAccessTest {
         assertThat(existing.getSellingPrice()).isEqualByComparingTo("4620");
         assertThat(existing.getPurchaseRate()).isEqualByComparingTo("4.2");
     }
+
+    @Test
+    void aVisaLineKeepsItsDurationTrimmedAndAnyOtherLineRefusesOne() {
+        ProposalItemCreateRequest visa = line("S1");
+        visa.setType(ProposalItemType.VISA_FEE);
+        visa.setVisaDuration("  30 days ");
+        leadService.addProposalItem("L1", visa);
+        ArgumentCaptor<LeadProposal> saved = ArgumentCaptor.forClass(LeadProposal.class);
+        verify(leadProposalRepository).save(saved.capture());
+        assertThat(saved.getValue().getVisaDuration()).isEqualTo("30 days");
+
+        ProposalItemCreateRequest flightLine = line("S1");
+        flightLine.setVisaDuration("30 days");
+        assertThatThrownBy(() -> leadService.addProposalItem("L1", flightLine))
+                .isInstanceOf(com.voyra.crm.exception.FieldValidationException.class).hasMessage("Only a visa line has a duration");
+    }
+
+    @Test
+    void anUpdateChangesClearsOrKeepsAVisaLinesDuration() {
+        LeadProposal existing = LeadProposal.builder().id("P1").leadId("L1").serviceId("S1").type(ProposalItemType.VISA_FEE)
+                .description("Dubai visa").netCost(new BigDecimal("100")).sellingPrice(new BigDecimal("100"))
+                .visaDuration("30 days").build();
+        when(leadProposalRepository.findByIdAndLeadId("P1", "L1")).thenReturn(Optional.of(existing));
+        com.voyra.crm.dto.ProposalItemUpdateRequest r = new com.voyra.crm.dto.ProposalItemUpdateRequest();
+
+        leadService.updateProposalItem("L1", "P1", r);
+        assertThat(existing.getVisaDuration()).isEqualTo("30 days");
+        r.setVisaDuration("Extension of existing visa");
+        assertThat(leadService.updateProposalItem("L1", "P1", r).getVisaDuration()).isEqualTo("Extension of existing visa");
+        r.setVisaDuration(" ");
+        leadService.updateProposalItem("L1", "P1", r);
+        assertThat(existing.getVisaDuration()).isNull();
+    }
 }

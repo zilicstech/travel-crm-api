@@ -319,6 +319,33 @@ public class Booking {
     @Column(name = "accountant_remark", length = 255)
     private String accountantRemark;
 
+    // ---- Issue details: recorded by hand after issue (owner ruling 2026-11-20); never read by money, accounting or
+    // access rules. The names are snapshots, live-synced on rename like agent_name.
+
+    @Column(name = "assigned_by_id", length = 36)
+    private String assignedById;
+
+    @Column(name = "assigned_by_name", length = 150)
+    private String assignedByName;
+
+    @Column(name = "issued_by_id", length = 36)
+    private String issuedById;
+
+    @Column(name = "issued_by_name", length = 150)
+    private String issuedByName;
+
+    @Column(name = "actioned_by_id", length = 36)
+    private String actionedById;
+
+    @Column(name = "actioned_by_name", length = 150)
+    private String actionedByName;
+
+    @Column(name = "purchase_currency", length = 3)
+    private String purchaseCurrency;
+
+    @Column(name = "selling_currency", length = 3)
+    private String sellingCurrency;
+
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
 

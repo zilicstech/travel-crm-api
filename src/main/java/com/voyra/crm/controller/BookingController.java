@@ -146,6 +146,15 @@ public class BookingController {
         return ResponseEntity.ok(bookingService.updateAccountantRemark(id, request.getRemark()));
     }
 
+    @PatchMapping("/{id}/issue-details")
+    @Operation(summary = "Record who assigned, issued and actioned an issued booking, and its currencies",
+            description = "Owner, or an agent who can open the booking; CONFIRMED or COMPLETED only (409 NOT_ISSUED). "
+                    + "Record-only, so a Voyra booking takes it too. The whole set is replaced.")
+    public ResponseEntity<BookingResponse> updateIssueDetails(@PathVariable String id,
+                                                              @Valid @RequestBody com.voyra.crm.dto.BookingIssueDetailsRequest request) {
+        return ResponseEntity.ok(bookingService.updateIssueDetails(id, request));
+    }
+
     @GetMapping("/{id}")
     @PreAuthorize("hasAnyRole('AGENCY_OWNER', 'AGENT', 'ACCOUNTANT')")
     @Operation(summary = "Booking detail")

@@ -3,8 +3,10 @@ package com.voyra.crm.dto;
 import com.voyra.crm.enums.FlightCabin;
 import com.voyra.crm.enums.FlightTripType;
 import com.voyra.crm.enums.ServiceType;
+import com.voyra.crm.enums.VisaApplicationStatus;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 import java.time.LocalDate;
@@ -68,6 +70,10 @@ public class ServiceDraft {
     @Schema(example = "2026-09-10")
     private LocalDate visaAppointmentDate;
 
+    @Schema(description = "Visa services only; a new Visa service starts NOT_APPLIED and an update without it keeps the "
+            + "current status", example = "APPLIED")
+    private VisaApplicationStatus visaStatus;
+
     @Schema(example = "4 Seater (Sedan)")
     private String transferVehicleType;
 
@@ -85,4 +91,8 @@ public class ServiceDraft {
 
     @Schema(example = "3")
     private Integer transferPassengers;
+
+    @Schema(description = "Miscellaneous services only: what the service is", example = "Travel insurance for 4")
+    @Size(max = 500, message = "Write at most 500 characters")
+    private String miscDetails;
 }

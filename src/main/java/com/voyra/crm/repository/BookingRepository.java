@@ -127,6 +127,15 @@ public interface BookingRepository extends JpaRepository<Booking, String>, JpaSp
     @Query("UPDATE Booking b SET b.agentName = :name WHERE b.agentId = :agentId")
     void updateAgentNameForAgent(@Param("agentId") String agentId, @Param("name") String name);
 
+    /** The issue details' name snapshots, live-synced on rename like agent_name. */
+    @Modifying
+    @Query("UPDATE Booking b SET "
+            + "b.assignedByName = CASE WHEN b.assignedById = :userId THEN :name ELSE b.assignedByName END, "
+            + "b.issuedByName = CASE WHEN b.issuedById = :userId THEN :name ELSE b.issuedByName END, "
+            + "b.actionedByName = CASE WHEN b.actionedById = :userId THEN :name ELSE b.actionedByName END "
+            + "WHERE b.assignedById = :userId OR b.issuedById = :userId OR b.actionedById = :userId")
+    void updateIssueDetailNames(@Param("userId") String userId, @Param("name") String name);
+
     @Modifying
     @Query("UPDATE Booking b SET b.clientName = :name WHERE b.clientId = :clientId")
     void updateClientNameForClient(@Param("clientId") String clientId, @Param("name") String name);

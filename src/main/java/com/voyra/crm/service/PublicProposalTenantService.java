@@ -216,7 +216,7 @@ public class PublicProposalTenantService {
                         .map(i -> PublicProposalItemResponse.builder()
                                 .id(i.getId()).type(i.getType())
                                 .serviceId(i.getServiceId()).serviceLabel(labelByServiceId.get(i.getServiceId()))
-                                .description(i.getDescription())
+                                .description(i.getDescription()).visaDuration(i.getVisaDuration())
                                 .sellingPrice(i.getSellingPrice())
                                 .optionGroup(i.getOptionGroup()).selected(i.isSelected())
                                 .build())

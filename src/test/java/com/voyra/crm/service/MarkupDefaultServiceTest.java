@@ -57,7 +57,8 @@ class MarkupDefaultServiceTest {
         List<MarkupDefaultResponse> rows = markupDefaultService.list();
 
         assertThat(rows).extracting(MarkupDefaultResponse::getServiceType)
-                .containsExactlyInAnyOrder(ServiceType.FLIGHT, ServiceType.HOTEL, ServiceType.VISA, ServiceType.TRANSFER);
+                .containsExactlyInAnyOrder(ServiceType.FLIGHT, ServiceType.HOTEL, ServiceType.VISA, ServiceType.TRANSFER,
+                        ServiceType.MISCELLANEOUS);
         assertThat(rows).allSatisfy(r -> assertThat(r.getValue()).isEqualByComparingTo("0"));
     }
 

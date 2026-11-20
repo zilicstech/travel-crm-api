@@ -14,9 +14,9 @@ package com.voyra.crm.enums;
  * second-highest-volume document of the year, so it is a first-class category.
  *
  * <p>{@link #AIR_INTERNATIONAL} / {@link #AIR_DOMESTIC} split {@link BookingType#FLIGHT};
- * {@link #RAIL} and {@link #MISCELLANEOUS} have no {@link BookingType} counterpart yet (see
- * ACCOUNTING_REDESIGN_SPEC.md gap 8) and can only be reached today by an explicit override at
- * draft time, never by {@link #forBooking}.
+ * {@link #MISCELLANEOUS} is also {@link BookingType#MISCELLANEOUS} (2026-11-20); {@link #RAIL} has no
+ * {@link BookingType} counterpart yet (see ACCOUNTING_REDESIGN_SPEC.md gap 8) and can only be reached by an
+ * explicit override at draft time, never by {@link #forBooking}.
  */
 public enum InvoiceServiceCategory {
 
@@ -80,9 +80,9 @@ public enum InvoiceServiceCategory {
     /**
      * The category a booking falls in by default. {@code international} is a property of the
      * booking itself ({@code Booking.internationalTrip}), set by whoever books it - there is no
-     * airport-code lookup here. {@link #RAIL} and {@link #MISCELLANEOUS} have no
-     * {@link BookingType} to derive from and are never returned by this method; a draft that
-     * needs either is created with an explicit category instead.
+     * airport-code lookup here. {@link #RAIL} has no
+     * {@link BookingType} to derive from and is never returned by this method; a draft that
+     * needs it is created with an explicit category instead.
      */
     public static InvoiceServiceCategory forBooking(BookingType bookingType, boolean international) {
         if (bookingType == null) {
@@ -94,6 +94,7 @@ public enum InvoiceServiceCategory {
             case VISA -> VISA;
             case TRANSFER -> TRANSPORT;
             case PACKAGE -> PACKAGE;
+            case MISCELLANEOUS -> MISCELLANEOUS;
         };
     }
 }

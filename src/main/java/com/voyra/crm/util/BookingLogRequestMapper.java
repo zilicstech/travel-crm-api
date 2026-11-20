@@ -84,7 +84,7 @@ public final class BookingLogRequestMapper {
             case HOTEL -> BookingDocumentType.HOTEL_VOUCHER;
             case VISA -> BookingDocumentType.VISA_COPY;
             case TRANSFER -> BookingDocumentType.TRANSFER_VOUCHER;
-            case PACKAGE -> BookingDocumentType.OTHER;
+            case PACKAGE, MISCELLANEOUS -> BookingDocumentType.OTHER;
         };
     }
 
@@ -125,6 +125,7 @@ public final class BookingLogRequestMapper {
                 req.setTransferTime(s.getTransferTime());
                 req.setJourneyDate(s.getTransferDate());
             };
+            case MISCELLANEOUS -> () -> { };
         };
         fill.run();
     }
@@ -136,6 +137,7 @@ public final class BookingLogRequestMapper {
             case HOTEL -> s.getHotelCity();
             case VISA -> s.getVisaCountry();
             case TRANSFER -> s.getTransferDropoff();
+            case MISCELLANEOUS -> null;
         };
         String d = blankToNull(fromService) != null ? fromService : blankToNull(s.getLeadDestination());
         return d != null ? d : (s.getLabel() != null ? s.getLabel() : s.getType().name());
@@ -185,7 +187,7 @@ public final class BookingLogRequestMapper {
     private static void setReference(BookingCreateRequest req, String reference) {
         // a switch expression over every type, so a new type fails to compile instead of silently storing nothing
         Consumer<String> setter = switch (req.getType()) {
-            case FLIGHT, PACKAGE -> req::setPnr;
+            case FLIGHT, PACKAGE, MISCELLANEOUS -> req::setPnr;
             case HOTEL -> req::setHotelConfirmationNo;
             case VISA -> req::setVisaApplicationNo;
             case TRANSFER -> req::setTransferVoucherNo;

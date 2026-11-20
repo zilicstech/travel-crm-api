@@ -34,8 +34,10 @@ import com.voyra.crm.enums.LeadStatus;
 import com.voyra.crm.enums.LeadTimelineEventType;
 import com.voyra.crm.enums.MemberType;
 import com.voyra.crm.enums.PaxType;
+import com.voyra.crm.enums.ProposalItemType;
 import com.voyra.crm.enums.ServiceStatus;
 import com.voyra.crm.enums.ServiceType;
+import com.voyra.crm.exception.FieldValidationException;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.LeadMemberRepository;
 import com.voyra.crm.repository.LeadNoteRepository;
@@ -450,6 +452,7 @@ public class LeadService {
                 .markupMode(request.getMarkupMode())
                 .markupValue(pricing.markupValue())
                 .optionGroup(request.getOptionGroup())
+                .visaDuration(visaDuration(request.getType(), request.getVisaDuration()))
                 .createdAt(LocalDateTime.now())
                 .createdBy(currentUserId())
                 .build();
@@ -566,6 +569,9 @@ public class LeadService {
         }
         if (request.getSupplier() != null) {
             item.setSupplier(request.getSupplier());
+        }
+        if (request.getVisaDuration() != null) {
+            item.setVisaDuration(visaDuration(item.getType(), request.getVisaDuration()));
         }
         if (request.getSellingPrice() != null) {
             item.setSellingPrice(request.getSellingPrice());
@@ -985,6 +991,18 @@ public class LeadService {
                 .markupCurrency(item.getMarkupCurrency()).markupInput(item.getMarkupInput()).markupRate(item.getMarkupRate())
                 .optionGroup(item.getOptionGroup()).selected(item.isSelected())
                 .selectedBy(item.getSelectedBy()).selectedAt(item.getSelectedAt())
+                .visaDuration(item.getVisaDuration())
                 .build();
+    }
+
+    /** Blank clears it; only a Visa line carries one. */
+    private static String visaDuration(ProposalItemType type, String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        if (type != ProposalItemType.VISA_FEE) {
+            throw new FieldValidationException("visaDuration", "Only a visa line has a duration");
+        }
+        return value.trim();
     }
 }

@@ -37,6 +37,7 @@ public class OwnerNameSyncService {
             TenantContext.setTenantId(tenantId);
             newTransaction.executeWithoutResult(status -> {
                 bookingRepository.updateAgentNameForAgent(tenantId, ownerName);
+                bookingRepository.updateIssueDetailNames(tenantId, ownerName);
                 visaRepository.updateAgentNameForAgent(tenantId, ownerName);
                 leadServiceRepository.updateAssignedAgentNameForAgent(tenantId, ownerName);
             });

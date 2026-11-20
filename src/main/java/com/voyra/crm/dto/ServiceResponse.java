@@ -5,6 +5,7 @@ import com.voyra.crm.enums.FlightTripType;
 import com.voyra.crm.enums.LeadStatus;
 import com.voyra.crm.enums.ServiceStatus;
 import com.voyra.crm.enums.ServiceType;
+import com.voyra.crm.enums.VisaApplicationStatus;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -121,6 +122,9 @@ public class ServiceResponse {
     @Schema(description = "Keyed by member_id - one entry per traveller on this Visa service")
     private Map<String, VisaChecklistEntry> visaChecklists;
 
+    @Schema(description = "Visa services only (NOT_APPLIED when never set); null on other types", example = "APPLIED")
+    private VisaApplicationStatus visaStatus;
+
     @Schema(example = "4 Seater (Sedan)")
     private String transferVehicleType;
 
@@ -138,6 +142,9 @@ public class ServiceResponse {
 
     @Schema(example = "3")
     private Integer transferPassengers;
+
+    @Schema(example = "Travel insurance for 4")
+    private String miscDetails;
 
     @Schema(example = "2026-08-13T09:15:22")
     private LocalDateTime createdAt;

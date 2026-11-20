@@ -16,6 +16,8 @@ import com.voyra.crm.enums.AuditEntityType;
 import com.voyra.crm.enums.LeadTimelineEventType;
 import com.voyra.crm.enums.ServiceStatus;
 import com.voyra.crm.enums.ServiceType;
+import com.voyra.crm.enums.VisaApplicationStatus;
+import com.voyra.crm.exception.FieldValidationException;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.LeadProposalRepository;
 import com.voyra.crm.repository.LeadRepository;
@@ -70,7 +72,8 @@ public class ServiceInstanceService {
             "flightTripType", "flightCabin",
             "hotelCity", "hotelCountryCode", "hotelCheckIn", "hotelCheckOut", "hotelNights", "hotelRooms",
             "visaSourceCity", "visaSourceCountry", "visaCountry", "visaIntendedTravelDate", "visaAppointmentDate",
-            "transferVehicleType", "transferPickup", "transferDropoff", "transferDate", "transferTime", "transferPassengers"
+            "visaStatus", "transferVehicleType", "transferPickup", "transferDropoff", "transferDate", "transferTime",
+            "transferPassengers", "miscDetails"
     };
 
     private final LeadServiceRepository leadServiceRepository;
@@ -131,6 +134,8 @@ public class ServiceInstanceService {
                     .transferDate(draft.getTransferDate())
                     .transferTime(draft.getTransferTime())
                     .transferPassengers(draft.getTransferPassengers())
+                    .visaStatus(visaStatus(draft, null))
+                    .miscDetails(miscDetails(draft.getType(), draft))
                     .createdAt(LocalDateTime.now())
                     .createdBy(currentUserId())
                     .build();
@@ -234,6 +239,8 @@ public class ServiceInstanceService {
         service.setTransferDate(draft.getTransferDate());
         service.setTransferTime(draft.getTransferTime());
         service.setTransferPassengers(draft.getTransferPassengers());
+        service.setVisaStatus(visaStatus(draft, service));
+        service.setMiscDetails(miscDetails(service.getType(), draft));
         service.setUpdatedAt(LocalDateTime.now());
         service.setUpdatedBy(currentUserId());
 
@@ -601,8 +608,30 @@ public class ServiceInstanceService {
                 .transferVehicleType(s.getTransferVehicleType()).transferPickup(s.getTransferPickup())
                 .transferDropoff(s.getTransferDropoff()).transferDate(s.getTransferDate())
                 .transferTime(s.getTransferTime()).transferPassengers(s.getTransferPassengers())
+                .visaStatus(s.getType() == ServiceType.VISA && s.getVisaStatus() == null
+                        ? VisaApplicationStatus.NOT_APPLIED : s.getVisaStatus())
+                .miscDetails(s.getMiscDetails())
                 .createdAt(s.getCreatedAt()).updatedAt(s.getUpdatedAt())
                 .build();
+    }
+
+    /** A Visa service's status: the draft's, else the current one (an update that leaves it out keeps it), else
+     *  NOT_APPLIED; any other type refuses one. {@code existing} is null on create. */
+    private static VisaApplicationStatus visaStatus(ServiceDraft draft, LeadService existing) {
+        ServiceType type = existing != null ? existing.getType() : draft.getType();
+        if (type != ServiceType.VISA) {
+            if (draft.getVisaStatus() != null) {
+                throw new FieldValidationException("visaStatus", "Only a Visa service has a visa status");
+            }
+            return null;
+        }
+        if (draft.getVisaStatus() != null) return draft.getVisaStatus();
+        return existing != null && existing.getVisaStatus() != null ? existing.getVisaStatus() : VisaApplicationStatus.NOT_APPLIED;
+    }
+
+    private static String miscDetails(ServiceType type, ServiceDraft draft) {
+        return type == ServiceType.MISCELLANEOUS && draft.getMiscDetails() != null && !draft.getMiscDetails().isBlank()
+                ? draft.getMiscDetails().trim() : null;
     }
 
     private static void checkTrip(LeadService service) {

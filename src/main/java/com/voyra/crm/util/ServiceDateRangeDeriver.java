@@ -30,6 +30,10 @@ public final class ServiceDateRangeDeriver {
                 service.setDateFrom(service.getTransferDate());
                 service.setDateTo(service.getTransferDate());
             };
+            case MISCELLANEOUS -> () -> {
+                service.setDateFrom(null);
+                service.setDateTo(null);
+            };
         };
         derive.run();
     }

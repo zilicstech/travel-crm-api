@@ -100,6 +100,10 @@ public class LeadProposal implements com.voyra.crm.models.ForeignPricedRecord {
     @Column(name = "markup_rate", precision = 18, scale = 6)
     private java.math.BigDecimal markupRate;
 
+    /** A Visa line's duration and type, e.g. "30 days" or "Extension of existing visa"; null on any other line. */
+    @Column(name = "visa_duration", length = 60)
+    private String visaDuration;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 

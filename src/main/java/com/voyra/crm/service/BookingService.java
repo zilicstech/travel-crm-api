@@ -1459,7 +1459,11 @@ public class BookingService {
                 .id(b.getId()).bookingNumber(b.getBookingNumber()).bookingRef(bookingRef(b.getBookingNumber()))
                 .clientId(b.getClientId()).clientName(b.getClientName())
                 .agentId(b.getAgentId()).agentName(b.getAgentName())
-                .assignedByName(assignedByName(b)).accountantRemark(b.getAccountantRemark())
+                .assignedByName(b.getAssignedById() != null ? b.getAssignedByName() : assignedByName(b))
+                .accountantRemark(b.getAccountantRemark())
+                .assignedById(b.getAssignedById()).issuedById(b.getIssuedById()).issuedByName(b.getIssuedByName())
+                .actionedById(b.getActionedById()).actionedByName(b.getActionedByName())
+                .purchaseCurrency(b.getPurchaseCurrency()).sellingCurrency(b.getSellingCurrency())
                 .uninvoicedPrice(b.getBookingStatus() == BookingStatus.CANCELLED ? BigDecimal.ZERO
                         : b.getSellingPrice().subtract(invoiced.price()).max(BigDecimal.ZERO))
                 .draftInvoiceId(draft != null ? draft.getId() : null)
@@ -1552,6 +1556,56 @@ public class BookingService {
         auditService.recordUpdate(AuditEntityType.BOOKING, booking.getId(), labelFor(booking),
                 AuditSnapshot.diff(before, AuditSnapshot.of(booking, "accountantRemark")));
         return toResponse(booking);
+    }
+
+    private static final String[] ISSUE_DETAILS = {"assignedByName", "issuedByName", "actionedByName",
+            "purchaseCurrency", "sellingCurrency"};
+
+    /**
+     * The issue details recorded by hand on an issued booking (owner ruling 2026-11-20). Record-only: no money,
+     * accounting, access or supplier state moves, so a Voyra booking takes them too and no change alert is raised.
+     */
+    @Transactional
+    public BookingResponse updateIssueDetails(String id, com.voyra.crm.dto.BookingIssueDetailsRequest request) {
+        Booking booking = findAccessibleBooking(id);
+        if (booking.getBookingStatus() != BookingStatus.CONFIRMED && booking.getBookingStatus() != BookingStatus.COMPLETED) {
+            throw new com.voyra.crm.exception.BookingConflictException("NOT_ISSUED",
+                    "Issue details can be recorded once the booking is confirmed", Map.of());
+        }
+        String tenantId = SecurityContextUtil.getCurrentUserOrThrow().tenantId();
+        Map<String, String> before = AuditSnapshot.of(booking, ISSUE_DETAILS);
+        String assignedBy = blankToNull(request.getAssignedById());
+        String issuedBy = blankToNull(request.getIssuedById());
+        String actionedBy = blankToNull(request.getActionedById());
+        booking.setAssignedById(assignedBy);
+        booking.setAssignedByName(personName(tenantId, assignedBy, "assignedById"));
+        booking.setIssuedById(issuedBy);
+        booking.setIssuedByName(personName(tenantId, issuedBy, "issuedById"));
+        booking.setActionedById(actionedBy);
+        booking.setActionedByName(personName(tenantId, actionedBy, "actionedById"));
+        booking.setPurchaseCurrency(blankToNull(request.getPurchaseCurrency()));
+        booking.setSellingCurrency(blankToNull(request.getSellingCurrency()));
+        touch(booking);
+        bookingRepository.save(booking);
+        auditService.recordUpdate(AuditEntityType.BOOKING, booking.getId(), labelFor(booking),
+                AuditSnapshot.diff(before, AuditSnapshot.of(booking, ISSUE_DETAILS)));
+        return toResponse(booking);
+    }
+
+    private static String blankToNull(String v) {
+        return v == null || v.isBlank() ? null : v.trim();
+    }
+
+    /** The owner (user id = agency id) or one of this agency's staff, else a 400 on {@code field}. */
+    private String personName(String tenantId, String userId, String field) {
+        if (userId == null) {
+            return null;
+        }
+        if (userId.equals(tenantId)) {
+            return tenantRepository.findById(tenantId).map(Tenant::getOwnerName).orElse(null);
+        }
+        return agentRepository.findByIdAndTenantId(userId, tenantId).map(Agent::getName)
+                .orElseThrow(() -> new com.voyra.crm.exception.FieldValidationException(field, "Pick someone from your agency"));
     }
 
     /** Paid to the booking's supplier so far. shortcut: one query per booking row, batch it if list pages grow past ~100. */

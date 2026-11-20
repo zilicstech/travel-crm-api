@@ -600,3 +600,39 @@ on phones, cheapest day in green) shows them on Departure and Return; the hotel 
 Tests: `TopupServiceTest`, `TopupControllerTest`, `AuthServiceCoverageTest`, `PlatformAgencyControllerTest`,
 `JwtServiceLoginAsTest`, `FlightSearchServiceTest#aCachedResultLivesTwoMinutesSoSearchPricesAreNeverStale`; e2e
 `e2e/wallet.spec.ts`, `e2e/platform-login-as.spec.ts`.
+
+## CRM improvements 2026-11-20 (client document, owner rulings)
+
+The client's "Internal - Improvements" document asked for four CRM changes. Tenant migration `V3__crm_improvements.sql`
+adds nullable columns only: `lead_service.misc_details`, `lead_service.visa_status`, `lead_proposal.visa_duration`, and on
+`booking` the issue details (`assigned_by_id/_name`, `issued_by_id/_name`, `actioned_by_id/_name`, `purchase_currency`,
+`selling_currency`). No CHECK covers the enums, so the new values needed no constraint change.
+
+- **Miscellaneous service type.** `ServiceType.MISCELLANEOUS` and `BookingType.MISCELLANEOUS` (1:1 in
+  `ServiceBookingTypeMapper`). A Miscellaneous service has no dates and describes itself in `miscDetails` (500
+  characters; its label is "Miscellaneous", or "Miscellaneous - <first 40 characters>" beside a second one). Its
+  booking is logged like the others: the voucher type is OTHER, the reference is kept as the PNR, the destination is the
+  lead's, travellers are on it. It invoices in the existing Miscellaneous category (MSC series, the 18 % "other services"
+  slab). Agents are given it per agent like any type; the agency settings seed Travel Insurance, Forex and SIM Card as
+  its preferences.
+- **Issue details (record-only).** `PATCH /api/bookings/{id}/issue-details` (owner, or an agent who can open the booking;
+  CONFIRMED or COMPLETED only, else 409 `NOT_ISSUED`; accountants 403) replaces the set: three people (the owner, whose
+  id is the agency id, or one of the agency's staff, else 400 "Pick someone from your agency") and two 3-letter
+  currencies; blank clears. It moves no money, accounting, access or supplier state, so a Voyra booking takes it too and
+  no change alert is raised; it is recorded in the booking's history. `BookingResponse.assignedByName` prefers the
+  recorded person; the list's "Issued by" (`agentIs`) and "Assign by" filters match the recorded person when one is
+  set. Owner and agent renames re-sync the name snapshots (`BookingRepository.updateIssueDetailNames`). The vendor is the
+  booking's own (`vendor_id` / `supplier`); there is no separate vendor field.
+- **Visa duration and paid clearance.** `visaDuration` (60 characters) on `VISA_FEE` proposal lines only (any other line
+  is a 400 field error; on update, omitted keeps it and blank clears it), shown on the public proposal. Paid clearance is
+  a frontend button that adds an ordinary priced `VISA_FEE` line ("Paid clearance - <visa line>"); the two lines are not
+  linked.
+- **Visa status on the Visa service.** `VisaApplicationStatus` NOT_APPLIED, APPLIED, PENDING ("Status pending"),
+  CONFIRMED, REJECTED on `lead_service.visa_status`; a new Visa service starts NOT_APPLIED, an update that leaves it out
+  keeps it, a stored null reads NOT_APPLIED, and any other type refuses one (400 field error). The lead status and its
+  funnel are unchanged, and so is the Visa module's derived `VisaStatus`.
+
+Tests: `MiscellaneousServiceTypeTest`, `ServiceInstanceServiceCoverageTest` (visa status, misc details),
+`LeadServiceProposalAccessTest` (visa duration), `BookingServiceCoverageTest#issueDetailsAreRecordedOnlyOnceIssued...`,
+`BookingControllerAccountantAuthTest#issueDetails...`, `BookingSpecificationsTest`, `InvoiceServiceCategoryTest`; e2e
+`e2e/crm-improvements.spec.ts`.

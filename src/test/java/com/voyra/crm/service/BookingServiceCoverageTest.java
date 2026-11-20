@@ -1408,6 +1408,49 @@ class BookingServiceCoverageTest {
         verify(auditService, times(3)).recordUpdate(eq(com.voyra.crm.enums.AuditEntityType.BOOKING), eq("B1"), any(), any());
     }
 
+    @Test
+    void issueDetailsAreRecordedOnlyOnceIssuedNamingTheOwnerOrStaffAndBlankClears() {
+        Booking pending = booking().build();
+        found(pending);
+        com.voyra.crm.dto.BookingIssueDetailsRequest r = new com.voyra.crm.dto.BookingIssueDetailsRequest();
+        assertThatThrownBy(() -> bookingService.updateIssueDetails("B1", r))
+                .isInstanceOf(com.voyra.crm.exception.BookingConflictException.class)
+                .hasMessage("Issue details can be recorded once the booking is confirmed");
+
+        Booking b = booking().id("B2").bookingStatus(BookingStatus.CONFIRMED).platformBookingId("PB1").leadId(null).createdBy("A1").build();
+        found(b);
+        when(tenantRepository.findById("T1")).thenReturn(Optional.of(Tenant.builder().id("T1").ownerName("Dana Owner").build()));
+        when(agentRepository.findByIdAndTenantId("A2", "T1")).thenReturn(Optional.of(agent("A2", "Vikram", List.of())));
+        r.setAssignedById("T1");
+        r.setIssuedById(" A2 ");
+        r.setActionedById(" ");
+        r.setPurchaseCurrency("AED");
+        r.setSellingCurrency("");
+
+        BookingResponse out = bookingService.updateIssueDetails("B2", r);
+
+        // record-only: a Voyra booking takes them too
+        assertThat(out.getAssignedById()).isEqualTo("T1");
+        assertThat(out.getAssignedByName()).isEqualTo("Dana Owner");
+        assertThat(out.getIssuedById()).isEqualTo("A2");
+        assertThat(out.getIssuedByName()).isEqualTo("Vikram");
+        assertThat(out.getActionedById()).isNull();
+        assertThat(out.getActionedByName()).isNull();
+        assertThat(out.getPurchaseCurrency()).isEqualTo("AED");
+        assertThat(out.getSellingCurrency()).isNull();
+        verify(auditService).recordUpdate(eq(com.voyra.crm.enums.AuditEntityType.BOOKING), eq("B2"), any(), any());
+
+        b.setBookingStatus(BookingStatus.COMPLETED);
+        when(tenantRepository.findById("T1")).thenReturn(Optional.empty());
+        r.setIssuedById(null);
+        assertThat(bookingService.updateIssueDetails("B2", r).getAssignedByName()).isNull();
+
+        r.setActionedById("A9");
+        when(agentRepository.findByIdAndTenantId("A9", "T1")).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> bookingService.updateIssueDetails("B2", r))
+                .isInstanceOf(com.voyra.crm.exception.FieldValidationException.class).hasMessage("Pick someone from your agency");
+    }
+
     // ---------------------------------------------------------------- cost components
 
     @Test

@@ -19,6 +19,8 @@ import com.voyra.crm.enums.LeadTimelineEventType;
 import com.voyra.crm.enums.ServiceStatus;
 import com.voyra.crm.enums.ServiceType;
 import com.voyra.crm.enums.UserType;
+import com.voyra.crm.enums.VisaApplicationStatus;
+import com.voyra.crm.exception.FieldValidationException;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.LeadMemberRepository;
 import com.voyra.crm.repository.LeadProposalRepository;
@@ -314,6 +316,74 @@ class ServiceInstanceServiceCoverageTest {
         assertThat(out.getPreferences()).containsExactly("Aisle");
         assertThat(out.getFlightSectors()).hasSize(1);
         assertThat(out.getDateFrom()).isEqualTo(LocalDate.of(2026, 4, 1));
+    }
+
+    @Test
+    void aNewVisaServiceStartsNotAppliedAMiscServiceKeepsItsDetailsAndOnlyAVisaTakesAStatus() {
+        as("O1", UserType.AGENCY_OWNER);
+        when(leadRepository.findById("L1")).thenReturn(Optional.of(lead()));
+        when(leadServiceRepository.findByLeadIdOrderBySortOrderAsc("L1")).thenReturn(new ArrayList<>());
+        when(leadProposalRepository.findByLeadId("L1")).thenReturn(List.of());
+        ServiceDraft visa = new ServiceDraft();
+        visa.setType(ServiceType.VISA);
+        ServiceDraft applied = new ServiceDraft();
+        applied.setType(ServiceType.VISA);
+        applied.setVisaStatus(VisaApplicationStatus.APPLIED);
+        ServiceDraft misc = new ServiceDraft();
+        misc.setType(ServiceType.MISCELLANEOUS);
+        misc.setMiscDetails("  Travel insurance for 4  ");
+        ServiceDraft blankMisc = new ServiceDraft();
+        blankMisc.setType(ServiceType.MISCELLANEOUS);
+        blankMisc.setMiscDetails(" ");
+        ServiceDraft noDetails = new ServiceDraft();
+        noDetails.setType(ServiceType.MISCELLANEOUS);
+        ServiceDraft hotel = new ServiceDraft();
+        hotel.setType(ServiceType.HOTEL);
+        hotel.setMiscDetails("ignored on a hotel");
+
+        List<ServiceResponse> out = service.createServices("L1", List.of(visa, applied, misc, blankMisc, noDetails, hotel));
+
+        assertThat(out).extracting(ServiceResponse::getVisaStatus)
+                .containsExactly(VisaApplicationStatus.NOT_APPLIED, VisaApplicationStatus.APPLIED, null, null, null, null);
+        assertThat(out).extracting(ServiceResponse::getMiscDetails)
+                .containsExactly(null, null, "Travel insurance for 4", null, null, null);
+        assertThat(out.get(2).getDateFrom()).isNull();
+
+        ServiceDraft refused = new ServiceDraft();
+        refused.setType(ServiceType.FLIGHT);
+        refused.setVisaStatus(VisaApplicationStatus.APPLIED);
+        assertThatThrownBy(() -> service.createServices("L1", List.of(refused)))
+                .isInstanceOf(FieldValidationException.class).hasMessage("Only a Visa service has a visa status");
+    }
+
+    @Test
+    void anUpdateSetsTheVisaStatusOrKeepsItWhenLeftOutAndAnOldVisaReadsNotApplied() {
+        as("O1", UserType.AGENCY_OWNER);
+        when(leadRepository.findById("L1")).thenReturn(Optional.of(lead()));
+        LeadService visa = svc("S1", ServiceType.VISA, ServiceStatus.IN_PROGRESS);
+        when(leadServiceRepository.findById("S1")).thenReturn(Optional.of(visa));
+        when(leadServiceRepository.findByLeadIdOrderBySortOrderAsc("L1")).thenReturn(List.of(visa));
+        when(leadProposalRepository.findByLeadId("L1")).thenReturn(List.of());
+
+        // a Visa service from before visa_status existed: none stored, so it reads Not applied
+        assertThat(service.updateService("L1", "S1", new ServiceDraft()).getVisaStatus())
+                .isEqualTo(VisaApplicationStatus.NOT_APPLIED);
+        ServiceDraft rejected = new ServiceDraft();
+        rejected.setVisaStatus(VisaApplicationStatus.REJECTED);
+        assertThat(service.updateService("L1", "S1", rejected).getVisaStatus()).isEqualTo(VisaApplicationStatus.REJECTED);
+        assertThat(service.updateService("L1", "S1", new ServiceDraft()).getVisaStatus()).isEqualTo(VisaApplicationStatus.REJECTED);
+        visa.setVisaStatus(null);
+        assertThat(service.listForLead("L1").get(0).getVisaStatus()).isEqualTo(VisaApplicationStatus.NOT_APPLIED);
+    }
+
+    @Test
+    void anUpdateOfAnotherTypeRefusesAVisaStatus() {
+        as("O1", UserType.AGENCY_OWNER);
+        when(leadRepository.findById("L1")).thenReturn(Optional.of(lead()));
+        when(leadServiceRepository.findById("S1")).thenReturn(Optional.of(svc("S1", ServiceType.MISCELLANEOUS, ServiceStatus.IN_PROGRESS)));
+        ServiceDraft d = new ServiceDraft();
+        d.setVisaStatus(VisaApplicationStatus.APPLIED);
+        assertThatThrownBy(() -> service.updateService("L1", "S1", d)).isInstanceOf(FieldValidationException.class);
     }
 
     @Test

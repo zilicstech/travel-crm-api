@@ -27,6 +27,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
@@ -88,6 +89,29 @@ class BookingControllerAccountantAuthTest {
                         .with(SecurityMockMvcRequestPostProcessors.user("agent1").roles("AGENT"))
                         .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void issueDetailsAreTheOwnersAndAgentsNotTheAccountantsAndCurrenciesAreCodes() throws Exception {
+        when(bookingService.updateIssueDetails(eq("B1"), any())).thenReturn(BookingResponse.builder().id("B1").build());
+        String body = "{\"issuedById\":\"A1\",\"purchaseCurrency\":\"AED\",\"sellingCurrency\":\"\"}";
+        var patch = org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch("/api/bookings/B1/issue-details");
+
+        mockMvc.perform(patch.with(SecurityMockMvcRequestPostProcessors.user("owner1").roles("AGENCY_OWNER"))
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk());
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch("/api/bookings/B1/issue-details")
+                        .with(SecurityMockMvcRequestPostProcessors.user("agent1").roles("AGENT"))
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk());
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch("/api/bookings/B1/issue-details")
+                        .with(SecurityMockMvcRequestPostProcessors.user("accountant1").roles("ACCOUNTANT"))
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch("/api/bookings/B1/issue-details")
+                        .with(SecurityMockMvcRequestPostProcessors.user("owner1").roles("AGENCY_OWNER"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"sellingCurrency\":\"rupees\"}"))
+                .andExpect(status().isBadRequest());
     }
 
     @Test

@@ -79,4 +79,8 @@ public class ProposalItemCreateRequest implements com.voyra.crm.models.ForeignPr
     @Schema(description = "Only meaningful with optionGroup set. When true, every other line in the "
             + "same group is deselected in the same transaction.")
     private boolean selected;
+
+    @jakarta.validation.constraints.Size(max = 60, message = "Write at most 60 characters")
+    @Schema(description = "VISA_FEE lines only: the visa's duration and type", example = "30 days")
+    private String visaDuration;
 }

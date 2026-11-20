@@ -121,8 +121,10 @@ public final class BookingSpecifications {
         };
     }
 
+    /** Issued by: the person recorded in the issue details, else the booking's agent. */
     public static Specification<Booking> agentIs(String agentId) {
-        return (root, query, cb) -> cb.equal(root.get("agentId"), agentId);
+        return (root, query, cb) -> cb.or(cb.equal(root.get("issuedById"), agentId),
+                cb.and(cb.isNull(root.get("issuedById")), cb.equal(root.get("agentId"), agentId)));
     }
 
     public static Specification<Booking> vendorIs(String vendorId) {
@@ -160,12 +162,14 @@ public final class BookingSpecifications {
                 }
             }
             if (f.assignedBy() != null && !f.assignedBy().isBlank()) {
-                // The lead's creator, or the booking's own when it was made without a lead.
+                // The person recorded in the issue details, else the lead's creator, or the booking's own when it was
+                // made without a lead.
                 jakarta.persistence.criteria.Subquery<String> leads = query.subquery(String.class);
                 jakarta.persistence.criteria.Root<com.voyra.crm.entity.Lead> lead = leads.from(com.voyra.crm.entity.Lead.class);
                 leads.select(lead.get("id")).where(cb.equal(lead.get("createdBy"), f.assignedBy()));
-                and.add(cb.or(root.get("leadId").in(leads),
-                        cb.and(cb.isNull(root.get("leadId")), cb.equal(root.get("createdBy"), f.assignedBy()))));
+                and.add(cb.or(cb.equal(root.get("assignedById"), f.assignedBy()), cb.and(cb.isNull(root.get("assignedById")),
+                        cb.or(root.get("leadId").in(leads),
+                                cb.and(cb.isNull(root.get("leadId")), cb.equal(root.get("createdBy"), f.assignedBy()))))));
             }
             return cb.and(and.toArray(new Predicate[0]));
         };

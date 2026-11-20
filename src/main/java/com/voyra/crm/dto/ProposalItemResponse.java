@@ -70,6 +70,9 @@ public class ProposalItemResponse {
     @Schema(description = "1 unit of markupCurrency in base, as entered", example = "22.85")
     private java.math.BigDecimal markupRate;
 
+    @Schema(description = "VISA_FEE lines only: the visa's duration and type", example = "30 days")
+    private String visaDuration;
+
     @Schema(description = "Null means a plain add-on that always counts. A shared value means "
             + "this line is one of several mutually-exclusive alternatives - exactly one line "
             + "per group is selected and counted.", example = "svc-flight-1")

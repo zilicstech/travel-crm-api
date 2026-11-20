@@ -94,6 +94,8 @@ public class AgencySettingDefaults {
                     Default.of("Appointment Assistance"), Default.of("Document Pickup"));
             case TRANSFER -> List.of(Default.of("Child Seat"), Default.of("Meet & Greet"),
                     Default.of("Extra Luggage Space"), Default.of("Wheelchair Accessible"));
+            case MISCELLANEOUS -> List.of(Default.of("Travel Insurance"), Default.of("Forex"),
+                    Default.of("SIM Card"));
         };
     }
 }

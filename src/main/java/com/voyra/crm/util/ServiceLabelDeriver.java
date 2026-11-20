@@ -76,6 +76,7 @@ public final class ServiceLabelDeriver {
             case HOTEL -> "Hotel";
             case VISA -> "Visa";
             case TRANSFER -> "Transfer";
+            case MISCELLANEOUS -> "Miscellaneous";
         };
     }
 
@@ -85,6 +86,8 @@ public final class ServiceLabelDeriver {
             case HOTEL -> s.getHotelCity();
             case VISA -> s.getVisaCountry();
             case TRANSFER -> s.getTransferPickup();
+            case MISCELLANEOUS -> s.getMiscDetails() == null || s.getMiscDetails().length() <= 40 ? s.getMiscDetails()
+                    : s.getMiscDetails().substring(0, 40).trim() + "…";
         };
     }
 

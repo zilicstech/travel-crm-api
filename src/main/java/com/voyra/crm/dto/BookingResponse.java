@@ -47,9 +47,30 @@ public class BookingResponse {
     @Schema(description = "Denormalized snapshot, live-synced on agent rename", example = "Liam Smith")
     private String agentName;
 
-    @Schema(description = "Who gave the work: the agent or owner who created the booking's lead, or the booking itself when it has no lead",
-            example = "Ryan Mathew")
+    @Schema(description = "Who gave the work: the person recorded in the issue details, else the agent or owner who created the "
+            + "booking's lead, or the booking itself when it has no lead", example = "Ryan Mathew")
     private String assignedByName;
+
+    @Schema(description = "Issue details (recorded by hand, null until recorded): who assigned the work", example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
+    private String assignedById;
+
+    @Schema(description = "Issue details: who issued it (else the booking's agent is shown)")
+    private String issuedById;
+
+    @Schema(example = "Liam Smith")
+    private String issuedByName;
+
+    @Schema(description = "Issue details: who actioned it")
+    private String actionedById;
+
+    @Schema(example = "Ryan Mathew")
+    private String actionedByName;
+
+    @Schema(description = "Issue details: the purchase currency as recorded (else read from the vouchers)", example = "AED")
+    private String purchaseCurrency;
+
+    @Schema(description = "Issue details: the selling currency as recorded (else the agency's base)", example = "INR")
+    private String sellingCurrency;
 
     @Schema(description = "Selling price not on an issued invoice yet, before tax (zero once cancelled)", example = "2000.00")
     private BigDecimal uninvoicedPrice;

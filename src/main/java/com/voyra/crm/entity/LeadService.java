@@ -9,6 +9,7 @@ import com.voyra.crm.enums.FlightTripType;
 import com.voyra.crm.enums.LeadStatus;
 import com.voyra.crm.enums.ServiceStatus;
 import com.voyra.crm.enums.ServiceType;
+import com.voyra.crm.enums.VisaApplicationStatus;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -176,6 +177,11 @@ public class LeadService {
     @Builder.Default
     private Map<String, VisaChecklistEntry> visaChecklists = Map.of();
 
+    /** Null on every non-Visa service; on a Visa service null reads as NOT_APPLIED. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "visa_status", length = 20)
+    private VisaApplicationStatus visaStatus;
+
     // ---- Transfer ----
 
     @Column(name = "transfer_vehicle_type", length = 50)
@@ -196,6 +202,12 @@ public class LeadService {
 
     @Column(name = "transfer_passengers")
     private Integer transferPassengers;
+
+    // ---- Miscellaneous ----
+
+    /** What a Miscellaneous service is, e.g. "Travel insurance for 4". */
+    @Column(name = "misc_details", length = 500)
+    private String miscDetails;
 
     @Column(name = "created_at")
     private LocalDateTime createdAt;
