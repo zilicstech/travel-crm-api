@@ -85,6 +85,17 @@ public class GlobalExceptionHandlerFixtureController {
         return "ok";
     }
 
+    @PostMapping("/test/validate-list")
+    public String validateList(@RequestBody java.util.List<@Valid FixtureRequest> requests) {
+        return "ok";
+    }
+
+    @PostMapping("/test/validate-param")
+    public String validateParam(@org.springframework.web.bind.annotation.RequestParam("code")
+                                @jakarta.validation.constraints.Size(max = 2, message = "Too long") String code) {
+        return "ok";
+    }
+
     @Data
     public static class FixtureRequest {
         @NotBlank(message = "Name is required")

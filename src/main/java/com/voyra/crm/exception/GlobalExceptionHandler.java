@@ -69,6 +69,23 @@ public class GlobalExceptionHandler {
         return ResponseEntity.badRequest().body(response);
     }
 
+    /** {@code @Valid} on list elements (e.g. {@code List<@Valid ServiceDraft>}) is method validation, not a bound body. */
+    @ExceptionHandler(org.springframework.web.method.annotation.HandlerMethodValidationException.class)
+    public ResponseEntity<ApiErrorResponse> handleMethodValidation(
+            org.springframework.web.method.annotation.HandlerMethodValidationException ex, HttpServletRequest request) {
+        String path = getPath(request);
+        Map<String, Object> fieldErrors = ex.getAllErrors().stream()
+                .collect(Collectors.toMap(
+                        e -> e instanceof FieldError f ? f.getField() : "request",
+                        e -> java.util.Objects.toString(e.getDefaultMessage(), "Invalid"),
+                        (a, b) -> a + "; " + b));
+        log.warn("Validation failed - path: {}, field errors: {}", path, fieldErrors);
+        ApiErrorResponse response = ApiErrorResponse.of("Validation failed",
+                "One or more request fields are invalid", null, HttpStatus.BAD_REQUEST.value(), path);
+        response.setDetails(Map.of("errors", fieldErrors));
+        return ResponseEntity.badRequest().body(response);
+    }
+
     @ExceptionHandler(FieldValidationException.class)
     public ResponseEntity<ApiErrorResponse> handleFieldValidation(FieldValidationException ex, HttpServletRequest request) {
         String path = getPath(request);

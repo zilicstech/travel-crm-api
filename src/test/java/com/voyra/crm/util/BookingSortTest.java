@@ -27,6 +27,12 @@ class BookingSortTest {
     }
 
     @Test
+    void issuedBySortsByTheRecordedIssuerElseTheAgent() {
+        assertThat(BookingSort.parse("agentName,asc")).isEqualTo(
+                Sort.by(Sort.Direction.ASC, "issuerSortName").and(Sort.by(Sort.Direction.DESC, "bookingNumber")));
+    }
+
+    @Test
     void unknownColumnIsRejected() {
         assertThatThrownBy(() -> BookingSort.parse("profit,desc"))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("profit");

@@ -125,6 +125,11 @@ public class Booking {
     @Setter(AccessLevel.NONE)
     private Boolean noJourneyDate;
 
+    /** Sort key only: the "Issued by" column shows the recorded issuer, else the booking's agent (see BookingSort). */
+    @org.hibernate.annotations.Formula("coalesce(issued_by_name, agent_name)")
+    @Setter(AccessLevel.NONE)
+    private String issuerSortName;
+
     @Column(name = "journey_date")
     private LocalDate journeyDate;
 

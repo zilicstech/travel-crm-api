@@ -148,6 +148,22 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    void anInvalidListElementIs400WithItsFieldErrorNot500() throws Exception {
+        mockMvc.perform(post("/test/validate-list")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("[{\"name\":\"\"},{\"name\":\"ok\"},{\"name\":\" \"}]"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.details.errors.name").value("Name is required; Name is required"));
+    }
+
+    @Test
+    void anInvalidRequestParameterIs400() throws Exception {
+        mockMvc.perform(post("/test/validate-param").param("code", "toolong"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.details.errors.request").value("Too long"));
+    }
+
+    @Test
     void everyErrorBodyCarriesTheStandardEnvelope() throws Exception {
         mockMvc.perform(get("/test/illegal-argument"))
                 .andExpect(jsonPath("$.success").value(false))

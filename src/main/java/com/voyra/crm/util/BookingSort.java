@@ -14,7 +14,8 @@ public final class BookingSort {
             "bookingDate", "bookingDate",
             // "Travel date": each type's own first date (flight departure, check-in, transfer day).
             "journeyDate", "departureDate",
-            "agentName", "agentName",
+            // "Issued by": the recorded issuer, else the booking's agent, as the column shows.
+            "agentName", "issuerSortName",
             "supplier", "supplier",
             "netCost", "netCost");
 
