@@ -242,10 +242,43 @@ public class BookingDocumentService {
 
     /** What the supplier charges, in the purchase currency - the figure the breakdown adds up to. */
     /**
+     * An ancillary (client round 2026-11-22) is a flight's paid add-on - a seat, a meal, extra baggage - for the
+     * travellers it names; it has no flights of its own.
+     */
+    private void applyAncillary(Booking booking, BookingDocument document, BookingDocumentCreateRequest request) {
+        if (booking.getType() != com.voyra.crm.enums.BookingType.FLIGHT) {
+            throw new IllegalArgumentException("Ancillaries go on a flight booking");
+        }
+        String kind = document.getDetails() == null ? null : document.getDetails().get("ancillaryKind");
+        if (kind == null || !ANCILLARY_KINDS.contains(kind)) {
+            throw new com.voyra.crm.exception.FieldValidationException("ancillaryKind", "Pick seat, meal, extra baggage or other");
+        }
+        List<String> ids = request.getTravellers() == null ? List.of() : request.getTravellers().stream()
+                .map(com.voyra.crm.dto.VoucherTraveller::getMemberId).filter(id -> id != null && !id.isBlank()).distinct().toList();
+        if (ids.isEmpty()) {
+            throw new IllegalArgumentException("Pick who the add-on is for");
+        }
+        document.setTravellers(ids.stream().map(id -> {
+            com.voyra.crm.entity.Member m = memberRepository.findByMemberIdAndClientId(id, booking.getClientId())
+                    .filter(x -> Boolean.TRUE.equals(x.getIsActive()))
+                    .orElseThrow(() -> new IllegalArgumentException("That traveller isn't one of this client's members"));
+            return com.voyra.crm.dto.VoucherTraveller.builder().memberId(id).name(m.getName())
+                    .paxType(com.voyra.crm.util.PaxTypeCalculator.paxTypeAt(m.getDob(), booking.getJourneyDate())).build();
+        }).toList());
+        document.setLegs(null);
+    }
+
+    private static final java.util.Set<String> ANCILLARY_KINDS = java.util.Set.of("SEAT", "MEAL", "BAGGAGE", "OTHER");
+
+    /**
      * An air ticket names its travellers - the client's own members, snapshotted as the ticket names them -
      * and its flights, from which its flat flight details are worked out. Any other voucher carries neither.
      */
     private void applyTrip(Booking booking, BookingDocument document, BookingDocumentCreateRequest request) {
+        if (request.getDocType() == com.voyra.crm.enums.BookingDocumentType.ANCILLARY) {
+            applyAncillary(booking, document, request);
+            return;
+        }
         if (booking.getType() != com.voyra.crm.enums.BookingType.FLIGHT
                 || request.getDocType() != com.voyra.crm.enums.BookingDocumentType.E_TICKET) {
             document.setTravellers(null);

@@ -288,6 +288,21 @@ class PlatformCancelRequestServiceTest {
     // ---- list, withdraw, files
 
     @Test
+    void theBoardingPassListLearnsWhoWasCancelledOnTheJourneyOfADay() {
+        String onwardOnly = raiseId(CancelReason.TRAVEL_PLAN_CANCELLED, List.of(1), List.of("d0"));
+        rows.get(onwardOnly).setStatus(CancelRequestStatus.COMPLETED);
+        loginAs("A9", UserType.AGENT);
+        assertThat(service.cancelledOn(ID, java.time.LocalDate.of(2026, 12, 1))).containsExactly(1);
+        assertThat(service.cancelledOn(ID, java.time.LocalDate.of(2026, 12, 5))).isEmpty();
+        assertThat(service.cancelledOn("someone-elses", java.time.LocalDate.of(2026, 12, 1))).isEmpty();
+
+        String everything = raiseId(CancelReason.TRAVEL_PLAN_CANCELLED, List.of(0), List.of());
+        rows.get(everything).setStatus(CancelRequestStatus.COMPLETED);
+        // a date that is no journey of the booking counts only what was cancelled on every journey
+        assertThat(service.cancelledOn(ID, java.time.LocalDate.of(2026, 12, 9))).containsExactly(0);
+    }
+
+    @Test
     void theCancellationsTabReadsAnyCrmBookingsRequestsInTheAgencyViewWithoutTheBookerRule() {
         String id = raiseId(CancelReason.TRAVEL_PLAN_CANCELLED, List.of(0), List.of());
         loginAs("A9", UserType.AGENT); // not the booker

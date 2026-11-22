@@ -94,6 +94,17 @@ class AirInvoicePdfRendererTest {
     }
 
     @Test
+    void anAncillaryPrintsAsOneAddOnRowWithItsAmountUnderOtherAndNoNewPassengerNumber() throws Exception {
+        InvoiceLineItem seat = InvoiceLineItem.builder().id("L2").bookingDocumentId("V2").description("Seat 12A (SR1) - Sheetal Singh")
+                .taxableValue(new BigDecimal("1250.00")).travellers(List.of(new VoucherTraveller("M2", "Sheetal Singh", PaxType.ADULT))).build();
+        String t = text(AirInvoicePdfRenderer.write(invoice(), List.of(ticket(), seat), gstOnMarkup(), agency(),
+                Map.of("V1", "LVBJAY", "V2", "SR1"), null, "Sandli"));
+
+        assertThat(t).contains("001 ABHISHEK KUMAR SINGH", "002 SHEETAL SINGH", "Seat 12A (SR1) - Sheetal Singh", "1250", "1250.00");
+        assertThat(t).doesNotContain("003 SHEETAL SINGH");
+    }
+
+    @Test
     void anInterStateInvoicePrintsIgstAndARupeeTicketNoForeignTotal() throws Exception {
         InvoiceLineItem rupees = ticket();
         rupees.setPurchaseCurrency("INR");

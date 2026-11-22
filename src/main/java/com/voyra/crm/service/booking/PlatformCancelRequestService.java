@@ -178,6 +178,21 @@ public class PlatformCancelRequestService {
                 .orElse(List.of());
     }
 
+    /**
+     * Positions, in the booking's passenger list, of the passengers a completed request cancelled on the journey that
+     * departs on {@code date}; empty when nothing was cancelled there or the booking is not this agency's.
+     */
+    public java.util.Set<Integer> cancelledOn(String platformBookingId, LocalDate date) {
+        String tenantId = SecurityContextUtil.getCurrentUserOrThrow().tenantId();
+        return bookingRepository.findByIdAndTenantId(platformBookingId, tenantId).map(b -> {
+            java.util.Set<String> cancelled = CancelParts.cancelled(requestRepository.findByPlatformBookingIdOrderByCreatedAtAsc(platformBookingId));
+            String key = CancelParts.sectors(b).stream().filter(x -> date.toString().equals(x.date()))
+                    .map(CancelParts.Sector::key).findFirst().orElse(CancelParts.ALL);
+            return java.util.stream.IntStream.range(0, passengers(b).size()).filter(i -> CancelParts.isCancelled(cancelled, i, key))
+                    .boxed().collect(Collectors.toSet());
+        }).orElse(java.util.Set.of());
+    }
+
     /** The agency takes back a request Voyra has not picked up yet; once picked up it is Voyra's to finish. */
     public CancelRequestResponse withdraw(String bookingId, String requestId) {
         CustomUserPrincipal p = bookingService.requireBooker();

@@ -56,6 +56,11 @@ public final class CancellationSpecifications {
         return (root, query, cb) -> followUp(root, query, cb, null, true, null, userId);
     }
 
+    /** No Voyra request of this agency is under way on the booking (open, being worked or completing). */
+    public static Specification<Booking> noActiveVoyraRequest(String tenantId) {
+        return (root, query, cb) -> cb.not(request(root, query, cb, tenantId, CancelRequestStatus.ACTIVE));
+    }
+
     private static Predicate cancelledShown(Root<Booking> root, CriteriaBuilder cb) {
         Predicate failCancelled = cb.and(cb.isNotNull(root.get("platformBookingId")),
                 cb.equal(root.get("cancelledBy"), SystemActor.USER_ID), cb.isNull(root.get("cancellationType")));

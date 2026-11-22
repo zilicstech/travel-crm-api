@@ -19,7 +19,7 @@ public final class VoucherDetails {
 
     private static final Map<BookingType, List<String>> KEYS = Map.of(
             BookingType.FLIGHT, List.of("airline", "flightNumber", "flightFrom", "flightTo", "journeyDate", "returnDate",
-                    "flightDepartTime", "flightArriveTime", "flightArriveDate", "flightCabin"),
+                    "flightDepartTime", "flightArriveTime", "flightArriveDate", "flightCabin", "ancillaryKind", "ancillaryDescription"),
             BookingType.HOTEL, List.of("hotelName", "hotelCity", "hotelCheckIn", "hotelCheckOut", "hotelRooms",
                     "hotelRoomType", "hotelBoardBasis"),
             BookingType.VISA, List.of("visaCountry", "journeyDate", "visaAppointmentDate", "visaAppliedDate", "visaIssuedDate"),

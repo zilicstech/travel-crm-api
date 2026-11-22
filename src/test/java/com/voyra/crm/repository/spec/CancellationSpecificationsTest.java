@@ -52,4 +52,10 @@ class CancellationSpecificationsTest {
         assertThat(rec.calls()).contains("equal(CancellationFollowUp.assignedAgentId, A1)", "equal(CancellationFollowUp.status, OPEN)");
         assertThat(rec.calls()).noneMatch(c -> c.equals("PlatformCancelRequest"));
     }
+
+    @Test
+    void noActiveVoyraRequestIsTheNegatedExists() {
+        assertThat(build(CancellationSpecifications.noActiveVoyraRequest("T1"))).isEqualTo("not(" + REQUEST + ")");
+        assertThat(rec.calls()).anyMatch(c -> c.startsWith("PlatformCancelRequest.status.in(") && c.contains("IN_PROGRESS"));
+    }
 }

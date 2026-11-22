@@ -366,6 +366,62 @@ class BookingDocumentServiceTest {
         verify(memberRepository, never()).findByMemberIdAndClientId(any(), any());
     }
 
+    private BookingDocumentCreateRequest ancillary(String kind, String... memberIds) {
+        BookingDocumentCreateRequest r = ticket(memberIds);
+        r.setDocType(BookingDocumentType.ANCILLARY);
+        r.setLegs(null);
+        java.util.Map<String, String> details = new java.util.HashMap<>();
+        if (kind != null) details.put("ancillaryKind", kind);
+        details.put("ancillaryDescription", "12A");
+        r.setDetails(details);
+        return r;
+    }
+
+    @Test
+    void anAncillaryNamesItsTravellersAndKindAndFliesNoSector() {
+        signIn();
+        when(bookingService.lockAccessibleBooking("F1")).thenReturn(flight);
+        when(memberRepository.findByMemberIdAndClientId("M1", "C1"))
+                .thenReturn(Optional.of(member("M1", "Abhishek Kumar Singh", java.time.LocalDate.of(1990, 1, 1))));
+        org.mockito.ArgumentCaptor<BookingDocument> saved = org.mockito.ArgumentCaptor.forClass(BookingDocument.class);
+
+        service.addDocument("F1", ancillary("SEAT", "M1", "M1"));
+
+        verify(bookingDocumentRepository).save(saved.capture());
+        BookingDocument d = saved.getValue();
+        assertThat(d.getTravellers()).extracting(com.voyra.crm.dto.VoucherTraveller::getName).containsExactly("Abhishek Kumar Singh");
+        assertThat(d.getTravellers().get(0).getPaxType()).isEqualTo(com.voyra.crm.enums.PaxType.UNKNOWN); // no travel date on the booking
+        assertThat(d.getLegs()).isNull();
+        assertThat(d.getDetails()).containsEntry("ancillaryKind", "SEAT").containsEntry("ancillaryDescription", "12A");
+    }
+
+    @Test
+    void anAncillaryNeedsAFlightBookingAKnownKindAndSomeoneItIsFor() {
+        signIn();
+        when(bookingService.lockAccessibleBooking("F1")).thenReturn(flight);
+        assertThatThrownBy(() -> service.addDocument("F1", ancillary("LOUNGE", "M1")))
+                .isInstanceOfSatisfying(com.voyra.crm.exception.FieldValidationException.class, e -> assertThat(e.getField()).isEqualTo("ancillaryKind"));
+        BookingDocumentCreateRequest none = ancillary("MEAL");
+        none.setDetails(null);
+        assertThatThrownBy(() -> service.addDocument("F1", none)).hasMessage("Pick seat, meal, extra baggage or other");
+        assertThatThrownBy(() -> service.addDocument("F1", ancillary(null))).hasMessage("Pick seat, meal, extra baggage or other");
+        assertThatThrownBy(() -> service.addDocument("F1", ancillary("MEAL"))).hasMessage("Pick who the add-on is for");
+        BookingDocumentCreateRequest nobody = ancillary("MEAL", " ");
+        nobody.setTravellers(new java.util.ArrayList<>(nobody.getTravellers()));
+        nobody.getTravellers().add(com.voyra.crm.dto.VoucherTraveller.builder().build());
+        assertThatThrownBy(() -> service.addDocument("F1", nobody)).hasMessage("Pick who the add-on is for");
+        BookingDocumentCreateRequest noList = ancillary("MEAL");
+        noList.setTravellers(null);
+        assertThatThrownBy(() -> service.addDocument("F1", noList)).hasMessage("Pick who the add-on is for");
+        when(memberRepository.findByMemberIdAndClientId("X9", "C1")).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> service.addDocument("F1", ancillary("BAGGAGE", "X9"))).hasMessage("That traveller isn't one of this client's members");
+
+        Booking hotel = flight.toBuilder().id("H1").type(com.voyra.crm.enums.BookingType.HOTEL).build();
+        when(bookingService.lockAccessibleBooking("H1")).thenReturn(hotel);
+        assertThatThrownBy(() -> service.addDocument("H1", ancillary("SEAT", "M1"))).hasMessage("Ancillaries go on a flight booking");
+        verify(bookingDocumentRepository, never()).save(any());
+    }
+
     @Test
     void aVoucherSetsItsFlightsTripTypeUntilTheBookingIsOnAnInvoice() {
         signIn();

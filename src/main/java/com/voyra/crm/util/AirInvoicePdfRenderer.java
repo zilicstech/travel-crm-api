@@ -142,6 +142,17 @@ public final class AirInvoicePdfRenderer {
             List<VoucherTraveller> travellers = line.getTravellers() != null ? line.getTravellers() : List.of();
             List<VoucherLeg> legs = line.getLegs() != null ? line.getLegs() : List.of();
             String reference = valueOr(references.get(line.getBookingDocumentId()));
+            if (legs.isEmpty() && !travellers.isEmpty()) {
+                // an add-on (seat, meal, baggage) names its travellers but flies no sector: one row, its amount under Other
+                table.addCell(cell(valueOr(line.getDescription()), body, false));
+                for (String blank : List.of("", "", "")) table.addCell(cell(blank, body, false));
+                table.addCell(cell(reference, body, false));
+                table.addCell(cell("", body, true));
+                table.addCell(cell("", body, true));
+                table.addCell(cell(amount(total), body, true));
+                table.addCell(cell(InvoicePdfRenderer.money(total), body, true));
+                continue;
+            }
             int rows = Math.max(1, Math.max(travellers.size(), legs.size()));
             for (int i = 0; i < rows; i++) {
                 String who = i < travellers.size() ? "%03d %s".formatted(++passenger, upper(travellers.get(i).getName()))

@@ -228,7 +228,9 @@ public class InvoiceLineSource {
         List<String> stops = d.getLegs() == null || d.getLegs().isEmpty() ? List.of()
                 : Stream.concat(Stream.of(d.getLegs().get(0).getFrom()), d.getLegs().stream().map(com.voyra.crm.dto.VoucherLeg::getTo))
                         .filter(c -> c != null && !c.isBlank()).toList();
-        String what = stops.size() > 2 ? String.join(" - ", stops)
+        String addOn = ANCILLARY_LABELS.get(x.getOrDefault("ancillaryKind", ""));
+        String what = addOn != null ? addOn + (x.get("ancillaryDescription") != null ? " " + x.get("ancillaryDescription") : "")
+                : stops.size() > 2 ? String.join(" - ", stops)
                 : x.get("flightFrom") != null && x.get("flightTo") != null ? x.get("flightFrom") + " to " + x.get("flightTo")
                 : x.getOrDefault("hotelName", x.getOrDefault("transferPickup", x.getOrDefault("visaCountry", "")));
         String when = x.getOrDefault("journeyDate", x.getOrDefault("hotelCheckIn", x.getOrDefault("transferDate", "")));
@@ -236,6 +238,8 @@ public class InvoiceLineSource {
         String ref = d.getReferenceNumber() == null || d.getReferenceNumber().isBlank() ? "" : "(" + d.getReferenceNumber().trim() + ")";
         return Stream.of(what, when, ref).filter(p -> !p.isBlank()).collect(Collectors.joining(" "));
     }
+
+    private static final Map<String, String> ANCILLARY_LABELS = Map.of("SEAT", "Seat", "MEAL", "Meal", "BAGGAGE", "Extra baggage", "OTHER", "Add-on");
 
     private static BigDecimal nz(BigDecimal v) {
         return v != null ? v : BigDecimal.ZERO;

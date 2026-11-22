@@ -329,5 +329,9 @@ class InvoiceLineSourceCoverageTest {
                 VoucherLeg.builder().from("BOM").to(" ").build(), VoucherLeg.builder().from("X").to(null).build())).build())).isEmpty();
         Map<String, String> flightToOnly = Map.of("flightTo", "DEL");
         assertThat(InvoiceLineSource.voucherLabel(BookingDocument.builder().details(flightToOnly).build())).isEmpty();
+        // an ancillary reads as its kind and description
+        assertThat(InvoiceLineSource.voucherLabel(BookingDocument.builder().details(Map.of("ancillaryKind", "SEAT", "ancillaryDescription", "12A"))
+                .referenceNumber("SR1").build())).isEqualTo("Seat 12A (SR1)");
+        assertThat(InvoiceLineSource.voucherLabel(BookingDocument.builder().details(Map.of("ancillaryKind", "BAGGAGE")).build())).isEqualTo("Extra baggage");
     }
 }
