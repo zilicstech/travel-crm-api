@@ -24,6 +24,8 @@ public interface PlatformCancelRequestRepository extends JpaRepository<PlatformC
 
     List<PlatformCancelRequest> findByPlatformBookingIdOrderByCreatedAtAsc(String platformBookingId);
 
+    List<PlatformCancelRequest> findByPlatformBookingIdInOrderByCreatedAtAsc(Collection<String> bookingIds);
+
     List<PlatformCancelRequest> findByPlatformBookingIdInAndStatusIn(Collection<String> bookingIds, Collection<CancelRequestStatus> statuses);
 
     boolean existsByPlatformBookingIdAndStatusIn(String platformBookingId, Collection<CancelRequestStatus> statuses);

@@ -167,6 +167,17 @@ public class PlatformCancelRequestService {
         return views(requestRepository.findByPlatformBookingIdOrderByCreatedAtAsc(bookingId), b);
     }
 
+    /**
+     * The agency-safe views of a CRM booking's Voyra requests, newest last, for screens that already checked the CRM
+     * booking's own scope (an agent who handles the service sees its status even when another user booked it).
+     */
+    public List<CancelRequestResponse> listForCrmBooking(String platformBookingId) {
+        String tenantId = SecurityContextUtil.getCurrentUserOrThrow().tenantId();
+        return bookingRepository.findByIdAndTenantId(platformBookingId, tenantId)
+                .map(b -> views(requestRepository.findByPlatformBookingIdOrderByCreatedAtAsc(platformBookingId), b))
+                .orElse(List.of());
+    }
+
     /** The agency takes back a request Voyra has not picked up yet; once picked up it is Voyra's to finish. */
     public CancelRequestResponse withdraw(String bookingId, String requestId) {
         CustomUserPrincipal p = bookingService.requireBooker();

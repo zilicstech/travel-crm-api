@@ -39,6 +39,7 @@ public class EscalationService {
     private final LeadFollowUpRepository leadFollowUpRepository;
     private final BookingRepository bookingRepository;
     private final ClientInvoiceRepository clientInvoiceRepository;
+    private final com.voyra.crm.repository.CancellationFollowUpRepository cancellationFollowUpRepository;
 
     @Transactional(readOnly = true)
     public List<EscalationResponse> list() {
@@ -86,6 +87,28 @@ public class EscalationService {
                     .title((ticketingPassed ? "Ticketing deadline passed: " : "Cancellation window closed: ") + b.getClientName())
                     .subtitle(b.getDestination() + (b.getDeadlineNote() != null ? " — " + b.getDeadlineNote() : ""))
                     .dueDate(ticketingPassed ? b.getTicketingDeadline() : b.getCancellationDeadline())
+                    .targetId(b.getId()).targetType("BOOKING")
+                    .build());
+        }
+
+        List<com.voyra.crm.entity.CancellationFollowUp> cancellationFollowUps = agentId != null
+                ? cancellationFollowUpRepository.findByAssignedAgentIdAndStatusAndDueDateLessThanOrderByDueDateAsc(agentId, FollowUpStatus.OPEN, today)
+                : cancellationFollowUpRepository.findByStatusAndDueDateLessThanOrderByDueDateAsc(FollowUpStatus.OPEN, today);
+        java.util.Map<String, Booking> cancellationBookings = new java.util.HashMap<>();
+        bookingRepository.findAllById(cancellationFollowUps.stream().map(com.voyra.crm.entity.CancellationFollowUp::getBookingId).distinct().toList())
+                .forEach(b -> cancellationBookings.put(b.getId(), b));
+        for (com.voyra.crm.entity.CancellationFollowUp f : cancellationFollowUps) {
+            Booking b = cancellationBookings.get(f.getBookingId());
+            boolean scheduled = f.getKind() == com.voyra.crm.enums.CancellationFollowUpKind.SCHEDULED_CANCEL;
+            // a scheduled cancellation of a booking already cancelled has happened (deleted bookings are gone too)
+            if (b == null || (scheduled && b.getBookingStatus() == BookingStatus.CANCELLED)) {
+                continue;
+            }
+            rows.add(EscalationResponse.builder()
+                    .type("CANCELLATION_FOLLOW_UP").severity("HIGH")
+                    .title((scheduled ? "Cancellation overdue: " : "Cancellation follow-up: ") + b.getClientName())
+                    .subtitle(f.getNote() != null ? f.getNote() : b.getDestination())
+                    .dueDate(f.getDueDate())
                     .targetId(b.getId()).targetType("BOOKING")
                     .build());
         }

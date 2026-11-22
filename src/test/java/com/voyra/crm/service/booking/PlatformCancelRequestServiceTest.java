@@ -288,6 +288,14 @@ class PlatformCancelRequestServiceTest {
     // ---- list, withdraw, files
 
     @Test
+    void theCancellationsTabReadsAnyCrmBookingsRequestsInTheAgencyViewWithoutTheBookerRule() {
+        String id = raiseId(CancelReason.TRAVEL_PLAN_CANCELLED, List.of(0), List.of());
+        loginAs("A9", UserType.AGENT); // not the booker
+        assertThat(service.listForCrmBooking(ID)).extracting(CancelRequestResponse::id).containsExactly(id);
+        assertThat(service.listForCrmBooking("someone-elses")).isEmpty();
+    }
+
+    @Test
     void theAgencyListsItsRequestsAndWithdrawsOneVoyraHasNotPickedUp() {
         String id = raiseId(CancelReason.TRAVEL_PLAN_CANCELLED, List.of(0), List.of());
         assertThat(service.list(ID)).extracting(CancelRequestResponse::id).containsExactly(id);

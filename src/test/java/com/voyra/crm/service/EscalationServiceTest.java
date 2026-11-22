@@ -30,6 +30,7 @@ import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -41,6 +42,7 @@ class EscalationServiceTest {
     @Mock private LeadFollowUpRepository leadFollowUpRepository;
     @Mock private BookingRepository bookingRepository;
     @Mock private ClientInvoiceRepository clientInvoiceRepository;
+    @Mock private com.voyra.crm.repository.CancellationFollowUpRepository cancellationFollowUpRepository;
     @InjectMocks private EscalationService service;
 
     private static final Set<BookingStatus> EXCLUDED = Set.of(BookingStatus.CANCELLED, BookingStatus.COMPLETED);
@@ -137,5 +139,42 @@ class EscalationServiceTest {
         List<EscalationResponse> rows = service.list();
 
         assertThat(rows).extracting(EscalationResponse::getTargetId).containsExactly("L1", "I1");
+    }
+
+    @Test
+    void overdueCancellationFollowUpsAreHighAndScheduledOnesOfCancelledBookingsAreLeftOut() {
+        as("O1", UserType.AGENCY_OWNER);
+        var scheduled = com.voyra.crm.entity.CancellationFollowUp.builder().bookingId("B1").kind(com.voyra.crm.enums.CancellationFollowUpKind.SCHEDULED_CANCEL)
+                .dueDate(today.minusDays(1)).build();
+        var followUp = com.voyra.crm.entity.CancellationFollowUp.builder().bookingId("B2").kind(com.voyra.crm.enums.CancellationFollowUpKind.FOLLOW_UP)
+                .dueDate(today.minusDays(2)).note("Chase the refund").build();
+        var done = com.voyra.crm.entity.CancellationFollowUp.builder().bookingId("B3").kind(com.voyra.crm.enums.CancellationFollowUpKind.SCHEDULED_CANCEL)
+                .dueDate(today.minusDays(3)).build();
+        var gone = com.voyra.crm.entity.CancellationFollowUp.builder().bookingId("B4").kind(com.voyra.crm.enums.CancellationFollowUpKind.FOLLOW_UP)
+                .dueDate(today.minusDays(3)).build();
+        when(cancellationFollowUpRepository.findByStatusAndDueDateLessThanOrderByDueDateAsc(FollowUpStatus.OPEN, today))
+                .thenReturn(List.of(done, gone, followUp, scheduled));
+        when(bookingRepository.findAllById(List.of("B3", "B4", "B2", "B1"))).thenReturn(List.of(
+                Booking.builder().id("B1").clientName("Client A").destination("Goa").bookingStatus(BookingStatus.CONFIRMED).build(),
+                Booking.builder().id("B2").clientName("Client B").destination("Bali").bookingStatus(BookingStatus.CANCELLED).build(),
+                Booking.builder().id("B3").clientName("Client C").bookingStatus(BookingStatus.CANCELLED).build()));
+
+        List<EscalationResponse> rows = service.list();
+
+        assertThat(rows).extracting(EscalationResponse::getTitle)
+                .containsExactly("Cancellation follow-up: Client B", "Cancellation overdue: Client A");
+        assertThat(rows.get(0).getSubtitle()).isEqualTo("Chase the refund");
+        assertThat(rows.get(1).getSubtitle()).isEqualTo("Goa");
+        assertThat(rows.get(1).getType()).isEqualTo("CANCELLATION_FOLLOW_UP");
+        assertThat(rows.get(1).getSeverity()).isEqualTo("HIGH");
+        assertThat(rows.get(1).getTargetType()).isEqualTo("BOOKING");
+        assertThat(rows.get(1).getTargetId()).isEqualTo("B1");
+    }
+
+    @Test
+    void anAgentSeesOnlyTheCancellationFollowUpsGivenToThem() {
+        as("A1", UserType.AGENT);
+        service.list();
+        verify(cancellationFollowUpRepository).findByAssignedAgentIdAndStatusAndDueDateLessThanOrderByDueDateAsc("A1", FollowUpStatus.OPEN, today);
     }
 }

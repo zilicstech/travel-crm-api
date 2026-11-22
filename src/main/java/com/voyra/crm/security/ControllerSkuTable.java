@@ -30,6 +30,7 @@ import com.voyra.crm.controller.FeedbackController;
 import com.voyra.crm.controller.FinancialStatementsController;
 import com.voyra.crm.controller.FlightSearchController;
 import com.voyra.crm.controller.FollowUpBoardController;
+import com.voyra.crm.controller.CancellationController;
 import com.voyra.crm.controller.GeneralLedgerController;
 import com.voyra.crm.controller.HotelSearchController;
 import com.voyra.crm.controller.InvoiceController;
@@ -156,6 +157,7 @@ public final class ControllerSkuTable {
             entry(CommunicationLogController.class, CRM_CORE),
             entry(FeedbackController.class, CRM_CORE),
             entry(BookingController.class, CRM_CORE),
+            entry(CancellationController.class, CRM_CORE),
             entry(BookingDocumentController.class, CRM_CORE),
             entry(BookingLifecycleController.class, CRM_CORE),
             entry(VendorController.class, CRM_CORE),
