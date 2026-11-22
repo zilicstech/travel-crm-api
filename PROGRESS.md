@@ -636,3 +636,36 @@ Tests: `MiscellaneousServiceTypeTest`, `ServiceInstanceServiceCoverageTest` (vis
 `LeadServiceProposalAccessTest` (visa duration), `BookingServiceCoverageTest#issueDetailsAreRecordedOnlyOnceIssued...`,
 `BookingControllerAccountantAuthTest#issueDetails...`, `BookingSpecificationsTest`, `InvoiceServiceCategoryTest`; e2e
 `e2e/crm-improvements.spec.ts`.
+
+## Client round 2026-11-22 (owner rulings): cancellations, boarding passes, vendor balance, visa date
+
+Design: `docs/superpowers/specs/2026-11-22-client-round-design.md`. Tenant migrations `V4__cancellation_follow_ups.sql` and
+`V5__boarding_passes.sql` (new tables only). Visa PAN and per-country checklists (step 5 of the design) are not in this
+release.
+
+- **Visa Open Case.** No application date is asked; the server stamps it (`VisaService`, `@PrePersist`) and
+  `VisaResponse.createdAt` (from `Visa.createdDate`) shows when the case was opened.
+- **Vendor balance.** Frontend only: the vendors list reads `GET /api/accounts/payables/ledger/vendors` on plans with
+  ACCOUNTS_GST and shows the credit limit (red, with what is used) and the advance held (green); without it only the limit.
+- **Cancellations tab.** `cancellation_follow_up` (SCHEDULED_CANCEL | FOLLOW_UP, due date, note, assignee, OPEN/DONE, never
+  deleted) and `booking_activity` (what people did on a booking, readable by everyone who may open it). `/api/cancellations`
+  (CRM_CORE; owner and agent write, accountant reads) lists, in the caller's `accessibleToAgent` scope, bookings that are
+  cancelled (not fail-cancelled Voyra mirrors), have a Voyra cancel request (public table via the search path, narrowed to
+  the tenant) or have a follow-up, as OPEN / DUE / ALL pages built in SQL (`CancellationSpecifications`). The status is
+  worked out by `CancellationStatusRules` in the client's wording: Cancellation pending, Follow-up required (a scheduled
+  cancellation due today or past), Cancellation requested / in progress / failed, Withdrawn, Partly cancelled, Refund
+  pending, Refund processed, Cancelled successfully, Kept (not cancelled). Follow-ups: `POST /api/cancellations/{bookingId}/follow-ups`
+  (`dueDate` or `inDays` 1-30; a scheduled cancellation needs a live booking with no request under way, a follow-up needs a
+  cancellation to follow), `PATCH .../{id}` (move, reassign, note), `PATCH .../{id}/done`. Overdue ones join
+  `EscalationService` as `CANCELLATION_FOLLOW_UP`. The DUE view sorts in memory (shortcut noted in the code).
+- **Boarding passes.** `boarding_pass` (one row per booking and travel date once someone acts: GENERATED with an optional
+  proof file, or NOT_NEEDED with an optional reason; no row = still to do). `/api/boarding-passes` (CRM_CORE; owner and
+  agent): CONFIRMED flights (CONFIRMED or COMPLETED for a past day) travelling on a day, tomorrow in India by default, by
+  the booking's own dates or an E_TICKET voucher's `details.journeyDate/returnDate`; bookings with a Voyra request under way
+  are left out and passengers a completed request cancelled on that journey are left off (`PlatformCancelRequestService.cancelledOn`).
+  Mark (multipart), undo (`DELETE`, file deleted after commit), `GET /{id}/file` (attachment, no-store); every action is
+  in the booking activity.
+- **Ancillary vouchers.** `BookingDocumentType.ANCILLARY` on FLIGHT bookings only: `details.ancillaryKind` (SEAT, MEAL,
+  BAGGAGE, OTHER) and `ancillaryDescription`, travellers ticked from the client's members, no legs; priced, billed and
+  supplier-billed like any voucher. Its invoice line reads "Seat 12A (ref) - name"; the air invoice prints a line with
+  travellers but no legs as one add-on row, amount under Other.
