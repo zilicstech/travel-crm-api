@@ -81,4 +81,8 @@ public class VisaResponse {
 
     @Schema(example = "2026-08-15")
     private LocalDate applicationDate;
+
+    /** When the case was opened (agency time); shown as the case's opening date and time. */
+    @Schema(example = "2026-08-15T10:30:00")
+    private java.time.LocalDateTime createdAt;
 }

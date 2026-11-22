@@ -209,6 +209,7 @@ public class VisaService {
                 .rejected(v.getRejected()).passportReturned(v.getPassportReturned())
                 .visaValidity(v.getVisaValidity()).expiryDate(v.getExpiryDate())
                 .applicationDate(v.getApplicationDate())
+                .createdAt(v.getCreatedDate())
                 .build();
     }
 }
