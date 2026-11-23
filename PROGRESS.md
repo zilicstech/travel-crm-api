@@ -669,3 +669,6 @@ release.
   BAGGAGE, OTHER) and `ancillaryDescription`, travellers ticked from the client's members, no legs; priced, billed and
   supplier-billed like any voucher. Its invoice line reads "Seat 12A (ref) - name"; the air invoice prints a line with
   travellers but no legs as one add-on row, amount under Other.
+- **Visa case owner (2026-11-23).** `POST /api/visas` no longer takes an agent from the owner: an owner's case is the
+  owner's (agent id = agency id, name = owner name, kept in line by `OwnerNameSyncService`), an agent's case their own
+  (still only an agent who handles visas). `VisaCreateRequest.agentId` is ignored, kept for old clients.

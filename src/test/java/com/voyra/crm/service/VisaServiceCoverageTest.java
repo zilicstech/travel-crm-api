@@ -14,6 +14,8 @@ import com.voyra.crm.enums.UserType;
 import com.voyra.crm.enums.VisaStatus;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.ClientRepository;
+import com.voyra.crm.repository.TenantRepository;
+import com.voyra.crm.entity.Tenant;
 import com.voyra.crm.repository.VisaRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import org.junit.jupiter.api.AfterEach;
@@ -48,6 +50,7 @@ class VisaServiceCoverageTest {
     @Mock VisaRepository visaRepository;
     @Mock ClientRepository clientRepository;
     @Mock AgentRepository agentRepository;
+    @Mock TenantRepository tenantRepository;
     @Mock AuditService auditService;
     @InjectMocks VisaService service;
 
@@ -101,9 +104,9 @@ class VisaServiceCoverageTest {
     }
 
     @Test
-    void anOwnerOpensACaseForAVisaAgentWithTheGivenDate() {
-        signInAs("O1", UserType.AGENCY_OWNER);
-        when(agentRepository.findByIdAndTenantId("A1", "T1")).thenReturn(Optional.of(visaAgent("A1")));
+    void anOwnerOpensACaseInTheirOwnNameIgnoringAnyAgentWithTheGivenDate() {
+        signInAs("T1", UserType.AGENCY_OWNER);
+        when(tenantRepository.findById("T1")).thenReturn(Optional.of(Tenant.builder().id("T1").ownerName("Dana").build()));
         when(clientRepository.findById("C1")).thenReturn(Optional.of(Client.builder().id("C1").name("Asha").build()));
         when(visaRepository.existsById(anyString())).thenReturn(false);
         VisaCreateRequest req = request("A1");
@@ -111,18 +114,30 @@ class VisaServiceCoverageTest {
 
         VisaResponse res = service.createVisa(req);
 
-        assertThat(res.getAgentId()).isEqualTo("A1");
+        assertThat(res.getAgentId()).isEqualTo("T1");
+        assertThat(res.getAgentName()).isEqualTo("Dana");
         assertThat(res.getApplicationDate()).isEqualTo(LocalDate.of(2026, 9, 1));
+        verifyNoInteractions(agentRepository);
     }
 
     @Test
     void createRefusesAnUnknownClient() {
-        signInAs("O1", UserType.AGENCY_OWNER);
-        when(agentRepository.findByIdAndTenantId("A1", "T1")).thenReturn(Optional.of(visaAgent("A1")));
+        signInAs("T1", UserType.AGENCY_OWNER);
+        when(tenantRepository.findById("T1")).thenReturn(Optional.of(Tenant.builder().id("T1").ownerName("Dana").build()));
         when(clientRepository.findById("C1")).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.createVisa(request("A1"))).isInstanceOf(IllegalArgumentException.class)
+        assertThatThrownBy(() -> service.createVisa(request(null))).isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Client not found: C1");
+        verifyNoInteractions(visaRepository);
+    }
+
+    @Test
+    void anOwnerWithoutAnAgencyRowIsAnError() {
+        signInAs("T1", UserType.AGENCY_OWNER);
+        when(tenantRepository.findById("T1")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.createVisa(request(null))).isInstanceOf(IllegalStateException.class)
+                .hasMessage("Agency not found: T1");
         verifyNoInteractions(visaRepository);
     }
 
@@ -141,26 +156,6 @@ class VisaServiceCoverageTest {
         when(agentRepository.findById("A1")).thenReturn(Optional.of(Agent.builder().id("A1").name("Priya").manageableServices(null).build()));
 
         assertThatThrownBy(() -> service.createVisa(request(null))).isInstanceOf(AccessDeniedException.class);
-        verifyNoInteractions(visaRepository);
-    }
-
-    @Test
-    void anOwnerMustNameTheAgent() {
-        signInAs("O1", UserType.AGENCY_OWNER);
-
-        assertThatThrownBy(() -> service.createVisa(request(null))).hasMessage("agentId is required when an Owner creates a visa case");
-        assertThatThrownBy(() -> service.createVisa(request("  "))).hasMessage("agentId is required when an Owner creates a visa case");
-        verifyNoInteractions(agentRepository, visaRepository);
-    }
-
-    @Test
-    void anOwnerCannotPickAnAgentOfAnotherAgencyOrOneWithNoServices() {
-        signInAs("O1", UserType.AGENCY_OWNER);
-        when(agentRepository.findByIdAndTenantId("AX", "T1")).thenReturn(Optional.empty());
-        when(agentRepository.findByIdAndTenantId("A2", "T1")).thenReturn(Optional.of(Agent.builder().id("A2").name("Ravi").manageableServices(null).build()));
-
-        assertThatThrownBy(() -> service.createVisa(request("AX"))).hasMessage("Agent not found in this agency: AX");
-        assertThatThrownBy(() -> service.createVisa(request("A2"))).hasMessage("Ravi doesn't handle visas - pick an agent who does");
         verifyNoInteractions(visaRepository);
     }
 

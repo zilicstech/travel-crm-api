@@ -8,12 +8,14 @@ import com.voyra.crm.dto.VisaDashboardSummaryResponse;
 import com.voyra.crm.dto.VisaResponse;
 import com.voyra.crm.entity.Agent;
 import com.voyra.crm.entity.Client;
+import com.voyra.crm.entity.Tenant;
 import com.voyra.crm.entity.Visa;
 import com.voyra.crm.enums.AuditEntityType;
 import com.voyra.crm.enums.ServiceType;
 import com.voyra.crm.enums.VisaStatus;
 import com.voyra.crm.repository.AgentRepository;
 import com.voyra.crm.repository.ClientRepository;
+import com.voyra.crm.repository.TenantRepository;
 import com.voyra.crm.repository.VisaRepository;
 import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.security.SecurityContextUtil;
@@ -47,11 +49,12 @@ public class VisaService {
     private final VisaRepository visaRepository;
     private final ClientRepository clientRepository;
     private final AgentRepository agentRepository;
+    private final TenantRepository tenantRepository;
     private final AuditService auditService;
 
     @Transactional
     public VisaResponse createVisa(VisaCreateRequest request) {
-        AuthorResolver.AuthorInfo owner = resolveOwningAgent(request.getAgentId());
+        AuthorResolver.AuthorInfo owner = resolveOwningAgent();
         Client client = clientRepository.findById(request.getClientId())
                 .orElseThrow(() -> new IllegalArgumentException("Client not found: " + request.getClientId()));
 
@@ -166,7 +169,7 @@ public class VisaService {
                 .build();
     }
 
-    private AuthorResolver.AuthorInfo resolveOwningAgent(String requestedAgentId) {
+    private AuthorResolver.AuthorInfo resolveOwningAgent() {
         CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
         if (principal.isAgent()) {
             Agent agent = agentRepository.findById(principal.userId())
@@ -176,15 +179,10 @@ public class VisaService {
             }
             return new AuthorResolver.AuthorInfo(agent.getId(), agent.getName());
         }
-        if (requestedAgentId == null || requestedAgentId.isBlank()) {
-            throw new IllegalArgumentException("agentId is required when an Owner creates a visa case");
-        }
-        Agent agent = agentRepository.findByIdAndTenantId(requestedAgentId, principal.tenantId())
-                .orElseThrow(() -> new IllegalArgumentException("Agent not found in this agency: " + requestedAgentId));
-        if (agent.getManageableServices() == null || !agent.getManageableServices().contains(ServiceType.VISA)) {
-            throw new IllegalArgumentException(agent.getName() + " doesn't handle visas - pick an agent who does");
-        }
-        return new AuthorResolver.AuthorInfo(agent.getId(), agent.getName());
+        // Owner: the case is theirs, as with bookings; any requested agent is ignored.
+        Tenant tenant = tenantRepository.findById(principal.tenantId())
+                .orElseThrow(() -> new IllegalStateException("Agency not found: " + principal.tenantId()));
+        return new AuthorResolver.AuthorInfo(tenant.getId(), tenant.getOwnerName());
     }
 
     private Visa findAccessibleVisa(String id) {

@@ -15,7 +15,7 @@ public class VisaCreateRequest {
     @Schema(example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
     private String clientId;
 
-    @Schema(description = "Owner-only: attribute the case to a specific agent. Ignored for the AGENT role (always self).", example = "CB9Y0N")
+    @Schema(description = "Ignored (kept for old clients): an owner opens the case in their own name, an agent in theirs.", example = "CB9Y0N")
     private String agentId;
 
     @Schema(description = "Optional traceability link back to the originating lead", example = "f47ac10b-58cc-4372-a567-0e02b2c3d479")
