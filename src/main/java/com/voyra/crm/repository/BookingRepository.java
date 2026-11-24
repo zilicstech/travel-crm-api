@@ -50,7 +50,8 @@ public interface BookingRepository extends JpaRepository<Booking, String>, JpaSp
     @Query(value = "select 1 from (select pg_advisory_xact_lock(hashtext(:id))) l", nativeQuery = true)
     int lockPlatformBooking(@Param("id") String platformBookingId);
 
-    boolean existsByIdAndPlatformBookingIdIsNotNull(String id);
+    /** A Voyra booking whose supplier (Voyra Platform) is {@code vendorId}: the bill, payment or note is Voyra's own. */
+    boolean existsByIdAndPlatformBookingIdIsNotNullAndVendorId(String id, String vendorId);
 
     /** Drives the auto-BOOKED/back-to-CONFIRMED transition: zero means nothing live remains. */
     long countByServiceIdAndBookingStatusNot(String serviceId, BookingStatus excludedStatus);

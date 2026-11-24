@@ -82,7 +82,7 @@ public class SupplierPaymentService {
                 throw new IllegalArgumentException("This bill does not belong to the selected vendor");
             }
             SupplierInvoiceLifecyclePolicy.assertPayable(invoice.getStatus());
-            assertNotPlatformManaged(invoice.getBookingId());
+            assertNotPlatformManaged(invoice.getBookingId(), invoice.getVendorId());
             assertWithinBalanceDue(invoice, request.getAmount());
         }
 
@@ -229,7 +229,7 @@ public class SupplierPaymentService {
     public SupplierPaymentResponse applyAdvance(String supplierInvoiceId, SupplierAdvanceApplyRequest request) {
         SupplierInvoice invoice = lockInvoice(supplierInvoiceId);
         SupplierInvoiceLifecyclePolicy.assertPayable(invoice.getStatus());
-        assertNotPlatformManaged(invoice.getBookingId());
+        assertNotPlatformManaged(invoice.getBookingId(), invoice.getVendorId());
 
         SupplierPayment advance = supplierPaymentRepository.findById(request.getAdvancePaymentId())
                 .orElseThrow(() -> new IllegalArgumentException("Advance payment not found: " + request.getAdvancePaymentId()));
@@ -292,7 +292,7 @@ public class SupplierPaymentService {
         if (original.getReversedAt() != null) {
             throw new IllegalStateException("This payment has already been reversed");
         }
-        assertNotPlatformManaged(original.getBookingId());
+        assertNotPlatformManaged(original.getBookingId(), original.getVendorId());
 
         if (Boolean.TRUE.equals(original.getIsAdvance())) {
             // An advance taken back can't stay spent on bills: undo what was applied from it, reopening those bills.
@@ -576,8 +576,10 @@ public class SupplierPaymentService {
     }
 
     /** The bills and payments of a platform booking's CRM mirror are the platform's (409 for anyone else). */
-    private void assertNotPlatformManaged(String bookingId) {
-        com.voyra.crm.util.PlatformManaged.check(bookingId != null && bookingRepository.existsByIdAndPlatformBookingIdIsNotNull(bookingId));
+    /** Voyra's own bill on a Voyra booking moves only through Voyra; an extra voucher's bill there is the agency's (2026-11-25). */
+    private void assertNotPlatformManaged(String bookingId, String vendorId) {
+        com.voyra.crm.util.PlatformManaged.check(bookingId != null
+                && bookingRepository.existsByIdAndPlatformBookingIdIsNotNullAndVendorId(bookingId, vendorId));
     }
 
     private Vendor findVendor(String vendorId) {

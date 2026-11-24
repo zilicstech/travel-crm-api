@@ -441,6 +441,23 @@ class BookingDocumentServiceTest {
                 .isInstanceOf(IllegalStateException.class).hasMessage("This booking is already on an invoice as International - its trip type can't change");
     }
 
+    /** A Voyra booking's Domestic / International is its ticket's: an extra voucher's answer is ignored. */
+    @Test
+    void anExtraOnAVoyraFlightLeavesItsTripType() {
+        signIn();
+        Booking voyra = flight.toBuilder().platformBookingId("PB1").bookingStatus(com.voyra.crm.enums.BookingStatus.CONFIRMED)
+                .internationalTrip(false).build();
+        when(bookingService.lockForVoucher("F1")).thenReturn(voyra);
+        when(memberRepository.findByMemberIdAndClientId("M1", "C1")).thenReturn(Optional.of(member("M1", "Abhishek Kumar Singh", null)));
+        BookingDocumentCreateRequest seat = ancillary("SEAT", "M1");
+        seat.setInternationalTrip(true);
+
+        service.addDocument("F1", seat);
+
+        assertThat(voyra.getInternationalTrip()).isFalse();
+        verify(invoiceLineSource, never()).draftOf(any());
+    }
+
     /** The ticket on a platform mirror is the platform's: no file swapped in from the CRM. */
     @org.junit.jupiter.api.Test
     void crmEditOfAMirrorIs409() {

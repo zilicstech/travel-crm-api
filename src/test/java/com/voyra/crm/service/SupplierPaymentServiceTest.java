@@ -502,7 +502,8 @@ class SupplierPaymentServiceTest {
         SupplierInvoice invoice = approvedBill(new BigDecimal("5400.00"));
         invoice.setBookingId("B1");
         when(supplierInvoiceRepository.findByIdForUpdate("SI1")).thenReturn(Optional.of(invoice));
-        when(bookingRepository.existsByIdAndPlatformBookingIdIsNotNull("B1")).thenReturn(true);
+        // only Voyra's own bill is locked: the guard asks for the booking with this bill's supplier
+        when(bookingRepository.existsByIdAndPlatformBookingIdIsNotNullAndVendorId("B1", invoice.getVendorId())).thenReturn(true);
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> supplierPaymentService.pay(request("SI1", new BigDecimal("100.00"))))
                 .isInstanceOf(com.voyra.crm.exception.BookingConflictException.class)

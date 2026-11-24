@@ -257,7 +257,7 @@ class SupplierCreditNoteServiceTest {
         when(supplierCreditNoteRepository.findById("CN1")).thenReturn(Optional.of(note));
         when(supplierInvoiceRepository.findById("SI1")).thenReturn(Optional.of(invoice));
         when(supplierPaymentRepository.save(org.mockito.ArgumentMatchers.any())).thenAnswer(inv -> inv.getArgument(0));
-        when(bookingRepository.existsByIdAndPlatformBookingIdIsNotNull("B1")).thenReturn(true);
+        when(bookingRepository.existsByIdAndPlatformBookingIdIsNotNullAndVendorId(org.mockito.ArgumentMatchers.eq("B1"), org.mockito.ArgumentMatchers.any())).thenReturn(true);
         when(ledgerAccountResolver.voyraWalletCode()).thenReturn("1310");
         com.voyra.crm.dto.SupplierCreditNoteRefundRequest req = new com.voyra.crm.dto.SupplierCreditNoteRefundRequest();
         req.setAmount(new BigDecimal("4000.00"));

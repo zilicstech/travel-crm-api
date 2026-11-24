@@ -195,7 +195,7 @@ class SupplierPaymentServiceCoverageTest {
         b.setBalanceDue(null);
         b.setBookingId("B1");
         when(supplierInvoiceRepository.findByIdForUpdate("SI1")).thenReturn(Optional.of(b));
-        when(bookingRepository.existsByIdAndPlatformBookingIdIsNotNull("B1")).thenReturn(false);
+        when(bookingRepository.existsByIdAndPlatformBookingIdIsNotNullAndVendorId(org.mockito.ArgumentMatchers.eq("B1"), org.mockito.ArgumentMatchers.any())).thenReturn(false);
 
         SupplierPaymentResponse out = service.pay(req("SI1", "0.00"));
 

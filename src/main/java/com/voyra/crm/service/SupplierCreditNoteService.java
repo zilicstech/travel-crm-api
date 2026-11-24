@@ -64,7 +64,7 @@ public class SupplierCreditNoteService {
     @Transactional
     public SupplierCreditNoteResponse record(SupplierCreditNoteRequest request) {
         SupplierInvoice invoice = findInvoice(request.getSupplierInvoiceId());
-        assertNotPlatformManaged(invoice.getBookingId());
+        assertNotPlatformManaged(invoice.getBookingId(), invoice.getVendorId());
         if (invoice.getStatus() != SupplierInvoiceStatus.APPROVED && invoice.getStatus() != SupplierInvoiceStatus.PARTIALLY_PAID
                 && invoice.getStatus() != SupplierInvoiceStatus.PAID) {
             throw new IllegalStateException("Only an approved bill can carry a credit note");
@@ -139,7 +139,7 @@ public class SupplierCreditNoteService {
     @Transactional
     public SupplierCreditNoteResponse cancel(String id, String reason) {
         SupplierCreditNote note = findById(id);
-        assertNotPlatformManaged(note.getBookingId());
+        assertNotPlatformManaged(note.getBookingId(), note.getVendorId());
         if (note.getStatus() == SupplierCreditNoteStatus.CANCELLED) {
             throw new IllegalStateException("This credit note is already cancelled");
         }
@@ -191,7 +191,7 @@ public class SupplierCreditNoteService {
     public SupplierCreditNoteResponse receiveRefund(String id, SupplierCreditNoteRefundRequest request, boolean toWallet) {
         com.voyra.crm.util.PlatformManaged.checkPaymentMode(request.getPaymentMode());
         SupplierCreditNote note = findById(id);
-        assertNotPlatformManaged(note.getBookingId());
+        assertNotPlatformManaged(note.getBookingId(), note.getVendorId());
         if (note.getStatus() != SupplierCreditNoteStatus.RECORDED) {
             throw new IllegalStateException("Only a recorded credit note can be refunded");
         }
@@ -341,8 +341,10 @@ public class SupplierCreditNoteService {
     }
 
     /** The supplier side of a platform booking's CRM mirror is the platform's (409 for anyone else). */
-    private void assertNotPlatformManaged(String bookingId) {
-        com.voyra.crm.util.PlatformManaged.check(bookingId != null && bookingRepository.existsByIdAndPlatformBookingIdIsNotNull(bookingId));
+    /** Voyra's own bill on a Voyra booking moves only through Voyra; an extra voucher's bill there is the agency's (2026-11-25). */
+    private void assertNotPlatformManaged(String bookingId, String vendorId) {
+        com.voyra.crm.util.PlatformManaged.check(bookingId != null
+                && bookingRepository.existsByIdAndPlatformBookingIdIsNotNullAndVendorId(bookingId, vendorId));
     }
 
     private SupplierInvoice findInvoice(String id) {

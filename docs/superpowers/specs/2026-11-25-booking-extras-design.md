@@ -7,9 +7,9 @@ designed separately.
 
 - New `AgencySettingKind.MISC_CATEGORY` (no service type), managed in Settings > "Miscellaneous sub-categories" like
   the lead sources (add, rename, switch off, delete). Nothing seeded.
-- Tenant `V7__booking_extras.sql`: `lead_service.misc_category` and `booking.misc_category`, varchar(60), nullable.
+- Tenant `V7__booking_extras.sql`: `lead_service.misc_category` and `booking.misc_category`, varchar(150) (a setting name's own limit), nullable.
 - Stored as plain text (not a setting id), so renaming or deleting an option never rewrites old records; the server
-  checks only the length (1-60, trimmed, blank = none) and keeps it only on Miscellaneous services and bookings.
+  checks only the length (at most 150, trimmed, blank = none) and keeps it only on Miscellaneous services and bookings.
 - Picked on a lead's Miscellaneous service (Service details) and on New Booking for a Miscellaneous booking; copied
   from the service to the booking Log Booking writes. A value no longer in Settings stays shown and selectable on the
   record that has it.

@@ -310,7 +310,8 @@ public class BookingDocumentService {
      * holds still once the booking is on a draft or issued invoice.
      */
     private void applyTripType(Booking booking, Boolean international) {
-        if (international == null || booking.getType() != com.voyra.crm.enums.BookingType.FLIGHT
+        // a Voyra booking's trip type is Voyra's ticket's: an extra voucher never moves it
+        if (international == null || booking.getType() != com.voyra.crm.enums.BookingType.FLIGHT || booking.getPlatformBookingId() != null
                 || international.equals(Boolean.TRUE.equals(booking.getInternationalTrip()))) {
             return;
         }

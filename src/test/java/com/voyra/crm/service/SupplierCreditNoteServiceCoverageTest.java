@@ -126,7 +126,7 @@ class SupplierCreditNoteServiceCoverageTest {
         SupplierInvoice mirrored = bill(SupplierInvoiceStatus.APPROVED);
         mirrored.setBookingId("B1");
         when(supplierInvoiceRepository.findById("SI1")).thenReturn(Optional.of(mirrored));
-        when(bookingRepository.existsByIdAndPlatformBookingIdIsNotNull("B1")).thenReturn(true);
+        when(bookingRepository.existsByIdAndPlatformBookingIdIsNotNullAndVendorId(org.mockito.ArgumentMatchers.eq("B1"), org.mockito.ArgumentMatchers.any())).thenReturn(true);
 
         assertThatThrownBy(() -> service.record(req(null, "10"))).isInstanceOf(BookingConflictException.class);
     }
@@ -230,7 +230,7 @@ class SupplierCreditNoteServiceCoverageTest {
         SupplierInvoice ownBooking = bill(SupplierInvoiceStatus.APPROVED);
         ownBooking.setBookingId("B1");
         when(supplierInvoiceRepository.findById("SI1")).thenReturn(Optional.of(ownBooking));
-        when(bookingRepository.existsByIdAndPlatformBookingIdIsNotNull("B1")).thenReturn(false);
+        when(bookingRepository.existsByIdAndPlatformBookingIdIsNotNullAndVendorId(org.mockito.ArgumentMatchers.eq("B1"), org.mockito.ArgumentMatchers.any())).thenReturn(false);
         when(journalEntryRepository.findBySourceTypeAndSourceIdAndPurpose(JournalSourceType.SUPPLIER_INVOICE, "SI1", JournalPurpose.SUPPLIER_BILL_BOOKED))
                 .thenReturn(Optional.empty());
 
