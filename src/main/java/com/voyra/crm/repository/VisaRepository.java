@@ -33,4 +33,10 @@ public interface VisaRepository extends JpaRepository<Visa, String> {
     @Modifying
     @Query("UPDATE Visa v SET v.clientName = :name WHERE v.clientId = :clientId")
     void updateClientNameForClient(@Param("clientId") String clientId, @Param("name") String name);
+
+    /** A renamed Dropdown option: every application holding the old option now holds the new one (field id and values bound, never spliced into SQL). */
+    @Modifying
+    @Query(value = "UPDATE visa SET field_values = jsonb_set(field_values, ARRAY[CAST(:fieldId AS text)], to_jsonb(CAST(:newValue AS text)))"
+            + " WHERE field_values ->> CAST(:fieldId AS text) = :oldValue", nativeQuery = true)
+    int renameOption(@Param("fieldId") String fieldId, @Param("oldValue") String oldValue, @Param("newValue") String newValue);
 }

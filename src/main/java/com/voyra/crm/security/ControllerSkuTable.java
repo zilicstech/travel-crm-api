@@ -80,6 +80,7 @@ import com.voyra.crm.controller.TaxConfigController;
 import com.voyra.crm.controller.TopupController;
 import com.voyra.crm.controller.VendorController;
 import com.voyra.crm.controller.VisaController;
+import com.voyra.crm.controller.VisaFieldController;
 import com.voyra.crm.controller.WalletController;
 import com.voyra.crm.enums.SkuRule;
 
@@ -196,7 +197,8 @@ public final class ControllerSkuTable {
             entry(BankMatchRuleController.class, ACCOUNTS_GST),
             // Reports, Visa desk
             entry(ReportController.class, REPORTS),
-            entry(VisaController.class, VISA));
+            entry(VisaController.class, VISA),
+            entry(VisaFieldController.class, VISA));
 
     private ControllerSkuTable() {
     }
