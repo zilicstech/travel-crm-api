@@ -93,6 +93,7 @@ class RequestValidationTest {
     void visaFieldsNameThemselvesWhenTooLong() {
         VisaCreateRequest visa = new VisaCreateRequest();
         visa.setClientId("C1");
+        visa.setMemberId("M1");
         visa.setCountry("France");
         visa.setVisaType("x".repeat(61));
         visa.setPassportNumber("x".repeat(25));
