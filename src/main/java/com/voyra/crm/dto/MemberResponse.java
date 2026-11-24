@@ -55,6 +55,9 @@ public class MemberResponse {
     @Schema(example = "M7654321")
     private String passportNumber;
 
+    @Schema(example = "ABCDE1234F")
+    private String panNumber;
+
     @Schema(example = "2031-08-14")
     private LocalDate passportExpiry;
 

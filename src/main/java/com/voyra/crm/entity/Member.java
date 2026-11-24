@@ -79,6 +79,9 @@ public class Member {
     @Column(name = "passport_number", length = 20)
     private String passportNumber;
 
+    @Column(name = "pan_number", length = 10)
+    private String panNumber;
+
     @Column(name = "passport_expiry")
     private LocalDate passportExpiry;
 

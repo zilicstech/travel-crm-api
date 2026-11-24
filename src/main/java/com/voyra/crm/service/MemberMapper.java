@@ -62,6 +62,7 @@ public class MemberMapper {
                 .gender(member.getGender())
                 .nationality(member.getNationality())
                 .passportNumber(member.getPassportNumber())
+                .panNumber(member.getPanNumber())
                 .passportExpiry(member.getPassportExpiry())
                 .currentAge(PaxTypeCalculator.ageAt(member.getDob(), LocalDate.now()))
                 .passportActionNeeded(passportActionNeeded(member))

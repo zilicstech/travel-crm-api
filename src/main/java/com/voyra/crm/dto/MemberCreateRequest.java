@@ -57,6 +57,10 @@ public class MemberCreateRequest {
     @Schema(description = "Required before an international booking or visa filing", example = "M7654321")
     private String passportNumber;
 
+    @jakarta.validation.constraints.Pattern(regexp = "^$|^[A-Za-z]{5}[0-9]{4}[A-Za-z]$", message = "Enter a valid 10-character PAN")
+    @Schema(description = "The traveller's PAN, for visa filings; blank clears it", example = "ABCDE1234F")
+    private String panNumber;
+
     @Schema(example = "2031-08-14")
     private LocalDate passportExpiry;
 }

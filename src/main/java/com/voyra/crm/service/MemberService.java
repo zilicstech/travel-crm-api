@@ -36,7 +36,7 @@ public class MemberService {
     private static final String MEMBER_DOC_CATEGORY = "member-documents";
     private static final String[] AUDITED = {
             "name", "relation", "email", "countryCode", "phone", "dob", "gender",
-            "nationality", "passportNumber", "passportExpiry", "isActive"
+            "nationality", "passportNumber", "panNumber", "passportExpiry", "isActive"
     };
 
     private final ClientService clientService;
@@ -82,6 +82,7 @@ public class MemberService {
                 .gender(request.getGender())
                 .nationality(request.getNationality())
                 .passportNumber(request.getPassportNumber())
+                .panNumber(pan(request.getPanNumber()))
                 .passportExpiry(request.getPassportExpiry())
                 .isActive(true)
                 .createdAt(LocalDateTime.now())
@@ -125,6 +126,7 @@ public class MemberService {
         if (request.getGender() != null) member.setGender(request.getGender());
         if (request.getNationality() != null) member.setNationality(request.getNationality());
         if (request.getPassportNumber() != null) member.setPassportNumber(request.getPassportNumber());
+        if (request.getPanNumber() != null) member.setPanNumber(pan(request.getPanNumber()));
         if (request.getPassportExpiry() != null) member.setPassportExpiry(request.getPassportExpiry());
 
         member.setModifiedAt(LocalDateTime.now());
@@ -249,5 +251,10 @@ public class MemberService {
                 .id(document.getId()).name(document.getName())
                 .docType(document.getDocType()).uploadedDate(document.getUploadedAt())
                 .build();
+    }
+
+    /** A PAN is kept in capitals; blank clears it (the request's pattern already checked its shape). */
+    static String pan(String raw) {
+        return raw == null || raw.isBlank() ? null : raw.trim().toUpperCase(java.util.Locale.ROOT);
     }
 }

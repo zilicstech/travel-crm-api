@@ -836,6 +836,7 @@ public class LeadService {
                 .gender(member != null ? member.getGender() : null)
                 .nationality(member != null ? member.getNationality() : null)
                 .passportNumber(member != null ? member.getPassportNumber() : null)
+                .panNumber(member != null ? member.getPanNumber() : null)
                 .passportExpiry(member != null ? member.getPassportExpiry() : null)
                 .paxType(member != null ? PaxTypeCalculator.paxTypeAt(member.getDob(), departure) : PaxType.UNKNOWN)
                 .ageAtTravel(member != null ? PaxTypeCalculator.ageAt(member.getDob(), departure) : null)

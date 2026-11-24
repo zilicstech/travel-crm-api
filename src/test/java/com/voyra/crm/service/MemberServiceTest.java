@@ -94,9 +94,11 @@ class MemberServiceTest {
         r.setGender("F");
         r.setNationality("IN");
         r.setPassportNumber("X0000000");
+        r.setPanNumber(" abcde1234f ");
         r.setPassportExpiry(LocalDate.of(2035, 1, 1));
 
         MemberResponse res = service.addMember("K1", r);
+        assertThat(res.getPanNumber()).isEqualTo("ABCDE1234F");
 
         ArgumentCaptor<Member> saved = ArgumentCaptor.forClass(Member.class);
         verify(memberRepository).save(saved.capture());
@@ -135,9 +137,11 @@ class MemberServiceTest {
         r.setGender("M");
         r.setNationality("IN");
         r.setPassportNumber("Y0000000");
+        r.setPanNumber(" ");
         r.setPassportExpiry(LocalDate.of(2034, 5, 6));
 
         MemberResponse res = service.updateMember("K1", "M1", r);
+        assertThat(m.getPanNumber()).isNull(); // blank clears it
 
         assertThat(m.getName()).isEqualTo("Ravi Kumar");
         assertThat(m.getRelation()).isEqualTo(MemberRelation.FRIEND);
