@@ -95,4 +95,8 @@ public class ServiceDraft {
     @Schema(description = "Miscellaneous services only: what the service is", example = "Travel insurance for 4")
     @Size(max = 500, message = "Write at most 500 characters")
     private String miscDetails;
+
+    @Schema(description = "Miscellaneous services only: its sub-category, from Settings (plain text)", example = "Railway ticket")
+    @Size(max = 150, message = "Write at most 150 characters")
+    private String miscCategory;
 }

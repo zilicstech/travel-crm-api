@@ -292,7 +292,11 @@ public class PlatformBookingMirrorTenantService {
         request.setReason("Cancelled with Voyra");
         request.setAirlineCharge(BigDecimal.ZERO);
         // from the converted figures, so charge + refund is exactly the purchase the mirror booked (two roundings can drift a cent)
-        request.setSupplierCharge(FxMath.toBase(INR, pb.getDisplayed(), rate, base).base().subtract(refund).max(BigDecimal.ZERO));
+        // extra vouchers bought outside Voyra (a seat, insurance) are not refunded through Voyra: their suppliers keep them
+        BigDecimal extras = bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc(bookingId).stream()
+                .filter(d -> !MIRROR_VOUCHERS.contains(d.getDocType()))
+                .map(BookingDocument::getNetCost).reduce(BigDecimal.ZERO, BigDecimal::add);
+        request.setSupplierCharge(FxMath.toBase(INR, pb.getDisplayed(), rate, base).base().subtract(refund).max(BigDecimal.ZERO).add(extras));
         request.setAgencyFee(BigDecimal.ZERO);
         LocalDate cancelledOn = FinancialYear.dateOf(pb.getCancelledAt());
         // partial cancellations already put their refunds back on the mirror's bill; only the rest comes in now

@@ -370,6 +370,18 @@ class BookingLifecycleServiceTest {
                 .doesNotContain("RECORD_PAYMENT");
     }
 
+    /** A Voyra booking takes extra vouchers once Voyra confirmed it, never while Voyra is still booking. */
+    @Test
+    void aVoyraBookingOffersVouchersOnlyOnceConfirmed() {
+        Booking b = booking(BookingStatus.PENDING);
+        b.setPlatformBookingId("PB1");
+        assertThat(BookingLifecycleService.build(facts(b, 0, List.of(), List.of(), "0"), Viewer.OWNER).getAllowedActions())
+                .doesNotContain("UPLOAD_VOUCHER");
+        b.setBookingStatus(BookingStatus.CONFIRMED);
+        assertThat(BookingLifecycleService.build(facts(b, 0, List.of(), List.of(), "0"), Viewer.OWNER).getAllowedActions())
+                .contains("UPLOAD_VOUCHER");
+    }
+
     @Test
     void paymentBeforeAnyInvoiceIsHeldOnTheClientsAccount() {
         stubBooking(booking(BookingStatus.CONFIRMED));

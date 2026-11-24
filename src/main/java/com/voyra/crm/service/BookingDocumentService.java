@@ -44,7 +44,8 @@ public class BookingDocumentService {
 
     @Transactional
     public BookingDocumentResponse addDocument(String bookingId, BookingDocumentCreateRequest request) {
-        Booking booking = bookingService.lockAccessibleBooking(bookingId);
+        Booking booking = bookingService.lockForVoucher(bookingId);
+        BookingService.checkVoucherWrite(booking, request.getDocType());
         String base = baseCurrency.code();
         com.voyra.crm.util.FxMath.Pricing pricing = com.voyra.crm.util.FxMath.resolve(request, base);
         if (booking.getBookingStatus() == com.voyra.crm.enums.BookingStatus.CANCELLED
@@ -91,9 +92,10 @@ public class BookingDocumentService {
     /** Text fields change in place; a changed cost, markup or supplier takes the old money back and books the new. */
     @Transactional
     public BookingDocumentResponse updateDocument(String bookingId, String documentId, BookingDocumentCreateRequest request) {
-        Booking booking = bookingService.lockAccessibleBooking(bookingId);
+        Booking booking = bookingService.lockForVoucher(bookingId);
         BookingDocument document = bookingDocumentRepository.findByIdAndBookingId(documentId, bookingId)
                 .orElseThrow(() -> new IllegalArgumentException("Document not found: " + documentId));
+        BookingService.checkVoucherWrite(booking, document.getDocType(), request.getDocType());
         bookingService.assertNotInvoiced(document);
         String oldReference = document.getReferenceNumber();
         document.setDocType(request.getDocType());
@@ -155,9 +157,10 @@ public class BookingDocumentService {
      */
     @Transactional
     public BookingDocumentResponse setCharges(String bookingId, String documentId, com.voyra.crm.dto.VoucherChargesRequest request) {
-        Booking booking = bookingService.lockAccessibleBooking(bookingId);
+        Booking booking = bookingService.lockForVoucher(bookingId);
         BookingDocument document = bookingDocumentRepository.findByIdAndBookingId(documentId, bookingId)
                 .orElseThrow(() -> new IllegalArgumentException("Document not found: " + documentId));
+        BookingService.checkVoucherWrite(booking, document.getDocType());
         java.util.Map<String, java.math.BigDecimal> charges = com.voyra.crm.util.VoucherCharges.clean(request.getCharges());
         // Its commission is the supplier bill's business and may still change; the breakdown is printed on the invoice.
         if (bookingService.invoiced(bookingId).covers(document) && !com.voyra.crm.util.VoucherCharges.same(charges, document.getCharges())) {
@@ -199,9 +202,10 @@ public class BookingDocumentService {
 
     /** Not {@code @Transactional} - see class javadoc. */
     public BookingDocumentResponse attachFile(String bookingId, String documentId, MultipartFile file) {
-        com.voyra.crm.util.PlatformManaged.check(bookingService.findAccessibleBooking(bookingId).getPlatformBookingId() != null);
+        Booking booking = bookingService.findAccessibleBooking(bookingId);
         BookingDocument document = bookingDocumentRepository.findByIdAndBookingId(documentId, bookingId)
                 .orElseThrow(() -> new IllegalArgumentException("Document not found: " + documentId));
+        BookingService.checkVoucherWrite(booking, document.getDocType());
 
         String tenantId = SecurityContextUtil.getCurrentUserOrThrow().tenantId();
         String fileKey = fileStorageService.store(tenantId, DOCUMENT_FILE_CATEGORY, documentId, file);

@@ -152,6 +152,10 @@ public class BookingUpdateRequest {
     @Schema(description = "Local clock time, 'HH:mm'", example = "14:30")
     private String transferTime;
 
+    @Size(max = 150, message = "Write at most 150 characters")
+    @Schema(description = "MISCELLANEOUS bookings only: the sub-category (plain text); blank clears it", example = "Railway ticket")
+    private String miscCategory;
+
     @Schema(description = "Whether this FLIGHT booking's itinerary leaves India - decides AIR_INTERNATIONAL vs AIR_DOMESTIC on any invoice drafted against it. Ignored for non-FLIGHT bookings.")
     private Boolean internationalTrip;
 

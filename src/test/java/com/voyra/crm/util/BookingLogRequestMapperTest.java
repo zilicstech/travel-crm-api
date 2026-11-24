@@ -121,6 +121,17 @@ class BookingLogRequestMapperTest {
     }
 
     @Test
+    void aMiscServicesSubCategoryGoesOnItsBooking() {
+        LeadService misc = LeadService.builder().id("S3").leadId("L1").clientId("C1").type(ServiceType.MISCELLANEOUS)
+                .miscCategory("Railway ticket").build();
+
+        BookingCreateRequest req = BookingLogRequestMapper.toCreateRequest(log("RAIL-1", "500"), misc, List.of(), null);
+
+        assertThat(req.getMiscCategory()).isEqualTo("Railway ticket");
+        assertThat(req.getPnr()).isEqualTo("RAIL-1");
+    }
+
+    @Test
     void adHocBookingNeedsClientTypeAndDestination() {
         BookingLogRequest r = new BookingLogRequest();
         r.setReference("REF");

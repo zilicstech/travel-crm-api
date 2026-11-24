@@ -227,8 +227,6 @@ class BookingServiceTest {
                 () -> bookingService.updateDeadlines("B1", new com.voyra.crm.dto.BookingDeadlineUpdateRequest()),
                 () -> bookingService.updatePaymentStatus("B1", paid),
                 () -> bookingService.deleteBooking("B1"),
-                () -> bookingService.removeVoucher("B1", "D1"),
-                () -> bookingService.lockAccessibleBooking("B1"),
                 () -> bookingService.replaceCostComponents("B1", java.util.List.of()));
         for (org.assertj.core.api.ThrowableAssert.ThrowingCallable edit : edits) {
             assertThatThrownBy(edit).isInstanceOf(com.voyra.crm.exception.BookingConflictException.class)
@@ -243,7 +241,20 @@ class BookingServiceTest {
         Booking mirror = Booking.builder().id("B1").agentId("A1").platformBookingId("PB1").build();
         when(bookingRepository.findById("B1")).thenReturn(Optional.of(mirror));
 
-        assertThat(com.voyra.crm.security.SystemActor.call("T1", () -> bookingService.lockAccessibleBooking("B1"))).isSameAs(mirror);
+        assertThat(com.voyra.crm.security.SystemActor.call("T1", () -> bookingService.lockForVoucher("B1"))).isSameAs(mirror);
+    }
+
+    @Test
+    void voyrasOwnVoucherCannotBeRemovedFromItsBooking() {
+        Booking mirror = Booking.builder().id("B1").agentId("A1").platformBookingId("PB1").bookingStatus(BookingStatus.CONFIRMED).build();
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(mirror));
+        when(bookingDocumentRepository.findByIdAndBookingId("D1", "B1")).thenReturn(Optional.of(
+                com.voyra.crm.entity.BookingDocument.builder().id("D1").bookingId("B1").docType(com.voyra.crm.enums.BookingDocumentType.E_TICKET).build()));
+
+        assertThatThrownBy(() -> bookingService.removeVoucher("B1", "D1"))
+                .isInstanceOf(com.voyra.crm.exception.BookingConflictException.class)
+                .extracting("code").isEqualTo("MANAGED_FROM_PLATFORM");
+        org.mockito.Mockito.verify(bookingRepository, org.mockito.Mockito.never()).save(org.mockito.ArgumentMatchers.any());
     }
 
     @Test

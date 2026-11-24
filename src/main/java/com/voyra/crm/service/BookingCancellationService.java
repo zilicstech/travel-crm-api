@@ -229,8 +229,9 @@ public class BookingCancellationService {
         if (booking.getBookingStatus() == BookingStatus.CANCELLED || amount.signum() <= 0) {
             return;
         }
+        // Voyra's own bill: an extra voucher's bill on the same booking is another supplier's
         SupplierInvoice bill = supplierInvoiceRepository.findByBookingIdAndStatusNot(bookingId, SupplierInvoiceStatus.CANCELLED).stream()
-                .filter(b -> !UNPOSTED.contains(b.getStatus())).findFirst()
+                .filter(b -> !UNPOSTED.contains(b.getStatus()) && java.util.Objects.equals(b.getVendorId(), booking.getVendorId())).findFirst()
                 .orElseThrow(() -> new IllegalStateException("The mirror of booking " + bookingId + " has no approved supplier bill to credit"));
         String number = VOYRA_PARTIAL_NOTE + requestId;
         if (supplierCreditNoteRepository.existsByVendorIdAndSupplierNoteNumberAndStatusNot(bill.getVendorId(), number, SupplierCreditNoteStatus.CANCELLED)) {
@@ -379,6 +380,10 @@ public class BookingCancellationService {
         assertCoveredByCreditNotes(bookingId, request.getAmount());
         BigDecimal left = request.getAmount();
         for (SupplierCreditNote note : supplierCreditNoteRepository.findByBookingIdAndStatus(bookingId, SupplierCreditNoteStatus.RECORDED)) {
+            // Voyra's wallet refunds only Voyra's own bill, never a Voyra booking's extra voucher
+            if (request.getPaymentMode() == PaymentMode.VOYRA_WALLET && !java.util.Objects.equals(note.getVendorId(), booking.getVendorId())) {
+                continue;
+            }
             BigDecimal noteOpen = note.getRefundableAmount().subtract(note.getRefundedAmount());
             if (left.signum() <= 0 || noteOpen.signum() <= 0) {
                 continue;
@@ -491,8 +496,12 @@ public class BookingCancellationService {
         BigDecimal remainingCharge = charge;
         BigDecimal expected = BigDecimal.ZERO;
         // The charge comes out of money already with the supplier first; only what is left of it becomes a payable on an unpaid draft.
+        // On a Voyra booking its extra vouchers' bills come first: the charge keeps them whole (bought outside Voyra),
+        // so Voyra's own bill carries exactly Voyra's refund.
+        boolean voyra = booking.getPlatformBookingId() != null;
         List<SupplierInvoice> ordered = bills.stream()
-                .sorted(java.util.Comparator.comparing((SupplierInvoice b) -> UNPOSTED.contains(b.getStatus())))
+                .sorted(java.util.Comparator.comparing((SupplierInvoice b) -> voyra && java.util.Objects.equals(b.getVendorId(), booking.getVendorId()))
+                        .thenComparing(b -> UNPOSTED.contains(b.getStatus())))
                 .toList();
         for (SupplierInvoice bill : ordered) {
             // A cancelled ticket's commission goes back to the supplier: the figures below are the bill's gross.

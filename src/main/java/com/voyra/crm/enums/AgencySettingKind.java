@@ -4,6 +4,9 @@ package com.voyra.crm.enums;
 public enum AgencySettingKind {
     LEAD_SOURCE, TRAVEL_CATEGORY, DOCUMENT_TYPE, SERVICE_PREFERENCE,
 
+    /** The sub-categories a Miscellaneous service or booking picks from (railway ticket, insurance, SIM card); none seeded. */
+    MISC_CATEGORY,
+
     /**
      * @deprecated Suppliers are now real records at {@code entity.Vendor} / {@code /api/vendors}.
      * This constant survives for one release only, as a read-only compatibility shim -

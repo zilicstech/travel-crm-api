@@ -695,3 +695,11 @@ agency now configures the fields once and the CRM is the sheet.
 - Tests: backend unit / slice tests for every class above (JaCoCo 100 %), frontend Vitest at 100 %, e2e
   `e2e/visa-configuration.spec.ts` (Settings -> agent Open Case with mandatory fields -> sheet filter, inline edit, export).
 
+## Booking extras 2026-11-25 (owner request)
+
+Tenant `V7__booking_extras.sql`. A configurable Miscellaneous sub-category (`MISC_CATEGORY` settings, plain text on
+`lead_service` and `booking`), extra vouchers on a confirmed Voyra booking from their own supplier (Voyra's own voucher
+stays the platform's; Voyra's partial refund, wallet refund and cancel stay on Voyra's bill and treat the extras as kept by
+their suppliers), "Assigned by" on a new booking, and a PNR / Ref column on the bookings list. Flight reissue waits for the
+owner's ruling on how its money works. Design `docs/superpowers/specs/2026-11-25-booking-extras-design.md`.
+

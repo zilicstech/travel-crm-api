@@ -41,6 +41,7 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -943,6 +944,7 @@ class BookingCancellationServiceTest {
     void theSystemActorCancelsAMirrorAndRecordsTheRefundAgainstTheVoyraWallet() {
         Booking b = booking(BookingStatus.COMPLETED);
         b.setPlatformBookingId("PB1");
+        b.setVendorId("V-VOYRA");
         b.setReceivedTotalInr(BigDecimal.ZERO);
         SupplierInvoice paid = SupplierInvoice.builder().id("S1").vendorId("V-VOYRA").status(SupplierInvoiceStatus.PAID)
                 .grandTotal(d("5400")).amountPaid(d("5400")).creditNoteTotal(BigDecimal.ZERO)
@@ -980,6 +982,70 @@ class BookingCancellationServiceTest {
         assertThat(b.getSupplierRefundReceived()).isEqualByComparingTo("4000");
     }
 
+    /**
+     * A Voyra booking with a seat bought outside Voyra: the cancel's charge keeps the seat's bill whole (it comes first)
+     * so Voyra's bill carries exactly Voyra's refund, and the wallet refund posts only to Voyra's credit note.
+     */
+    @Test
+    void aVoyraCancelLeavesTheExtraVouchersBillWithItsSupplier() {
+        Booking b = booking(BookingStatus.CONFIRMED);
+        b.setPlatformBookingId("PB1");
+        b.setVendorId("V-VOYRA");
+        b.setReceivedTotalInr(BigDecimal.ZERO);
+        SupplierInvoice voyra = SupplierInvoice.builder().id("S1").vendorId("V-VOYRA").status(SupplierInvoiceStatus.PAID)
+                .grandTotal(d("5400")).amountPaid(d("5400")).creditNoteTotal(BigDecimal.ZERO)
+                .cgstAmount(BigDecimal.ZERO).sgstAmount(BigDecimal.ZERO).igstAmount(BigDecimal.ZERO).build();
+        SupplierInvoice seat = SupplierInvoice.builder().id("S2").vendorId("V-AIR").status(SupplierInvoiceStatus.APPROVED)
+                .grandTotal(d("350")).amountPaid(BigDecimal.ZERO).creditNoteTotal(BigDecimal.ZERO)
+                .cgstAmount(BigDecimal.ZERO).sgstAmount(BigDecimal.ZERO).igstAmount(BigDecimal.ZERO).build();
+        when(supplierInvoiceRepository.findByBookingIdAndStatusNot("B1", SupplierInvoiceStatus.CANCELLED)).thenReturn(List.of(voyra, seat));
+        SupplierCreditNote seatNote = SupplierCreditNote.builder().id("SCN0").vendorId("V-AIR")
+                .refundableAmount(d("100")).refundedAmount(BigDecimal.ZERO).build();
+        SupplierCreditNote voyraNote = SupplierCreditNote.builder().id("SCN1").vendorId("V-VOYRA")
+                .refundableAmount(d("4000")).refundedAmount(BigDecimal.ZERO).build();
+        when(supplierCreditNoteRepository.findByBookingIdAndStatus("B1", SupplierCreditNoteStatus.RECORDED)).thenReturn(List.of(seatNote, voyraNote));
+        BookingCancelRequest request = cancel("1750", "0"); // 1400 Voyra kept + the 350 seat
+        request.setAirlineCharge(BigDecimal.ZERO);
+        org.mockito.Mockito.doAnswer(i -> {
+            b.setBookingStatus(BookingStatus.CANCELLED);
+            return null;
+        }).when(bookingService).markCancelled(eq(b), any(), any());
+
+        java.time.LocalDate on = java.time.LocalDate.now();
+        com.voyra.crm.security.SystemActor.call("T1", () -> {
+            service.cancel("B1", request, java.time.LocalDateTime.now(), on);
+            return service.recordVoyraWalletRefund("B1", d("4000"), on);
+        });
+
+        ArgumentCaptor<SupplierCreditNoteRequest> credit = ArgumentCaptor.forClass(SupplierCreditNoteRequest.class);
+        verify(supplierCreditNoteService).record(credit.capture());
+        assertThat(credit.getValue().getSupplierInvoiceId()).isEqualTo("S1");
+        assertThat(credit.getValue().getTaxableValue()).isEqualByComparingTo("4000");
+        verify(supplierCreditNoteService, never()).receiveRefund(eq("SCN0"), any(), anyBoolean());
+        verify(supplierCreditNoteService).receiveRefund(eq("SCN1"), any(), eq(false));
+    }
+
+    @Test
+    void aVoyraPartialCancellationSkipsAnExtraVouchersBill() {
+        booking(BookingStatus.CONFIRMED).setVendorId("V-VOYRA");
+        SupplierInvoice seat = SupplierInvoice.builder().id("S2").vendorId("V-AIR").status(SupplierInvoiceStatus.APPROVED)
+                .grandTotal(d("350")).creditNoteTotal(BigDecimal.ZERO).build();
+        SupplierInvoice voyra = SupplierInvoice.builder().id("S1").vendorId("V-VOYRA").status(SupplierInvoiceStatus.PAID)
+                .grandTotal(d("8000")).amountPaid(d("8000")).creditNoteTotal(BigDecimal.ZERO)
+                .cgstAmount(BigDecimal.ZERO).sgstAmount(BigDecimal.ZERO).igstAmount(BigDecimal.ZERO).build();
+        when(supplierInvoiceRepository.findByBookingIdAndStatusNot("B1", SupplierInvoiceStatus.CANCELLED)).thenReturn(List.of(seat, voyra));
+        when(supplierCreditNoteService.record(any())).thenReturn(com.voyra.crm.dto.SupplierCreditNoteResponse.builder().id("SCN9").build());
+
+        com.voyra.crm.security.SystemActor.call("T1", () -> {
+            service.recordVoyraPartialRefund("B1", "R1", d("1500"), java.time.LocalDate.now());
+            return null;
+        });
+
+        ArgumentCaptor<SupplierCreditNoteRequest> credit = ArgumentCaptor.forClass(SupplierCreditNoteRequest.class);
+        verify(supplierCreditNoteService).record(credit.capture());
+        assertThat(credit.getValue().getSupplierInvoiceId()).isEqualTo("S1");
+    }
+
     // ---- cancellation requests: a partial cancellation of a Voyra mirror, and credit notes issued before the cancel
 
     private SupplierInvoice voyraBill(String status) {
@@ -992,7 +1058,7 @@ class BookingCancellationServiceTest {
 
     @Test
     void aVoyraPartialCancellationIsCreditedOnTheMirrorsBillAndReceivedIntoTheVoyraWallet() {
-        booking(BookingStatus.CONFIRMED);
+        booking(BookingStatus.CONFIRMED).setVendorId("V-VOYRA");
         voyraBill("PAID");
         when(supplierCreditNoteService.record(any())).thenReturn(com.voyra.crm.dto.SupplierCreditNoteResponse.builder().id("SCN9").build());
         java.time.LocalDate on = java.time.LocalDate.of(2026, 11, 18);
@@ -1015,7 +1081,7 @@ class BookingCancellationServiceTest {
 
     @Test
     void aPartialRefundAboveWhatTheBillStillHoldsIsCappedAndARepeatPostsNothing() {
-        booking(BookingStatus.CONFIRMED);
+        booking(BookingStatus.CONFIRMED).setVendorId("V-VOYRA");
         voyraBill("APPROVED");
         when(supplierCreditNoteService.record(any())).thenReturn(com.voyra.crm.dto.SupplierCreditNoteResponse.builder().id("SCN9").build());
         com.voyra.crm.security.SystemActor.call("T1", () -> {

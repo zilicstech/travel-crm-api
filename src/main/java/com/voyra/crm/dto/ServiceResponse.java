@@ -146,6 +146,9 @@ public class ServiceResponse {
     @Schema(example = "Travel insurance for 4")
     private String miscDetails;
 
+    @Schema(example = "Railway ticket")
+    private String miscCategory;
+
     @Schema(example = "2026-08-13T09:15:22")
     private LocalDateTime createdAt;
 

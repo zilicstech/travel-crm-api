@@ -249,6 +249,36 @@ class BookingServiceCoverageTest {
         verify(leadServiceRepository, never()).findById(any());
     }
 
+    /** New Booking names who gave it to its agent, and a Miscellaneous booking its sub-category (plain text). */
+    @Test
+    void aNewBookingKeepsWhoAssignedItAndAMiscBookingsSubCategory() {
+        ownerPicks(agent("A1", "Priya", List.of(ServiceType.MISCELLANEOUS)));
+        clientFound();
+        when(tenantRepository.findById("T1")).thenReturn(Optional.of(Tenant.builder().id("T1").ownerName("Dana Owner").build()));
+        BookingCreateRequest r = request(BookingType.MISCELLANEOUS);
+        r.setMiscCategory("  Railway ticket  ");
+        r.setAssignedById(" T1 ");
+
+        BookingResponse out = bookingService.createBooking(r);
+
+        assertThat(out.getMiscCategory()).isEqualTo("Railway ticket");
+        assertThat(out.getAssignedById()).isEqualTo("T1");
+        assertThat(out.getAssignedByName()).isEqualTo("Dana Owner");
+
+        BookingUpdateRequest blank = new BookingUpdateRequest();
+        blank.setMiscCategory(" ");
+        Booking misc = booking().type(BookingType.MISCELLANEOUS).miscCategory("SIM card").build();
+        found(misc);
+        bookingService.updateBooking("B1", blank);
+        assertThat(misc.getMiscCategory()).isNull();
+
+        BookingCreateRequest stranger = request(BookingType.MISCELLANEOUS);
+        stranger.setAssignedById("A9");
+        when(agentRepository.findByIdAndTenantId("A9", "T1")).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> bookingService.createBooking(stranger))
+                .isInstanceOf(com.voyra.crm.exception.FieldValidationException.class).hasMessage("Pick someone from your agency");
+    }
+
     @Test
     void aStandaloneBookingKeepsItsLeadItsPaymentStatusAndItsPassengers() {
         ownerPicks(agent("A1", "Priya", List.of()));
@@ -741,8 +771,10 @@ class BookingServiceCoverageTest {
         r.setTransferDate(d); r.setTransferTime("10:00");
         r.setInternationalTrip(true);
         r.setPassengers(List.of());
+        r.setMiscCategory("Railway ticket"); // a flight has none
 
         BookingResponse response = bookingService.updateBooking("B1", r);
+        assertThat(b.getMiscCategory()).isNull();
 
         assertThat(response.getPnr()).isEqualTo("PNR2");
         assertThat(b.getTicketNo()).isEqualTo("T-1");
@@ -1057,6 +1089,66 @@ class BookingServiceCoverageTest {
         assertThatThrownBy(() -> bookingService.applyVoucher(b, voucher().build(), "V2", false))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("This booking is with Air Co - every voucher on a booking is with its one supplier");
+    }
+
+    @Test
+    void aVoyraBookingsExtraIsWithItsOwnSupplierNeverVoyraAndLeavesVoyrasMarkup() {
+        Booking b = booking().platformBookingId("PB1").bookingStatus(BookingStatus.CONFIRMED).vendorId("VOY").supplier("Voyra Platform")
+                .netCost(new BigDecimal("5000")).sellingPrice(new BigDecimal("5200")).markupMode(MarkupMode.FLAT).markupValue(new BigDecimal("200"))
+                .paymentStatusSource(PaymentStatusSource.DERIVED).build();
+        when(bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc("B1")).thenReturn(List.of(
+                voucher().id("D0").docType(com.voyra.crm.enums.BookingDocumentType.E_TICKET).netCost(new BigDecimal("5000"))
+                        .sellingPrice(new BigDecimal("5200")).build()));
+        BookingDocument seat = voucher().docType(com.voyra.crm.enums.BookingDocumentType.ANCILLARY).netCost(new BigDecimal("400"))
+                .markupMode(MarkupMode.PERCENT).markupValue(new BigDecimal("25")).build();
+
+        // no supplier, or Voyra's: refused; a Voyra booking never falls back to its own supplier
+        assertThatThrownBy(() -> bookingService.applyVoucher(b, seat, null, false))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Pick the supplier of this voucher");
+        assertThatThrownBy(() -> bookingService.applyVoucher(b, seat, "VOY", false))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Voyra supplies only what you book with Voyra - pick who sold you this");
+
+        when(supplierInvoiceService.draftForVoucher(b, "AIR", null, null, new BigDecimal("400"), null, BigDecimal.ZERO, BigDecimal.ZERO, java.time.LocalDate.now()))
+                .thenReturn(com.voyra.crm.dto.SupplierInvoiceResponse.builder().id("SI9").build());
+        bookingService.applyVoucher(b, seat, "AIR", false);
+
+        assertThat(seat.getVendorId()).isEqualTo("AIR");
+        assertThat(seat.getSupplierInvoiceId()).isEqualTo("SI9");
+        assertThat(b.getVendorId()).isEqualTo("VOY");
+        assertThat(b.getNetCost()).isEqualByComparingTo("5400");
+        assertThat(b.getSellingPrice()).isEqualByComparingTo("5700");
+        assertThat(b.getMarkupMode()).isEqualTo(MarkupMode.FLAT);
+        assertThat(b.getMarkupValue()).isEqualByComparingTo("200");
+    }
+
+    @Test
+    void aVoyraBookingTakesOnlyExtraVouchersAndOnlyOnceConfirmed() {
+        Booking crm = booking().bookingStatus(BookingStatus.PENDING).build();
+        Booking confirmed = booking().platformBookingId("PB1").bookingStatus(BookingStatus.CONFIRMED).build();
+        Booking completed = booking().platformBookingId("PB1").bookingStatus(BookingStatus.COMPLETED).build();
+        Booking pending = booking().platformBookingId("PB1").bookingStatus(BookingStatus.PENDING).build();
+        Booking cancelled = booking().platformBookingId("PB1").bookingStatus(BookingStatus.CANCELLED).build();
+        var ancillary = com.voyra.crm.enums.BookingDocumentType.ANCILLARY;
+        var ticket = com.voyra.crm.enums.BookingDocumentType.E_TICKET;
+
+        BookingService.checkVoucherWrite(crm, ticket);
+        BookingService.checkVoucherWrite(confirmed, ancillary, com.voyra.crm.enums.BookingDocumentType.INSURANCE);
+        BookingService.checkVoucherWrite(completed, com.voyra.crm.enums.BookingDocumentType.OTHER);
+        com.voyra.crm.security.SystemActor.call("T1", () -> {
+            BookingService.checkVoucherWrite(pending, ticket);
+            return null;
+        });
+        for (Runnable managed : List.<Runnable>of(
+                () -> BookingService.checkVoucherWrite(confirmed, ticket),
+                () -> BookingService.checkVoucherWrite(confirmed, ancillary, com.voyra.crm.enums.BookingDocumentType.HOTEL_VOUCHER),
+                () -> BookingService.checkVoucherWrite(cancelled, ancillary))) {
+            assertThatThrownBy(managed::run).isInstanceOf(com.voyra.crm.exception.BookingConflictException.class)
+                    .extracting("code").isEqualTo("MANAGED_FROM_PLATFORM");
+        }
+        assertThatThrownBy(() -> BookingService.checkVoucherWrite(pending, ancillary))
+                .isInstanceOf(com.voyra.crm.exception.BookingConflictException.class)
+                .hasMessage("Voyra is still booking this; add extras once it is confirmed")
+                .extracting("code").isEqualTo("WAITING_FOR_VOYRA");
     }
 
     @Test

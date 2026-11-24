@@ -125,7 +125,7 @@ public final class BookingLogRequestMapper {
                 req.setTransferTime(s.getTransferTime());
                 req.setJourneyDate(s.getTransferDate());
             };
-            case MISCELLANEOUS -> () -> { };
+            case MISCELLANEOUS -> () -> req.setMiscCategory(s.getMiscCategory());
         };
         fill.run();
     }

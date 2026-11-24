@@ -217,6 +217,9 @@ public class BookingResponse {
     @Schema(description = "Local clock time, 'HH:mm'", example = "14:30")
     private String transferTime;
 
+    @Schema(description = "MISCELLANEOUS bookings: the sub-category", example = "Railway ticket")
+    private String miscCategory;
+
     @Schema(description = "Cost paid to the supplier", example = "42000.00")
     private BigDecimal netCost;
 

@@ -301,7 +301,8 @@ public class BookingLifecycleService {
         }
 
         List<String> actions = new ArrayList<>();
-        if (ops && !cancelled) actions.add(UPLOAD_VOUCHER);
+        // a Voyra booking takes extra vouchers once Voyra confirmed it (BookingService.checkVoucherWrite)
+        if (ops && !cancelled && !BookingService.waitingForVoyra(b)) actions.add(UPLOAD_VOUCHER);
         if (ops && live) actions.add(CANCEL);
         if (accounts && !cancelled && (invoiced ? uninvoiced.signum() > 0 : nz(b.getSellingPrice()).signum() > 0)) {
             if (status != BookingStatus.PENDING) actions.add(GENERATE_INVOICE);

@@ -155,6 +155,13 @@ public class BookingCreateRequest {
     @Schema(description = "Local clock time, 'HH:mm'", example = "14:30")
     private String transferTime;
 
+    @Size(max = 150, message = "Write at most 150 characters")
+    @Schema(description = "MISCELLANEOUS bookings only: the sub-category, from Settings (plain text)", example = "Railway ticket")
+    private String miscCategory;
+
+    @Schema(description = "Who gave this booking to its agent: the owner (the agency id) or a staff member; optional", example = "a1b2c3d4")
+    private String assignedById;
+
     @Schema(description = "Cost paid to the supplier - may be left out on a pending booking and added once booked; defaults to 0", example = "42000.00")
     private BigDecimal netCost;
 

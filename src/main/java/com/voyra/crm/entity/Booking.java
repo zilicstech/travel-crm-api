@@ -240,6 +240,10 @@ public class Booking {
     @Column(name = "transfer_time", length = 5)
     private String transferTime;
 
+    /** A Miscellaneous booking's sub-category, as the agency's Settings named it when picked (plain text). */
+    @Column(name = "misc_category", length = 150)
+    private String miscCategory;
+
     @Column(name = "net_cost", nullable = false, precision = 19, scale = 2)
     @Builder.Default
     private BigDecimal netCost = BigDecimal.ZERO;

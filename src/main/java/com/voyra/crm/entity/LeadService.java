@@ -209,6 +209,10 @@ public class LeadService {
     @Column(name = "misc_details", length = 500)
     private String miscDetails;
 
+    /** Its sub-category (railway ticket, insurance, SIM card), as the agency's Settings named it when picked. */
+    @Column(name = "misc_category", length = 150)
+    private String miscCategory;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 

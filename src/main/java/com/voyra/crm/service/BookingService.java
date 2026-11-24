@@ -94,7 +94,7 @@ public class BookingService {
             "hotelRoomType", "hotelBoardBasis", "hotelRooms",
             "visaApplicationNo", "visaCountry", "visaAppliedDate", "visaAppointmentDate", "visaIssuedDate",
             "transferVoucherNo", "transferVehicleType", "transferPickup", "transferDropoff",
-            "transferDate", "transferTime",
+            "transferDate", "transferTime", "miscCategory",
             "netCost", "sellingPrice", "profit", "bookingStatus", "paymentStatus", "cancelReason",
             "refundState", "refundAmount", "refundDueDate",
             "ticketingDeadline", "cancellationDeadline", "deadlineNote"
@@ -230,6 +230,7 @@ public class BookingService {
                 .transferDropoff(request.getTransferDropoff())
                 .transferDate(request.getTransferDate())
                 .transferTime(request.getTransferTime())
+                .miscCategory(miscCategory(request.getType(), request.getMiscCategory()))
                 .netCost(request.getNetCost())
                 .sellingPrice(request.getSellingPrice())
                 .markupMode(request.getMarkupMode())
@@ -253,6 +254,13 @@ public class BookingService {
                     .serviceAgentName(service.getAssignedAgentName());
         } else if (standaloneLeadId != null) {
             builder.leadId(standaloneLeadId);
+        }
+
+        // who gave the booking to its agent, picked on New Booking (the same record the issue details keep)
+        String assignedBy = blankToNull(request.getAssignedById());
+        if (assignedBy != null) {
+            builder.assignedById(assignedBy)
+                    .assignedByName(personName(SecurityContextUtil.getCurrentUserOrThrow().tenantId(), assignedBy, "assignedById"));
         }
 
         Booking booking = builder.build();
@@ -713,6 +721,7 @@ public class BookingService {
         if (request.getTransferDropoff() != null) booking.setTransferDropoff(request.getTransferDropoff());
         if (request.getTransferDate() != null) booking.setTransferDate(request.getTransferDate());
         if (request.getTransferTime() != null) booking.setTransferTime(request.getTransferTime());
+        if (request.getMiscCategory() != null) booking.setMiscCategory(miscCategory(booking.getType(), request.getMiscCategory()));
         // Cost and price come only from the vouchers (or Log Booking); a booking edit never sets them.
         if (request.getInternationalTrip() != null) booking.setInternationalTrip(request.getInternationalTrip());
         // Profit is never client-trusted - always recomputed server-side from the current values.
@@ -1042,15 +1051,21 @@ public class BookingService {
         voucher.setSellingPrice(voucher.getMarkupMode() == null ? BigDecimal.ZERO
                 : com.voyra.crm.util.MarkupMath.sellingPrice(cost, voucher.getMarkupMode(), voucher.getMarkupValue()));
         clientCreditService.assertWithinLimit(booking.getClientId(), voucher.getSellingPrice(), overrideCreditLimit);
-        String vendorId = requestedVendorId != null && !requestedVendorId.isBlank() ? requestedVendorId : booking.getVendorId();
+        // a Voyra booking's extra is bought outside Voyra: from its own supplier, never "Voyra Platform"
+        boolean voyraExtra = booking.getPlatformBookingId() != null;
+        String vendorId = requestedVendorId != null && !requestedVendorId.isBlank() ? requestedVendorId
+                : voyraExtra ? null : booking.getVendorId();
         if (blank(vendorId)) {
             throw new IllegalArgumentException("Pick the supplier of this voucher");
+        }
+        if (voyraExtra && vendorId.equals(booking.getVendorId())) {
+            throw new IllegalArgumentException("Voyra supplies only what you book with Voyra - pick who sold you this");
         }
         // One supplier per booking: beside other vouchers a voucher is with the booking's supplier.
         List<BookingDocument> otherVouchers = bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc(booking.getId()).stream()
                 .filter(d -> !java.util.Objects.equals(d.getId(), voucher.getId())).toList();
         boolean others = !otherVouchers.isEmpty();
-        if (others && !blank(booking.getVendorId()) && !booking.getVendorId().equals(vendorId)) {
+        if (others && !voyraExtra && !blank(booking.getVendorId()) && !booking.getVendorId().equals(vendorId)) {
             throw new IllegalArgumentException("This booking is with " + booking.getSupplier()
                     + " - every voucher on a booking is with its one supplier");
         }
@@ -1070,7 +1085,7 @@ public class BookingService {
         booking.setSellingPrice(otherVouchers.stream().map(d -> nzMoney(d.getSellingPrice())).reduce(voucher.getSellingPrice(), BigDecimal::add));
         booking.setCommission(otherVouchers.stream().map(d -> nzMoney(d.getCommissionInr())).reduce(nzMoney(voucher.getCommissionInr()), BigDecimal::add));
         booking.setProfit(computeProfit(booking.getSellingPrice(), booking.getNetCost(), booking.getCommission()));
-        if (voucher.getMarkupMode() != null) {
+        if (voucher.getMarkupMode() != null && !voyraExtra) { // a Voyra booking's markup stays Voyra's
             booking.setMarkupMode(voucher.getMarkupMode());
             booking.setMarkupValue(voucher.getMarkupValue());
         }
@@ -1160,10 +1175,34 @@ public class BookingService {
         syncPaymentIfInvoiced(booking);
     }
 
-    /** Row lock first, then the usual access check - two vouchers saved at once must not lose either's amounts. */
-    Booking lockAccessibleBooking(String id) {
+    /** What a Voyra booking takes on top of Voyra's own ticket or hotel voucher, once it is confirmed (2026-11-25). */
+    static final java.util.Set<BookingDocumentType> EXTRAS_ON_VOYRA =
+            java.util.EnumSet.of(BookingDocumentType.ANCILLARY, BookingDocumentType.INSURANCE, BookingDocumentType.OTHER);
+
+    /**
+     * The booking for a voucher write: row lock first, then the usual access check (two vouchers saved at once must
+     * not lose either's amounts); the caller checks the write with {@link #checkVoucherWrite}.
+     */
+    Booking lockForVoucher(String id) {
         bookingRepository.findByIdForUpdate(id);
-        return findWritableBooking(id);
+        return findAccessibleBooking(id);
+    }
+
+    /**
+     * Any booking takes vouchers; a Voyra booking only extra ones ({@link #EXTRAS_ON_VOYRA}: every one of
+     * {@code types}, the voucher's type before and after an edit) and only once Voyra confirmed it. Voyra's own
+     * voucher, and a cancelled Voyra booking, stay the platform's (409 MANAGED_FROM_PLATFORM).
+     */
+    static void checkVoucherWrite(Booking booking, BookingDocumentType... types) {
+        if (booking.getPlatformBookingId() == null || com.voyra.crm.security.SystemActor.isActive()) {
+            return;
+        }
+        com.voyra.crm.util.PlatformManaged.check(booking.getBookingStatus() == BookingStatus.CANCELLED
+                || java.util.Arrays.stream(types).anyMatch(t -> !EXTRAS_ON_VOYRA.contains(t)));
+        if (booking.getBookingStatus() == BookingStatus.PENDING) {
+            throw new com.voyra.crm.exception.BookingConflictException("WAITING_FOR_VOYRA",
+                    "Voyra is still booking this; add extras once it is confirmed", Map.of());
+        }
     }
 
     /** {@link #findAccessibleBooking} for a change: a platform booking's CRM mirror is changed only by the platform (409). */
@@ -1176,9 +1215,10 @@ public class BookingService {
     /** Removes a voucher and its amounts in one transaction. @return its stored file key, deleted by the caller after commit */
     @Transactional
     public String removeVoucher(String bookingId, String documentId) {
-        Booking booking = lockAccessibleBooking(bookingId);
+        Booking booking = lockForVoucher(bookingId);
         BookingDocument document = bookingDocumentRepository.findByIdAndBookingId(documentId, bookingId)
                 .orElseThrow(() -> new IllegalArgumentException("Document not found: " + documentId));
+        checkVoucherWrite(booking, document.getDocType());
         assertNotInvoiced(document);
         reverseVoucher(booking, document);
         bookingDocumentRepository.delete(document);
@@ -1487,6 +1527,7 @@ public class BookingService {
                 .transferVoucherNo(b.getTransferVoucherNo()).transferVehicleType(b.getTransferVehicleType())
                 .transferPickup(b.getTransferPickup()).transferDropoff(b.getTransferDropoff())
                 .transferDate(b.getTransferDate()).transferTime(b.getTransferTime())
+                .miscCategory(b.getMiscCategory())
                 .netCost(b.getNetCost())
                 .sellingPrice(b.getSellingPrice()).profit(b.getProfit())
                 .markupMode(b.getMarkupMode()).markupValue(b.getMarkupValue()).bookingStatus(b.getBookingStatus())
@@ -1590,6 +1631,11 @@ public class BookingService {
         auditService.recordUpdate(AuditEntityType.BOOKING, booking.getId(), labelFor(booking),
                 AuditSnapshot.diff(before, AuditSnapshot.of(booking, ISSUE_DETAILS)));
         return toResponse(booking);
+    }
+
+    /** A Miscellaneous booking's sub-category, trimmed; blank, or on another type, is none. */
+    private static String miscCategory(BookingType type, String raw) {
+        return type == BookingType.MISCELLANEOUS ? blankToNull(raw) : null;
     }
 
     private static String blankToNull(String v) {

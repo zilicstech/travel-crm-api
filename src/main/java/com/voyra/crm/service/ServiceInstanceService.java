@@ -73,7 +73,7 @@ public class ServiceInstanceService {
             "hotelCity", "hotelCountryCode", "hotelCheckIn", "hotelCheckOut", "hotelNights", "hotelRooms",
             "visaSourceCity", "visaSourceCountry", "visaCountry", "visaIntendedTravelDate", "visaAppointmentDate",
             "visaStatus", "transferVehicleType", "transferPickup", "transferDropoff", "transferDate", "transferTime",
-            "transferPassengers", "miscDetails"
+            "transferPassengers", "miscDetails", "miscCategory"
     };
 
     private final LeadServiceRepository leadServiceRepository;
@@ -136,6 +136,7 @@ public class ServiceInstanceService {
                     .transferPassengers(draft.getTransferPassengers())
                     .visaStatus(visaStatus(draft, null))
                     .miscDetails(miscDetails(draft.getType(), draft))
+                    .miscCategory(miscText(draft.getType(), draft.getMiscCategory()))
                     .createdAt(LocalDateTime.now())
                     .createdBy(currentUserId())
                     .build();
@@ -241,6 +242,7 @@ public class ServiceInstanceService {
         service.setTransferPassengers(draft.getTransferPassengers());
         service.setVisaStatus(visaStatus(draft, service));
         service.setMiscDetails(miscDetails(service.getType(), draft));
+        service.setMiscCategory(miscText(service.getType(), draft.getMiscCategory()));
         service.setUpdatedAt(LocalDateTime.now());
         service.setUpdatedBy(currentUserId());
 
@@ -610,7 +612,7 @@ public class ServiceInstanceService {
                 .transferTime(s.getTransferTime()).transferPassengers(s.getTransferPassengers())
                 .visaStatus(s.getType() == ServiceType.VISA && s.getVisaStatus() == null
                         ? VisaApplicationStatus.NOT_APPLIED : s.getVisaStatus())
-                .miscDetails(s.getMiscDetails())
+                .miscDetails(s.getMiscDetails()).miscCategory(s.getMiscCategory())
                 .createdAt(s.getCreatedAt()).updatedAt(s.getUpdatedAt())
                 .build();
     }
@@ -630,8 +632,12 @@ public class ServiceInstanceService {
     }
 
     private static String miscDetails(ServiceType type, ServiceDraft draft) {
-        return type == ServiceType.MISCELLANEOUS && draft.getMiscDetails() != null && !draft.getMiscDetails().isBlank()
-                ? draft.getMiscDetails().trim() : null;
+        return miscText(type, draft.getMiscDetails());
+    }
+
+    /** A Miscellaneous service's own text, trimmed; blank, or on another type, is none. */
+    private static String miscText(ServiceType type, String raw) {
+        return type == ServiceType.MISCELLANEOUS && raw != null && !raw.isBlank() ? raw.trim() : null;
     }
 
     private static void checkTrip(LeadService service) {

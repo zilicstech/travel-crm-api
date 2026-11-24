@@ -63,7 +63,7 @@ class BookingDocumentServiceTest {
     }
 
     private void stub() {
-        when(bookingService.lockAccessibleBooking("B1")).thenReturn(booking);
+        when(bookingService.lockForVoucher("B1")).thenReturn(booking);
         when(bookingDocumentRepository.findByIdAndBookingId("D1", "B1")).thenReturn(Optional.of(voucher));
     }
 
@@ -177,7 +177,7 @@ class BookingDocumentServiceTest {
     @Test
     void anAddedVoucherCannotPriceTheBookingBelowWhatIsInvoiced() {
         signIn();
-        when(bookingService.lockAccessibleBooking("B1")).thenReturn(booking);
+        when(bookingService.lockForVoucher("B1")).thenReturn(booking);
         when(bookingService.invoicedPrice("B1")).thenReturn(new BigDecimal("4400"));
         org.mockito.Mockito.doAnswer(i -> { booking.setSellingPrice(new BigDecimal("3300")); return null; })
                 .when(bookingService).applyVoucher(any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
@@ -190,7 +190,7 @@ class BookingDocumentServiceTest {
     @Test
     void anAddedVoucherThatDoesNotLowerThePriceIsAcceptedEvenWhenInvoicedExceedsIt() {
         signIn();
-        when(bookingService.lockAccessibleBooking("B1")).thenReturn(booking);
+        when(bookingService.lockForVoucher("B1")).thenReturn(booking);
         // e.g. cancellation charges invoiced above the vouchers' total
         when(bookingService.invoicedPrice("B1")).thenReturn(new BigDecimal("5000"));
         booking.setSellingPrice(new BigDecimal("4400"));
@@ -319,7 +319,7 @@ class BookingDocumentServiceTest {
     @Test
     void anAirTicketSnapshotsItsTravellersAndRunsItsDetailsFromItsFlights() {
         signIn();
-        when(bookingService.lockAccessibleBooking("F1")).thenReturn(flight);
+        when(bookingService.lockForVoucher("F1")).thenReturn(flight);
         when(memberRepository.findByMemberIdAndClientId("M1", "C1"))
                 .thenReturn(Optional.of(member("M1", "Abhishek Kumar Singh", java.time.LocalDate.of(1990, 1, 1))));
         when(memberRepository.findByMemberIdAndClientId("M2", "C1"))
@@ -340,7 +340,7 @@ class BookingDocumentServiceTest {
     @Test
     void anAirTicketWithoutTravellersOrWithAnotherClientsMemberIsRefused() {
         signIn();
-        when(bookingService.lockAccessibleBooking("F1")).thenReturn(flight);
+        when(bookingService.lockForVoucher("F1")).thenReturn(flight);
         when(memberRepository.findByMemberIdAndClientId("X9", "C1")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.addDocument("F1", ticket()))
@@ -353,7 +353,7 @@ class BookingDocumentServiceTest {
     @Test
     void anyOtherVoucherCarriesNoTravellersOrFlights() {
         signIn();
-        when(bookingService.lockAccessibleBooking("F1")).thenReturn(flight);
+        when(bookingService.lockForVoucher("F1")).thenReturn(flight);
         BookingDocumentCreateRequest insurance = ticket("M1");
         insurance.setDocType(BookingDocumentType.INSURANCE);
         org.mockito.ArgumentCaptor<BookingDocument> saved = org.mockito.ArgumentCaptor.forClass(BookingDocument.class);
@@ -380,7 +380,7 @@ class BookingDocumentServiceTest {
     @Test
     void anAncillaryNamesItsTravellersAndKindAndFliesNoSector() {
         signIn();
-        when(bookingService.lockAccessibleBooking("F1")).thenReturn(flight);
+        when(bookingService.lockForVoucher("F1")).thenReturn(flight);
         when(memberRepository.findByMemberIdAndClientId("M1", "C1"))
                 .thenReturn(Optional.of(member("M1", "Abhishek Kumar Singh", java.time.LocalDate.of(1990, 1, 1))));
         org.mockito.ArgumentCaptor<BookingDocument> saved = org.mockito.ArgumentCaptor.forClass(BookingDocument.class);
@@ -398,7 +398,7 @@ class BookingDocumentServiceTest {
     @Test
     void anAncillaryNeedsAFlightBookingAKnownKindAndSomeoneItIsFor() {
         signIn();
-        when(bookingService.lockAccessibleBooking("F1")).thenReturn(flight);
+        when(bookingService.lockForVoucher("F1")).thenReturn(flight);
         assertThatThrownBy(() -> service.addDocument("F1", ancillary("LOUNGE", "M1")))
                 .isInstanceOfSatisfying(com.voyra.crm.exception.FieldValidationException.class, e -> assertThat(e.getField()).isEqualTo("ancillaryKind"));
         BookingDocumentCreateRequest none = ancillary("MEAL");
@@ -417,7 +417,7 @@ class BookingDocumentServiceTest {
         assertThatThrownBy(() -> service.addDocument("F1", ancillary("BAGGAGE", "X9"))).hasMessage("That traveller isn't one of this client's members");
 
         Booking hotel = flight.toBuilder().id("H1").type(com.voyra.crm.enums.BookingType.HOTEL).build();
-        when(bookingService.lockAccessibleBooking("H1")).thenReturn(hotel);
+        when(bookingService.lockForVoucher("H1")).thenReturn(hotel);
         assertThatThrownBy(() -> service.addDocument("H1", ancillary("SEAT", "M1"))).hasMessage("Ancillaries go on a flight booking");
         verify(bookingDocumentRepository, never()).save(any());
     }
@@ -425,7 +425,7 @@ class BookingDocumentServiceTest {
     @Test
     void aVoucherSetsItsFlightsTripTypeUntilTheBookingIsOnAnInvoice() {
         signIn();
-        when(bookingService.lockAccessibleBooking("F1")).thenReturn(flight);
+        when(bookingService.lockForVoucher("F1")).thenReturn(flight);
         when(memberRepository.findByMemberIdAndClientId("M1", "C1"))
                 .thenReturn(Optional.of(member("M1", "Abhishek Kumar Singh", null)));
         BookingDocumentCreateRequest international = ticket("M1");
@@ -446,6 +446,8 @@ class BookingDocumentServiceTest {
     void crmEditOfAMirrorIs409() {
         booking.setPlatformBookingId("PB1");
         when(bookingService.findAccessibleBooking("B1")).thenReturn(booking);
+        when(bookingDocumentRepository.findByIdAndBookingId("D1", "B1")).thenReturn(Optional.of(
+                BookingDocument.builder().id("D1").bookingId("B1").docType(BookingDocumentType.E_TICKET).build()));
 
         assertThatThrownBy(() -> service.attachFile("B1", "D1", org.mockito.Mockito.mock(org.springframework.web.multipart.MultipartFile.class)))
                 .isInstanceOf(com.voyra.crm.exception.BookingConflictException.class)
@@ -462,7 +464,7 @@ class BookingDocumentServiceTest {
         booking.setLeadId("L1");
         booking.setServiceId("S1");
         booking.setDestination("Goa");
-        when(bookingService.lockAccessibleBooking("B1")).thenReturn(booking);
+        when(bookingService.lockForVoucher("B1")).thenReturn(booking);
 
         assertThatThrownBy(() -> service.addDocument("B1", edit("100", "0")))
                 .isInstanceOf(IllegalStateException.class).hasMessage("This booking is cancelled - a voucher can't add cost or price to it");
@@ -483,7 +485,7 @@ class BookingDocumentServiceTest {
 
     @Test
     void editingAnUnknownDocumentFails() {
-        when(bookingService.lockAccessibleBooking("B1")).thenReturn(booking);
+        when(bookingService.lockForVoucher("B1")).thenReturn(booking);
         when(bookingDocumentRepository.findByIdAndBookingId("D9", "B1")).thenReturn(Optional.empty());
         assertThatThrownBy(() -> service.updateDocument("B1", "D9", edit("1", "1")))
                 .isInstanceOf(IllegalArgumentException.class).hasMessage("Document not found: D9");
@@ -612,7 +614,7 @@ class BookingDocumentServiceTest {
     @Test
     void aTicketWithNoTravellerListOrOnlyBlankIdsIsRefusedAndRepeatsCountOnce() {
         signIn();
-        when(bookingService.lockAccessibleBooking("F1")).thenReturn(flight);
+        when(bookingService.lockForVoucher("F1")).thenReturn(flight);
         BookingDocumentCreateRequest none = ticket();
         none.setTravellers(null);
         assertThatThrownBy(() -> service.addDocument("F1", none)).hasMessage("Add the travellers on this ticket");
@@ -642,11 +644,11 @@ class BookingDocumentServiceTest {
         BookingDocumentCreateRequest intl = edit("0", "0");
         intl.setDocType(BookingDocumentType.OTHER);
         intl.setInternationalTrip(true);
-        when(bookingService.lockAccessibleBooking("B1")).thenReturn(booking);
+        when(bookingService.lockForVoucher("B1")).thenReturn(booking);
         service.addDocument("B1", intl);
         assertThat(booking.getInternationalTrip()).isNotEqualTo(Boolean.TRUE);
 
-        when(bookingService.lockAccessibleBooking("F1")).thenReturn(flight);
+        when(bookingService.lockForVoucher("F1")).thenReturn(flight);
         BookingDocumentCreateRequest flightIntl = edit("0", "0");
         flightIntl.setDocType(BookingDocumentType.OTHER);
         flightIntl.setInternationalTrip(false);

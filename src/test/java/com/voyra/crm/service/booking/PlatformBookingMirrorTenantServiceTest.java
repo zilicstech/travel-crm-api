@@ -713,6 +713,23 @@ class PlatformBookingMirrorTenantServiceTest {
         verify(cancellationService).recordVoyraWalletRefund("B1", new BigDecimal("4000.00"), CANCELLED_ON);
     }
 
+    /** An extra bought outside Voyra (a seat) is kept by its supplier: its cost joins what Voyra kept; Voyra's refund is unchanged. */
+    @Test
+    void aCancelKeepsTheExtraVouchersWithTheirSuppliers() {
+        PlatformBooking pb = platformBooking();
+        pb.setCancelRefund(new BigDecimal("4000.00"));
+        when(bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc("B1")).thenReturn(java.util.List.of(
+                BookingDocument.builder().id("D0").docType(BookingDocumentType.E_TICKET).netCost(new BigDecimal("5400.00")).build(),
+                BookingDocument.builder().id("D1").docType(BookingDocumentType.ANCILLARY).netCost(new BigDecimal("350.00")).build()));
+
+        service.cancel("B1", pb);
+
+        ArgumentCaptor<BookingCancelRequest> request = ArgumentCaptor.forClass(BookingCancelRequest.class);
+        verify(cancellationService).cancel(eq("B1"), request.capture(), any(), eq(CANCELLED_ON));
+        assertThat(request.getValue().getSupplierCharge()).isEqualByComparingTo("1750.00"); // 1400 Voyra kept + 350 seat
+        verify(cancellationService).recordVoyraWalletRefund("B1", new BigDecimal("4000.00"), CANCELLED_ON);
+    }
+
     /** Partial cancellations already put 1500 back on the mirror's bill: the cancel receives only the rest. */
     @Test
     void aCancelAfterPartialCancellationsReceivesOnlyWhatIsLeft() {

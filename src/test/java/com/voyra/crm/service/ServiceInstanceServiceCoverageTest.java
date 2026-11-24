@@ -332,6 +332,7 @@ class ServiceInstanceServiceCoverageTest {
         ServiceDraft misc = new ServiceDraft();
         misc.setType(ServiceType.MISCELLANEOUS);
         misc.setMiscDetails("  Travel insurance for 4  ");
+        misc.setMiscCategory("  Insurance ");
         ServiceDraft blankMisc = new ServiceDraft();
         blankMisc.setType(ServiceType.MISCELLANEOUS);
         blankMisc.setMiscDetails(" ");
@@ -340,6 +341,7 @@ class ServiceInstanceServiceCoverageTest {
         ServiceDraft hotel = new ServiceDraft();
         hotel.setType(ServiceType.HOTEL);
         hotel.setMiscDetails("ignored on a hotel");
+        hotel.setMiscCategory("ignored on a hotel");
 
         List<ServiceResponse> out = service.createServices("L1", List.of(visa, applied, misc, blankMisc, noDetails, hotel));
 
@@ -348,6 +350,8 @@ class ServiceInstanceServiceCoverageTest {
         assertThat(out).extracting(ServiceResponse::getMiscDetails)
                 .containsExactly(null, null, "Travel insurance for 4", null, null, null);
         assertThat(out.get(2).getDateFrom()).isNull();
+        assertThat(out).extracting(ServiceResponse::getMiscCategory)
+                .containsExactly(null, null, "Insurance", null, null, null);
 
         ServiceDraft refused = new ServiceDraft();
         refused.setType(ServiceType.FLIGHT);
