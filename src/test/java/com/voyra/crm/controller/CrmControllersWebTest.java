@@ -83,6 +83,7 @@ class CrmControllersWebTest {
     @MockBean private EscalationService escalationService;
     @MockBean private CalendarService calendarService;
     @MockBean private VisaService visaService;
+    @MockBean private com.voyra.crm.service.VisaExportService visaExportService;
     @MockBean private ShiftHandoverService shiftHandoverService;
 
     @Test
@@ -293,7 +294,7 @@ class CrmControllersWebTest {
         verify(shiftHandoverService).acknowledge("H1");
         verify(visaService).createVisa(any());
         verify(visaService).listVisas();
-        verify(visaService).listVisas(PageRequest.of(1, 25));
+        verify(visaService).searchVisas(any(), org.mockito.ArgumentMatchers.isNull(), eq(PageRequest.of(1, 25)));
         verify(visaService).getVisa("V1");
         verify(visaService).updateChecklist(eq("V1"), any());
         verify(visaService).getDashboardSummary();

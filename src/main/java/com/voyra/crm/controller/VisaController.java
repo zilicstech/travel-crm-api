@@ -51,6 +51,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class VisaController {
 
     private final VisaService visaService;
+    private final com.voyra.crm.service.VisaExportService visaExportService;
 
     @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
     @Operation(summary = "Open a new visa case (no files)", description = "Kept for old clients; File fields need the multipart form.")
@@ -103,14 +104,60 @@ public class VisaController {
     }
 
     @GetMapping
-    @Operation(summary = "List visa cases",
-            description = "Agents see only their own cases; Owners see the whole agency. Supply ?page= for a "
-                    + "paged envelope; omit it for the full list as a plain array.")
+    @Operation(summary = "List visa cases (the sheet)",
+            description = "Agents see only their own cases; Owners see the whole agency. Supply ?page= for a paged envelope "
+                    + "with search (q: traveller, client, passport number, case number), filters (country, status, agentId, "
+                    + "openedFrom/openedTo, f.<fieldId>=value, f.<dateFieldId>.from/.to, f.<fileFieldId>=has|missing) and "
+                    + "sort (caseNo, createdDate, clientName, memberName, status, passportExpiry, country, agentName, visaType, "
+                    + "sellingPrice or field.<fieldId>, then ,asc or ,desc); omit page for the full list as a plain array.")
     public ResponseEntity<Object> listVisas(
             @RequestParam(value = "page", required = false) Integer page,
-            @RequestParam(value = "size", required = false) Integer size) {
+            @RequestParam(value = "size", required = false) Integer size,
+            @RequestParam(value = "sort", required = false) String sort,
+            @RequestParam(value = "q", required = false) String q,
+            @RequestParam(value = "country", required = false) String country,
+            @RequestParam(value = "status", required = false) com.voyra.crm.enums.VisaStatus status,
+            @RequestParam(value = "agentId", required = false) String agentId,
+            @RequestParam(value = "openedFrom", required = false) java.time.LocalDate openedFrom,
+            @RequestParam(value = "openedTo", required = false) java.time.LocalDate openedTo,
+            @RequestParam Map<String, String> params) {
         Pageable pageable = PageRequestUtil.resolve(page, size);
-        return ResponseEntity.ok(pageable == null ? visaService.listVisas() : visaService.listVisas(pageable));
+        if (pageable == null) {
+            return ResponseEntity.ok(visaService.listVisas());
+        }
+        return ResponseEntity.ok(visaService.searchVisas(
+                new com.voyra.crm.models.VisaListFilter(q, country, status, agentId, openedFrom, openedTo, fieldFilters(params)), sort, pageable));
+    }
+
+    @GetMapping("/export.csv")
+    @Operation(summary = "Export the sheet as CSV", description = "Same filters, order and scope as the list; at most 5000 rows "
+            + "(X-Truncated: true when there were more). Audited.")
+    public ResponseEntity<String> exportCsv(
+            @RequestParam(value = "sort", required = false) String sort,
+            @RequestParam(value = "q", required = false) String q,
+            @RequestParam(value = "country", required = false) String country,
+            @RequestParam(value = "status", required = false) com.voyra.crm.enums.VisaStatus status,
+            @RequestParam(value = "agentId", required = false) String agentId,
+            @RequestParam(value = "openedFrom", required = false) java.time.LocalDate openedFrom,
+            @RequestParam(value = "openedTo", required = false) java.time.LocalDate openedTo,
+            @RequestParam Map<String, String> params) {
+        com.voyra.crm.service.VisaExportService.Export export = visaExportService.export(
+                new com.voyra.crm.models.VisaListFilter(q, country, status, agentId, openedFrom, openedTo, fieldFilters(params)), sort);
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType("text/csv; charset=UTF-8"))
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"visa-applications.csv\"")
+                .header(HttpHeaders.CACHE_CONTROL, "no-store")
+                .header("X-Truncated", String.valueOf(export.truncated()))
+                .body(export.csv());
+    }
+
+    /** f.<id>=v, f.<id>.from=d ... -> <id>=v, <id>.from=d. */
+    private static Map<String, String> fieldFilters(Map<String, String> params) {
+        Map<String, String> out = new LinkedHashMap<>();
+        params.forEach((k, v) -> {
+            if (k.startsWith("f.")) out.put(k.substring(2), v);
+        });
+        return out;
     }
 
     @GetMapping("/{id}")

@@ -53,6 +53,11 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
+import com.voyra.crm.models.VisaListFilter;
+import com.voyra.crm.repository.spec.VisaSpecifications;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -346,12 +351,43 @@ public class VisaService {
         return withFiles(base);
     }
 
+    /** Built-in columns the sheet sorts on (besides {@code field.<id>}). */
+    static final Set<String> SORTABLE = Set.of("caseNo", "createdDate", "clientName", "memberName", "status", "passportExpiry",
+            "country", "agentName", "visaType", "sellingPrice");
+
+    /** The sheet's query: what matches, in which order, and the fields it may show (common, then the country's). */
+    public record VisaQuery(Specification<Visa> spec, Sort sort, List<VisaField> fields) {
+    }
+
+    /** Builds the sheet's query for the caller: an agent only ever sees their own cases. Unknown fields or sorts are 400. */
     @Transactional(readOnly = true)
-    public PagedResponse<VisaResponse> listVisas(Pageable pageable) {
+    public VisaQuery query(VisaListFilter filter, String sort) {
         CustomUserPrincipal principal = SecurityContextUtil.getCurrentUserOrThrow();
-        Page<Visa> page = principal.isAgent()
-                ? visaRepository.findByAgentId(principal.userId(), pageable)
-                : visaRepository.findAll(pageable);
+        List<VisaField> fields = visaFieldService.activeFor(filter.country());
+        Map<String, VisaField> byId = byId(fields);
+        Specification<Visa> spec = VisaSpecifications.matching(filter, byId, principal.isAgent() ? principal.userId() : null);
+        String[] parts = sort == null || sort.isBlank() ? new String[]{"caseNo", "desc"} : sort.trim().split(",", 2);
+        boolean ascending = parts.length < 2 || !parts[1].trim().equalsIgnoreCase("desc");
+        String property = parts[0].trim();
+        if (property.startsWith("field.")) {
+            VisaField field = byId.get(property.substring("field.".length()));
+            if (field == null || field.getType() == VisaFieldType.FILE) {
+                throw new FieldValidationException("sort", "That column cannot be sorted");
+            }
+            return new VisaQuery(spec.and(VisaSpecifications.sortedByField(field, ascending)), Sort.unsorted(), fields);
+        }
+        if (!SORTABLE.contains(property)) {
+            throw new FieldValidationException("sort", "That column cannot be sorted");
+        }
+        Sort order = Sort.by(ascending ? Sort.Direction.ASC : Sort.Direction.DESC, property);
+        return new VisaQuery(spec, property.equals("caseNo") ? order : order.and(Sort.by(Sort.Direction.DESC, "caseNo")), fields);
+    }
+
+    /** One page of the sheet. */
+    @Transactional(readOnly = true)
+    public PagedResponse<VisaResponse> searchVisas(VisaListFilter filter, String sort, Pageable pageable) {
+        VisaQuery q = query(filter, sort);
+        Page<Visa> page = visaRepository.findAll(q.spec(), PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(), q.sort()));
         Map<String, List<VisaFile>> files = filesOf(page.getContent());
         return PagedResponse.from(page, v -> toResponse(v, files.getOrDefault(v.getId(), List.of())));
     }
@@ -376,7 +412,7 @@ public class VisaService {
         return visas.stream().map(v -> toResponse(v, files.getOrDefault(v.getId(), List.of()))).toList();
     }
 
-    private Map<String, List<VisaFile>> filesOf(List<Visa> visas) {
+    Map<String, List<VisaFile>> filesOf(List<Visa> visas) {
         if (visas.isEmpty()) {
             return Map.of();
         }

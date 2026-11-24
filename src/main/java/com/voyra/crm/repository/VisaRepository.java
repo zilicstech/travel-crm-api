@@ -13,7 +13,7 @@ import java.time.LocalDate;
 import java.util.List;
 
 @Repository
-public interface VisaRepository extends JpaRepository<Visa, String> {
+public interface VisaRepository extends JpaRepository<Visa, String>, org.springframework.data.jpa.repository.JpaSpecificationExecutor<Visa> {
 
     List<Visa> findByAgentId(String agentId);
 

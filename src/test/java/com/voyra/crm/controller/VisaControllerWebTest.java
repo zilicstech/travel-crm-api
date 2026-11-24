@@ -48,6 +48,33 @@ class VisaControllerWebTest {
 
     @Autowired private MockMvc mvc;
     @MockBean private VisaService service;
+    @MockBean private com.voyra.crm.service.VisaExportService exportService;
+
+    @Test
+    void theSheetSearchesWithFieldFiltersAndThePlainListStays() throws Exception {
+        mvc.perform(get("/api/visas").with(as(UserType.AGENT))).andExpect(status().isOk());
+        verify(service).listVisas();
+        mvc.perform(get("/api/visas").param("page", "1").param("size", "50").param("sort", "field.f1,desc").param("q", "ravi")
+                .param("country", "Kenya").param("status", "SUBMITTED").param("agentId", "A2").param("openedFrom", "2026-11-01")
+                .param("openedTo", "2026-11-30").param("f.f1", "RECVD").param("f.f2.from", "2026-01-01").with(as(UserType.AGENCY_OWNER)))
+                .andExpect(status().isOk());
+        verify(service).searchVisas(eq(new com.voyra.crm.models.VisaListFilter("ravi", "Kenya", com.voyra.crm.enums.VisaStatus.SUBMITTED, "A2",
+                java.time.LocalDate.of(2026, 11, 1), java.time.LocalDate.of(2026, 11, 30), Map.of("f1", "RECVD", "f2.from", "2026-01-01"))),
+                eq("field.f1,desc"), eq(org.springframework.data.domain.PageRequest.of(1, 50)));
+        mvc.perform(get("/api/visas").param("page", "0").param("status", "MAYBE").with(as(UserType.AGENT))).andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void theExportDownloadsAsCsvAndSaysWhenItWasCut() throws Exception {
+        given(exportService.export(any(), any())).willReturn(new com.voyra.crm.service.VisaExportService.Export("No.\n1\n", 1, true));
+        mvc.perform(get("/api/visas/export.csv").param("country", "Kenya").param("f.f1", "RECVD").param("sort", "caseNo").with(as(UserType.AGENT)))
+                .andExpect(status().isOk())
+                .andExpect(content().contentTypeCompatibleWith("text/csv"))
+                .andExpect(header().string(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"visa-applications.csv\""))
+                .andExpect(header().string("X-Truncated", "true"))
+                .andExpect(content().string("No.\n1\n"));
+        verify(exportService).export(eq(new com.voyra.crm.models.VisaListFilter(null, "Kenya", null, null, null, null, Map.of("f1", "RECVD"))), eq("caseNo"));
+    }
 
     @Test
     void opensACaseWithItsFilesNamedByField() throws Exception {

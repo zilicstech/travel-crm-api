@@ -187,23 +187,6 @@ class VisaServiceCoverageTest {
     }
 
     @Test
-    void pagedListingIsScopedTheSameWay() {
-        PageRequest page = PageRequest.of(0, 10);
-        Visa mine = Visa.builder().id("V1").agentId("A1").createdDate(java.time.LocalDateTime.of(2026, 11, 22, 10, 15)).build();
-        when(visaRepository.findByAgentId("A1", page)).thenReturn(new PageImpl<>(List.of(mine), page, 1));
-        when(visaRepository.findAll(page)).thenReturn(new PageImpl<>(List.of(mine, mine), page, 2));
-
-        signInAs("A1", UserType.AGENT);
-        PagedResponse<VisaResponse> agentPage = service.listVisas(page);
-        signInAs("O1", UserType.AGENCY_OWNER);
-        PagedResponse<VisaResponse> ownerPage = service.listVisas(page);
-
-        assertThat(agentPage.getTotalElements()).isEqualTo(1);
-        assertThat(ownerPage.getTotalElements()).isEqualTo(2);
-        assertThat(agentPage.getContent().get(0).getCreatedAt()).isEqualTo(java.time.LocalDateTime.of(2026, 11, 22, 10, 15));
-    }
-
-    @Test
     void anAgentCannotOpenAnotherAgentsCaseButTheOwnerCan() {
         Visa v = Visa.builder().id("V1").agentId("A2").build();
         when(visaRepository.findById("V1")).thenReturn(Optional.of(v));
