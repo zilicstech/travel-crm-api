@@ -43,6 +43,19 @@ class VisaServiceTest {
     private AgentRepository agentRepository;
     @Mock
     private AuditService auditService;
+    @Mock com.voyra.crm.repository.MemberRepository memberRepository;
+    @Mock com.voyra.crm.repository.VendorRepository vendorRepository;
+    @Mock VisaFieldService visaFieldService;
+    @Mock com.voyra.crm.repository.VisaFileRepository visaFileRepository;
+    @Mock FileStorageService fileStorage;
+    @Mock AuthorResolver authorResolver;
+
+    @org.junit.jupiter.api.BeforeEach
+    void stubFieldsAndSaves() {
+        org.mockito.Mockito.lenient().when(memberRepository.findById("M1")).thenReturn(Optional.of(com.voyra.crm.entity.Member.builder()
+                .memberId("M1").clientId("C1").name("Asha").passportNumber("P1").nationality("Indian").build()));
+        org.mockito.Mockito.lenient().when(visaRepository.saveAndFlush(org.mockito.ArgumentMatchers.any())).thenAnswer(inv -> inv.getArgument(0));
+    }
 
     @InjectMocks
     private VisaService visaService;
@@ -68,7 +81,7 @@ class VisaServiceTest {
         request.setVisaType("Tourist");
 
         assertThatThrownBy(() -> visaService.createVisa(request)).isInstanceOf(AccessDeniedException.class);
-        verify(visaRepository, never()).save(any());
+        verify(visaRepository, never()).saveAndFlush(any());
     }
 
     private Visa caseFor(String agentId) {
@@ -88,7 +101,7 @@ class VisaServiceTest {
 
         assertThatThrownBy(() -> visaService.updateChecklist("V1", request))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("both approved and rejected");
-        verify(visaRepository, never()).save(any());
+        verify(visaRepository, never()).saveAndFlush(any());
     }
 
     @Test

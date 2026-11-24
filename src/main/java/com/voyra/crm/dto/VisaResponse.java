@@ -85,4 +85,49 @@ public class VisaResponse {
     /** When the case was opened (agency time); shown as the case's opening date and time. */
     @Schema(example = "2026-08-15T10:30:00")
     private java.time.LocalDateTime createdAt;
+
+    @Schema(description = "The sheet's S.NO", example = "42")
+    private Long caseNo;
+
+    @Schema(description = "The traveller; null on cases opened before visa configuration", example = "m-1")
+    private String memberId;
+
+    @Schema(description = "Denormalized snapshot, live-synced on member rename", example = "Jane Doe")
+    private String memberName;
+
+    @Schema(example = "2031-04-30")
+    private LocalDate passportExpiry;
+
+    @Schema(example = "Indian")
+    private String nationality;
+
+    @Schema(description = "Configured field id -> value", example = "{\"f1\": \"RECVD\"}")
+    private java.util.Map<String, String> values;
+
+    @Schema(description = "Files held for File fields")
+    private java.util.List<VisaFileResponse> files;
+
+    @Schema(description = "Detail only: labels of removed fields this application still holds, by field id", example = "{\"f7\": \"OLD FIELD\"}")
+    private java.util.Map<String, String> removedFields;
+
+    @Schema(example = "120.00")
+    private java.math.BigDecimal purchasePrice;
+
+    @Schema(example = "USD")
+    private String purchaseCurrency;
+
+    @Schema(description = "In the agency's base currency", example = "12500.00")
+    private java.math.BigDecimal sellingPrice;
+
+    @Schema(example = "v-1")
+    private String vendorId;
+
+    @Schema(description = "Denormalized snapshot, live-synced on vendor rename", example = "Atlas Visas")
+    private String vendorName;
+
+    @Schema(example = "Express processing")
+    private String remarks;
+
+    @Schema(description = "Send it back with an edit; a newer one on the server is 409 VISA_CHANGED", example = "3")
+    private Long version;
 }

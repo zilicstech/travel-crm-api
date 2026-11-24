@@ -89,10 +89,10 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(FieldValidationException.class)
     public ResponseEntity<ApiErrorResponse> handleFieldValidation(FieldValidationException ex, HttpServletRequest request) {
         String path = getPath(request);
-        log.warn("Validation failed - path: {}, field: {}", path, ex.getField());
+        log.warn("Validation failed - path: {}, fields: {}", path, ex.getErrors().keySet());
         ApiErrorResponse response = ApiErrorResponse.of("Validation failed",
                 "One or more request fields are invalid", null, HttpStatus.BAD_REQUEST.value(), path);
-        response.setDetails(Map.of("errors", Map.of(ex.getField(), ex.getMessage())));
+        response.setDetails(Map.of("errors", ex.getErrors()));
         return ResponseEntity.badRequest().body(response);
     }
 

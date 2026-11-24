@@ -300,6 +300,7 @@ public class ClientService {
                     primary.setModifiedBy(currentUserId());
                     memberRepository.save(primary);
                     leadMemberRepository.updateMemberNameForMember(primary.getMemberId(), newName);
+                    visaRepository.updateMemberNameForMember(primary.getMemberId(), newName);
                 });
     }
 

@@ -43,6 +43,7 @@ public class MemberService {
     private final MemberRepository memberRepository;
     private final MemberDocumentRepository memberDocumentRepository;
     private final LeadMemberRepository leadMemberRepository;
+    private final com.voyra.crm.repository.VisaRepository visaRepository;
     private final FileStorageService fileStorageService;
     private final MemberMapper memberMapper;
     private final AuditService auditService;
@@ -135,6 +136,7 @@ public class MemberService {
 
         if (renamed) {
             leadMemberRepository.updateMemberNameForMember(member.getMemberId(), member.getName());
+            visaRepository.updateMemberNameForMember(member.getMemberId(), member.getName());
         }
 
         auditService.recordUpdate(AuditEntityType.MEMBER, member.getMemberId(), member.getName(),

@@ -48,6 +48,7 @@ class VendorServiceCoverageTest {
     @Mock LeadProposalRepository leadProposalRepository;
     @Mock SupplierInvoiceRepository supplierInvoiceRepository;
     @Mock AuditService auditService;
+    @Mock com.voyra.crm.repository.VisaRepository visaRepository;
     @InjectMocks VendorService service;
 
     @AfterEach
@@ -247,6 +248,7 @@ class VendorServiceCoverageTest {
         verify(bookingRepository).updateSupplierName("Agoda", "Agoda Asia");
         verify(leadProposalRepository).updateSupplierName("Agoda", "Agoda Asia");
         verify(supplierInvoiceRepository).updateSupplierName("Agoda", "Agoda Asia");
+        verify(visaRepository).updateVendorNameForVendor(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq("Agoda Asia"));
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<AuditChange>> changes = ArgumentCaptor.forClass(List.class);
         verify(auditService).recordUpdate(eq(AuditEntityType.VENDOR), eq("V1"), eq("Agoda Asia"), changes.capture());

@@ -278,7 +278,7 @@ class CrmControllersWebTest {
         mvc.perform(json(post("/api/handovers"), "{\"summary\":\"Two follow-ups open\"}").with(as(UserType.AGENT))).andExpect(status().isOk());
         mvc.perform(get("/api/handovers").with(as(UserType.AGENT))).andExpect(status().isOk());
         mvc.perform(patch("/api/handovers/H1/acknowledge").with(as(UserType.AGENT))).andExpect(status().isOk());
-        mvc.perform(json(post("/api/visas"), "{\"clientId\":\"C1\",\"country\":\"France\",\"visaType\":\"Tourist\"}").with(as(UserType.AGENT)))
+        mvc.perform(json(post("/api/visas"), "{\"clientId\":\"C1\",\"memberId\":\"M1\",\"country\":\"France\",\"visaType\":\"Tourist\"}").with(as(UserType.AGENT)))
                 .andExpect(status().isOk());
         mvc.perform(get("/api/visas").with(as(UserType.AGENT))).andExpect(status().isOk());
         mvc.perform(get("/api/visas").param("page", "1").with(as(UserType.AGENT))).andExpect(status().isOk());

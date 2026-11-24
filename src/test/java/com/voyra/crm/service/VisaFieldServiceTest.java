@@ -107,6 +107,7 @@ class VisaFieldServiceTest {
         assertOptionsRefused(null);
         assertOptionsRefused(List.of());
         assertOptionsRefused(List.of("  "));
+        assertOptionsRefused(java.util.Arrays.asList("A", null));
         assertOptionsRefused(IntStream.range(0, 31).mapToObj(i -> "O" + i).toList());
         assertOptionsRefused(List.of("Yes", "YES"));
         assertOptionsRefused(List.of("x".repeat(41)));
@@ -136,6 +137,7 @@ class VisaFieldServiceTest {
     @Test
     void reAddingARemovedLabelRestoresIt() {
         VisaField removed = field("old", VisaFieldScope.COUNTRY, "Kenya", "Medical", VisaFieldType.DROPDOWN, false, 2);
+        group.add(field("other", VisaFieldScope.COUNTRY, "Kenya", "Insurance", VisaFieldType.TEXT, false, 1));
         group.add(removed);
         group.add(field("b", VisaFieldScope.COUNTRY, "Kenya", "EVISA", VisaFieldType.TEXT, true, 7));
         VisaFieldResponse back = service.create(req(VisaFieldScope.COUNTRY, "Kenya", "medical", VisaFieldType.DROPDOWN, List.of("RECVD", "HOLD")));
@@ -227,6 +229,9 @@ class VisaFieldServiceTest {
         service.update("m", req(VisaFieldScope.COMMON, null, "Medical", VisaFieldType.DROPDOWN, List.of("PENDING", "RECEIVED")));
         verify(visaRepository, never()).renameOption(eq("m"), eq("RECEIVED"), eq("PENDING"));
         verify(visaRepository, never()).renameOption(eq("m"), eq("PENDING"), eq("RECEIVED"));
+        // [PENDING, RECEIVED] -> [RECEIVED, NEW]: RECEIVED moved up and NEW is new; neither is a rename
+        service.update("m", req(VisaFieldScope.COMMON, null, "Medical", VisaFieldType.DROPDOWN, List.of("RECEIVED", "NEW")));
+        verify(visaRepository, never()).renameOption(eq("m"), anyString(), eq("NEW"));
     }
 
     @Test
@@ -245,18 +250,20 @@ class VisaFieldServiceTest {
     void reorderSetsSortOrderInGivenOrder() {
         VisaField a = field("a", VisaFieldScope.COUNTRY, "Kenya", "A", VisaFieldType.TEXT, true, 0);
         VisaField b = field("b", VisaFieldScope.COUNTRY, "Kenya", "B", VisaFieldType.TEXT, true, 1);
-        group.addAll(List.of(a, b, field("gone", VisaFieldScope.COUNTRY, "Kenya", "Gone", VisaFieldType.TEXT, false, 2)));
-        List<VisaFieldResponse> out = service.reorder(new VisaFieldOrderRequest(VisaFieldScope.COUNTRY, "Kenya", List.of("b", "a")));
+        VisaField c = field("c", VisaFieldScope.COUNTRY, "Kenya", "C", VisaFieldType.TEXT, true, 2);
+        group.addAll(List.of(a, b, c, field("gone", VisaFieldScope.COUNTRY, "Kenya", "Gone", VisaFieldType.TEXT, false, 3)));
+        List<VisaFieldResponse> out = service.reorder(new VisaFieldOrderRequest(VisaFieldScope.COUNTRY, "Kenya", List.of("b", "a", "c")));
         assertThat(b.getSortOrder()).isZero();
         assertThat(a.getSortOrder()).isEqualTo(1);
-        assertThat(out).extracting(VisaFieldResponse::getId).containsExactly("b", "a");
+        assertThat(out).extracting(VisaFieldResponse::getId).containsExactly("b", "a", "c");
+        verify(auditService, never()).recordUpdate(eq(AuditEntityType.VISA_FIELD), eq("c"), anyString(), anyList());
         verify(auditService).recordUpdate(eq(AuditEntityType.VISA_FIELD), eq("b"), eq("B"), anyList());
 
-        assertThatThrownBy(() -> service.reorder(new VisaFieldOrderRequest(VisaFieldScope.COUNTRY, "Kenya", List.of("b", "x"))))
+        assertThatThrownBy(() -> service.reorder(new VisaFieldOrderRequest(VisaFieldScope.COUNTRY, "Kenya", List.of("b", "x", "c"))))
                 .isInstanceOf(IllegalArgumentException.class).hasMessage("Give every field of that list once");
         assertThatThrownBy(() -> service.reorder(new VisaFieldOrderRequest(VisaFieldScope.COUNTRY, "Kenya", List.of("b"))))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> service.reorder(new VisaFieldOrderRequest(VisaFieldScope.COUNTRY, "Kenya", List.of("a", "a"))))
+        assertThatThrownBy(() -> service.reorder(new VisaFieldOrderRequest(VisaFieldScope.COUNTRY, "Kenya", List.of("a", "a", "b"))))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> service.reorder(new VisaFieldOrderRequest(VisaFieldScope.COUNTRY, " ", List.of("a"))))
                 .isInstanceOf(FieldValidationException.class);

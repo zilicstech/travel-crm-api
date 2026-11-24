@@ -53,6 +53,7 @@ public class VendorService {
     private final BookingRepository bookingRepository;
     private final LeadProposalRepository leadProposalRepository;
     private final SupplierInvoiceRepository supplierInvoiceRepository;
+    private final com.voyra.crm.repository.VisaRepository visaRepository;
     private final AuditService auditService;
 
     @Transactional
@@ -170,6 +171,7 @@ public class VendorService {
             bookingRepository.updateSupplierName(oldName, vendor.getName());
             leadProposalRepository.updateSupplierName(oldName, vendor.getName());
             supplierInvoiceRepository.updateSupplierName(oldName, vendor.getName());
+            visaRepository.updateVendorNameForVendor(vendor.getId(), vendor.getName());
         }
 
         auditService.recordUpdate(AuditEntityType.VENDOR, vendor.getId(), vendor.getName(), changes);

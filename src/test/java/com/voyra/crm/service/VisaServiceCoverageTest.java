@@ -52,6 +52,19 @@ class VisaServiceCoverageTest {
     @Mock AgentRepository agentRepository;
     @Mock TenantRepository tenantRepository;
     @Mock AuditService auditService;
+    @Mock com.voyra.crm.repository.MemberRepository memberRepository;
+    @Mock com.voyra.crm.repository.VendorRepository vendorRepository;
+    @Mock VisaFieldService visaFieldService;
+    @Mock com.voyra.crm.repository.VisaFileRepository visaFileRepository;
+    @Mock FileStorageService fileStorage;
+    @Mock AuthorResolver authorResolver;
+
+    @org.junit.jupiter.api.BeforeEach
+    void stubFieldsAndSaves() {
+        org.mockito.Mockito.lenient().when(memberRepository.findById("M1")).thenReturn(Optional.of(com.voyra.crm.entity.Member.builder()
+                .memberId("M1").clientId("C1").name("Asha").passportNumber("P1").nationality("Indian").build()));
+        org.mockito.Mockito.lenient().when(visaRepository.saveAndFlush(org.mockito.ArgumentMatchers.any())).thenAnswer(inv -> inv.getArgument(0));
+    }
     @InjectMocks VisaService service;
 
     @AfterEach
@@ -76,6 +89,7 @@ class VisaServiceCoverageTest {
         r.setCountry("France");
         r.setVisaType("Tourist");
         r.setPassportNumber("X0000000");
+        r.setMemberId("M1");
         return r;
     }
 
@@ -89,7 +103,7 @@ class VisaServiceCoverageTest {
         VisaResponse res = service.createVisa(request("IGNORED"));
 
         ArgumentCaptor<Visa> saved = ArgumentCaptor.forClass(Visa.class);
-        verify(visaRepository).save(saved.capture());
+        verify(visaRepository).saveAndFlush(saved.capture());
         Visa v = saved.getValue();
         assertThat(v.getAgentId()).isEqualTo("A1");
         assertThat(v.getAgentName()).isEqualTo("Priya");
@@ -241,7 +255,7 @@ class VisaServiceCoverageTest {
         assertThat(v.getStatus()).isEqualTo(VisaStatus.APPROVED);
         assertThat(v.getUpdatedBy()).isEqualTo("O1");
         assertThat(res.getStatus()).isEqualTo(VisaStatus.APPROVED);
-        verify(visaRepository).save(v);
+        verify(visaRepository).saveAndFlush(v);
         verify(auditService).recordUpdate(eq(AuditEntityType.VISA), eq("V1"), eq("Asha / France"), anyList());
     }
 

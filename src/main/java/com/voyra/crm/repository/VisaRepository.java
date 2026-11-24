@@ -39,4 +39,12 @@ public interface VisaRepository extends JpaRepository<Visa, String> {
     @Query(value = "UPDATE visa SET field_values = jsonb_set(field_values, ARRAY[CAST(:fieldId AS text)], to_jsonb(CAST(:newValue AS text)))"
             + " WHERE field_values ->> CAST(:fieldId AS text) = :oldValue", nativeQuery = true)
     int renameOption(@Param("fieldId") String fieldId, @Param("oldValue") String oldValue, @Param("newValue") String newValue);
+
+    @Modifying
+    @Query("UPDATE Visa v SET v.memberName = :name WHERE v.memberId = :memberId")
+    void updateMemberNameForMember(@Param("memberId") String memberId, @Param("name") String name);
+
+    @Modifying
+    @Query("UPDATE Visa v SET v.vendorName = :name WHERE v.vendorId = :vendorId")
+    void updateVendorNameForVendor(@Param("vendorId") String vendorId, @Param("name") String name);
 }

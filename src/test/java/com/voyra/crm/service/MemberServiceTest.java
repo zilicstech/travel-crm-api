@@ -49,11 +49,12 @@ class MemberServiceTest {
     @Mock LeadMemberRepository leadMemberRepository;
     @Mock FileStorageService fileStorageService;
     @Mock AuditService auditService;
+    @Mock com.voyra.crm.repository.VisaRepository visaRepository;
     MemberService service;
 
     @BeforeEach
     void setUp() {
-        service = new MemberService(clientService, memberRepository, memberDocumentRepository, leadMemberRepository,
+        service = new MemberService(clientService, memberRepository, memberDocumentRepository, leadMemberRepository, visaRepository,
                 fileStorageService, new MemberMapper(memberDocumentRepository), auditService);
         SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
                 new CustomUserPrincipal("A1", "agent", UserType.AGENT, "T1"), null, List.of()));
@@ -156,6 +157,7 @@ class MemberServiceTest {
         assertThat(m.getModifiedBy()).isEqualTo("A1");
         assertThat(res.getName()).isEqualTo("Ravi Kumar");
         verify(leadMemberRepository).updateMemberNameForMember("M1", "Ravi Kumar");
+        verify(visaRepository).updateMemberNameForMember("M1", "Ravi Kumar");
         verify(auditService).recordUpdate(eq(AuditEntityType.MEMBER), eq("M1"), eq("Ravi Kumar"), anyList());
     }
 

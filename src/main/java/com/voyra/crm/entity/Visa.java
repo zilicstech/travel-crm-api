@@ -8,14 +8,21 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
+import org.hibernate.annotations.Generated;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 @Entity
 @Table(name = "visa")
@@ -113,6 +120,54 @@ public class Visa {
 
     @Column(name = "updated_by", length = 36)
     private String updatedBy;
+
+    /** The sheet's S.NO, from a tenant sequence. */
+    @Generated
+    @Column(name = "case_no", insertable = false, updatable = false)
+    private Long caseNo;
+
+    /** The traveller (a member of the client); null on cases opened before visa configuration. */
+    @Column(name = "member_id", length = 36)
+    private String memberId;
+
+    @Column(name = "member_name", length = 150)
+    private String memberName;
+
+    @Column(name = "passport_expiry")
+    private LocalDate passportExpiry;
+
+    @Column(name = "nationality", length = 60)
+    private String nationality;
+
+    /** Configured field id -> value (text, the chosen option, ISO date, "true"/"false"). File fields live in visa_file. */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "field_values", columnDefinition = "jsonb", nullable = false)
+    @Builder.Default
+    private Map<String, String> fieldValues = new LinkedHashMap<>();
+
+    @Column(name = "purchase_price", precision = 12, scale = 2)
+    private BigDecimal purchasePrice;
+
+    @Column(name = "purchase_currency", length = 3)
+    private String purchaseCurrency;
+
+    /** In the agency's base currency. Record only: nothing posts it to the books. */
+    @Column(name = "selling_price", precision = 12, scale = 2)
+    private BigDecimal sellingPrice;
+
+    @Column(name = "vendor_id", length = 36)
+    private String vendorId;
+
+    @Column(name = "vendor_name", length = 150)
+    private String vendorName;
+
+    @Column(name = "remarks", length = 500)
+    private String remarks;
+
+    /** Optimistic lock: an in-place edit carries the version it read. */
+    @Version
+    @Column(name = "version", nullable = false)
+    private Long version;
 
     @PrePersist
     protected void onCreate() {

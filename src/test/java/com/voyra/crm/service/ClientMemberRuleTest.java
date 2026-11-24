@@ -80,7 +80,7 @@ class ClientMemberRuleTest {
 
     private MemberService memberService() {
         return new MemberService(clientService, memberRepository, memberDocumentRepository,
-                leadMemberRepository, fileStorageService, memberMapper, auditService);
+                leadMemberRepository, visaRepository, fileStorageService, memberMapper, auditService);
     }
 
     private void authenticateAs(String userId, UserType role) {
@@ -397,6 +397,7 @@ class ClientMemberRuleTest {
         assertThat(member.getName()).isEqualTo("Ajay Kumar Sharma");
         verify(memberRepository).save(member);
         verify(leadMemberRepository).updateMemberNameForMember("M1", "Ajay Kumar Sharma");
+        verify(visaRepository).updateMemberNameForMember("M1", "Ajay Kumar Sharma");
     }
 
     /** A primary renamed on purpose (no longer the client's name) is a different fact - keep it. */
