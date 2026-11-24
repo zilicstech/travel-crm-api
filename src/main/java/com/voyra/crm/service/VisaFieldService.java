@@ -90,11 +90,10 @@ public class VisaFieldService {
         LocalDateTime now = LocalDateTime.now();
         String by = SecurityContextUtil.getCurrentUserId().orElse(null);
 
-        VisaField removed = group.stream().filter(f -> !f.isActive() && sameLabel(f, label)).findFirst().orElse(null);
+        // a removed field with the same label and type comes back (with its old values); another type is a new field
+        VisaField removed = group.stream()
+                .filter(f -> !f.isActive() && sameLabel(f, label) && f.getType() == request.getType()).findFirst().orElse(null);
         if (removed != null) {
-            if (removed.getType() != request.getType()) {
-                throw new FieldValidationException("type", "A field's type cannot change");
-            }
             removed.setActive(true);
             removed.setLabel(label);
             removed.setOptions(options);

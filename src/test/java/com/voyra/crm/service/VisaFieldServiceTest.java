@@ -148,9 +148,12 @@ class VisaFieldServiceTest {
         assertThat(back.getSortOrder()).isEqualTo(8);
         verify(auditService).recordUpdate(eq(AuditEntityType.VISA_FIELD), eq("old"), eq("medical"), anyList());
 
+        // a removed label added back with another type is a new field (the old values keep their own field)
         removed.setActive(false);
-        assertThatThrownBy(() -> service.create(req(VisaFieldScope.COUNTRY, "Kenya", "Medical", VisaFieldType.TEXT, null)))
-                .isInstanceOfSatisfying(FieldValidationException.class, e -> assertThat(e.getMessage()).isEqualTo("A field's type cannot change"));
+        VisaFieldResponse fresh = service.create(req(VisaFieldScope.COUNTRY, "Kenya", "Medical", VisaFieldType.TEXT, null));
+        assertThat(fresh.getId()).isNotEqualTo("old");
+        assertThat(fresh.getType()).isEqualTo(VisaFieldType.TEXT);
+        assertThat(removed.isActive()).isFalse();
     }
 
     @Test
