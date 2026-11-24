@@ -102,7 +102,7 @@ public class VisaExportService {
         parts.put("agent", f.agentId());
         parts.put("from", f.openedFrom());
         parts.put("to", f.openedTo());
-        parts.put("search", f.q() == null || f.q().isBlank() ? null : "yes");
+        parts.put("search", org.springframework.util.StringUtils.hasText(f.q()) ? "yes" : null);
         parts.put("field filters", f.fieldFilters().isEmpty() ? null : f.fieldFilters().size());
         String text = parts.entrySet().stream().filter(e -> e.getValue() != null && !e.getValue().toString().isBlank())
                 .map(e -> e.getKey() + "=" + e.getValue()).collect(Collectors.joining(", "));

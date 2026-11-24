@@ -672,3 +672,26 @@ release.
 - **Visa case owner (2026-11-23).** `POST /api/visas` no longer takes an agent from the owner: an owner's case is the
   owner's (agent id = agency id, name = owner name, kept in line by `OwnerNameSyncService`), an agent's case their own
   (still only an agent who handles visas). `VisaCreateRequest.agentId` is ignored, kept for old clients.
+
+## Visa configuration 2026-11-24 (owner rulings)
+
+The client ran visas in one Excel sheet per country (UAE residency, UAE tourist for Dubai / Sharjah / Oman, Kenya). The
+agency now configures the fields once and the CRM is the sheet.
+
+- **Tenant V6** `V6__visa_configuration.sql`: `member.pan_number`; `visa_field`; new `visa` columns (traveller, passport
+  expiry, nationality, `field_values` jsonb, purchase / selling, supplier, remarks, `case_no`, `version`); `visa_file`.
+  The unreleased step-5 V6 (per-country document ticks) was dropped; PAN kept.
+- **Configuration** `VisaFieldController` / `VisaFieldService` (`/api/visa-fields`): common and country fields, five types,
+  mandatory, order, soft delete with restore by label, in-place option rename rewrites stored values. Audited `VISA_FIELD`.
+- **Cases** `VisaService`: Open Case per traveller with the country's fields and files (`VisaFieldValues` checks by type;
+  files stored after validation, removed on rollback); `PATCH /{id}/values` with optimistic `version` (409 `VISA_CHANGED`);
+  file upload / download / delete; member and vendor rename re-sync; detail lists `removedFields` still held.
+- **Sheet** `VisaSpecifications` + `VisaService.query` / `searchVisas`: search, built-in and per-field filters, sort on any
+  field (empty last), agent scope always applied; unknown field ids are 400. `VisaExportService`: CSV of the same query, 5000
+  rows max, formula-safe, audited.
+- **Frontend**: Settings section, shared visa workspace, Open Case modal, the sheet with inline edit and export.
+- **Not in this round**: no accounting from purchase / selling, no per-visa-type field sets, no bulk import of the old
+  sheets, no multi-traveller Open Case, lead visa services unchanged.
+- Tests: backend unit / slice tests for every class above (JaCoCo 100 %), frontend Vitest at 100 %, e2e
+  `e2e/visa-configuration.spec.ts` (Settings -> agent Open Case with mandatory fields -> sheet filter, inline edit, export).
+
