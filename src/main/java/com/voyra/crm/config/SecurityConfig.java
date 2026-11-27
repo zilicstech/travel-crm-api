@@ -7,6 +7,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.voyra.crm.dto.ApiErrorResponse;
+import jakarta.servlet.DispatcherType;
 import org.springframework.context.annotation.Bean;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -53,6 +54,8 @@ public class SecurityConfig {
                                     "Forbidden", null, HttpStatus.FORBIDDEN.value(), request.getRequestURI())));
                         }))
                 .authorizeHttpRequests(auth -> auth
+                        // the closing dispatch of a live event stream (/api/events); its opening request was authorised
+                        .dispatcherTypeMatchers(DispatcherType.ASYNC).permitAll()
                         .requestMatchers("/swagger-ui/**", "/v3/api-docs/**", "/swagger-ui.html").permitAll()
                         .requestMatchers("/api/auth/entitlements").authenticated()  // the one non-login auth route
                         .requestMatchers("/api/auth/**").permitAll()

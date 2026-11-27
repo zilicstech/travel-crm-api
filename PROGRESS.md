@@ -709,3 +709,13 @@ A visa case's overall status (Docs pending, Appointment scheduled, Submitted, Ap
 `PATCH /api/visas/{id}/values` (`status`, with the row's `version`, audited with the other facts). The checklist is a record of
 the steps only: saving it no longer recalculates the status (`VisaStatusCalculator` removed); existing cases keep their status.
 
+
+## Live counts 2026-11-27
+
+The sidebar counts used to be re-read every minute and on every focus, each time behind the blocking loader. Now the
+frontend's background reads are silent, and the backend pushes a signal: `GET /api/events` (Server-Sent Events,
+owner / agent / accountant, CRM_CORE) carries an event `changed` (no data) after any successful write in the agency
+(`AgencyChangeInterceptor` -> `AgencyEventHub`), with a `:ping` comment every 25 s (`AgencyEventHeartbeatJob`). The
+screens re-ask their own counts, so nothing crosses users. Jobs, admin actions without a tenant header and writes on
+another instance send nothing; the frontend's 5-minute re-count covers them. Tests: `AgencyEventHubTest`,
+`AgencyChangeInterceptorTest`, `AgencyEventControllerTest`, `AgencyEventHeartbeatJobTest`.
