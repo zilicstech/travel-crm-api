@@ -30,6 +30,8 @@ public final class BookingNextStep {
         if (b.getPlatformBookingId() != null && b.getBookingStatus() == BookingStatus.PENDING) return "Waiting for Voyra";
         if (b.getBookingStatus() == BookingStatus.PENDING || documentCount == 0) return "Upload voucher";
         BigDecimal invoiced = nz(b.getInvoicedTotalInr());
+        // Accounts may verify a booking without invoicing it; then nothing is billed, so nothing is to collect either
+        if (invoiced.signum() == 0 && b.getVerifiedAt() != null) return null;
         if (invoiced.signum() == 0 && nz(b.getSellingPrice()).signum() > 0) return "Generate invoice";
         BigDecimal toCollect = invoiced.subtract(nz(b.getReceivedTotalInr()));
         if (toCollect.signum() > 0) return "Collect " + money(toCollect, currency);

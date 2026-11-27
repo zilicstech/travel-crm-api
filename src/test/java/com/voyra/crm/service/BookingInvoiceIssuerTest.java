@@ -106,20 +106,21 @@ class BookingInvoiceIssuerTest {
         assertThat(issued.getGrandTotal()).isEqualByComparingTo("1554");
     }
 
-    /** The cancel preview shows what the charges invoice will bill: GST on the agency's fee alone - the supplier's part passes through. */
+    /** The cancel preview shows what the charges invoice will bill: what was kept, with no GST (owner ruling 2026-11-27). */
     @Test
-    void theCancellationChargesTotalCarriesTheSameGstTheInvoiceWill() {
+    void theCancellationChargesCarryNoGst() {
         when(taxRateConfigRepository.findByTaxKindAndSupplyNatureAndIsDefaultTrueAndIsActiveTrue(TaxKind.GST, SupplyNature.AIR_TICKET))
                 .thenReturn(Optional.of(TaxRateConfig.builder().id("T1").label("GST 18%").ratePercent(new BigDecimal("18")).build()));
-        when(taxRateConfigRepository.findByTaxKindAndSupplyNatureAndIsDefaultTrueAndIsActiveTrue(TaxKind.GST, SupplyNature.HOTEL_ONLY))
-                .thenReturn(Optional.of(TaxRateConfig.builder().id("T2").label("GST 18%").ratePercent(new BigDecimal("18")).build()));
+        when(invoiceDocumentService.createDraft(any())).thenReturn(InvoiceResponse.builder().id("CI1").build());
 
         assertThat(issuer.cancellationChargesTotal(Booking.builder().type(BookingType.FLIGHT).internationalTrip(false).build(),
-                new BigDecimal("1200"), new BigDecimal("300"))).isEqualByComparingTo("1554");
-        assertThat(issuer.cancellationChargesTotal(Booking.builder().type(BookingType.HOTEL).build(),
-                new BigDecimal("1200"), new BigDecimal("300"))).isEqualByComparingTo("1554");
-        assertThat(issuer.cancellationChargesTotal(Booking.builder().type(BookingType.TRANSFER).build(),
                 new BigDecimal("1200"), new BigDecimal("300"))).isEqualByComparingTo("1500");
+        issuer.issueCancellationCharges(Booking.builder().id("B1").bookingNumber(42L).type(BookingType.FLIGHT).internationalTrip(false).build(),
+                new BigDecimal("1200"), new BigDecimal("300"));
+        ArgumentCaptor<InvoiceDraftRequest> draft = ArgumentCaptor.forClass(InvoiceDraftRequest.class);
+        verify(invoiceDocumentService).createDraft(draft.capture());
+        assertThat(draft.getValue().getTaxes()).isNull();
+        assertThat(draft.getValue().getSupplyNature()).isEqualTo(SupplyNature.AIR_TICKET);
     }
 
     @org.junit.jupiter.api.Test

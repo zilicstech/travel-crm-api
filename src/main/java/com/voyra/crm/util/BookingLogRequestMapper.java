@@ -85,6 +85,7 @@ public final class BookingLogRequestMapper {
             case VISA -> BookingDocumentType.VISA_COPY;
             case TRANSFER -> BookingDocumentType.TRANSFER_VOUCHER;
             case PACKAGE, MISCELLANEOUS -> BookingDocumentType.OTHER;
+            case INSURANCE -> BookingDocumentType.INSURANCE;
         };
     }
 
@@ -126,6 +127,13 @@ public final class BookingLogRequestMapper {
                 req.setJourneyDate(s.getTransferDate());
             };
             case MISCELLANEOUS -> () -> req.setMiscCategory(s.getMiscCategory());
+            case INSURANCE -> () -> {
+                req.setInsuranceType(s.getInsuranceType());
+                req.setInsuranceFromCountry(s.getInsuranceFromCountry());
+                req.setInsurancePersons(s.getInsurancePersons());
+                req.setJourneyDate(s.getInsuranceStart());
+                req.setReturnDate(s.getInsuranceEnd());
+            };
         };
         fill.run();
     }
@@ -138,6 +146,7 @@ public final class BookingLogRequestMapper {
             case VISA -> s.getVisaCountry();
             case TRANSFER -> s.getTransferDropoff();
             case MISCELLANEOUS -> null;
+            case INSURANCE -> s.getInsuranceCountries();
         };
         String d = blankToNull(fromService) != null ? fromService : blankToNull(s.getLeadDestination());
         return d != null ? d : (s.getLabel() != null ? s.getLabel() : s.getType().name());
@@ -187,7 +196,7 @@ public final class BookingLogRequestMapper {
     private static void setReference(BookingCreateRequest req, String reference) {
         // a switch expression over every type, so a new type fails to compile instead of silently storing nothing
         Consumer<String> setter = switch (req.getType()) {
-            case FLIGHT, PACKAGE, MISCELLANEOUS -> req::setPnr;
+            case FLIGHT, PACKAGE, MISCELLANEOUS, INSURANCE -> req::setPnr; // insurance: the policy number
             case HOTEL -> req::setHotelConfirmationNo;
             case VISA -> req::setVisaApplicationNo;
             case TRANSFER -> req::setTransferVoucherNo;

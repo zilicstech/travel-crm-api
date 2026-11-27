@@ -257,30 +257,47 @@ public class BookingDocumentService {
         if (kind == null || !ANCILLARY_KINDS.contains(kind)) {
             throw new com.voyra.crm.exception.FieldValidationException("ancillaryKind", "Pick seat, meal, extra baggage or other");
         }
-        List<String> ids = request.getTravellers() == null ? List.of() : request.getTravellers().stream()
-                .map(com.voyra.crm.dto.VoucherTraveller::getMemberId).filter(id -> id != null && !id.isBlank()).distinct().toList();
+        List<String> ids = travellerIds(request);
         if (ids.isEmpty()) {
             throw new IllegalArgumentException("Pick who the add-on is for");
         }
-        document.setTravellers(ids.stream().map(id -> {
+        document.setTravellers(snapshot(booking, ids, booking.getJourneyDate()));
+        document.setLegs(null);
+    }
+
+    private static List<String> travellerIds(BookingDocumentCreateRequest request) {
+        return request.getTravellers() == null ? List.of() : request.getTravellers().stream()
+                .map(com.voyra.crm.dto.VoucherTraveller::getMemberId).filter(id -> id != null && !id.isBlank()).distinct().toList();
+    }
+
+    /** The client's own active members, as the voucher names them, each typed by age on {@code on}. */
+    private List<com.voyra.crm.dto.VoucherTraveller> snapshot(Booking booking, List<String> ids, java.time.LocalDate on) {
+        return ids.stream().map(id -> {
             com.voyra.crm.entity.Member m = memberRepository.findByMemberIdAndClientId(id, booking.getClientId())
                     .filter(x -> Boolean.TRUE.equals(x.getIsActive()))
                     .orElseThrow(() -> new IllegalArgumentException("That traveller isn't one of this client's members"));
             return com.voyra.crm.dto.VoucherTraveller.builder().memberId(id).name(m.getName())
-                    .paxType(com.voyra.crm.util.PaxTypeCalculator.paxTypeAt(m.getDob(), booking.getJourneyDate())).build();
-        }).toList());
-        document.setLegs(null);
+                    .paxType(com.voyra.crm.util.PaxTypeCalculator.paxTypeAt(m.getDob(), on)).build();
+        }).toList();
     }
 
     private static final java.util.Set<String> ANCILLARY_KINDS = java.util.Set.of("SEAT", "MEAL", "BAGGAGE", "OTHER");
 
     /**
      * An air ticket names its travellers - the client's own members, snapshotted as the ticket names them -
-     * and its flights, from which its flat flight details are worked out. Any other voucher carries neither.
+     * and its flights, from which its flat flight details are worked out. A hotel or transfer voucher may name its guests
+     * (client 27 Nov); any other voucher carries neither.
      */
     private void applyTrip(Booking booking, BookingDocument document, BookingDocumentCreateRequest request) {
         if (request.getDocType() == com.voyra.crm.enums.BookingDocumentType.ANCILLARY) {
             applyAncillary(booking, document, request);
+            return;
+        }
+        if (request.getDocType() == com.voyra.crm.enums.BookingDocumentType.HOTEL_VOUCHER
+                || request.getDocType() == com.voyra.crm.enums.BookingDocumentType.TRANSFER_VOUCHER) {
+            List<String> guests = travellerIds(request);
+            document.setTravellers(guests.isEmpty() ? null : snapshot(booking, guests, booking.getJourneyDate()));
+            document.setLegs(null);
             return;
         }
         if (booking.getType() != com.voyra.crm.enums.BookingType.FLIGHT
@@ -290,17 +307,14 @@ public class BookingDocumentService {
             return;
         }
         List<com.voyra.crm.dto.VoucherLeg> legs = com.voyra.crm.util.VoucherTrip.cleanLegs(request.getLegs());
-        List<String> ids = request.getTravellers() == null ? List.of() : request.getTravellers().stream()
-                .map(com.voyra.crm.dto.VoucherTraveller::getMemberId).filter(id -> id != null && !id.isBlank()).distinct().toList();
+        List<String> ids = travellerIds(request);
         com.voyra.crm.util.VoucherTrip.check(ids.size(), legs);
-        java.time.LocalDate firstFlight = com.voyra.crm.util.VoucherTrip.firstDate(legs);
-        document.setTravellers(ids.stream().map(id -> {
-            com.voyra.crm.entity.Member m = memberRepository.findByMemberIdAndClientId(id, booking.getClientId())
-                    .filter(x -> Boolean.TRUE.equals(x.getIsActive()))
-                    .orElseThrow(() -> new IllegalArgumentException("That traveller isn't one of this client's members"));
-            return com.voyra.crm.dto.VoucherTraveller.builder().memberId(id).name(m.getName())
-                    .paxType(com.voyra.crm.util.PaxTypeCalculator.paxTypeAt(m.getDob(), firstFlight)).build();
-        }).toList());
+        // a traveller whose part of the ticket was cancelled stays cancelled through any later edit
+        java.util.Set<String> cancelled = document.getTravellers() == null ? java.util.Set.of() : document.getTravellers().stream()
+                .filter(t -> Boolean.TRUE.equals(t.getCancelled())).map(com.voyra.crm.dto.VoucherTraveller::getMemberId)
+                .collect(java.util.stream.Collectors.toSet());
+        document.setTravellers(snapshot(booking, ids, com.voyra.crm.util.VoucherTrip.firstDate(legs)).stream()
+                .map(t -> cancelled.contains(t.getMemberId()) ? t.toBuilder().cancelled(true).build() : t).toList());
         document.setLegs(legs);
         document.setDetails(com.voyra.crm.util.VoucherTrip.details(legs, document.getDetails()));
     }

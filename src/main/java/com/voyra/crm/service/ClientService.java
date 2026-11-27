@@ -83,7 +83,8 @@ public class ClientService {
         }
         ValidationPatterns.requireGstinMatchesState(request.getGstin(), request.getStateCode());
         rejectSamePhone(request.getIdentifier(), request.getType(), null);
-        if (request.getCreditLimit() == null && !isOwner()) {
+        // a corporate client needs an agreed limit from an agent; a household may be left open (client ruling 2026-11-27)
+        if (request.getCreditLimit() == null && request.getType() == ClientType.B2B && !isOwner()) {
             throw new IllegalArgumentException("Enter the client's credit limit (0 if they pay upfront)");
         }
 

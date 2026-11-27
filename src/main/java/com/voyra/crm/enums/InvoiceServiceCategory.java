@@ -94,7 +94,8 @@ public enum InvoiceServiceCategory {
             case VISA -> VISA;
             case TRANSFER -> TRANSPORT;
             case PACKAGE -> PACKAGE;
-            case MISCELLANEOUS -> MISCELLANEOUS;
+            // travel insurance is billed in the Miscellaneous series (owner ruling 2026-11-27), no series of its own
+            case MISCELLANEOUS, INSURANCE -> MISCELLANEOUS;
         };
     }
 }

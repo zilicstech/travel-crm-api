@@ -31,8 +31,13 @@ class BookingNextStepTest {
         assertThat(BookingNextStep.of(b, 0, "INR")).isEqualTo("Upload voucher");
         assertThat(BookingNextStep.of(b, 1, "INR")).isEqualTo("Generate invoice");
 
+        // verified by Accounts without an invoice: nothing to bill or collect
+        b.setVerifiedAt(LocalDateTime.now());
+        assertThat(BookingNextStep.of(b, 1, "INR")).isNull();
         b.setInvoicedTotalInr(d("10000"));
         b.setReceivedTotalInr(d("4000"));
+        assertThat(BookingNextStep.of(b, 1, "INR")).isEqualTo("Collect ₹6,000");
+        b.setVerifiedAt(null);
         assertThat(BookingNextStep.of(b, 1, "INR")).isEqualTo("Collect ₹6,000");
 
         b.setReceivedTotalInr(d("10000"));

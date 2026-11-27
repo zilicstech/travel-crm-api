@@ -220,6 +220,15 @@ public class BookingResponse {
     @Schema(description = "MISCELLANEOUS bookings: the sub-category", example = "Railway ticket")
     private String miscCategory;
 
+    @Schema(description = "INSURANCE bookings: who the policy covers", example = "INDIVIDUAL")
+    private com.voyra.crm.enums.InsuranceType insuranceType;
+
+    @Schema(example = "India")
+    private String insuranceFromCountry;
+
+    @Schema(example = "2")
+    private Integer insurancePersons;
+
     @Schema(description = "Cost paid to the supplier", example = "42000.00")
     private BigDecimal netCost;
 
@@ -324,6 +333,12 @@ public class BookingResponse {
 
     @Schema(description = "Cancellation: who cross-checked the settled refund", example = "Sandli")
     private String refundCheckedBy;
+
+    @Schema(description = "When Accounts marked it verified without an invoice; null when not (an invoiced booking counts as verified)")
+    private LocalDateTime verifiedAt;
+
+    @Schema(description = "Who marked it verified", example = "Sandli")
+    private String verifiedBy;
 
     @Schema(description = "What this booking needs next in its lifecycle; null when nothing is left to do", example = "Generate invoice")
     private String nextStep;

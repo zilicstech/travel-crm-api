@@ -16,6 +16,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -72,5 +73,17 @@ public class CancellationController {
     @Operation(summary = "Mark a follow-up done", description = "Done, never deleted; a scheduled cancellation closed without a cancel means the booking was kept")
     public ResponseEntity<CancellationFollowUpResponse> completeFollowUp(@PathVariable String bookingId, @PathVariable String followUpId) {
         return ResponseEntity.ok(cancellationService.completeFollowUp(bookingId, followUpId));
+    }
+
+    @PostMapping("/{bookingId}/refund-processed")
+    @Operation(summary = "Mark a cancelled booking's refund processed", description = "It leaves the Open list; owner, an agent who can open it, or the accountant")
+    public ResponseEntity<CancellationRowResponse> markRefundProcessed(@PathVariable String bookingId) {
+        return ResponseEntity.ok(cancellationService.setRefundProcessed(bookingId, true));
+    }
+
+    @DeleteMapping("/{bookingId}/refund-processed")
+    @Operation(summary = "Reopen a cancelled booking's refund", description = "It comes back on the Open list")
+    public ResponseEntity<CancellationRowResponse> reopenRefund(@PathVariable String bookingId) {
+        return ResponseEntity.ok(cancellationService.setRefundProcessed(bookingId, false));
     }
 }

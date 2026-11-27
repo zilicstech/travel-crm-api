@@ -212,7 +212,10 @@ public class InvoiceLineSource {
 
     /** e.g. "BOM to DXB 19/10/26 (NAHKSJ) - MUKESH, SHEETAL". */
     private String describe(Booking booking, BookingDocument d) {
-        String label = voucherLabel(d);
+        // travel insurance names its cover, countries and dates (client 27 Nov), then its policy number
+        String label = booking.getType() == com.voyra.crm.enums.BookingType.INSURANCE
+                ? Stream.of(com.voyra.crm.util.BookingInvoiceLineBuilder.insuranceText(booking), voucherLabel(d)).filter(p -> !p.isBlank()).collect(Collectors.joining(" "))
+                : voucherLabel(d);
         Stream<String> names = d.getTravellers() != null && !d.getTravellers().isEmpty()
                 ? d.getTravellers().stream().map(com.voyra.crm.dto.VoucherTraveller::getName)
                 : bookingPassengerRepository.findByBookingIdOrderBySortOrderAsc(booking.getId()).stream().map(BookingPassenger::getPassengerName);

@@ -249,6 +249,50 @@ class BookingServiceCoverageTest {
         verify(leadServiceRepository, never()).findById(any());
     }
 
+    /** An Insurance booking keeps its cover; another type keeps none, and an edit changes only what it sends (client 27 Nov). */
+    @Test
+    void anInsuranceBookingKeepsItsCoverAndAnotherTypeNone() {
+        ownerPicks(agent("A1", "Priya", List.of(ServiceType.INSURANCE, ServiceType.MISCELLANEOUS)));
+        clientFound();
+        BookingCreateRequest r = request(BookingType.INSURANCE);
+        r.setInsuranceType(com.voyra.crm.enums.InsuranceType.STUDENT);
+        r.setInsuranceFromCountry("  India ");
+        r.setInsurancePersons(2);
+        BookingResponse out = bookingService.createBooking(r);
+        assertThat(out.getInsuranceType()).isEqualTo(com.voyra.crm.enums.InsuranceType.STUDENT);
+        assertThat(out.getInsuranceFromCountry()).isEqualTo("India");
+        assertThat(out.getInsurancePersons()).isEqualTo(2);
+
+        BookingCreateRequest misc = request(BookingType.MISCELLANEOUS);
+        misc.setInsuranceType(com.voyra.crm.enums.InsuranceType.STUDENT);
+        misc.setInsuranceFromCountry("India");
+        misc.setInsurancePersons(2);
+        BookingResponse other = bookingService.createBooking(misc);
+        assertThat(other.getInsuranceType()).isNull();
+        assertThat(other.getInsuranceFromCountry()).isNull();
+        assertThat(other.getInsurancePersons()).isNull();
+
+        Booking cover = booking().type(BookingType.INSURANCE).insuranceType(com.voyra.crm.enums.InsuranceType.FAMILY)
+                .insuranceFromCountry("India").insurancePersons(4).build();
+        found(cover);
+        BookingUpdateRequest nothing = new BookingUpdateRequest();
+        bookingService.updateBooking("B1", nothing);
+        assertThat(cover.getInsurancePersons()).isEqualTo(4);
+        BookingUpdateRequest change = new BookingUpdateRequest();
+        change.setInsuranceType(com.voyra.crm.enums.InsuranceType.INDIVIDUAL);
+        change.setInsuranceFromCountry(" ");
+        change.setInsurancePersons(1);
+        bookingService.updateBooking("B1", change);
+        assertThat(cover.getInsuranceType()).isEqualTo(com.voyra.crm.enums.InsuranceType.INDIVIDUAL);
+        assertThat(cover.getInsuranceFromCountry()).isNull();
+        assertThat(cover.getInsurancePersons()).isEqualTo(1);
+
+        Booking flight = booking().type(BookingType.FLIGHT).build();
+        found(flight);
+        bookingService.updateBooking("B1", change);
+        assertThat(flight.getInsuranceType()).isNull();
+    }
+
     /** New Booking names who gave it to its agent, and a Miscellaneous booking its sub-category (plain text). */
     @Test
     void aNewBookingKeepsWhoAssignedItAndAMiscBookingsSubCategory() {

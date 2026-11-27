@@ -24,7 +24,9 @@ public final class CancellationStatusRules {
      */
     public static CancellationStatus of(Booking b, CancelRequestStatus newestRequest, List<CancellationFollowUp> followUps, LocalDate today) {
         if (b.getBookingStatus() == BookingStatus.CANCELLED) {
-            if (refundMoving(b)) {
+            // open until someone marks the refund processed or Accounts cross-checks it (client 27 Nov); the mark wins over
+            // money still recorded as open - Accounts follows that on its own refunds list
+            if (!closed(b)) {
                 return CancellationStatus.REFUND_PENDING;
             }
             return positive(b.getCustomerRefundDue()) || positive(b.getSupplierRefundExpected())
@@ -42,6 +44,9 @@ public final class CancellationStatusRules {
         if (scheduled != null) {
             return scheduled.isAfter(today) ? CancellationStatus.CANCELLATION_PENDING : CancellationStatus.FOLLOW_UP_REQUIRED;
         }
+        if (b.getPartlyCancelledAt() != null) {
+            return CancellationStatus.PARTLY_CANCELLED; // some passengers cancelled, the rest still fly (client 27 Nov)
+        }
         if (newestRequest == CancelRequestStatus.REJECTED) {
             return CancellationStatus.FAILED;
         }
@@ -57,10 +62,9 @@ public final class CancellationStatusRules {
                 && f.getStatus() == FollowUpStatus.OPEN && !f.getDueDate().isAfter(today));
     }
 
-    /** Money the client is owed, or the supplier owes, has not moved yet (the cross-check is Accounts' step after). */
-    public static boolean refundMoving(Booking b) {
-        return nz(b.getRefundedTotalInr()).compareTo(nz(b.getCustomerRefundDue())) < 0
-                || nz(b.getSupplierRefundReceived()).compareTo(nz(b.getSupplierRefundExpected())) < 0;
+    /** Someone marked the refund processed, or Accounts cross-checked the cancellation. */
+    public static boolean closed(Booking b) {
+        return b.getRefundProcessedAt() != null || b.getRefundCheckedAt() != null;
     }
 
     private static boolean positive(BigDecimal v) {

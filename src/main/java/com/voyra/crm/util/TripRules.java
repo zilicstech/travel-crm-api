@@ -32,9 +32,9 @@ public final class TripRules {
         }
     }
 
-    /** A booking's start and end: a package reads as start/end, everything else as departure/return. */
+    /** A booking's start and end: a package or an insurance cover reads as start/end, everything else as departure/return. */
     public static void journey(BookingType type, LocalDate start, LocalDate end) {
-        if (type == BookingType.PACKAGE && start != null && end != null && end.isBefore(start)) {
+        if ((type == BookingType.PACKAGE || type == BookingType.INSURANCE) && start != null && end != null && end.isBefore(start)) {
             throw new IllegalArgumentException("The end date can't be before the start date");
         }
         flight(start, end);

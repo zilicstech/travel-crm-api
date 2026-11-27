@@ -6,5 +6,5 @@ package com.voyra.crm.enums;
  * which types a given Agent covers, it does not invent new ones.
  */
 public enum ServiceType {
-    FLIGHT, HOTEL, VISA, TRANSFER, MISCELLANEOUS
+    FLIGHT, HOTEL, VISA, TRANSFER, MISCELLANEOUS, INSURANCE
 }

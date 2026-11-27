@@ -48,6 +48,15 @@ class CancellationControllerTest {
     }
 
     @Test
+    void everyRoleMarksARefundProcessedOrReopensIt() throws Exception {
+        mvc.perform(post("/api/cancellations/B1/refund-processed").with(as(UserType.ACCOUNTANT))).andExpect(status().isOk());
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete("/api/cancellations/B1/refund-processed")
+                .with(as(UserType.AGENT))).andExpect(status().isOk());
+        org.mockito.Mockito.verify(cancellationService).setRefundProcessed("B1", true);
+        org.mockito.Mockito.verify(cancellationService).setRefundProcessed("B1", false);
+    }
+
+    @Test
     void ownerAndAgentWriteFollowUps() throws Exception {
         mvc.perform(json(post("/api/cancellations/B1/follow-ups"), "{\"kind\":\"SCHEDULED_CANCEL\",\"inDays\":2}").with(as(UserType.AGENT)))
                 .andExpect(status().isOk());

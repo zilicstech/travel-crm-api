@@ -24,7 +24,7 @@ class CancellationStatusRulesTest {
     }
 
     private static Booking cancelled(String due, String refunded, String expected, String received) {
-        Booking b = Booking.builder().bookingStatus(BookingStatus.CANCELLED).build();
+        Booking b = Booking.builder().bookingStatus(BookingStatus.CANCELLED).refundProcessedAt(java.time.LocalDateTime.now()).build();
         b.setCustomerRefundDue(due == null ? null : new BigDecimal(due));
         b.setRefundedTotalInr(refunded == null ? null : new BigDecimal(refunded));
         b.setSupplierRefundExpected(expected == null ? null : new BigDecimal(expected));
@@ -42,12 +42,35 @@ class CancellationStatusRulesTest {
 
     @Test
     void aCancelledBookingReadsByItsRefunds() {
-        assertThat(of(cancelled("100", "40", "0", "0"), null)).isEqualTo(CancellationStatus.REFUND_PENDING);
-        assertThat(of(cancelled("0", "0", "90", "10"), CancelRequestStatus.COMPLETED)).isEqualTo(CancellationStatus.REFUND_PENDING);
+        // marked processed: done, even while the books still show money to move (Accounts follows that)
+        assertThat(of(cancelled("100", "40", "0", "0"), null)).isEqualTo(CancellationStatus.REFUND_PROCESSED);
+        Booking unmarked = cancelled("0", "0", "90", "10");
+        unmarked.setRefundProcessedAt(null);
+        assertThat(of(unmarked, CancelRequestStatus.COMPLETED)).isEqualTo(CancellationStatus.REFUND_PENDING);
         assertThat(of(cancelled("100", "100", "90", "90"), null)).isEqualTo(CancellationStatus.REFUND_PROCESSED);
         assertThat(of(cancelled("0", "0", "90", "90"), null)).isEqualTo(CancellationStatus.REFUND_PROCESSED);
         assertThat(of(cancelled("0", "0", "0", "0"), null)).isEqualTo(CancellationStatus.CANCELLED);
         assertThat(of(cancelled(null, null, null, null), null)).isEqualTo(CancellationStatus.CANCELLED);
+    }
+
+    @Test
+    void aLiveBookingWithSomePassengersCancelledIsPartlyCancelledUnlessVoyraOrAScheduleSaysMore() {
+        Booking b = live();
+        b.setPartlyCancelledAt(java.time.LocalDateTime.now());
+        assertThat(of(b, null)).isEqualTo(CancellationStatus.PARTLY_CANCELLED);
+        assertThat(of(b, CancelRequestStatus.REJECTED)).isEqualTo(CancellationStatus.PARTLY_CANCELLED);
+        assertThat(of(b, CancelRequestStatus.OPEN)).isEqualTo(CancellationStatus.REQUESTED);
+    }
+
+    @Test
+    void aCancellationNobodyMarkedProcessedIsStillPendingUntilMarkedOrCrossChecked() {
+        Booking b = cancelled("0", "0", "0", "0");
+        b.setRefundProcessedAt(null);
+        assertThat(of(b, null)).isEqualTo(CancellationStatus.REFUND_PENDING);
+        assertThat(CancellationStatusRules.closed(b)).isFalse();
+        b.setRefundCheckedAt(java.time.LocalDateTime.now());
+        assertThat(of(b, null)).isEqualTo(CancellationStatus.CANCELLED);
+        assertThat(CancellationStatusRules.closed(b)).isTrue();
     }
 
     @Test

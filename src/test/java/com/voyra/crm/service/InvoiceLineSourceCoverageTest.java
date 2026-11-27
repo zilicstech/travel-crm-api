@@ -191,6 +191,26 @@ class InvoiceLineSourceCoverageTest {
     }
 
     @Test
+    void anInsuranceVoucherLineNamesTheCoverThenItsPolicyNumber() {
+        noInvoices();
+        Booking b = booking(BookingType.INSURANCE, "1000.00");
+        b.setDestination("France");
+        b.setInsurancePersons(2);
+        BookingDocument d = voucher("D1", "1000.00", "800.00");
+        d.setReferenceNumber("POL123");
+        BookingDocument noRef = voucher("D2", "0", "0");
+        b.setSellingPrice(new BigDecimal("1000.00"));
+        when(bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc("B1")).thenReturn(List.of(d));
+        when(bookingPassengerRepository.findByBookingIdOrderBySortOrderAsc("B1")).thenReturn(List.of());
+
+        assertThat(source.linesFor(b, InvoiceServiceCategory.MISCELLANEOUS).lines()).singleElement()
+                .satisfies(l -> assertThat(l.getDescription()).isEqualTo("Travel insurance (2 persons): France (POL123)"));
+        when(bookingDocumentRepository.findByBookingIdOrderBySortOrderAsc("B1")).thenReturn(List.of(noRef.toBuilder().netCost(new BigDecimal("800.00")).sellingPrice(new BigDecimal("1000.00")).build()));
+        assertThat(source.linesFor(b, InvoiceServiceCategory.MISCELLANEOUS).lines()).singleElement()
+                .satisfies(l -> assertThat(l.getDescription()).isEqualTo("Travel insurance (2 persons): France"));
+    }
+
+    @Test
     void aSingleVoucherWithNoTravellersOrANonPassengerCategoryBillsTheVoucher() {
         noInvoices();
         Booking b = booking(BookingType.TRANSFER, "400.00");

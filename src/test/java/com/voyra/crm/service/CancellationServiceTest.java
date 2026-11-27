@@ -9,9 +9,11 @@ import com.voyra.crm.dto.CancellationRowResponse;
 import com.voyra.crm.dto.PagedResponse;
 import com.voyra.crm.entity.Agent;
 import com.voyra.crm.entity.Booking;
+import com.voyra.crm.entity.BookingDocument;
 import com.voyra.crm.entity.CancellationFollowUp;
 import com.voyra.crm.entity.PlatformCancelRequest;
 import com.voyra.crm.entity.Tenant;
+import com.voyra.crm.enums.BookingDocumentType;
 import com.voyra.crm.enums.BookingStatus;
 import com.voyra.crm.enums.BookingType;
 import com.voyra.crm.enums.CancelRequestStatus;
@@ -74,6 +76,7 @@ class CancellationServiceTest {
     private static final LocalDate TODAY = LocalDate.of(2026, 11, 22);
 
     @Mock private BookingRepository bookingRepository;
+    @Mock private com.voyra.crm.repository.BookingDocumentRepository documentRepository;
     @Mock private CancellationFollowUpRepository followUpRepository;
     @Mock private PlatformCancelRequestRepository requestRepository;
     @Mock private PlatformCancelRequestService requestService;
@@ -164,7 +167,7 @@ class CancellationServiceTest {
         assertThat(first.getBookingRef()).isEqualTo("BK00000042");
         assertThat(first.getTravelDate()).isEqualTo(TODAY.plusDays(9));
         CancellationRowResponse second = page.getContent().get(1);
-        assertThat(second.getStatus()).isEqualTo(CancellationStatus.REFUND_PENDING);
+        assertThat(second.getStatus()).isEqualTo(CancellationStatus.REFUND_PROCESSED); // cross-checked by Accounts: closed (client 27 Nov)
         assertThat(second.isFollowUpDue()).isTrue();
         assertThat(second.getNextFollowUp().getId()).isEqualTo("F1");
         assertThat(second.getCancellationCharges()).isEqualByComparingTo("1000");
@@ -172,10 +175,60 @@ class CancellationServiceTest {
         assertThat(second.getRefundedToClient()).isEqualByComparingTo("0");
         assertThat(second.getSupplierRefundExpected()).isEqualByComparingTo("0");
         assertThat(second.isCrossChecked()).isTrue();
+        assertThat(first.getSector()).isNull();
+        assertThat(first.getPnr()).isNull();
+        assertThat(first.getIssuedOn()).isNull();
         ArgumentCaptor<Pageable> paged = ArgumentCaptor.forClass(Pageable.class);
         verify(bookingRepository).findAll(any(Specification.class), paged.capture());
         assertThat(paged.getValue().getSort()).isEqualTo(Sort.by(Sort.Direction.DESC, "bookingNumber"));
         assertThat(paged.getValue().getPageNumber()).isEqualTo(1);
+    }
+
+    private static com.voyra.crm.dto.VoucherLeg leg(String from, String to, int day) {
+        return com.voyra.crm.dto.VoucherLeg.builder().from(from).to(to).travelDate(TODAY.plusDays(day)).build();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void eachRowCarriesItsSectorPnrIssuedDateAndVendor() {
+        Booking flight = booking("B1", BookingStatus.CANCELLED, null);
+        flight.setSupplier("My Partner MMT");
+        flight.setCancelledAt(LocalDateTime.of(2026, 11, 26, 9, 0));
+        Booking hotel = booking("B2", BookingStatus.CANCELLED, null);
+        hotel.setType(BookingType.HOTEL);
+        hotel.setHotelConfirmationNo("NH282");
+        Booking noTicket = booking("B3", BookingStatus.CANCELLED, null);
+        noTicket.setFlightFrom("HYD");
+        noTicket.setFlightTo("DEL");
+        Booking nothing = booking("B4", BookingStatus.CANCELLED, null);
+        Booking roundTrip = booking("B5", BookingStatus.CANCELLED, null);
+        roundTrip.setPnr(" ");
+        Booking marked = booking("B7", BookingStatus.CANCELLED, null);
+        Booking oneSided = booking("B6", BookingStatus.CANCELLED, null);
+        oneSided.setFlightTo("DXB");
+        when(bookingRepository.findAll(any(Specification.class), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(flight, hotel, noTicket, nothing, roundTrip, oneSided, marked)));
+        com.voyra.crm.dto.VoucherLeg way = leg("DXB", "DEL", 4);
+        way.setReturnFlight(true);
+        when(documentRepository.findByBookingIdInOrderBySortOrderAsc(List.of("B1", "B2", "B3", "B4", "B5", "B6", "B7"))).thenReturn(List.of(
+                BookingDocument.builder().bookingId("B7").docType(BookingDocumentType.E_TICKET).legs(List.of(leg("DEL", "DXB", 1), way)).build(),
+                BookingDocument.builder().bookingId("B1").docType(BookingDocumentType.OTHER).referenceNumber("X").issuedDate(TODAY.minusDays(3)).build(),
+                BookingDocument.builder().bookingId("B1").docType(BookingDocumentType.E_TICKET).referenceNumber("PNR1").issuedDate(TODAY.minusDays(5))
+                        .legs(List.of(leg("DEL", "BOM", 1), leg("BOM", "DXB", 1))).build(),
+                BookingDocument.builder().bookingId("B3").docType(BookingDocumentType.E_TICKET).legs(List.of()).build(),
+                BookingDocument.builder().bookingId("B4").docType(BookingDocumentType.E_TICKET).build(),
+                BookingDocument.builder().bookingId("B5").docType(BookingDocumentType.E_TICKET).referenceNumber("RT9")
+                        .legs(List.of(leg("DEL", "BOM", 1), leg("BOM", "DXB", 1), leg("DXB", "BOM", 6), leg("BOM", "DEL", 6))).build()));
+
+        List<CancellationRowResponse> rows = service.list(CancellationService.View.ALL, null, null, PageRequest.of(0, 20)).getContent();
+
+        assertThat(rows).extracting(CancellationRowResponse::getSector)
+                .containsExactly("DEL → DXB", null, "HYD → DEL", null, "DEL ⇄ DXB", "? → DXB", "DEL ⇄ DXB");
+        assertThat(rows).extracting(CancellationRowResponse::getPnr).containsExactly("X", "NH282", null, null, "RT9", null, null);
+        assertThat(rows.get(0).getIssuedOn()).isEqualTo(TODAY.minusDays(5));
+        assertThat(rows.get(0).getVendorName()).isEqualTo("My Partner MMT");
+        assertThat(rows.get(0).getCancelledAt()).isEqualTo(LocalDateTime.of(2026, 11, 26, 9, 0));
+        assertThat(rows.get(1).getCancelledAt()).isNull();
     }
 
     @Test
@@ -277,6 +330,37 @@ class CancellationServiceTest {
         when(requestRepository.existsByPlatformBookingIdAndStatusIn("PB2", CancelRequestStatus.ACTIVE)).thenReturn(true);
         assertThatThrownBy(() -> service.addFollowUp("B2", r)).isInstanceOf(BookingConflictException.class);
         verify(followUpRepository, never()).save(any());
+    }
+
+    @Test
+    void aCancelledBookingsRefundIsMarkedProcessedOnceAndCanBeReopened() {
+        Booking b = booking("B1", BookingStatus.CANCELLED, null);
+        when(bookingService.findAccessibleBooking("B1")).thenReturn(b);
+        when(authorResolver.resolveCurrentAuthor()).thenReturn(new AuthorResolver.AuthorInfo("A1", "Vikram"));
+
+        CancellationRowResponse row = service.setRefundProcessed("B1", true);
+        assertThat(row.getRefundProcessedBy()).isEqualTo("Vikram");
+        assertThat(row.getRefundProcessedAt()).isNotNull();
+        verify(bookingRepository).findByIdForUpdate("B1");
+        verify(activityService).record("B1", "REFUND_PROCESSED", "Marked the refund processed");
+
+        service.setRefundProcessed("B1", true); // already processed: nothing recorded again
+        verify(activityService, org.mockito.Mockito.times(1)).record(any(), any(), any());
+
+        assertThat(service.setRefundProcessed("B1", false).getRefundProcessedAt()).isNull();
+        verify(activityService).record("B1", "REFUND_REOPENED", "Reopened the refund");
+
+        Booking partly = booking("B3", BookingStatus.CONFIRMED, null);
+        partly.setPartlyCancelledAt(LocalDateTime.of(2026, 11, 27, 10, 0));
+        when(documentRepository.findByBookingIdOrderBySortOrderAsc("B3")).thenReturn(List.of());
+        when(bookingService.findAccessibleBooking("B3")).thenReturn(partly);
+        CancellationRowResponse partRow = service.setRefundProcessed("B3", true);
+        assertThat(partRow.getRefundProcessedBy()).isEqualTo("Vikram");
+        assertThat(partRow.getCancelledAt()).isEqualTo(LocalDateTime.of(2026, 11, 27, 10, 0)); // a partial cancel's date
+
+        when(bookingService.findAccessibleBooking("B2")).thenReturn(booking("B2", BookingStatus.CONFIRMED, null));
+        assertThatThrownBy(() -> service.setRefundProcessed("B2", true))
+                .isInstanceOf(IllegalStateException.class).hasMessage("Only a cancelled booking's refund can be marked processed");
     }
 
     @Test

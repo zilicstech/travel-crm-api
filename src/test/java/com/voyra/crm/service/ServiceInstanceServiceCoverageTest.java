@@ -319,6 +319,48 @@ class ServiceInstanceServiceCoverageTest {
     }
 
     @Test
+    void anInsuranceServiceKeepsItsCoverAndAnotherTypeNoneAndTheCoverCannotEndBeforeItStarts() {
+        as("O1", UserType.AGENCY_OWNER);
+        when(leadRepository.findById("L1")).thenReturn(Optional.of(lead()));
+        when(leadServiceRepository.findByLeadIdOrderBySortOrderAsc("L1")).thenReturn(new ArrayList<>());
+        when(leadProposalRepository.findByLeadId("L1")).thenReturn(List.of());
+        ServiceDraft cover = new ServiceDraft();
+        cover.setType(ServiceType.INSURANCE);
+        cover.setInsuranceType(com.voyra.crm.enums.InsuranceType.FAMILY);
+        cover.setInsuranceFromCountry("  India ");
+        cover.setInsuranceCountries(" France, Italy ");
+        cover.setInsuranceStart(LocalDate.of(2026, 12, 1));
+        cover.setInsuranceEnd(LocalDate.of(2026, 12, 15));
+        cover.setInsurancePersons(3);
+        ServiceDraft blank = new ServiceDraft();
+        blank.setType(ServiceType.INSURANCE);
+        blank.setInsuranceFromCountry(" ");
+        ServiceDraft hotel = new ServiceDraft();
+        hotel.setType(ServiceType.HOTEL);
+        hotel.setInsuranceCountries("ignored on a hotel");
+        hotel.setInsurancePersons(2);
+
+        List<ServiceResponse> out = service.createServices("L1", List.of(cover, blank, hotel));
+
+        assertThat(out.get(0).getInsuranceType()).isEqualTo(com.voyra.crm.enums.InsuranceType.FAMILY);
+        assertThat(out.get(0).getInsuranceFromCountry()).isEqualTo("India");
+        assertThat(out.get(0).getInsuranceCountries()).isEqualTo("France, Italy");
+        assertThat(out.get(0).getInsuranceStart()).isEqualTo(LocalDate.of(2026, 12, 1));
+        assertThat(out.get(0).getInsuranceEnd()).isEqualTo(LocalDate.of(2026, 12, 15));
+        assertThat(out.get(0).getInsurancePersons()).isEqualTo(3);
+        assertThat(out.get(0).getDateTo()).isEqualTo(LocalDate.of(2026, 12, 15));
+        assertThat(out.get(1).getInsuranceFromCountry()).isNull();
+        assertThat(out.get(2).getInsuranceCountries()).isNull();
+        assertThat(out.get(2).getInsurancePersons()).isNull();
+
+        ServiceDraft backwards = new ServiceDraft();
+        backwards.setType(ServiceType.INSURANCE);
+        backwards.setInsuranceStart(LocalDate.of(2026, 12, 15));
+        backwards.setInsuranceEnd(LocalDate.of(2026, 12, 1));
+        assertThatThrownBy(() -> service.createServices("L1", List.of(backwards))).hasMessage("The end date can't be before the start date");
+    }
+
+    @Test
     void aNewVisaServiceStartsNotAppliedAMiscServiceKeepsItsDetailsAndOnlyAVisaTakesAStatus() {
         as("O1", UserType.AGENCY_OWNER);
         when(leadRepository.findById("L1")).thenReturn(Optional.of(lead()));

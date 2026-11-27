@@ -147,6 +147,13 @@ public final class BookingSpecifications {
             } else if ("NONE".equalsIgnoreCase(f.remark())) {
                 and.add(cb.or(cb.isNull(root.get("accountantRemark")), cb.equal(cb.trim(root.get("accountantRemark")), "")));
             }
+            // verified: marked by Accounts, or invoiced (any amount)
+            if ("YES".equalsIgnoreCase(f.verified())) {
+                and.add(cb.or(cb.isNotNull(root.get("verifiedAt")), cb.greaterThan(root.get("invoicedTotalInr"), java.math.BigDecimal.ZERO)));
+            } else if ("NO".equalsIgnoreCase(f.verified())) {
+                and.add(cb.and(cb.isNull(root.get("verifiedAt")),
+                        cb.or(cb.isNull(root.get("invoicedTotalInr")), cb.equal(root.get("invoicedTotalInr"), java.math.BigDecimal.ZERO))));
+            }
             if (f.purchaseCurrency() != null && !f.purchaseCurrency().isBlank()) {
                 String code = f.purchaseCurrency().trim().toUpperCase();
                 jakarta.persistence.criteria.Subquery<Long> bought = query.subquery(Long.class);

@@ -710,6 +710,67 @@ A visa case's overall status (Docs pending, Appointment scheduled, Submitted, Ap
 the steps only: saving it no longer recalculates the status (`VisaStatusCalculator` removed); existing cases keep their status.
 
 
+## Visa client checklist 2026-11-27
+
+The Visa page has a Download checklist button: the agent picks a country that has fields of its own, unticks any field the
+client should not see (an internal tracking field), and downloads a PDF to send the client. `GET /api/visa-fields/checklist
+?country=&skip=` (owner, agent; VISA; `VisaChecklistService`) matches the country ignoring case against the countries with
+active fields (404 "No visa fields are set up for this country"), keeps the active common and country fields less `skip`
+(400 "Keep at least one item on the checklist" when none is left), prints the four basic documents first (`VisaChecklistService.BASICS`: original passport with 6 months' validity and 2 blank pages, a copy of its first and last pages, recent photographs, PAN card copy as optional; skip ids `basic:*`, which the modal lists again) and renders `VisaChecklistPdfRenderer`: agency header
+(logo, name, contact), the country band, "Documents to provide" (File fields) and "Details we need from you" (the rest, with
+a hint for dates, Yes / No and dropdown options), each with a tick box and Required or Optional, a contact line, and a
+footer with "Prepared with" and the Voyra wordmark (`src/main/resources/branding/voyra-wordmark.png`) and the page number.
+Nothing is stored or audited. Tests: `VisaChecklistPdfRendererTest`, `VisaChecklistServiceTest`, `VisaFieldControllerWebTest`.
+
+## Client round 27 Nov, Phase A (owner rulings 2026-11-27)
+
+From the client's "27 CRM ERROR" list (plan `docs/superpowers/specs/2026-11-27-client-round-27-nov-design.md`):
+credit limit optional for B2C clients (agents still set one on B2B); Cancellations list columns sector, PNR, issued on,
+cancelled on, vendor, with Follow-up / Done / Refund processed per row; tenant `V9__refund_processed.sql`
+(`booking.refund_processed_at/by`, backfilled for cancellations already settled) keeps a cancelled booking in Open until its
+refund is marked processed or cross-checked (`POST`/`DELETE /api/cancellations/{bookingId}/refund-processed`); guests on hotel
+and transfer vouchers; `VoucherLeg.returnFlight` for a return on one PNR (`VoucherTrip.returnStart`); the Bookings list's
+foreign selling price; no GST on cancellation charges; booking-value figures in the cancel preview (information only).
+
+## Client round 27 Nov, Phase B: Insurance as its own service
+
+`ServiceType.INSURANCE` and `BookingType.INSURANCE`, tenant `V10__insurance.sql`: lead service insurance type, from country,
+travelling countries, start, end, persons; booking insurance type, from country, persons (dates in journey / return date,
+countries in destination). Billed in the Miscellaneous series; voucher type INSURANCE (policy number); invoice line from
+`BookingInvoiceLineBuilder.insuranceText`. Tests: `InsuranceServiceTypeTest`, `BookingServiceCoverageTest`,
+`ServiceInstanceServiceCoverageTest`.
+
+## Client round 27 Nov, Phase C: New Booking in one window
+
+Frontend only: Save & add voucher keeps New Booking open on the voucher form (its save confirms the booking), then Add
+another with the same client, service and supplier. Phase D (cancel some passengers) waits for its money design.
+
+## Client round 27 Nov, Phase D: cancel some passengers
+
+`POST /api/bookings/{id}/cancel-passengers` (`PassengerCancellationController` / `PassengerCancellationService`, tenant
+`V11__partial_cancellation.sql`: `booking.partly_cancelled_at`). Before invoicing only (an invoiced booking is 409
+`ALREADY_INVOICED`): the e-ticket's cost drops by the purchase share less the airline and supplier charges and its price by
+the selling share less every charge, through `BookingDocumentService.updateDocument`; the travellers are marked `cancelled`
+(`VoucherTraveller.cancelled`, kept through later voucher edits); the booking reads Partly cancelled on Cancellations. The
+planned `booking_partial_cancellation` table was not needed: the details are in the booking's activity. Frontend
+`CancelPassengersModal` on the booking page. Tests: `PassengerCancellationServiceTest`, `PassengerCancellationControllerTest`.
+After the pre-merge regression (`qa-reports/2026-11-28-shivansh_dev-pre-merge.md`): tenant `V12` keeps the charges partial cancels
+kept (`partial_supplier_charge`, `partial_agency_fee`) and a later full cancel adds them; shares leaving a negative markup are
+refused; a partly cancelled row carries its date as `cancelledAt` (so Refund processed shows); the insurance invoice line
+names the cover; hotel and transfer voucher cards show their guests.
+
+## Verified by Accounts 2026-11-27
+
+Accounts can mark bookings verified without invoicing them. Tenant `V8__booking_verified.sql` adds `booking.verified_at` and
+`verified_by`; `POST /api/bookings/verification {bookingIds, verified}` (owner, accountant; `BookingService.setVerified`) is all or
+none: verifying needs a confirmed or completed booking (409 `NOT_VERIFIABLE` "BK... can't be verified: only a confirmed or
+completed booking can"), one already in the asked state is left alone, and each change is audited. Nothing moves in the books
+and an invoice can still be made later. `BookingNextStep` gives a verified, uninvoiced booking no next step (instead of
+"Generate invoice"); the list filter `verified=YES|NO` counts an invoiced booking as verified. Frontend: Accounts › Bookings
+ticks any booking, Mark verified / Undo verified act on the ticked ones, Create draft invoice needs them all to fit one
+invoice, a green Verified tag shows who and when. Tests: `BookingServiceTest`, `BookingNextStepTest`,
+`BookingSpecificationsTest`, `BookingControllersWebTest`, `BookingsList.test.tsx`.
+
 ## Live counts 2026-11-27
 
 The sidebar counts used to be re-read every minute and on every focus, each time behind the blocking loader. Now the

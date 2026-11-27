@@ -74,4 +74,22 @@ public class CancellationRowResponse {
 
     @Schema(description = "Accounts cross-checked the cancellation", example = "false")
     private boolean crossChecked;
+
+    @Schema(description = "Flight: the ticket's route (⇄ for a return); null for other types", example = "DEL ⇄ DXB")
+    private String sector;
+
+    @Schema(description = "The booking's PNR or reference, else its first voucher's", example = "ABC123")
+    private String pnr;
+
+    @Schema(description = "The earliest issued date on the booking's vouchers", example = "2026-11-20")
+    private LocalDate issuedOn;
+
+    @Schema(example = "My Partner MMT")
+    private String vendorName;
+
+    @Schema(description = "When the refund was marked processed; null while it is still to process")
+    private LocalDateTime refundProcessedAt;
+
+    @Schema(example = "Vikram Rao")
+    private String refundProcessedBy;
 }

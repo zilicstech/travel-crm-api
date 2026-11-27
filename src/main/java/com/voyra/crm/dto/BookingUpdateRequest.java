@@ -156,6 +156,18 @@ public class BookingUpdateRequest {
     @Schema(description = "MISCELLANEOUS bookings only: the sub-category (plain text); blank clears it", example = "Railway ticket")
     private String miscCategory;
 
+    @Schema(description = "INSURANCE bookings only: who the policy covers", example = "INDIVIDUAL")
+    private com.voyra.crm.enums.InsuranceType insuranceType;
+
+    @Size(max = 80, message = "Write at most 80 characters")
+    @Schema(description = "INSURANCE bookings only: the country the traveller leaves from", example = "India")
+    private String insuranceFromCountry;
+
+    @jakarta.validation.constraints.Min(value = 1, message = "At least 1 person")
+    @jakarta.validation.constraints.Max(value = 99, message = "At most 99 persons")
+    @Schema(description = "INSURANCE bookings only: persons covered", example = "2")
+    private Integer insurancePersons;
+
     @Schema(description = "Whether this FLIGHT booking's itinerary leaves India - decides AIR_INTERNATIONAL vs AIR_DOMESTIC on any invoice drafted against it. Ignored for non-FLIGHT bookings.")
     private Boolean internationalTrip;
 

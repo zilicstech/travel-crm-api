@@ -106,19 +106,20 @@ class BookingSpecificationsTest {
 
     @Test
     void blankTextFiltersAndAnUnknownRemarkAreIgnored() {
-        BookingListFilter f = new BookingListFilter(null, null, null, null, " ", " ", " ", null, " ", "maybe");
+        BookingListFilter f = new BookingListFilter(null, null, null, null, " ", " ", " ", null, " ", "maybe", "perhaps");
         assertThat(build(BookingSpecifications.matches(f, "INR"))).isEqualTo("and()");
     }
 
     @Test
     void everyColumnFilterBecomesOnePredicate() {
         LocalDate d1 = LocalDate.of(2026, 1, 1), d2 = LocalDate.of(2026, 1, 31);
-        BookingListFilter f = new BookingListFilter(d1, d2, d1, d2, "C1", "Business", " usd ", PaymentStatus.PAID, "U1", "has");
+        BookingListFilter f = new BookingListFilter(d1, d2, d1, d2, "C1", "Business", " usd ", PaymentStatus.PAID, "U1", "has", "yes");
         assertThat(build(BookingSpecifications.matches(f, "INR"))).isEqualTo("and("
                 + "greaterThanOrEqualTo(root.bookingDate, 2026-01-01), lessThanOrEqualTo(root.bookingDate, 2026-01-31), "
                 + "greaterThanOrEqualTo(root.departureDate, 2026-01-01), lessThanOrEqualTo(root.departureDate, 2026-01-31), "
                 + "equal(root.clientId, C1), equal(lower(root.flightCabin), business), equal(root.paymentStatus, PAID), "
                 + "and(isNotNull(root.accountantRemark), notEqual(trim(root.accountantRemark), )), "
+                + "or(isNotNull(root.verifiedAt), greaterThan(root.invoicedTotalInr, 0)), "
                 + "exists(query.subquery(Long)), "
                 + "or(equal(root.assignedById, U1), and(isNull(root.assignedById), "
                 + "or(root.leadId.in(query.subquery(String)), and(isNull(root.leadId), equal(root.createdBy, U1))))))");
@@ -129,9 +130,10 @@ class BookingSpecificationsTest {
 
     @Test
     void noRemarkAndBaseCurrencyMeanNothingBoughtAbroad() {
-        BookingListFilter f = new BookingListFilter(null, null, null, null, null, null, "inr", null, null, "NONE");
+        BookingListFilter f = new BookingListFilter(null, null, null, null, null, null, "inr", null, null, "NONE", "no");
         assertThat(build(BookingSpecifications.matches(f, "INR"))).isEqualTo("and("
                 + "or(isNull(root.accountantRemark), equal(trim(root.accountantRemark), )), "
+                + "and(isNull(root.verifiedAt), or(isNull(root.invoicedTotalInr), equal(root.invoicedTotalInr, 0))), "
                 + "not(exists(query.subquery(Long))))");
         assertThat(rec.calls()).contains(
                 "query.subquery(Long).select(literal(1)).where(equal(BookingDocument.bookingId, root.id), isNotNull(BookingDocument.purchaseCurrency))");

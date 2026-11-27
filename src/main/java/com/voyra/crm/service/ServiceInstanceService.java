@@ -73,7 +73,8 @@ public class ServiceInstanceService {
             "hotelCity", "hotelCountryCode", "hotelCheckIn", "hotelCheckOut", "hotelNights", "hotelRooms",
             "visaSourceCity", "visaSourceCountry", "visaCountry", "visaIntendedTravelDate", "visaAppointmentDate",
             "visaStatus", "transferVehicleType", "transferPickup", "transferDropoff", "transferDate", "transferTime",
-            "transferPassengers", "miscDetails", "miscCategory"
+            "transferPassengers", "miscDetails", "miscCategory",
+            "insuranceType", "insuranceFromCountry", "insuranceCountries", "insuranceStart", "insuranceEnd", "insurancePersons"
     };
 
     private final LeadServiceRepository leadServiceRepository;
@@ -140,6 +141,7 @@ public class ServiceInstanceService {
                     .createdAt(LocalDateTime.now())
                     .createdBy(currentUserId())
                     .build();
+            applyInsurance(service, draft);
             checkTrip(service);
             ServiceDateRangeDeriver.derive(service);
             created.add(service);
@@ -243,6 +245,7 @@ public class ServiceInstanceService {
         service.setVisaStatus(visaStatus(draft, service));
         service.setMiscDetails(miscDetails(service.getType(), draft));
         service.setMiscCategory(miscText(service.getType(), draft.getMiscCategory()));
+        applyInsurance(service, draft);
         service.setUpdatedAt(LocalDateTime.now());
         service.setUpdatedBy(currentUserId());
 
@@ -613,6 +616,9 @@ public class ServiceInstanceService {
                 .visaStatus(s.getType() == ServiceType.VISA && s.getVisaStatus() == null
                         ? VisaApplicationStatus.NOT_APPLIED : s.getVisaStatus())
                 .miscDetails(s.getMiscDetails()).miscCategory(s.getMiscCategory())
+                .insuranceType(s.getInsuranceType()).insuranceFromCountry(s.getInsuranceFromCountry())
+                .insuranceCountries(s.getInsuranceCountries()).insuranceStart(s.getInsuranceStart())
+                .insuranceEnd(s.getInsuranceEnd()).insurancePersons(s.getInsurancePersons())
                 .createdAt(s.getCreatedAt()).updatedAt(s.getUpdatedAt())
                 .build();
     }
@@ -635,6 +641,21 @@ public class ServiceInstanceService {
         return miscText(type, draft.getMiscDetails());
     }
 
+    /** An Insurance service's cover (client 27 Nov); on another type it carries none. */
+    private static void applyInsurance(LeadService service, ServiceDraft draft) {
+        boolean insurance = service.getType() == ServiceType.INSURANCE;
+        service.setInsuranceType(insurance ? draft.getInsuranceType() : null);
+        service.setInsuranceFromCountry(insurance ? blank(draft.getInsuranceFromCountry()) : null);
+        service.setInsuranceCountries(insurance ? blank(draft.getInsuranceCountries()) : null);
+        service.setInsuranceStart(insurance ? draft.getInsuranceStart() : null);
+        service.setInsuranceEnd(insurance ? draft.getInsuranceEnd() : null);
+        service.setInsurancePersons(insurance ? draft.getInsurancePersons() : null);
+    }
+
+    private static String blank(String raw) {
+        return raw == null || raw.isBlank() ? null : raw.trim();
+    }
+
     /** A Miscellaneous service's own text, trimmed; blank, or on another type, is none. */
     private static String miscText(ServiceType type, String raw) {
         return type == ServiceType.MISCELLANEOUS && raw != null && !raw.isBlank() ? raw.trim() : null;
@@ -644,5 +665,6 @@ public class ServiceInstanceService {
         TripRules.sectors(service.getFlightSectors());
         TripRules.stay(service.getHotelCheckIn(), service.getHotelCheckOut(), service.getHotelRooms(), service.getHotelNights());
         TripRules.transfer(service.getTransferTime(), service.getTransferPassengers());
+        TripRules.journey(com.voyra.crm.enums.BookingType.INSURANCE, service.getInsuranceStart(), service.getInsuranceEnd());
     }
 }

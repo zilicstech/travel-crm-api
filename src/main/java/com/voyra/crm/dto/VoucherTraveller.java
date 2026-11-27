@@ -12,7 +12,7 @@ import lombok.NoArgsConstructor;
  * follow a later rename of the member.
  */
 @Data
-@Builder
+@Builder(toBuilder = true)
 @NoArgsConstructor
 @AllArgsConstructor
 @Schema(description = "A traveller on the voucher - send memberId; the server fills name and paxType")
@@ -26,4 +26,11 @@ public class VoucherTraveller {
 
     @Schema(description = "Set by the server from the member's date of birth on the first leg's date", example = "ADULT")
     private com.voyra.crm.enums.PaxType paxType;
+
+    @Schema(description = "Set by the server once this traveller's part of the ticket is cancelled; the rest still fly", example = "true")
+    private Boolean cancelled;
+
+    public VoucherTraveller(String memberId, String name, com.voyra.crm.enums.PaxType paxType) {
+        this(memberId, name, paxType, null);
+    }
 }

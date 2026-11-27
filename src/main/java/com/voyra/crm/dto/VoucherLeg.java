@@ -39,4 +39,7 @@ public class VoucherLeg {
 
     @Schema(example = "20:10")
     private String arriveTime;
+
+    @Schema(description = "True on the flight the way back starts with (a return ticket on one PNR); null otherwise", example = "true")
+    private Boolean returnFlight;
 }

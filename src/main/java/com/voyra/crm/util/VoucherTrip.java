@@ -30,7 +30,8 @@ public final class VoucherTrip {
             VoucherLeg c = VoucherLeg.builder()
                     .from(code(l.getFrom())).to(code(l.getTo())).airline(text(l.getAirline()))
                     .flightNumber(text(l.getFlightNumber())).cabin(text(l.getCabin())).travelDate(l.getTravelDate())
-                    .departTime(text(l.getDepartTime())).arriveTime(text(l.getArriveTime())).build();
+                    .departTime(text(l.getDepartTime())).arriveTime(text(l.getArriveTime()))
+                    .returnFlight(Boolean.TRUE.equals(l.getReturnFlight()) && !out.isEmpty() ? Boolean.TRUE : null).build();
             boolean blank = c.getFrom() == null && c.getTo() == null && c.getTravelDate() == null && c.getFlightNumber() == null;
             if (blank) continue;
             if (c.getFrom() == null || c.getTo() == null || c.getTravelDate() == null) {
@@ -68,10 +69,17 @@ public final class VoucherTrip {
         put(out, "airline", first.getAirline());
         put(out, "flightNumber", first.getFlightNumber());
         put(out, "flightFrom", first.getFrom());
-        // Out and back (DEL-BOM-DEL) reads DEL to BOM, returning on the last flight's date - not DEL to DEL.
-        boolean outAndBack = legs.size() > 1 && Objects.equals(first.getFrom(), last.getTo());
-        put(out, "flightTo", outAndBack ? first.getTo() : last.getTo());
-        if (outAndBack) put(out, "returnDate", last.getTravelDate().toString());
+        // A flight marked as the way back splits the ticket: it reads to where the outbound ended, returning that day.
+        int back = returnStart(legs);
+        if (back > 0) {
+            put(out, "flightTo", legs.get(back - 1).getTo());
+            put(out, "returnDate", legs.get(back).getTravelDate().toString());
+        } else {
+            // Out and back (DEL-BOM-DEL) reads DEL to BOM, returning on the last flight's date - not DEL to DEL.
+            boolean outAndBack = legs.size() > 1 && Objects.equals(first.getFrom(), last.getTo());
+            put(out, "flightTo", outAndBack ? first.getTo() : last.getTo());
+            if (outAndBack) put(out, "returnDate", last.getTravelDate().toString());
+        }
         put(out, "journeyDate", first.getTravelDate().toString());
         put(out, "flightDepartTime", first.getDepartTime());
         put(out, "flightArriveTime", last.getArriveTime());
@@ -80,6 +88,14 @@ public final class VoucherTrip {
             put(out, "flightArriveDate", last.getTravelDate().toString());
         }
         return out;
+    }
+
+    /** Where the way back starts: the first leg marked as the return flight, else -1. */
+    public static int returnStart(List<VoucherLeg> legs) {
+        for (int i = 1; i < legs.size(); i++) {
+            if (Boolean.TRUE.equals(legs.get(i).getReturnFlight())) return i;
+        }
+        return -1;
     }
 
     /** The first flight's date, for working out a traveller's pax type. */

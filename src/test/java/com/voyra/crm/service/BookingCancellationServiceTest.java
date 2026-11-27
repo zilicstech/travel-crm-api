@@ -139,7 +139,14 @@ class BookingCancellationServiceTest {
         b.setReceivedTotalInr(BigDecimal.ZERO);
         when(paymentReceiptService.heldForBooking("C1", "B1")).thenReturn(d("10000"));
 
-        assertThat(service.preview("B1", d("3000"), d("500"), d("1000")).getCustomerRefundDue()).isEqualByComparingTo("5500");
+        com.voyra.crm.dto.BookingCancelPreviewResponse preview = service.preview("B1", d("3000"), d("500"), d("1000"));
+        assertThat(preview.getCustomerRefundDue()).isEqualByComparingTo("5500");
+        // on the booking's value (selling 10000, purchase 8000), whatever was recorded
+        assertThat(preview.getBookingValue()).isEqualByComparingTo("10000");
+        assertThat(preview.getRefundOnValue()).isEqualByComparingTo("5500");
+        assertThat(preview.getPurchaseValue()).isEqualByComparingTo("8000");
+        assertThat(preview.getExpectedOnPurchase()).isEqualByComparingTo("4500");
+        assertThat(service.preview("B1", d("9000"), d("500"), d("1000")).getExpectedOnPurchase()).isEqualByComparingTo("0");
         BookingCancelRequest request = cancel("500", "1000");
         request.setAirlineCharge(d("3000"));
         service.cancel("B1", request);
@@ -148,6 +155,25 @@ class BookingCancellationServiceTest {
         assertThat(b.getCancellationSupplierCharge()).isEqualByComparingTo("3500");
         assertThat(b.getCancellationAirlineCharge()).isEqualByComparingTo("3000");
         assertThat(b.getCancellationAgencyFee()).isEqualByComparingTo("1000");
+    }
+
+    /** What earlier partial cancellations kept is still owed: the full cancel adds it to its own charges (client 27 Nov). */
+    @Test
+    void aFullCancelAfterAPartialOneKeepsWhatThePartialKept() {
+        Booking b = booking(BookingStatus.CONFIRMED);
+        b.setReceivedTotalInr(BigDecimal.ZERO);
+        b.setPartialSupplierCharge(d("1000"));
+        b.setPartialAgencyFee(d("200"));
+        when(paymentReceiptService.heldForBooking("C1", "B1")).thenReturn(d("10000"));
+
+        assertThat(service.preview("B1", d("2000"), null, d("300")).getCustomerRefundDue()).isEqualByComparingTo("6500");
+        BookingCancelRequest request = cancel("0", "300");
+        request.setAirlineCharge(d("2000"));
+        service.cancel("B1", request);
+
+        assertThat(b.getCustomerRefundDue()).isEqualByComparingTo("6500");
+        assertThat(b.getCancellationSupplierCharge()).isEqualByComparingTo("3000");
+        assertThat(b.getCancellationAgencyFee()).isEqualByComparingTo("500");
     }
 
     /** Cancelled before any invoice: the kept charges get their own invoice (advance applied to it) and the refund is what is left. */

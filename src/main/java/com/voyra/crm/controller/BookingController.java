@@ -128,6 +128,8 @@ public class BookingController {
             @RequestParam(value = "assignedBy", required = false) String assignedBy,
             @Parameter(description = "HAS or NONE: with or without an accountant remark - paged list only")
             @RequestParam(value = "remark", required = false) String remark,
+            @Parameter(description = "YES or NO: verified by Accounts (marked, or invoiced) or not - paged list only")
+            @RequestParam(value = "verified", required = false) String verified,
             @RequestParam(value = "page", required = false) Integer page,
             @RequestParam(value = "size", required = false) Integer size) {
         Pageable pageable = PageRequestUtil.resolve(page, size);
@@ -135,7 +137,16 @@ public class BookingController {
                 ? bookingService.listBookings(type, status, destination, agentId, vendorId)
                 : bookingService.listBookings(type, status, destination, agentId, vendorId, q, sort, moneyPending,
                         new com.voyra.crm.models.BookingListFilter(bookedFrom, bookedTo, travelFrom, travelTo, clientId, cabin,
-                                purchaseCurrency, paymentStatus, assignedBy, remark), pageable));
+                                purchaseCurrency, paymentStatus, assignedBy, remark, verified), pageable));
+    }
+
+    @PostMapping("/verification")
+    @PreAuthorize("hasAnyRole('AGENCY_OWNER', 'ACCOUNTANT')")
+    @Operation(summary = "Mark bookings verified by Accounts, or undo it",
+            description = "Owner or accountant. Verifying needs a confirmed or completed booking (409 NOT_VERIFIABLE names the first "
+                    + "that is not); already-verified ones are left as they are, all or none. No invoice is made.")
+    public ResponseEntity<List<BookingResponse>> setVerified(@Valid @RequestBody com.voyra.crm.dto.BookingVerificationRequest request) {
+        return ResponseEntity.ok(bookingService.setVerified(request.getBookingIds(), request.isVerified()));
     }
 
     @PatchMapping("/{id}/accountant-remark")

@@ -79,9 +79,10 @@ public class BookingCancellationService {
     public BookingCancelPreviewResponse preview(String bookingId, BigDecimal airlineCharge, BigDecimal supplierCharge, BigDecimal agencyFee) {
         assertNotNegative(airlineCharge, supplierCharge, agencyFee);
         Booking booking = cancellable(bookingId);
-        // The supplier side keeps the airline's charge and its own fee; both come out of its refund.
-        BigDecimal charge = nz(airlineCharge).add(nz(supplierCharge));
-        BigDecimal fee = nz(agencyFee);
+        // The supplier side keeps the airline's charge and its own fee; both come out of its refund. What earlier partial
+        // cancellations kept is still owed, so it is added (client 27 Nov).
+        BigDecimal charge = nz(airlineCharge).add(nz(supplierCharge)).add(nz(booking.getPartialSupplierCharge()));
+        BigDecimal fee = nz(agencyFee).add(nz(booking.getPartialAgencyFee()));
         List<Invoice> invoices = liveTaxInvoices(bookingId);
         BigDecimal held = held(booking);
         BigDecimal customerPaid = customerPaid(booking).add(held);
@@ -105,6 +106,11 @@ public class BookingCancellationService {
                 .supplierChargeOwed(supplierChargeOwed(bills, charge))
                 .chargesInvoiceTotal(chargesInvoice)
                 .invoiced(!invoices.isEmpty())
+                // what the client sees on paper, whatever was recorded (client 27 Nov): information only, never posted
+                .bookingValue(nz(booking.getSellingPrice()))
+                .refundOnValue(nz(booking.getSellingPrice()).subtract(charge).subtract(fee).max(BigDecimal.ZERO))
+                .purchaseValue(nz(booking.getNetCost()))
+                .expectedOnPurchase(nz(booking.getNetCost()).subtract(charge).max(BigDecimal.ZERO))
                 .build();
     }
 
@@ -128,8 +134,8 @@ public class BookingCancellationService {
         if (request.getType() == com.voyra.crm.enums.CancellationType.VOID && booking.getType() != com.voyra.crm.enums.BookingType.FLIGHT) {
             throw new IllegalArgumentException("Void is only for airline tickets - use Cancellation or No show");
         }
-        BigDecimal charge = nz(request.getAirlineCharge()).add(nz(request.getSupplierCharge()));
-        BigDecimal fee = nz(request.getAgencyFee());
+        BigDecimal charge = nz(request.getAirlineCharge()).add(nz(request.getSupplierCharge())).add(nz(booking.getPartialSupplierCharge()));
+        BigDecimal fee = nz(request.getAgencyFee()).add(nz(booking.getPartialAgencyFee()));
         // Off any draft invoice first (nothing is posted on a draft); a combined draft keeps its other bookings.
         invoiceDocumentService.removeBookingFromDraft(bookingId);
         bookingAccountingSync.syncPayment(bookingId);

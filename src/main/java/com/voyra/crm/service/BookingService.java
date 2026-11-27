@@ -78,6 +78,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 @Service
 @RequiredArgsConstructor
@@ -94,7 +95,7 @@ public class BookingService {
             "hotelRoomType", "hotelBoardBasis", "hotelRooms",
             "visaApplicationNo", "visaCountry", "visaAppliedDate", "visaAppointmentDate", "visaIssuedDate",
             "transferVoucherNo", "transferVehicleType", "transferPickup", "transferDropoff",
-            "transferDate", "transferTime", "miscCategory",
+            "transferDate", "transferTime", "miscCategory", "insuranceType", "insuranceFromCountry", "insurancePersons",
             "netCost", "sellingPrice", "profit", "bookingStatus", "paymentStatus", "cancelReason",
             "refundState", "refundAmount", "refundDueDate",
             "ticketingDeadline", "cancellationDeadline", "deadlineNote"
@@ -132,6 +133,7 @@ public class BookingService {
     private final BaseCurrency baseCurrency;
     private final InvoiceLineSource invoiceLineSource;
     private final BookingAccountingSync bookingAccountingSync;
+    private final AuthorResolver authorResolver;
 
     /** FRD US-ACC-6.1's example rate, used whenever an agency hasn't set its own in Settings. */
     private static final BigDecimal DEFAULT_LOW_MARGIN_THRESHOLD_PERCENT = BigDecimal.valueOf(8);
@@ -231,6 +233,9 @@ public class BookingService {
                 .transferDate(request.getTransferDate())
                 .transferTime(request.getTransferTime())
                 .miscCategory(miscCategory(request.getType(), request.getMiscCategory()))
+                .insuranceType(request.getType() == BookingType.INSURANCE ? request.getInsuranceType() : null)
+                .insuranceFromCountry(request.getType() == BookingType.INSURANCE ? blankToNull(request.getInsuranceFromCountry()) : null)
+                .insurancePersons(request.getType() == BookingType.INSURANCE ? request.getInsurancePersons() : null)
                 .netCost(request.getNetCost())
                 .sellingPrice(request.getSellingPrice())
                 .markupMode(request.getMarkupMode())
@@ -722,6 +727,11 @@ public class BookingService {
         if (request.getTransferDate() != null) booking.setTransferDate(request.getTransferDate());
         if (request.getTransferTime() != null) booking.setTransferTime(request.getTransferTime());
         if (request.getMiscCategory() != null) booking.setMiscCategory(miscCategory(booking.getType(), request.getMiscCategory()));
+        if (booking.getType() == BookingType.INSURANCE) {
+            if (request.getInsuranceType() != null) booking.setInsuranceType(request.getInsuranceType());
+            if (request.getInsuranceFromCountry() != null) booking.setInsuranceFromCountry(blankToNull(request.getInsuranceFromCountry()));
+            if (request.getInsurancePersons() != null) booking.setInsurancePersons(request.getInsurancePersons());
+        }
         // Cost and price come only from the vouchers (or Log Booking); a booking edit never sets them.
         if (request.getInternationalTrip() != null) booking.setInternationalTrip(request.getInternationalTrip());
         // Profit is never client-trusted - always recomputed server-side from the current values.
@@ -1528,6 +1538,7 @@ public class BookingService {
                 .transferPickup(b.getTransferPickup()).transferDropoff(b.getTransferDropoff())
                 .transferDate(b.getTransferDate()).transferTime(b.getTransferTime())
                 .miscCategory(b.getMiscCategory())
+                .insuranceType(b.getInsuranceType()).insuranceFromCountry(b.getInsuranceFromCountry()).insurancePersons(b.getInsurancePersons())
                 .netCost(b.getNetCost())
                 .sellingPrice(b.getSellingPrice()).profit(b.getProfit())
                 .markupMode(b.getMarkupMode()).markupValue(b.getMarkupValue()).bookingStatus(b.getBookingStatus())
@@ -1550,6 +1561,7 @@ public class BookingService {
                 .supplierRefundClaimBy(b.getSupplierRefundClaimBy())
                 .cancellationType(b.getCancellationType())
                 .refundCheckedAt(b.getRefundCheckedAt()).refundCheckedBy(b.getRefundCheckedBy())
+                .verifiedAt(b.getVerifiedAt()).verifiedBy(b.getVerifiedBy())
                 .documents(documents)
                 .nextStep(com.voyra.crm.util.BookingNextStep.of(b, documents.size(), baseCurrency.code()))
                 .internationalTrip(b.getInternationalTrip())
@@ -1584,6 +1596,38 @@ public class BookingService {
         return agentRepository.findById(userId).map(Agent::getName)
                 .or(() -> tenantRepository.findById(userId).map(Tenant::getOwnerName))
                 .orElse(null);
+    }
+
+    /**
+     * Accounts marks bookings verified (checked) without invoicing them, or undoes it; all or none. Verifying needs a
+     * confirmed or completed booking; one already in the asked state is left alone. Record-only: no money moves.
+     */
+    @Transactional
+    public List<BookingResponse> setVerified(List<String> bookingIds, boolean verified) {
+        List<Booking> bookings = bookingIds.stream().distinct().map(id -> {
+            bookingRepository.findByIdForUpdate(id);
+            return findAccessibleBooking(id);
+        }).toList();
+        if (verified) {
+            bookings.stream().filter(b -> b.getVerifiedAt() == null)
+                    .filter(b -> b.getBookingStatus() != BookingStatus.CONFIRMED && b.getBookingStatus() != BookingStatus.COMPLETED)
+                    .findFirst().ifPresent(b -> {
+                        String ref = Objects.requireNonNullElse(bookingRef(b.getBookingNumber()), b.getId());
+                        throw new com.voyra.crm.exception.BookingConflictException("NOT_VERIFIABLE", ref + " can't be verified: only a confirmed or completed booking can",
+                                Map.of("bookingId", b.getId()));
+                    });
+        }
+        String by = authorResolver.resolveCurrentAuthor().name();
+        for (Booking b : bookings) {
+            if ((b.getVerifiedAt() != null) == verified) continue;
+            Map<String, String> before = AuditSnapshot.of(b, "verifiedBy");
+            b.setVerifiedAt(verified ? LocalDateTime.now() : null);
+            b.setVerifiedBy(verified ? by : null);
+            touch(b);
+            bookingRepository.save(b);
+            auditService.recordUpdate(AuditEntityType.BOOKING, b.getId(), labelFor(b), AuditSnapshot.diff(before, AuditSnapshot.of(b, "verifiedBy")));
+        }
+        return bookings.stream().map(this::toResponse).toList();
     }
 
     /** The accountant's own note on a booking; blank clears it. */

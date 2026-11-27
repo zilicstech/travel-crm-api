@@ -62,4 +62,19 @@ class VoucherTripTest {
         assertThat(d).containsEntry("flightFrom", "DEL").containsEntry("flightTo", "BOM")
                 .containsEntry("returnDate", "2026-12-27");
     }
+
+    @Test
+    void aFlightMarkedAsTheWayBackSplitsTheTicketAndTheFirstFlightCannotBeIt() {
+        VoucherLeg back = leg("DXB", "BOM", "2026-12-27");
+        back.setReturnFlight(true);
+        VoucherLeg first = leg("DEL", "BOM", "2026-12-20");
+        first.setReturnFlight(true);
+        List<VoucherLeg> legs = VoucherTrip.cleanLegs(List.of(first, leg("BOM", "DXB", "2026-12-20"), back, leg("BOM", "DEL", "2026-12-27")));
+
+        assertThat(legs).extracting(VoucherLeg::getReturnFlight).containsExactly(null, null, true, null);
+        assertThat(VoucherTrip.returnStart(legs)).isEqualTo(2);
+        assertThat(VoucherTrip.details(legs, null)).containsEntry("flightFrom", "DEL").containsEntry("flightTo", "DXB")
+                .containsEntry("returnDate", "2026-12-27");
+        assertThat(VoucherTrip.returnStart(List.of(leg("DEL", "BOM", "2026-12-20")))).isEqualTo(-1);
+    }
 }

@@ -24,6 +24,7 @@ public final class ServiceBookingTypeMapper {
             case VISA -> BookingType.VISA;
             case TRANSFER -> BookingType.TRANSFER;
             case MISCELLANEOUS -> BookingType.MISCELLANEOUS;
+            case INSURANCE -> BookingType.INSURANCE;
         };
     }
 
@@ -35,6 +36,7 @@ public final class ServiceBookingTypeMapper {
             case VISA -> ServiceType.VISA;
             case TRANSFER -> ServiceType.TRANSFER;
             case MISCELLANEOUS -> ServiceType.MISCELLANEOUS;
+            case INSURANCE -> ServiceType.INSURANCE;
             case PACKAGE -> null;
         };
     }

@@ -10,11 +10,12 @@ import java.time.LocalDate;
  *
  * @param assignedBy   the user who created the booking's lead (or the booking itself, when it has no lead)
  * @param remark       HAS or NONE - bookings with or without an accountant remark
+ * @param verified     YES or NO - verified by Accounts (marked, or invoiced) or not
  * @param purchaseCurrency a voucher bought in this currency; the base currency means none bought in another
  */
 public record BookingListFilter(LocalDate bookedFrom, LocalDate bookedTo, LocalDate travelFrom, LocalDate travelTo,
                                 String clientId, String cabin, String purchaseCurrency, PaymentStatus paymentStatus,
-                                String assignedBy, String remark) {
+                                String assignedBy, String remark, String verified) {
 
-    public static final BookingListFilter NONE = new BookingListFilter(null, null, null, null, null, null, null, null, null, null);
+    public static final BookingListFilter NONE = new BookingListFilter(null, null, null, null, null, null, null, null, null, null, null);
 }

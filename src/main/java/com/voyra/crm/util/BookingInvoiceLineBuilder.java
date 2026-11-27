@@ -98,9 +98,26 @@ public final class BookingInvoiceLineBuilder {
                     + " to " + nvl(booking.getTransferDropoff())
                     + (booking.getTransferDate() != null ? " on " + fmt(booking.getTransferDate()) : "")
                     + (booking.getTransferTime() != null ? " " + booking.getTransferTime() : "");
-            case PACKAGE, MISCELLANEOUS -> nvl(booking.getDestination())
+            case PACKAGE, MISCELLANEOUS -> booking.getType() == com.voyra.crm.enums.BookingType.INSURANCE ? insuranceText(booking)
+                    : nvl(booking.getDestination())
                     + (booking.getNotes() != null && !booking.getNotes().isBlank() ? " - " + booking.getNotes() : "");
         };
+    }
+
+    /** "Travel insurance (Family, 3 persons): France, Italy, 01-12-2026 to 15-12-2026", from what the booking has. */
+    public static String insuranceText(Booking booking) {
+        List<String> about = new java.util.ArrayList<>();
+        if (booking.getInsuranceType() != null) {
+            String t = booking.getInsuranceType().name().replace('_', ' ').toLowerCase(java.util.Locale.ROOT);
+            about.add(Character.toUpperCase(t.charAt(0)) + t.substring(1));
+        }
+        if (booking.getInsurancePersons() != null) {
+            about.add(booking.getInsurancePersons() + (booking.getInsurancePersons() == 1 ? " person" : " persons"));
+        }
+        return "Travel insurance" + (about.isEmpty() ? "" : " (" + String.join(", ", about) + ")")
+                + (booking.getDestination() != null && !booking.getDestination().isBlank() ? ": " + booking.getDestination() : "")
+                + (booking.getJourneyDate() != null ? ", " + fmt(booking.getJourneyDate()) : "")
+                + (booking.getReturnDate() != null ? " to " + fmt(booking.getReturnDate()) : "");
     }
 
     private static String legsText(List<BookingSector> sectors, Booking booking) {
@@ -123,7 +140,7 @@ public final class BookingInvoiceLineBuilder {
         return sb.toString();
     }
 
-    private static String fmt(java.time.LocalDate d) {
+    static String fmt(java.time.LocalDate d) {
         return d == null ? "" : d.format(DATE);
     }
 

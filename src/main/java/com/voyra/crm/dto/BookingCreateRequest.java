@@ -159,6 +159,18 @@ public class BookingCreateRequest {
     @Schema(description = "MISCELLANEOUS bookings only: the sub-category, from Settings (plain text)", example = "Railway ticket")
     private String miscCategory;
 
+    @Schema(description = "INSURANCE bookings only: who the policy covers", example = "INDIVIDUAL")
+    private com.voyra.crm.enums.InsuranceType insuranceType;
+
+    @Size(max = 80, message = "Write at most 80 characters")
+    @Schema(description = "INSURANCE bookings only: the country the traveller leaves from", example = "India")
+    private String insuranceFromCountry;
+
+    @jakarta.validation.constraints.Min(value = 1, message = "At least 1 person")
+    @jakarta.validation.constraints.Max(value = 99, message = "At most 99 persons")
+    @Schema(description = "INSURANCE bookings only: persons covered", example = "2")
+    private Integer insurancePersons;
+
     @Schema(description = "Who gave this booking to its agent: the owner (the agency id) or a staff member; optional", example = "a1b2c3d4")
     private String assignedById;
 

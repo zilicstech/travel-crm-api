@@ -1,12 +1,14 @@
 package com.voyra.crm.service;
 
 import com.voyra.crm.dto.BookingPaymentStatusUpdateRequest;
+import com.voyra.crm.dto.BookingResponse;
 import com.voyra.crm.dto.BookingStatusUpdateRequest;
 import com.voyra.crm.dto.BookingUpdateRequest;
 import com.voyra.crm.entity.Booking;
 import com.voyra.crm.entity.BookingCostComponent;
 import com.voyra.crm.entity.Invoice;
 import com.voyra.crm.entity.JournalEntry;
+import com.voyra.crm.enums.AuditEntityType;
 import com.voyra.crm.enums.BookingStatus;
 import com.voyra.crm.enums.CreditNoteStatus;
 import com.voyra.crm.enums.JournalPurpose;
@@ -51,6 +53,10 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -136,6 +142,9 @@ class BookingServiceTest {
     private com.voyra.crm.service.BaseCurrency baseCurrency = new com.voyra.crm.service.BaseCurrency(null);
 
 
+
+    @Mock
+    private AuthorResolver authorResolver;
 
     @InjectMocks
     private BookingService bookingService;
@@ -845,6 +854,60 @@ class BookingServiceTest {
 
         bookingService.updateAccountantRemark("B1", "   ");
         assertThat(booking.getAccountantRemark()).isNull();
+    }
+
+    @Test
+    void accountsVerifiesLiveBookingsWithoutAnInvoiceAndCanUndoIt() {
+        Booking confirmed = pendingWithoutFare();
+        confirmed.setBookingStatus(BookingStatus.CONFIRMED);
+        Booking completed = pendingWithoutFare().toBuilder().id("B2").bookingStatus(BookingStatus.COMPLETED).build();
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(confirmed));
+        when(bookingRepository.findById("B2")).thenReturn(Optional.of(completed));
+        when(authorResolver.resolveCurrentAuthor()).thenReturn(new AuthorResolver.AuthorInfo("U9", "Sandli"));
+
+        List<BookingResponse> out = bookingService.setVerified(List.of("B1", "B2", "B1"), true);
+        assertThat(out).extracting(BookingResponse::getVerifiedBy).containsExactly("Sandli", "Sandli");
+        assertThat(confirmed.getVerifiedAt()).isNotNull();
+        verify(bookingRepository).findByIdForUpdate("B2");
+        verify(auditService, org.mockito.Mockito.times(2)).recordUpdate(eq(AuditEntityType.BOOKING), any(), any(), any());
+
+        // already verified: left as it was, nothing recorded again
+        java.time.LocalDateTime first = confirmed.getVerifiedAt();
+        bookingService.setVerified(List.of("B1"), true);
+        assertThat(confirmed.getVerifiedAt()).isEqualTo(first);
+        verify(auditService, org.mockito.Mockito.times(2)).recordUpdate(eq(AuditEntityType.BOOKING), any(), any(), any());
+
+        // undo, also for a booking cancelled since; one never verified is left alone
+        confirmed.setBookingStatus(BookingStatus.CANCELLED);
+        Booking never = pendingWithoutFare().toBuilder().id("B3").build();
+        when(bookingRepository.findById("B3")).thenReturn(Optional.of(never));
+        bookingService.setVerified(List.of("B1", "B3"), false);
+        assertThat(confirmed.getVerifiedAt()).isNull();
+        assertThat(confirmed.getVerifiedBy()).isNull();
+        verify(auditService, org.mockito.Mockito.times(3)).recordUpdate(eq(AuditEntityType.BOOKING), any(), any(), any());
+    }
+
+    @Test
+    void onlyAConfirmedOrCompletedBookingCanBeVerifiedAndNothingIsVerifiedThen() {
+        Booking confirmed = pendingWithoutFare().toBuilder().bookingStatus(BookingStatus.CONFIRMED).build();
+        Booking pending = pendingWithoutFare().toBuilder().id("B2").bookingNumber(42L).build();
+        Booking cancelled = pendingWithoutFare().toBuilder().id("B3").bookingStatus(BookingStatus.CANCELLED).build();
+        when(bookingRepository.findById("B1")).thenReturn(Optional.of(confirmed));
+        when(bookingRepository.findById("B2")).thenReturn(Optional.of(pending));
+        when(bookingRepository.findById("B3")).thenReturn(Optional.of(cancelled));
+
+        assertThatThrownBy(() -> bookingService.setVerified(List.of("B1", "B2"), true))
+                .isInstanceOf(com.voyra.crm.exception.BookingConflictException.class)
+                .hasMessage("BK00000042 can't be verified: only a confirmed or completed booking can");
+        assertThatThrownBy(() -> bookingService.setVerified(List.of("B3"), true))
+                .hasMessage("B3 can't be verified: only a confirmed or completed booking can");
+        assertThat(confirmed.getVerifiedAt()).isNull();
+        verify(auditService, never()).recordUpdate(any(), any(), any(), any());
+
+        // a cancelled booking verified before it was cancelled stays verified when verified again
+        cancelled.setVerifiedAt(java.time.LocalDateTime.now());
+        when(authorResolver.resolveCurrentAuthor()).thenReturn(new AuthorResolver.AuthorInfo("U9", "Sandli"));
+        assertThat(bookingService.setVerified(List.of("B3"), true)).hasSize(1);
     }
 
     @Test

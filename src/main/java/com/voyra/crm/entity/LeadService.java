@@ -213,6 +213,28 @@ public class LeadService {
     @Column(name = "misc_category", length = 150)
     private String miscCategory;
 
+    // ---- Insurance (client 27 Nov) ----
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "insurance_type", length = 20)
+    private com.voyra.crm.enums.InsuranceType insuranceType;
+
+    @Column(name = "insurance_from_country", length = 80)
+    private String insuranceFromCountry;
+
+    /** The countries travelled, comma separated as picked. */
+    @Column(name = "insurance_countries", length = 500)
+    private String insuranceCountries;
+
+    @Column(name = "insurance_start")
+    private LocalDate insuranceStart;
+
+    @Column(name = "insurance_end")
+    private LocalDate insuranceEnd;
+
+    @Column(name = "insurance_persons")
+    private Integer insurancePersons;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 

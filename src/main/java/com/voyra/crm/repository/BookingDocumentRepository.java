@@ -12,6 +12,8 @@ public interface BookingDocumentRepository extends JpaRepository<BookingDocument
 
     List<BookingDocument> findByBookingIdOrderBySortOrderAsc(String bookingId);
 
+    List<BookingDocument> findByBookingIdInOrderBySortOrderAsc(java.util.Collection<String> bookingIds);
+
     /** Bookings with an air ticket voucher starting or returning on the day (a return ticket may be its own voucher). */
     @org.springframework.data.jpa.repository.Query(value = """
             SELECT DISTINCT d.booking_id FROM booking_document d

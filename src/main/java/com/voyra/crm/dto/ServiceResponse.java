@@ -149,6 +149,24 @@ public class ServiceResponse {
     @Schema(example = "Railway ticket")
     private String miscCategory;
 
+    @Schema(example = "INDIVIDUAL")
+    private com.voyra.crm.enums.InsuranceType insuranceType;
+
+    @Schema(example = "India")
+    private String insuranceFromCountry;
+
+    @Schema(example = "France, Italy")
+    private String insuranceCountries;
+
+    @Schema(example = "2026-12-01")
+    private java.time.LocalDate insuranceStart;
+
+    @Schema(example = "2026-12-15")
+    private java.time.LocalDate insuranceEnd;
+
+    @Schema(example = "2")
+    private Integer insurancePersons;
+
     @Schema(example = "2026-08-13T09:15:22")
     private LocalDateTime createdAt;
 

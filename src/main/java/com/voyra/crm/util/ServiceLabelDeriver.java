@@ -77,6 +77,7 @@ public final class ServiceLabelDeriver {
             case VISA -> "Visa";
             case TRANSFER -> "Transfer";
             case MISCELLANEOUS -> "Miscellaneous";
+            case INSURANCE -> "Insurance";
         };
     }
 
@@ -88,6 +89,7 @@ public final class ServiceLabelDeriver {
             case TRANSFER -> s.getTransferPickup();
             case MISCELLANEOUS -> s.getMiscDetails() == null || s.getMiscDetails().length() <= 40 ? s.getMiscDetails()
                     : s.getMiscDetails().substring(0, 40).trim() + "…";
+            case INSURANCE -> s.getInsuranceCountries();
         };
     }
 

@@ -34,6 +34,10 @@ public final class ServiceDateRangeDeriver {
                 service.setDateFrom(null);
                 service.setDateTo(null);
             };
+            case INSURANCE -> () -> {
+                service.setDateFrom(service.getInsuranceStart());
+                service.setDateTo(service.getInsuranceEnd() != null ? service.getInsuranceEnd() : service.getInsuranceStart());
+            };
         };
         derive.run();
     }

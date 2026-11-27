@@ -3,11 +3,17 @@ package com.voyra.crm.controller;
 import com.voyra.crm.dto.VisaFieldOrderRequest;
 import com.voyra.crm.dto.VisaFieldRequest;
 import com.voyra.crm.dto.VisaFieldResponse;
+import com.voyra.crm.service.VisaChecklistService;
 import com.voyra.crm.service.VisaFieldService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.core.io.Resource;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -20,6 +26,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 /** Visa configuration: the fields an application asks for. Agents read them (Open Case, the sheet); only the owner edits. */
@@ -31,6 +38,7 @@ import java.util.List;
 public class VisaFieldController {
 
     private final VisaFieldService service;
+    private final VisaChecklistService checklistService;
 
     @GetMapping
     @Operation(summary = "Fields for one country", description = "Active common fields, then that country's. No country: common only.")
@@ -48,6 +56,18 @@ public class VisaFieldController {
     @Operation(summary = "Countries that have fields")
     public ResponseEntity<List<String>> countries() {
         return ResponseEntity.ok(service.countries());
+    }
+
+    @GetMapping("/checklist")
+    @Operation(summary = "Client checklist PDF for one country",
+            description = "The country's common and own fields as a checklist to send the client; skip leaves fields off.")
+    public ResponseEntity<Resource> checklist(@RequestParam("country") String country,
+                                              @RequestParam(value = "skip", required = false) List<String> skip) {
+        VisaChecklistService.ChecklistPdf pdf = checklistService.pdf(country, skip);
+        return ResponseEntity.ok().contentType(MediaType.APPLICATION_PDF)
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        ContentDisposition.attachment().filename(pdf.fileName(), StandardCharsets.UTF_8).build().toString())
+                .body(new ByteArrayResource(pdf.bytes()));
     }
 
     @PostMapping

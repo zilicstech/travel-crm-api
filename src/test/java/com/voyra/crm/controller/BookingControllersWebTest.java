@@ -30,6 +30,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.List;
 
 import static com.voyra.crm.controller.WebTestSupport.FILE;
 import static com.voyra.crm.controller.WebTestSupport.as;
@@ -110,8 +111,22 @@ class BookingControllersWebTest {
 
         verify(bookingService).listBookings(BookingType.values()[0], null, "Goa", null, null);
         verify(bookingService).listBookings(null, null, null, null, null, "BK42", null, true,
-                new BookingListFilter(LocalDate.of(2026, 4, 1), null, null, null, "C1", null, null, null, null, "HAS"), PageRequest.of(0, 10));
+                new BookingListFilter(LocalDate.of(2026, 4, 1), null, null, null, "C1", null, null, null, null, "HAS", null), PageRequest.of(0, 10));
         verify(bookingService).listUnbilledBookings();
+    }
+
+    @Test
+    void ownerAndAccountantMarkBookingsVerified() throws Exception {
+        mvc.perform(json(post(B + "/verification"), "{\"bookingIds\":[\"B1\",\"B2\"],\"verified\":true}").with(as(UserType.ACCOUNTANT)))
+                .andExpect(status().isOk());
+        mvc.perform(json(post(B + "/verification"), "{\"bookingIds\":[\"B1\"],\"verified\":false}").with(as(UserType.AGENCY_OWNER)))
+                .andExpect(status().isOk());
+        verify(bookingService).setVerified(List.of("B1", "B2"), true);
+        verify(bookingService).setVerified(List.of("B1"), false);
+        mvc.perform(json(post(B + "/verification"), "{\"bookingIds\":[\"B1\"],\"verified\":true}").with(as(UserType.AGENT)))
+                .andExpect(status().isForbidden());
+        mvc.perform(json(post(B + "/verification"), "{\"bookingIds\":[],\"verified\":true}").with(as(UserType.ACCOUNTANT)))
+                .andExpect(status().isBadRequest());
     }
 
     @Test

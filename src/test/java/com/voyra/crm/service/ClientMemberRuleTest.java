@@ -105,15 +105,24 @@ class ClientMemberRuleTest {
      * table carries.
      */
     @Test
-    void agentMustSetACreditLimitOnCreate() {
+    void agentMustSetACreditLimitOnACorporateClientButNotOnAHousehold() {
         authenticateAs("A1", UserType.AGENT);
-        ClientCreateRequest request = new ClientCreateRequest();
-        request.setIdentifier("9876543210");
-        request.setName("Ajay Sharma");
-        request.setType(ClientType.B2C);
-        request.setPrimaryMemberName("Ajay Sharma");
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> clientService.createClient(request))
+        ClientCreateRequest corporate = new ClientCreateRequest();
+        corporate.setIdentifier("acme");
+        corporate.setName("Acme Corp");
+        corporate.setType(ClientType.B2B);
+        corporate.setPrimaryMemberName("Ajay Sharma");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> clientService.createClient(corporate))
                 .hasMessage("Enter the client's credit limit (0 if they pay upfront)");
+
+        when(clientRepository.existsById(any())).thenReturn(false);
+        when(memberRepository.existsById(any())).thenReturn(false);
+        ClientCreateRequest household = new ClientCreateRequest();
+        household.setIdentifier("9876543210");
+        household.setName("Ajay Sharma");
+        household.setType(ClientType.B2C);
+        household.setPrimaryMemberName("Ajay Sharma");
+        org.assertj.core.api.Assertions.assertThat(clientService.createClient(household).getCreditLimit()).isNull();
     }
 
     @Test

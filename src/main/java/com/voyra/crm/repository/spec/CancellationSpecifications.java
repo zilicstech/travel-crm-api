@@ -35,12 +35,17 @@ public final class CancellationSpecifications {
     /** Cancelled (not a Voyra booking that simply failed), with a Voyra request, or with any follow-up. */
     public static Specification<Booking> onTab(String tenantId) {
         return (root, query, cb) -> cb.or(cancelledShown(root, cb), request(root, query, cb, tenantId, null),
-                followUp(root, query, cb, tenantId, false, null, null));
+                followUp(root, query, cb, tenantId, false, null, null), cb.isNotNull(root.get("partlyCancelledAt")));
     }
 
-    /** Still needs someone: a refund that has not moved, a Voyra request under way, or an open follow-up. */
+    /**
+     * Still needs someone: a cancellation nobody has marked refund-processed and Accounts has not cross-checked
+     * (client 27 Nov), a Voyra request under way, or an open follow-up.
+     */
     public static Specification<Booking> open(String tenantId) {
-        return (root, query, cb) -> cb.or(cb.and(cancelledShown(root, cb), refundMoving(root, cb)),
+        return (root, query, cb) -> cb.or(cb.and(cancelledShown(root, cb),
+                        cb.isNull(root.get("refundProcessedAt")), cb.isNull(root.get("refundCheckedAt"))),
+                cb.and(cb.isNotNull(root.get("partlyCancelledAt")), cb.isNull(root.get("refundProcessedAt"))),
                 request(root, query, cb, tenantId, CancelRequestStatus.ACTIVE),
                 followUp(root, query, cb, tenantId, true, null, null));
     }
@@ -65,11 +70,6 @@ public final class CancellationSpecifications {
         Predicate failCancelled = cb.and(cb.isNotNull(root.get("platformBookingId")),
                 cb.equal(root.get("cancelledBy"), SystemActor.USER_ID), cb.isNull(root.get("cancellationType")));
         return cb.and(cb.equal(root.get("bookingStatus"), BookingStatus.CANCELLED), cb.not(failCancelled));
-    }
-
-    private static Predicate refundMoving(Root<Booking> root, CriteriaBuilder cb) {
-        return cb.or(cb.lessThan(root.get("refundedTotalInr"), root.get("customerRefundDue")),
-                cb.lessThan(root.get("supplierRefundReceived"), root.get("supplierRefundExpected")));
     }
 
     /** A Voyra request of this agency on the booking, in one of {@code statuses} (null = any). */

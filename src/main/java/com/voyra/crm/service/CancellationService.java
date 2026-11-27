@@ -9,6 +9,7 @@ import com.voyra.crm.dto.CancellationRowResponse;
 import com.voyra.crm.dto.PagedResponse;
 import com.voyra.crm.entity.Agent;
 import com.voyra.crm.entity.Booking;
+import com.voyra.crm.entity.BookingDocument;
 import com.voyra.crm.entity.CancellationFollowUp;
 import com.voyra.crm.entity.PlatformCancelRequest;
 import com.voyra.crm.entity.Tenant;
@@ -71,6 +72,7 @@ public class CancellationService {
     private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.ENGLISH);
 
     private final BookingRepository bookingRepository;
+    private final com.voyra.crm.repository.BookingDocumentRepository documentRepository;
     private final CancellationFollowUpRepository followUpRepository;
     private final PlatformCancelRequestRepository requestRepository;
     private final PlatformCancelRequestService requestService;
@@ -117,7 +119,7 @@ public class CancellationService {
         List<CancelRequestResponse> requests = b.getPlatformBookingId() == null ? List.of() : requestService.listForCrmBooking(b.getPlatformBookingId());
         CancelRequestStatus newest = requests.isEmpty() ? null : requests.get(requests.size() - 1).status();
         return CancellationDetailResponse.builder()
-                .row(row(b, newest, followUps, today()))
+                .row(row(b, newest, followUps, documentRepository.findByBookingIdOrderBySortOrderAsc(bookingId), today()))
                 .followUps(followUps.stream().map(CancellationService::view).toList())
                 .voyraRequests(requests)
                 .activity(activityService.list(bookingId))
@@ -200,6 +202,25 @@ public class CancellationService {
         return view(followUpRepository.save(f));
     }
 
+    /** Marks a cancelled booking's refund processed (it leaves the Open list), or undoes that; recorded in its activity. */
+    @Transactional
+    public CancellationRowResponse setRefundProcessed(String bookingId, boolean processed) {
+        bookingRepository.findByIdForUpdate(bookingId);
+        Booking b = bookingService.findAccessibleBooking(bookingId);
+        if (b.getBookingStatus() != BookingStatus.CANCELLED && b.getPartlyCancelledAt() == null) {
+            throw new IllegalStateException("Only a cancelled booking's refund can be marked processed");
+        }
+        if ((b.getRefundProcessedAt() != null) != processed) {
+            String by = authorResolver.resolveCurrentAuthor().name();
+            b.setRefundProcessedAt(processed ? LocalDateTime.now() : null);
+            b.setRefundProcessedBy(processed ? by : null);
+            bookingRepository.save(b);
+            activityService.record(bookingId, processed ? "REFUND_PROCESSED" : "REFUND_REOPENED",
+                    processed ? "Marked the refund processed" : "Reopened the refund");
+        }
+        return detail(bookingId).getRow();
+    }
+
     // ---- rows
 
     private List<CancellationRowResponse> rows(List<Booking> bookings, LocalDate today) {
@@ -212,13 +233,51 @@ public class CancellationService {
         Map<String, CancelRequestStatus> newest = platformIds.isEmpty() ? Map.of()
                 : requestRepository.findByPlatformBookingIdInOrderByCreatedAtAsc(platformIds).stream()
                         .collect(Collectors.toMap(PlatformCancelRequest::getPlatformBookingId, PlatformCancelRequest::getStatus, (a, b) -> b));
+        Map<String, List<BookingDocument>> documents = ids.isEmpty() ? Map.of()
+                : documentRepository.findByBookingIdInOrderBySortOrderAsc(ids).stream().collect(Collectors.groupingBy(BookingDocument::getBookingId));
         return bookings.stream()
                 .map(b -> row(b, b.getPlatformBookingId() == null ? null : newest.get(b.getPlatformBookingId()),
-                        followUps.getOrDefault(b.getId(), List.of()), today))
+                        followUps.getOrDefault(b.getId(), List.of()), documents.getOrDefault(b.getId(), List.of()), today))
                 .toList();
     }
 
-    private static CancellationRowResponse row(Booking b, CancelRequestStatus newest, List<CancellationFollowUp> followUps, LocalDate today) {
+    /** The ticket's route: its first e-ticket's legs (⇄ when it comes back to where it started), else the booking's own. */
+    static String sector(Booking b, List<BookingDocument> documents) {
+        if (b.getType() != com.voyra.crm.enums.BookingType.FLIGHT) return null;
+        List<com.voyra.crm.dto.VoucherLeg> legs = documents.stream()
+                .filter(d -> d.getDocType() == com.voyra.crm.enums.BookingDocumentType.E_TICKET && d.getLegs() != null && !d.getLegs().isEmpty())
+                .map(BookingDocument::getLegs).findFirst().orElse(List.of());
+        String from = legs.isEmpty() ? b.getFlightFrom() : legs.get(0).getFrom();
+        String to = legs.isEmpty() ? b.getFlightTo() : legs.get(legs.size() - 1).getTo();
+        int back = com.voyra.crm.util.VoucherTrip.returnStart(legs);
+        if (back > 0) {
+            return from + " ⇄ " + legs.get(back - 1).getTo();
+        }
+        if (legs.size() > 1 && Objects.equals(from, to)) {
+            // out and back: the outbound ends before the longest wait between two flights
+            int turn = 0;
+            long longest = -1;
+            for (int i = 0; i < legs.size() - 1; i++) {
+                long wait = java.time.temporal.ChronoUnit.DAYS.between(legs.get(i).getTravelDate(), legs.get(i + 1).getTravelDate());
+                if (wait > longest) {
+                    longest = wait;
+                    turn = i;
+                }
+            }
+            return from + " ⇄ " + legs.get(turn).getTo();
+        }
+        return from == null && to == null ? null : Objects.toString(from, "?") + " → " + Objects.toString(to, "?");
+    }
+
+    private static String pnr(Booking b, List<BookingDocument> documents) {
+        return java.util.stream.Stream.concat(
+                        java.util.stream.Stream.of(b.getPnr(), b.getHotelConfirmationNo(), b.getVisaApplicationNo(), b.getTransferVoucherNo()),
+                        documents.stream().map(BookingDocument::getReferenceNumber))
+                .filter(r -> r != null && !r.isBlank()).findFirst().orElse(null);
+    }
+
+    private static CancellationRowResponse row(Booking b, CancelRequestStatus newest, List<CancellationFollowUp> followUps,
+                                               List<BookingDocument> documents, LocalDate today) {
         CancellationFollowUp next = followUps.stream().filter(f -> f.getStatus() == FollowUpStatus.OPEN)
                 .min(Comparator.comparing(CancellationFollowUp::getDueDate)).orElse(null);
         return CancellationRowResponse.builder()
@@ -228,11 +287,14 @@ public class CancellationService {
                 .followUpDue(CancellationStatusRules.followUpDue(followUps, today))
                 .nextFollowUp(next == null ? null : view(next))
                 .voyraRequestStatus(newest)
-                .cancelledAt(b.getCancelledAt())
+                .cancelledAt(b.getCancelledAt() != null ? b.getCancelledAt() : b.getPartlyCancelledAt())
                 .cancellationCharges(nz(b.getCancellationSupplierCharge()).add(nz(b.getCancellationAgencyFee())))
                 .customerRefundDue(nz(b.getCustomerRefundDue())).refundedToClient(nz(b.getRefundedTotalInr()))
                 .supplierRefundExpected(nz(b.getSupplierRefundExpected())).supplierRefundReceived(nz(b.getSupplierRefundReceived()))
                 .crossChecked(b.getRefundCheckedAt() != null)
+                .refundProcessedAt(b.getRefundProcessedAt()).refundProcessedBy(b.getRefundProcessedBy())
+                .sector(sector(b, documents)).pnr(pnr(b, documents)).vendorName(b.getSupplier())
+                .issuedOn(documents.stream().map(BookingDocument::getIssuedDate).filter(Objects::nonNull).min(LocalDate::compareTo).orElse(null))
                 .build();
     }
 

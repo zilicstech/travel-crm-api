@@ -14,6 +14,7 @@ import com.voyra.crm.controller.BankStatementImportController;
 import com.voyra.crm.controller.BankStatementProfileController;
 import com.voyra.crm.controller.BankTransactionController;
 import com.voyra.crm.controller.BookingController;
+import com.voyra.crm.controller.PassengerCancellationController;
 import com.voyra.crm.controller.BookingDocumentController;
 import com.voyra.crm.controller.BookingLifecycleController;
 import com.voyra.crm.controller.CalendarController;
@@ -160,6 +161,7 @@ public final class ControllerSkuTable {
             entry(CommunicationLogController.class, CRM_CORE),
             entry(FeedbackController.class, CRM_CORE),
             entry(BookingController.class, CRM_CORE),
+            entry(PassengerCancellationController.class, CRM_CORE),
             entry(CancellationController.class, CRM_CORE),
             entry(AgencyEventController.class, CRM_CORE),
             entry(BoardingPassController.class, CRM_CORE),

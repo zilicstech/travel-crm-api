@@ -96,6 +96,7 @@ public class AgencySettingDefaults {
                     Default.of("Extra Luggage Space"), Default.of("Wheelchair Accessible"));
             case MISCELLANEOUS -> List.of(Default.of("Travel Insurance"), Default.of("Forex"),
                     Default.of("SIM Card"));
+            case INSURANCE -> List.of(Default.of("Covid Cover"), Default.of("Adventure Sports"), Default.of("Pre-existing Illness"));
         };
     }
 }

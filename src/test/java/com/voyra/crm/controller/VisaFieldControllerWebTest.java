@@ -9,6 +9,7 @@ import com.voyra.crm.enums.VisaFieldType;
 import com.voyra.crm.security.JwtAuthenticationFilter;
 import com.voyra.crm.security.JwtService;
 import com.voyra.crm.security.RestAuthenticationEntryPoint;
+import com.voyra.crm.service.VisaChecklistService;
 import com.voyra.crm.service.VisaFieldService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -22,13 +23,17 @@ import java.util.List;
 
 import static com.voyra.crm.controller.WebTestSupport.as;
 import static com.voyra.crm.controller.WebTestSupport.json;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -41,6 +46,21 @@ class VisaFieldControllerWebTest {
 
     @Autowired private MockMvc mvc;
     @MockBean private VisaFieldService service;
+    @MockBean private VisaChecklistService checklistService;
+
+    @Test
+    void ownerAndAgentDownloadTheChecklistPdf() throws Exception {
+        given(checklistService.pdf(any(), any())).willReturn(new VisaChecklistService.ChecklistPdf("visa-checklist-kenya.pdf", new byte[]{37, 80}));
+        mvc.perform(get("/api/visa-fields/checklist").param("country", "Kenya").param("skip", "F1", "F2").with(as(UserType.AGENT)))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Type", "application/pdf"))
+                .andExpect(header().string("Content-Disposition", org.hamcrest.Matchers.containsString("visa-checklist-kenya.pdf")))
+                .andExpect(content().bytes(new byte[]{37, 80}));
+        mvc.perform(get("/api/visa-fields/checklist").param("country", "Kenya").with(as(UserType.AGENCY_OWNER))).andExpect(status().isOk());
+        verify(checklistService).pdf("Kenya", List.of("F1", "F2"));
+        verify(checklistService).pdf("Kenya", null);
+        mvc.perform(get("/api/visa-fields/checklist").param("country", "Kenya").with(as(UserType.ACCOUNTANT))).andExpect(status().isForbidden());
+    }
 
     @Test
     void ownerAndAgentReadTheFields() throws Exception {

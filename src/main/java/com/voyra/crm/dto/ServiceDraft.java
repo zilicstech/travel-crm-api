@@ -99,4 +99,26 @@ public class ServiceDraft {
     @Schema(description = "Miscellaneous services only: its sub-category, from Settings (plain text)", example = "Railway ticket")
     @Size(max = 150, message = "Write at most 150 characters")
     private String miscCategory;
+
+    @Schema(description = "Insurance services only: who the policy covers", example = "INDIVIDUAL")
+    private com.voyra.crm.enums.InsuranceType insuranceType;
+
+    @Schema(description = "Insurance services only: the country the traveller leaves from", example = "India")
+    @Size(max = 80, message = "Write at most 80 characters")
+    private String insuranceFromCountry;
+
+    @Schema(description = "Insurance services only: the countries travelled, comma separated", example = "France, Italy")
+    @Size(max = 500, message = "Write at most 500 characters")
+    private String insuranceCountries;
+
+    @Schema(description = "Insurance services only: cover starts", example = "2026-12-01")
+    private java.time.LocalDate insuranceStart;
+
+    @Schema(description = "Insurance services only: cover ends", example = "2026-12-15")
+    private java.time.LocalDate insuranceEnd;
+
+    @Schema(description = "Insurance services only: persons covered", example = "2")
+    @jakarta.validation.constraints.Min(value = 1, message = "At least 1 person")
+    @jakarta.validation.constraints.Max(value = 99, message = "At most 99 persons")
+    private Integer insurancePersons;
 }

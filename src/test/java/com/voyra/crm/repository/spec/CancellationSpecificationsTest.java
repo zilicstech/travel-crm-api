@@ -25,7 +25,7 @@ class CancellationSpecificationsTest {
     @Test
     void theTabListsCancelledBookingsAndOnesWithARequestOrAFollowUp() {
         assertThat(build(CancellationSpecifications.onTab("T1")))
-                .isEqualTo("or(" + CANCELLED_SHOWN + ", " + REQUEST + ", " + REQUEST + ")");
+                .isEqualTo("or(" + CANCELLED_SHOWN + ", " + REQUEST + ", " + REQUEST + ", isNotNull(root.partlyCancelledAt))");
         assertThat(rec.calls()).contains("PlatformCancelRequest", "equal(PlatformCancelRequest.platformBookingId, root.platformBookingId)",
                 "equal(PlatformCancelRequest.tenantId, T1)", "CancellationFollowUp", "equal(CancellationFollowUp.bookingId, root.id)");
         assertThat(rec.calls()).noneMatch(c -> c.contains("CancellationFollowUp.status"));
@@ -33,8 +33,8 @@ class CancellationSpecificationsTest {
 
     @Test
     void openIsAMovingRefundARequestUnderWayOrALiveOpenFollowUp() {
-        assertThat(build(CancellationSpecifications.open("T1"))).isEqualTo("or(and(" + CANCELLED_SHOWN + ", or(lessThan(root.refundedTotalInr, "
-                + "root.customerRefundDue), lessThan(root.supplierRefundReceived, root.supplierRefundExpected))), " + REQUEST + ", " + REQUEST + ")");
+        assertThat(build(CancellationSpecifications.open("T1"))).isEqualTo("or(and(" + CANCELLED_SHOWN + ", isNull(root.refundProcessedAt), isNull(root.refundCheckedAt)), "
+                + "and(isNotNull(root.partlyCancelledAt), isNull(root.refundProcessedAt)), " + REQUEST + ", " + REQUEST + ")");
         assertThat(rec.calls()).contains("equal(CancellationFollowUp.status, OPEN)", "equal(CancellationFollowUp.kind, FOLLOW_UP)",
                 "notEqual(root.bookingStatus, CANCELLED)");
         assertThat(rec.calls()).anyMatch(c -> c.startsWith("PlatformCancelRequest.status.in(") && c.contains("OPEN") && c.contains("COMPLETING"));

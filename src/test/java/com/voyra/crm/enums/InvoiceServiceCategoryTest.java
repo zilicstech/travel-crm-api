@@ -28,11 +28,11 @@ class InvoiceServiceCategoryTest {
     }
 
     @Test
-    void railIsNeverDerivedFromABookingAndMiscellaneousOnlyFromAMiscellaneousOne() {
+    void railIsNeverDerivedFromABookingAndMiscellaneousOnlyFromAMiscellaneousOrInsuranceOne() {
         for (BookingType type : BookingType.values()) {
             assertThat(InvoiceServiceCategory.forBooking(type, true)).isNotEqualTo(InvoiceServiceCategory.RAIL);
             assertThat(InvoiceServiceCategory.forBooking(type, true) == InvoiceServiceCategory.MISCELLANEOUS)
-                    .isEqualTo(type == BookingType.MISCELLANEOUS);
+                    .isEqualTo(type == BookingType.MISCELLANEOUS || type == BookingType.INSURANCE);
         }
     }
 

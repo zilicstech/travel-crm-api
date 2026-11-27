@@ -338,6 +338,25 @@ class BookingDocumentServiceTest {
     }
 
     @Test
+    void aTravellerCancelledOnTheTicketStaysCancelledThroughAnEdit() {
+        signIn();
+        when(bookingService.lockForVoucher("F1")).thenReturn(flight);
+        when(memberRepository.findByMemberIdAndClientId("M1", "C1"))
+                .thenReturn(Optional.of(member("M1", "Abhishek Kumar Singh", java.time.LocalDate.of(1990, 1, 1))));
+        when(memberRepository.findByMemberIdAndClientId("M2", "C1"))
+                .thenReturn(Optional.of(member("M2", "Aarav Singh", java.time.LocalDate.of(2020, 1, 1))));
+        BookingDocument existing = BookingDocument.builder().id("D1").bookingId("F1").docType(BookingDocumentType.E_TICKET)
+                .netCost(new BigDecimal("1000")).travellers(java.util.List.of(
+                        com.voyra.crm.dto.VoucherTraveller.builder().memberId("M1").cancelled(true).build(),
+                        com.voyra.crm.dto.VoucherTraveller.builder().memberId("M2").build())).build();
+        when(bookingDocumentRepository.findByIdAndBookingId("D1", "F1")).thenReturn(Optional.of(existing));
+
+        service.updateDocument("F1", "D1", ticket("M1", "M2"));
+
+        assertThat(existing.getTravellers()).extracting(com.voyra.crm.dto.VoucherTraveller::getCancelled).containsExactly(true, null);
+    }
+
+    @Test
     void anAirTicketWithoutTravellersOrWithAnotherClientsMemberIsRefused() {
         signIn();
         when(bookingService.lockForVoucher("F1")).thenReturn(flight);
@@ -364,6 +383,30 @@ class BookingDocumentServiceTest {
         assertThat(saved.getValue().getTravellers()).isNull();
         assertThat(saved.getValue().getLegs()).isNull();
         verify(memberRepository, never()).findByMemberIdAndClientId(any(), any());
+    }
+
+    @Test
+    void aHotelVoucherMayNameItsGuestsAndATransferVoucherMayNot() {
+        signIn();
+        when(bookingService.lockForVoucher("F1")).thenReturn(flight);
+        when(memberRepository.findByMemberIdAndClientId("M1", "C1"))
+                .thenReturn(Optional.of(member("M1", "Abhishek Kumar Singh", java.time.LocalDate.of(1990, 1, 1))));
+        BookingDocumentCreateRequest hotel = ticket("M1", " ");
+        hotel.setDocType(BookingDocumentType.HOTEL_VOUCHER);
+        hotel.setLegs(null);
+        BookingDocumentCreateRequest transfer = ticket();
+        transfer.setDocType(BookingDocumentType.TRANSFER_VOUCHER);
+        transfer.setLegs(null);
+        org.mockito.ArgumentCaptor<BookingDocument> saved = org.mockito.ArgumentCaptor.forClass(BookingDocument.class);
+
+        service.addDocument("F1", hotel);
+        service.addDocument("F1", transfer);
+
+        verify(bookingDocumentRepository, org.mockito.Mockito.times(2)).save(saved.capture());
+        assertThat(saved.getAllValues().get(0).getTravellers()).extracting(com.voyra.crm.dto.VoucherTraveller::getName)
+                .containsExactly("Abhishek Kumar Singh");
+        assertThat(saved.getAllValues().get(0).getLegs()).isNull();
+        assertThat(saved.getAllValues().get(1).getTravellers()).isNull();
     }
 
     private BookingDocumentCreateRequest ancillary(String kind, String... memberIds) {

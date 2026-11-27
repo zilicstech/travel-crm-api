@@ -244,6 +244,17 @@ public class Booking {
     @Column(name = "misc_category", length = 150)
     private String miscCategory;
 
+    /** An Insurance booking's cover type, the country left from and persons covered; its dates are journey / return date. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "insurance_type", length = 20)
+    private com.voyra.crm.enums.InsuranceType insuranceType;
+
+    @Column(name = "insurance_from_country", length = 80)
+    private String insuranceFromCountry;
+
+    @Column(name = "insurance_persons")
+    private Integer insurancePersons;
+
     @Column(name = "net_cost", nullable = false, precision = 19, scale = 2)
     @Builder.Default
     private BigDecimal netCost = BigDecimal.ZERO;
@@ -413,6 +424,33 @@ public class Booking {
 
     @Column(name = "refund_checked_by")
     private String refundCheckedBy;
+
+    /** Set when Accounts marked the booking verified without invoicing it (an invoice counts as verified anyway). */
+    @Column(name = "verified_at")
+    private LocalDateTime verifiedAt;
+
+    @Column(name = "verified_by")
+    private String verifiedBy;
+
+    /** Set when someone marked a cancelled booking's refund processed; until then it stays open on Cancellations. */
+    @Column(name = "refund_processed_at")
+    private LocalDateTime refundProcessedAt;
+
+    @Column(name = "refund_processed_by")
+    private String refundProcessedBy;
+
+    /** When some passengers were last cancelled while the booking stays live for the rest (client 27 Nov). */
+    @Column(name = "partly_cancelled_at")
+    private LocalDateTime partlyCancelledAt;
+
+    /** Kept by the airline and supplier, and by the agency, on earlier partial cancellations: a later full cancel adds them. */
+    @Column(name = "partial_supplier_charge", nullable = false, precision = 19, scale = 2)
+    @Builder.Default
+    private BigDecimal partialSupplierCharge = BigDecimal.ZERO;
+
+    @Column(name = "partial_agency_fee", nullable = false, precision = 19, scale = 2)
+    @Builder.Default
+    private BigDecimal partialAgencyFee = BigDecimal.ZERO;
 
     /** An agent's "the supplier refund came into our bank", waiting for the accountant to find it
      *  on the statement. Nothing is posted until then; null when no claim is open. */
