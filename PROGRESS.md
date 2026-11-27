@@ -703,3 +703,9 @@ stays the platform's; Voyra's partial refund, wallet refund and cancel stay on V
 their suppliers), "Assigned by" on a new booking, and a PNR / Ref column on the bookings list. Flight reissue waits for the
 owner's ruling on how its money works. Design `docs/superpowers/specs/2026-11-25-booking-extras-design.md`.
 
+## Visa status set by hand 2026-11-27 (owner ruling)
+
+A visa case's overall status (Docs pending, Appointment scheduled, Submitted, Approved, Rejected) is set by hand through
+`PATCH /api/visas/{id}/values` (`status`, with the row's `version`, audited with the other facts). The checklist is a record of
+the steps only: saving it no longer recalculates the status (`VisaStatusCalculator` removed); existing cases keep their status.
+

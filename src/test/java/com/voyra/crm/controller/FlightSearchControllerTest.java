@@ -59,7 +59,7 @@ class FlightSearchControllerTest {
         when(flightSearchService.searchPage(any())).thenReturn(com.voyra.crm.dto.FlightSearchPageResponse.builder()
                 .flights(List.of(com.voyra.crm.dto.FlightGroupResponse.builder().fares(List.of(offer)).build()))
                 .suppliersFailed(List.of("Tripjack")).build());
-        String body = "{\"origin\":\"BLR\",\"destination\":\"GOI\",\"departDate\":\"2026-11-25\",\"adults\":1}";
+        String body = "{\"origin\":\"BLR\",\"destination\":\"GOI\",\"departDate\":\"2099-11-25\",\"adults\":1}";
         mockMvc.perform(post("/api/flights/search").with(SecurityMockMvcRequestPostProcessors.user("o").roles("AGENCY_OWNER"))
                         .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(jsonPath("$[0].offerId").value("s1:o1"))
@@ -81,7 +81,7 @@ class FlightSearchControllerTest {
         mockMvc.perform(post("/api/flights/search")
                         .with(SecurityMockMvcRequestPostProcessors.user("o").roles("AGENCY_OWNER"))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"origin\":\"BLR\",\"destination\":\"GOI\",\"departDate\":\"2026-11-25\",\"adults\":1}"))
+                        .content("{\"origin\":\"BLR\",\"destination\":\"GOI\",\"departDate\":\"2099-11-25\",\"adults\":1}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].displayedFare").value(4500))
                 .andExpect(jsonPath("$[0].agencyEarns").value(100))
@@ -114,7 +114,7 @@ class FlightSearchControllerTest {
                 .flights(List.of(com.voyra.crm.dto.FlightGroupResponse.builder().fares(List.of(offer)).build()))
                 .priceMin(new BigDecimal("4000.50")).priceMax(new BigDecimal("9000")).fareTypes(List.of("PUBLISHED"))
                 .origins(List.of("DEL")).destinations(List.of("BOM", "NMI")).build());
-        String query = "\"query\":{\"origin\":\"BLR\",\"destination\":\"GOI\",\"departDate\":\"2026-11-25\",\"adults\":1}";
+        String query = "\"query\":{\"origin\":\"BLR\",\"destination\":\"GOI\",\"departDate\":\"2099-11-25\",\"adults\":1}";
         mockMvc.perform(post("/api/flights/search/paged").with(SecurityMockMvcRequestPostProcessors.user("o").roles("AGENCY_OWNER"))
                         .contentType(MediaType.APPLICATION_JSON).content("{" + query + ",\"stops\":3,\"minPrice\":0,\"maxPrice\":9000,"
                                 + "\"departBuckets\":[\"EARLY\"],\"arriveBuckets\":[\"EVENING\"],\"fareTypes\":[\"PUBLISHED\"],"

@@ -167,7 +167,7 @@ public class VisaController {
     }
 
     @PatchMapping("/{id}/checklist")
-    @Operation(summary = "Update the visa checklist", description = "Status is always server-derived from the checklist booleans.")
+    @Operation(summary = "Update the visa checklist", description = "A record of the steps; the case's overall status is set separately (PATCH /values, status).")
     public ResponseEntity<VisaResponse> updateChecklist(@PathVariable String id,
                                                          @Valid @RequestBody VisaChecklistUpdateRequest request) {
         return ResponseEntity.ok(visaService.updateChecklist(id, request));

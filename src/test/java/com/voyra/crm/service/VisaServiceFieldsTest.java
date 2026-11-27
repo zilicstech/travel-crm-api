@@ -265,6 +265,22 @@ class VisaServiceFieldsTest {
                         org.assertj.core.groups.Tuple.tuple("vendorName", null, "Atlas Visas"));
     }
 
+    /** The overall status is set by hand, audited like the other facts; leaving it out keeps it. */
+    @Test
+    void theOverallStatusIsSetByHandAndAudited() {
+        Visa v = stored("T1", 0);
+        v.setStatus(com.voyra.crm.enums.VisaStatus.DOCUMENTS_PENDING);
+
+        service.updateValues("VI1", VisaValuesUpdateRequest.builder().version(0L).status(com.voyra.crm.enums.VisaStatus.SUBMITTED).build());
+
+        assertThat(v.getStatus()).isEqualTo(com.voyra.crm.enums.VisaStatus.SUBMITTED);
+        verify(auditService).recordUpdate(eq(com.voyra.crm.enums.AuditEntityType.VISA), eq("VI1"), any(),
+                org.mockito.ArgumentMatchers.argThat(changes -> changes.stream().anyMatch(c -> "status".equals(c.getField())
+                        && "DOCUMENTS_PENDING".equals(c.getOldValue()) && "SUBMITTED".equals(c.getNewValue()))));
+        service.updateValues("VI1", VisaValuesUpdateRequest.builder().version(0L).remarks("x").build());
+        assertThat(v.getStatus()).isEqualTo(com.voyra.crm.enums.VisaStatus.SUBMITTED);
+    }
+
     @Test
     void everyOwnFactCanBeEditedAndClearedAndNoChangeSavesNothing() {
         Visa v = stored("T1", 0);

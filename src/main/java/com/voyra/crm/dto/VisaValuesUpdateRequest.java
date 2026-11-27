@@ -26,6 +26,9 @@ public class VisaValuesUpdateRequest {
     @Schema(description = "The application's version as read; a newer one on the server is 409 VISA_CHANGED", example = "3")
     private Long version;
 
+    @Schema(description = "The case's overall status, set by hand (the checklist no longer sets it)", example = "SUBMITTED")
+    private com.voyra.crm.enums.VisaStatus status;
+
     @Schema(description = "Field id -> new value; \"\" clears it (refused for a mandatory field)", example = "{\"f1\": \"RECVD\"}")
     private Map<String, String> values;
 

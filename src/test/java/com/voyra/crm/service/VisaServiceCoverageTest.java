@@ -210,7 +210,8 @@ class VisaServiceCoverageTest {
     @Test
     void checklistUpdateSetsEveryFieldAndApprovalClearsRejection() {
         signInAs("O1", UserType.AGENCY_OWNER);
-        Visa v = Visa.builder().id("V1").agentId("A1").clientName("Asha").country("France").rejected(true).build();
+        Visa v = Visa.builder().id("V1").agentId("A1").clientName("Asha").country("France").rejected(true)
+                .status(VisaStatus.SUBMITTED).build();
         when(visaRepository.findById("V1")).thenReturn(Optional.of(v));
         VisaChecklistUpdateRequest r = new VisaChecklistUpdateRequest();
         r.setPassportCollected(true);
@@ -235,9 +236,10 @@ class VisaServiceCoverageTest {
         assertThat(v.getVisaValidity()).isEqualTo("90 days");
         assertThat(v.getApproved()).isTrue();
         assertThat(v.getRejected()).isFalse();
-        assertThat(v.getStatus()).isEqualTo(VisaStatus.APPROVED);
+        // the checklist is a record: the overall status stays as it was set
+        assertThat(v.getStatus()).isEqualTo(VisaStatus.SUBMITTED);
         assertThat(v.getUpdatedBy()).isEqualTo("O1");
-        assertThat(res.getStatus()).isEqualTo(VisaStatus.APPROVED);
+        assertThat(res.getStatus()).isEqualTo(VisaStatus.SUBMITTED);
         verify(visaRepository).saveAndFlush(v);
         verify(auditService).recordUpdate(eq(AuditEntityType.VISA), eq("V1"), eq("Asha / France"), anyList());
     }
@@ -254,7 +256,7 @@ class VisaServiceCoverageTest {
 
         assertThat(v.getApproved()).isFalse();
         assertThat(v.getRejected()).isTrue();
-        assertThat(v.getStatus()).isEqualTo(VisaStatus.REJECTED);
+        assertThat(v.getStatus()).isNull();
     }
 
     @Test
@@ -268,7 +270,8 @@ class VisaServiceCoverageTest {
 
         service.updateChecklist("V1", r);
 
-        assertThat(v.getStatus()).isEqualTo(VisaStatus.APPROVED);
+        assertThat(v.getApproved()).isTrue();
+        assertThat(v.getStatus()).isNull();
     }
 
     @Test

@@ -48,7 +48,6 @@ import com.voyra.crm.security.CustomUserPrincipal;
 import com.voyra.crm.security.SecurityContextUtil;
 import com.voyra.crm.util.AuditSnapshot;
 import com.voyra.crm.util.UniqueIdResolver;
-import com.voyra.crm.util.VisaStatusCalculator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -71,9 +70,9 @@ import java.util.Map;
 @Slf4j
 public class VisaService {
 
-    /** The case's own facts edited in place on the sheet. */
+    /** The case's own facts edited in place on the sheet, its overall status among them (set by hand since 2026-11-27). */
     private static final String[] OWN_FACTS = {
-            "passportNumber", "passportExpiry", "nationality", "purchasePrice", "purchaseCurrency", "sellingPrice",
+            "status", "passportNumber", "passportExpiry", "nationality", "purchasePrice", "purchaseCurrency", "sellingPrice",
             "vendorName", "remarks"
     };
 
@@ -195,6 +194,7 @@ public class VisaService {
         requireCurrencyWithPrice(request.getPurchasePrice() != null ? request.getPurchasePrice() : visa.getPurchasePrice(),
                 request.getPurchaseCurrency() != null ? request.getPurchaseCurrency() : visa.getPurchaseCurrency());
         Map<String, String> before = AuditSnapshot.of(visa, OWN_FACTS);
+        if (request.getStatus() != null) visa.setStatus(request.getStatus());
         if (request.getPassportNumber() != null) visa.setPassportNumber(blankToNull(request.getPassportNumber()));
         if (request.getPassportExpiry() != null) visa.setPassportExpiry(request.getPassportExpiry());
         if (request.getNationality() != null) visa.setNationality(blankToNull(request.getNationality()));
@@ -448,7 +448,7 @@ public class VisaService {
             throw new IllegalArgumentException("Visa expiry date can't be before the appointment date");
         }
 
-        visa.setStatus(VisaStatusCalculator.calculate(visa));
+        // the checklist is a record of the steps; the case's overall status is set on its own (updateValues)
         List<AuditChange> changes = AuditSnapshot.diff(before, AuditSnapshot.of(visa, AUDITED));
         touch(visa);
         visa = visaRepository.saveAndFlush(visa);

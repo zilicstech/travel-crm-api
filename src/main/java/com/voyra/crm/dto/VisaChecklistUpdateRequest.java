@@ -6,9 +6,9 @@ import lombok.Data;
 
 import java.time.LocalDate;
 
-/** Patch semantics - only non-null fields are applied. Status is always server-recalculated after any change. */
+/** Patch semantics - only non-null fields are applied. A record of the steps: the case status is set separately. */
 @Data
-@Schema(description = "Request body for updating a Visa's checklist. Only non-null fields are applied; status is always server-recalculated.")
+@Schema(description = "Request body for updating a Visa's checklist. Only non-null fields are applied; the case status is set separately (PATCH /values).")
 public class VisaChecklistUpdateRequest {
 
     @Schema(example = "true")

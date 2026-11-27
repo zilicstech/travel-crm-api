@@ -10,7 +10,7 @@ import lombok.NoArgsConstructor;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-@Schema(description = "Owner's Visa dashboard KPIs, counted from each case's server-derived status")
+@Schema(description = "Owner's Visa dashboard KPIs, counted from each case's status")
 public class VisaDashboardSummaryResponse {
 
     @Schema(description = "Total visa cases", example = "5")
